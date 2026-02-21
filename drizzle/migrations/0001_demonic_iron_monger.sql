@@ -1,0 +1,1 @@
+ALTER TABLE `messages` ADD `raw_message` text;
