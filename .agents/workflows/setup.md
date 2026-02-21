@@ -12,14 +12,25 @@ This workflow installs all dependencies and initializes the database.
 bun install
 ```
 
-2. Generate SQLite Drizzle migrations:
+2. Ensure SQLite data directory exists:
+```bash
+mkdir -p data
+```
+
+3. Generate SQLite Drizzle migrations:
 ```bash
 bun run db:generate
 ```
 
-3. Push migrations to the local database file:
+4. Push migrations to the local database file:
 ```bash
 bun run db:push
 ```
 
-4. Create a `.env` file if it doesn't exist, copying from `.env.example` or setting the necessary AI keys.
+5. Commit the generated migrations to keep the working tree clean for Jules:
+```bash
+git add drizzle/
+git commit -m "chore: setup database migrations" || true
+```
+
+6. Create a `.env` file if it doesn't exist, copying from `.env.example` or setting the necessary AI keys.
