@@ -1,8 +1,15 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { tools } from './index';
+
+type ToolGetter = () => BaseTool[];
 
 export class MenuTool extends BaseTool {
+  private getTools: ToolGetter;
+
+  constructor(getTools: ToolGetter) {
+    super();
+    this.getTools = getTools;
+  }
   readonly name = 'menu';
   readonly description = 'Displays the main menu of available commands, or detailed help for a specific command.';
   readonly aliases = ['help', 'h', '?'];
@@ -31,6 +38,7 @@ export class MenuTool extends BaseTool {
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
     const { command_name } = args;
+    const tools = this.getTools();
 
     if (command_name) {
       const tool = tools.find(
