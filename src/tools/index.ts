@@ -5,12 +5,14 @@ import { MakeStickerTool } from './MakeStickerTool';
 import { GroupAdminTool } from './GroupAdminTool';
 
 // Instantiate all active tools here
-export const tools: BaseTool[] = [
-  new WebSearchTool(),
-  new MenuTool(),
-  new MakeStickerTool(),
-  new GroupAdminTool(),
-];
+const toolsList: BaseTool[] = [];
+
+export const tools = toolsList;
+
+toolsList.push(new WebSearchTool());
+toolsList.push(new MenuTool(() => toolsList));
+toolsList.push(new MakeStickerTool());
+toolsList.push(new GroupAdminTool());
 
 // Helper to easily grab an instance by name
 export function getToolByName(name: string): BaseTool | undefined {
