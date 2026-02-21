@@ -77,14 +77,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
   try {
     // 1. Ensure ChatRoom exists
-    const roomRecord = await db.select().from(chatRooms).where(eq(chatRooms.id, chatId));
-    if (roomRecord.length === 0) {
-      await db.insert(chatRooms).values({
+    await db.insert(chatRooms)
+      .values({
         id: chatId,
         platform,
         created_at: new Date(),
-      });
-    }
+      })
+      .onConflictDoNothing();
 
     // 2. Save User Message
     await db.insert(messages).values({
