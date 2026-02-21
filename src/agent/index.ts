@@ -10,11 +10,17 @@ import { FlowHandler } from '../core/FlowHandler';
 
 const aiClient = new AIClient();
 
-const DEFAULT_SYSTEM_PROMPT = `You are Elastra BOT, a helpful, concise AI personal assistant. 
+const DEFAULT_SYSTEM_PROMPT = `You are ElastraX, a helpful and friendly female AI personal assistant.
 You are communicating via a messaging app (WhatsApp/Discord).
-Keep your answers relatively short unless asked for detail. Use formatting where appropriate.
+If someone asks your name or identity, strictly introduce yourself as ElastraX.
+Be concise but warmly conversational. Use emojis naturally where appropriate, but don't overdo it.
+Do not use markdown formatting that is not supported by WhatsApp (e.g. headers). Bold and italic are fine.
 If a user asks a question requiring recent information, facts, or news, you MUST use the "web_search" tool to find the answer.
-When using "web_search", always provide a summary of the findings first, and then explicitly provide a list of the source URLs you used at the bottom of your message.`;
+When using "web_search", always provide a summary of the findings first, and then explicitly provide a list of the source URLs you used at the bottom of your message.
+
+CRITICAL LOCALIZATION INSTRUCTION:
+You MUST respond entirely in the language specified by the user's chat room setting.
+Current Room Language: {{LANGUAGE}}`;
 
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
@@ -76,14 +82,22 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent}`);
 
   try {
-    // 1. Ensure ChatRoom exists
-    await db.insert(chatRooms)
-      .values({
+    // 1. Ensure ChatRoom exists and fetch its settings
+    let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
+    
+    if (!room) {
+      const newRoom = {
         id: chatId,
         platform,
+        language: 'en',
         created_at: new Date(),
-      })
-      .onConflictDoNothing();
+      };
+      await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
+      room = newRoom as any;
+    }
+
+    // Determine the language prompt mapping
+    const langFull = room.language === 'id' ? 'Indonesian (Bahasa Indonesia)' : 'English';
 
     // 2. Save User Message
     await db.insert(messages).values({
@@ -106,8 +120,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // Reverse to put chronological order back
     history.reverse();
 
-    const formattedMessages: AIChatMessage[] = [
-      { role: 'system', content: DEFAULT_SYSTEM_PROMPT },
+    // Assemble system prompt with localized injection
+    const systemPromptText = (room.systemPrompt || DEFAULT_SYSTEM_PROMPT).replace('{{LANGUAGE}}', langFull);
+    
+    // Assemble AI context
+    const messagesForAI: AIChatMessage[] = [
+      { role: 'system', content: systemPromptText },
       ...history.map(m => ({
         role: m.role as 'user' | 'assistant',
         // Prepend sender name for group context if user
@@ -124,10 +142,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     while (!isDone) {
       try {
-        const aiMsgObj = await aiClient.chatCompletion(formattedMessages, availableTools);
+        const aiMsgObj = await aiClient.chatCompletion(messagesForAI, availableTools);
 
         // Append the AI's step back to the context
-        formattedMessages.push(aiMsgObj);
+        messagesForAI.push(aiMsgObj);
 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
           // Tool Call Requested
@@ -153,7 +171,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             }
 
             // Append tool response
-            formattedMessages.push({
+            messagesForAI.push({
               role: 'tool',
               tool_call_id: tc.id,
               name: toolName,
@@ -177,7 +195,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: 'bot',
-      senderName: 'ElastraGPBOT',
+      senderName: 'ElastraX',
       role: 'assistant',
       content: finalAiResponseText,
       created_at: new Date(),

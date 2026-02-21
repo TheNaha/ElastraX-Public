@@ -80,7 +80,7 @@ export class MenuTool extends BaseTool {
     }
 
     // Default Main Menu
-    let menu = `✨ *ElastraGPBOT Menu* ✨\n\n`;
+    let menu = `✨ *ElastraX Menu* ✨\n\n`;
     menu += `Halo ${ctx.senderName}!\n`;
     menu += `Gunakan */help <command>* untuk melihat detail cara menggunakan sebuah command.\n\n`;
 
@@ -102,7 +102,7 @@ export class MenuTool extends BaseTool {
       menu += `*╰──────────────*\n\n`;
     }
 
-    menu += `_Powered by ElastraGPBOT v7 with Native AI_`;
+    menu += `_Powered by ElastraX v7 with Native AI_`;
     
     return menu;
   }

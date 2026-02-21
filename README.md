@@ -1,4 +1,4 @@
-# ElastraGPBOT v7
+# ElastraX v7
 
 A multi-platform, general-purpose hybrid bot with conversational AI, built on Bun.
 

@@ -3,7 +3,7 @@ import { handleIncomingMessage } from './agent';
 import { logger } from './utils/logger';
 
 async function main() {
-  logger.info('Starting ElastraGPBOT v7...');
+  logger.info('Starting ElastraX v7...');
 
   // Initialize providers
   const waProvider = new WhatsAppProvider();

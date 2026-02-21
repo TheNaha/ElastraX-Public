@@ -3,6 +3,7 @@ import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
   platform: text('platform').notNull(), // 'whatsapp' | 'discord'
+  language: text('language').default('en').notNull(), // 'en' | 'id'
   systemPrompt: text('system_prompt'), // Optional custom constraint
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });

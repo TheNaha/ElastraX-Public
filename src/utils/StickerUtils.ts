@@ -37,12 +37,12 @@ export class StickerUtils {
     const img = new nodeWebpmux.Image();
     await img.load(media);
 
-    const packname = metadata.packname || 'ElastraGPBOT-v7';
+    const packname = metadata.packname || 'ElastraX-v7';
     const author = metadata.author || 'AI Agent';
     const categories = metadata.categories || [''];
 
     const json = { 
-      'sticker-pack-id': 'ElastraGPBOT', 
+      'sticker-pack-id': 'ElastraX', 
       'sticker-pack-name': packname, 
       'sticker-pack-publisher': author, 
       'emojis': categories 

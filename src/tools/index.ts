@@ -3,6 +3,7 @@ import { WebSearchTool } from './WebSearchTool';
 import { MenuTool } from './MenuTool';
 import { MakeStickerTool } from './MakeStickerTool';
 import { GroupAdminTool } from './GroupAdminTool';
+import { LanguageTool } from './LanguageTool';
 
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
@@ -13,6 +14,7 @@ toolsList.push(new WebSearchTool());
 toolsList.push(new MenuTool(() => toolsList));
 toolsList.push(new MakeStickerTool());
 toolsList.push(new GroupAdminTool());
+toolsList.push(new LanguageTool());
 
 
 

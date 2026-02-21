@@ -14,6 +14,7 @@ describe('Schema Compatibility', () => {
       CREATE TABLE chat_rooms (
         id TEXT PRIMARY KEY,
         platform TEXT NOT NULL,
+        language TEXT DEFAULT 'en' NOT NULL,
         system_prompt TEXT,
         created_at INTEGER NOT NULL
       )
@@ -25,8 +26,9 @@ describe('Schema Compatibility', () => {
     await db.insert(chatRooms).values({
       id: chatId,
       platform: 'whatsapp',
+      language: 'en',
       created_at: new Date(),
-    }).onConflictDoNothing();
+    } as any).onConflictDoNothing();
 
     const check1 = await db.select().from(chatRooms);
     expect(check1.length).toBe(1);
@@ -35,8 +37,9 @@ describe('Schema Compatibility', () => {
     await db.insert(chatRooms).values({
       id: chatId,
       platform: 'discord', // Changing platform to verify it wasn't updated
+      language: 'id',
       created_at: new Date(),
-    }).onConflictDoNothing();
+    } as any).onConflictDoNothing();
 
     const check2 = await db.select().from(chatRooms);
     expect(check2.length).toBe(1);
