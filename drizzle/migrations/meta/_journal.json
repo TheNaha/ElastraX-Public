@@ -8,6 +8,13 @@
       "when": 1771674293122,
       "tag": "0000_low_rick_jones",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1771702690604,
+      "tag": "0001_soft_talon",
+      "breakpoints": true
     }
   ]
 }
