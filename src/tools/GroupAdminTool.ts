@@ -1,6 +1,7 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { t } from '../utils/i18n';
 
 export class GroupAdminTool extends BaseTool {
   readonly name = 'groupadmin';
@@ -29,19 +30,19 @@ export class GroupAdminTool extends BaseTool {
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
     if (!ctx.isGroup) {
-      return "❌ This command can only be used in a group.";
+      return t(ctx.language, 'group.not_in_group');
     }
 
     const { action, user } = args;
 
     if (action !== 'add' && action !== 'remove') {
-      return "❌ Invalid action. Must be 'add' or 'remove'.";
+      return t(ctx.language, 'group.invalid_action');
     }
 
     // Attempt to format the phone number as a WhatsApp JID natively
     let rawNumber = user.replace(/[^0-9]/g, '');
-    if (!rawNumber) return "❌ Invalid user phone number.";
-    
+    if (!rawNumber) return t(ctx.language, 'group.invalid_phone');
+
     // Default country code logic simplified: if starts with 0 replace with indonesian +62 code
     if (rawNumber.startsWith('0')) {
         rawNumber = '62' + rawNumber.slice(1);
@@ -50,18 +51,18 @@ export class GroupAdminTool extends BaseTool {
 
     try {
       if (!ctx.updateGroupParticipants) {
-        return "❌ Group Administration is not supported by the current adapter.";
+        return t(ctx.language, 'group.not_supported');
       }
 
       await ctx.react?.('⏳');
       await ctx.updateGroupParticipants(action, [userJid]);
-      
-      const actionText = action === 'add' ? 'Added' : 'Removed';
-      return `✅ Successfully ${actionText} user ${userJid}.`;
-      
+
+      const key = action === 'add' ? 'group.success_add' : 'group.success_remove';
+      return t(ctx.language, key, { jid: userJid });
+
     } catch (e: any) {
       logger.error(e, 'Failed to administer group');
-      return `❌ Error administering group: ${e.message || 'Unknown error'}. Note: Ensure the bot is an admin of the group.`;
+      return t(ctx.language, 'group.error', { msg: e.message || 'Unknown error' });
     }
   }
 }
