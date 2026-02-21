@@ -10,7 +10,7 @@ describe('WebSearchTool', () => {
 
   test('should return an error string if query is missing', async () => {
     const tool = new WebSearchTool();
-    // @ts-ignore - mock context
+    // @ts-expect-error - mock context
     const result = await tool.execute({}, {});
     expect(result).toContain('Error: query parameter is missing');
   });

@@ -10,9 +10,10 @@ import qrcode from 'qrcode-terminal';
 import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { checkPermissions } from '../utils/permissions';
 
 export class WhatsAppProvider implements BotProvider {
-  name: 'whatsapp' = 'whatsapp';
+  name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
   private authDir = './data/auth_info_baileys';
@@ -193,6 +194,9 @@ export class WhatsAppProvider implements BotProvider {
       updateGroupParticipants: async (action: 'add' | 'remove', userIds: string[]) => {
         if (!isGroup) throw new Error("Not inside a group.");
         await sock.groupParticipantsUpdate(jid, userIds, action);
+      },
+      checkPermissions: async (required: 'user' | 'admin' | 'owner') => {
+        return checkPermissions(sock, jid, senderId || jid, isGroup, required);
       },
     };
   }

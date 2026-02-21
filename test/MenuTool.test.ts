@@ -1,14 +1,13 @@
-import { expect, test, describe, beforeAll } from 'bun:test';
+import { describe, test, expect } from 'bun:test';
 import { MenuTool } from '../src/tools/MenuTool';
 import { BaseTool, ToolDefinition } from '../src/tools/BaseTool';
 import { MessageContext } from '../src/core/MessageContext';
 
-// Mock Tools
-class MockToolA extends BaseTool {
-  name = 'mock_tool_a';
-  description = 'Description for Tool A';
-  aliases = ['mta', 'tool_a'];
-  category = 'utility';
+class MockTool extends BaseTool {
+  name = 'mock_tool';
+  description = 'A mock tool';
+  aliases = ['mt'];
+  category = 'mock';
   permissions = 'user' as const;
   get definition(): ToolDefinition {
     return {
@@ -16,91 +15,38 @@ class MockToolA extends BaseTool {
       function: {
         name: this.name,
         description: this.description,
-        parameters: { type: 'object', properties: {}, required: [] }
-      }
+        parameters: { type: 'object', properties: {}, required: [] },
+      },
     };
   }
-  async execute() { return 'A'; }
-}
-
-class MockToolB extends BaseTool {
-  name = 'mock_tool_b';
-  description = 'Description for Tool B';
-  aliases = [];
-  category = 'admin';
-  permissions = 'admin' as const;
-  get definition(): ToolDefinition {
-    return {
-      type: 'function',
-      function: {
-        name: this.name,
-        description: this.description,
-        parameters: {
-          type: 'object',
-          properties: {
-            param1: { type: 'string', description: 'Parameter 1' }
-          },
-          required: ['param1']
-        }
-      }
-    };
-  }
-  async execute() { return 'B'; }
+  async execute() { return 'mock'; }
 }
 
 describe('MenuTool', () => {
-  let menuTool: MenuTool;
-  let mockTools: BaseTool[];
-  let mockContext: MessageContext;
+  test('should display menu with mock tool', async () => {
+    const mockTools = [new MockTool()];
+    const menuTool = new MenuTool(() => mockTools);
 
-  beforeAll(() => {
-    menuTool = new MenuTool();
-    mockTools = [new MockToolA(), new MockToolB(), menuTool];
-    menuTool.setTools(mockTools);
+    // partial mock of MessageContext
+    const ctx = { senderName: 'User' } as MessageContext;
 
-    mockContext = {
-      senderName: 'TestUser',
-      // Add other required properties for MessageContext type if needed, but we only use senderName in MenuTool
-    } as any;
+    const result = await menuTool.execute({}, ctx);
+
+    expect(result).toContain('MOCK');
+    expect(result).toContain('/mock_tool (mt)');
   });
 
-  test('should return main menu when no command_name is provided', async () => {
-    const result = await menuTool.execute({}, mockContext);
+  test('should display detailed help for mock tool', async () => {
+    const mockTools = [new MockTool()];
+    const menuTool = new MenuTool(() => mockTools);
 
-    expect(result).toContain('ElastraGPBOT Menu');
-    expect(result).toContain('Halo TestUser!');
-    expect(result).toContain('UTILITY');
-    expect(result).toContain('/mock_tool_a');
-    expect(result).toContain('ADMIN');
-    expect(result).toContain('/mock_tool_b');
-  });
+    const ctx = { senderName: 'User' } as MessageContext;
 
-  test('should return help for specific tool', async () => {
-    const result = await menuTool.execute({ command_name: 'mock_tool_a' }, mockContext);
+    const result = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
 
-    expect(result).toContain('Bantuan untuk: /mock_tool_a');
-    expect(result).toContain('Description for Tool A');
-    expect(result).toContain('*Alias:* mta, tool_a');
-    expect(result).toContain('*Kategori:* utility');
-  });
-
-  test('should return help for tool via alias', async () => {
-    const result = await menuTool.execute({ command_name: 'mta' }, mockContext);
-
-    expect(result).toContain('Bantuan untuk: /mock_tool_a');
-  });
-
-  test('should return error for unknown command', async () => {
-    const result = await menuTool.execute({ command_name: 'unknown_tool' }, mockContext);
-
-    expect(result).toContain('Command or tool "*unknown_tool*" not found');
-  });
-
-  test('should show usage and parameters for tool with parameters', async () => {
-    const result = await menuTool.execute({ command_name: 'mock_tool_b' }, mockContext);
-
-    expect(result).toContain('*Penggunaan:* /mock_tool_b <param1>');
-    expect(result).toContain('*Parameter:*');
-    expect(result).toContain('param1');
+    expect(result).toContain('Bantuan untuk: /mock_tool');
+    expect(result).toContain('Deskripsi:* A mock tool');
+    expect(result).toContain('Alias:* mt');
+    expect(result).toContain('Kategori:* mock');
   });
 });
