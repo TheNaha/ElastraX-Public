@@ -41,7 +41,7 @@ export class MenuTool extends BaseTool {
     const tools = this.getTools();
 
     if (command_name) {
-      const tool = tools.find(
+      const tool = this.tools.find(
         (t) => t.name === command_name.toLowerCase() || t.aliases.includes(command_name.toLowerCase())
       );
 
@@ -86,7 +86,7 @@ export class MenuTool extends BaseTool {
 
     // Group tools by category
     const categories: Record<string, BaseTool[]> = {};
-    for (const tool of tools) {
+    for (const tool of this.tools) {
       if (!categories[tool.category]) {
         categories[tool.category] = [];
       }
