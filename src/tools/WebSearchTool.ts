@@ -5,6 +5,9 @@ import { logger } from '../utils/logger';
 export class WebSearchTool extends BaseTool {
   readonly name = 'web_search';
   readonly description = 'Searches the web for up-to-date information. Use this whenever you need to look up facts, news, or answer questions that require recent knowledge.';
+  readonly aliases = ['search', 'google', 'duckduckgo'];
+  readonly category = 'utility';
+  readonly permissions = 'user';
 
   private readonly searxngUrl: string;
 

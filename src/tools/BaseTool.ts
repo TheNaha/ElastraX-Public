@@ -31,6 +31,26 @@ export abstract class BaseTool {
   abstract readonly description: string;
 
   /**
+   * Command aliases that can trigger this tool directly
+   */
+  abstract readonly aliases: string[];
+
+  /**
+   * The category this tool belongs to (e.g. 'utility', 'media', 'admin')
+   */
+  abstract readonly category: string;
+
+  /**
+   * Permissions required to execute this tool as a command
+   */
+  abstract readonly permissions: 'user' | 'admin' | 'owner';
+
+  /**
+   * If true, this tool can only be executed in a group chat directly
+   */
+  readonly groupOnly?: boolean = false;
+
+  /**
    * Return the OpenAI-compatible representation of this tool
    */
   abstract get definition(): ToolDefinition;

@@ -16,6 +16,7 @@ export const messages = sqliteTable('messages', {
   senderName: text('sender_name').notNull(),
   role: text('role').notNull(), // 'user' | 'assistant'
   content: text('content').notNull(),
+  rawMessage: text('raw_message'), // Store complete provider message JSON for historical media downloads
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

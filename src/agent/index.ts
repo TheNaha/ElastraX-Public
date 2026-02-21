@@ -4,7 +4,9 @@ import { eq, desc } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIClient, AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
-import { getToolDefinitions, getToolByName } from '../tools';
+import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tools';
+import { ParameterValidator } from '../utils/ParameterValidator';
+import { FlowHandler } from '../core/FlowHandler';
 
 const aiClient = new AIClient();
 
@@ -23,26 +25,32 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
   }
 
+  // Handle active interactive sessions (bypass normal commands and AI)
+  const inFlow = await FlowHandler.handle(ctx);
+  if (inFlow) return;
+
   // Handle explicit commands (bypass AI conversation loop)
   if (text.startsWith('/') && !text.toLowerCase().startsWith('/chat')) {
-    const cmdArgs = text.slice(1).trim().split(' ');
-    const command = cmdArgs.shift()?.toLowerCase();
-    const query = cmdArgs.join(' ');
+    const spaceIdx = text.indexOf(' ');
+    const command = (spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx)).toLowerCase();
+    const queryStr = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
 
-    logger.info(`[Command Router] Received command: /${command} with query: "${query}"`);
+    logger.info(`[Command Router] Received command: /${command} with query: "${queryStr}"`);
 
-    // Map explicit commands to their tools
-    if (command === 'search' || command === 'cari') {
-      const tool = getToolByName('web_search');
-      if (tool) {
-        await ctx.react?.('🔍');
-        const result = await tool.execute({ query }, ctx);
+    // Map explicit commands dynamically
+    const tool = getToolByAliasOrName(command);
+    if (tool) {
+      await ctx.react?.('🔍');
+      try {
+        const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
+        const result = await tool.execute(parsedArgs, ctx);
         await ctx.reply(result);
         await ctx.react?.('✅');
-      } else {
-        await ctx.reply('Error: web_search tool not found pipeline.');
+      } catch (err: any) {
+        await ctx.reply(err.message);
+        await ctx.react?.('❌');
       }
-      return; // End execution after explicit command handles it
+      return;
     }
 
     // If an unknown command is issued, we can optionally warn the user
@@ -78,6 +86,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       senderName,
       role: 'user',
       content: userContent,
+      rawMessage: JSON.stringify(ctx.rawMessage),
       created_at: new Date(),
     });
 
