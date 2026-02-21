@@ -40,6 +40,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // Map explicit commands dynamically
     const tool = getToolByAliasOrName(command);
     if (tool) {
+      // Check permissions
+      const hasPermission = await ctx.checkPermissions(tool.permissions);
+      if (!hasPermission) {
+        await ctx.reply('⛔ You do not have permission to use this command.');
+        return;
+      }
+
       await ctx.react?.('🔍');
       try {
         const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
