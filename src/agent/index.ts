@@ -17,17 +17,40 @@ When using "web_search", always provide a summary of the findings first, and the
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
 
-  // In groups, only respond if the bot is mentioned or if the message starts with '/chat'
   if (isGroup) {
-    // Basic heuristics: if the text mentions the bot or starts with /chat
-    // A more advanced check would verify if `mentionedIds` contains the bot's own JID
-    // For now, if it doesn't start with /chat, ignore it.
-    if (!text.toLowerCase().startsWith('/chat')) {
-      return; // Ignore general group chatter for now unless explicitly commanded to chat
+    if (!text.toLowerCase().startsWith('/chat') && !text.startsWith('/')) {
+      return; // Ignore general group chatter unless explicitly commanded
     }
   }
 
-  // Clean the text from the command if it exists
+  // Handle explicit commands (bypass AI conversation loop)
+  if (text.startsWith('/') && !text.toLowerCase().startsWith('/chat')) {
+    const cmdArgs = text.slice(1).trim().split(' ');
+    const command = cmdArgs.shift()?.toLowerCase();
+    const query = cmdArgs.join(' ');
+
+    logger.info(`[Command Router] Received command: /${command} with query: "${query}"`);
+
+    // Map explicit commands to their tools
+    if (command === 'search' || command === 'cari') {
+      const tool = getToolByName('web_search');
+      if (tool) {
+        await ctx.react?.('🔍');
+        const result = await tool.execute({ query }, ctx);
+        await ctx.reply(result);
+        await ctx.react?.('✅');
+      } else {
+        await ctx.reply('Error: web_search tool not found pipeline.');
+      }
+      return; // End execution after explicit command handles it
+    }
+
+    // If an unknown command is issued, we can optionally warn the user
+    await ctx.reply(`Unknown command: /${command}`);
+    return;
+  }
+
+  // Clean the text for conversational flow
   const userContent = isGroup && text.toLowerCase().startsWith('/chat') 
     ? text.substring(5).trim() 
     : text;
