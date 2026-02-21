@@ -7,6 +7,7 @@ import { logger } from '../utils/logger';
 import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tools';
 import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
+import { t } from '../utils/i18n';
 
 const aiClient = new AIClient();
 
@@ -31,6 +32,21 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
   }
 
+  // Fetch or create the chat room early so that ctx.language is available to all
+  // tools and flow handlers before any routing takes place.
+  let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
+  if (!room) {
+    const newRoom = {
+      id: chatId,
+      platform,
+      language: 'en',
+      created_at: new Date(),
+    };
+    await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
+    room = newRoom as any;
+  }
+  ctx.language = room.language;
+
   // Handle active interactive sessions (bypass normal commands and AI)
   const inFlow = await FlowHandler.handle(ctx);
   if (inFlow) return;
@@ -49,7 +65,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       // Check permissions
       const hasPermission = await ctx.checkPermissions(tool.permissions);
       if (!hasPermission) {
-        await ctx.reply('⛔ You do not have permission to use this command.');
+        await ctx.reply(t(ctx.language, 'agent.no_permission'));
         return;
       }
 
@@ -66,8 +82,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       return;
     }
 
-    // If an unknown command is issued, we can optionally warn the user
-    await ctx.reply(`Unknown command: /${command}`);
+    // If an unknown command is issued, warn the user in their language
+    await ctx.reply(t(ctx.language, 'agent.unknown_command', { cmd: command }));
     return;
   }
 
@@ -82,24 +98,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent}`);
 
   try {
-    // 1. Ensure ChatRoom exists and fetch its settings
-    let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
-    
-    if (!room) {
-      const newRoom = {
-        id: chatId,
-        platform,
-        language: 'en',
-        created_at: new Date(),
-      };
-      await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
-      room = newRoom as any;
-    }
-
-    // Determine the language prompt mapping
+    // Room is already fetched above; derive the language label for the system prompt.
     const langFull = room.language === 'id' ? 'Indonesian (Bahasa Indonesia)' : 'English';
 
-    // 2. Save User Message
+    // 1. Save User Message
     await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: ctx.senderId,
@@ -110,7 +112,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     });
 
-    // 3. Retrieve Context (last 10 messages)
+    // 2. Retrieve Context (last 10 messages)
     const history = await db.select()
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
@@ -133,7 +135,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }))
     ];
 
-    // 4. Generate AI Response (Recursive for tools)
+    // 3. Generate AI Response (Recursive for tools)
     await ctx.react?.('⏳');
     
     let isDone = false;
@@ -191,7 +193,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }
     }
 
-    // 5. Save Final AI Response
+    // 4. Save Final AI Response
     await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: 'bot',
@@ -201,7 +203,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     });
 
-    // 6. Send Response
+    // 5. Send Response
     await ctx.reply(finalAiResponseText);
     await ctx.react?.('✅'); // show success
     logger.info({ chatId }, 'Successfully responded');
@@ -209,6 +211,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   } catch (error) {
     logger.error(error, 'Error handling message');
     await ctx.react?.('❌'); // show error
-    await ctx.reply('An internal error occurred while processing your message.');
+    await ctx.reply(t(ctx.language, 'agent.internal_error'));
   }
 }

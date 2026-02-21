@@ -1,6 +1,7 @@
 import { MessageContext } from './MessageContext';
 import { SessionManager } from '../utils/SessionManager';
 import { logger } from '../utils/logger';
+import { t } from '../utils/i18n';
 
 export type FlowProcessor = (ctx: MessageContext, activeFlowData: any, flowId: string) => Promise<void>;
 
@@ -21,7 +22,7 @@ export class FlowHandler {
    */
   static async handle(ctx: MessageContext): Promise<boolean> {
     const session = SessionManager.get(ctx.senderId, ctx.platform);
-    
+
     if (!session || !session.activeFlow) {
       return false; // User is not in an active flow
     }
@@ -37,10 +38,10 @@ export class FlowHandler {
          if (ctx.text.trim() === '/cancel' || ctx.text.trim() === '/batal') {
             SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
             await ctx.react?.('✅');
-            await ctx.reply('❌ Active flow cancelled.');
+            await ctx.reply(t(ctx.language, 'flow.cancelled'));
             return true;
          }
-         
+
          // Clear active flow to prevent being stuck if they start a new command
          SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
          return false;
@@ -51,7 +52,7 @@ export class FlowHandler {
         return true;
       } catch (err: any) {
         logger.error(err, `[FlowHandler] Error in flow: ${activeFlowData.flow}`);
-        await ctx.reply(`❌ An error occurred processing your flow step:\n${err.message}`);
+        await ctx.reply(t(ctx.language, 'flow.error', { msg: err.message }));
         SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
         return true;
       }

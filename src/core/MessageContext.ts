@@ -8,6 +8,12 @@ export interface MessageContext {
   mentionedIds?: string[];
 
   /**
+   * The active language for this chat room ('en' | 'id'). Populated by the agent
+   * before invoking tools so that responses can be localized.  Defaults to 'en'.
+   */
+  language?: string;
+
+  /**
    * True if the message contains an image, video, audio, or document
    */
   hasMedia: boolean;

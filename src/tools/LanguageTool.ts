@@ -4,6 +4,7 @@ import { db } from '../db';
 import { chatRooms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logger } from '../utils/logger';
+import { t } from '../utils/i18n';
 
 export class LanguageTool extends BaseTool {
   readonly name = 'language';
@@ -37,7 +38,7 @@ export class LanguageTool extends BaseTool {
     const { lang_code } = args;
 
     if (!lang_code || (lang_code !== 'en' && lang_code !== 'id')) {
-      return "❌ Invalid language code. Please provide either 'en' (English) or 'id' (Indonesian). Example: /language en";
+      return t(ctx.language, 'language.invalid');
     }
 
     try {
@@ -47,14 +48,11 @@ export class LanguageTool extends BaseTool {
         .set({ language: lang_code })
         .where(eq(chatRooms.id, ctx.chatId));
 
-      const successMsg = lang_code === 'id' 
-        ? '✅ Bahasa untuk obrolan ini telah diubah ke Bahasa Indonesia.'
-        : '✅ The language for this chat room has been set to English.';
-
-      return successMsg;
+      const key = lang_code === 'id' ? 'language.success_id' : 'language.success_en';
+      return t(lang_code, key);
     } catch (e: any) {
       logger.error(e, 'Failed to update language');
-      return `❌ Error updating language: ${e.message}`;
+      return t(ctx.language, 'language.error', { msg: e.message });
     }
   }
 }
