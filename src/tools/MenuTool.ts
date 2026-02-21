@@ -1,8 +1,13 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { tools } from './index';
 
 export class MenuTool extends BaseTool {
+  private tools: BaseTool[] = [];
+
+  setTools(tools: BaseTool[]) {
+    this.tools = tools;
+  }
+
   readonly name = 'menu';
   readonly description = 'Displays the main menu of available commands, or detailed help for a specific command.';
   readonly aliases = ['help', 'h', '?'];
@@ -33,7 +38,7 @@ export class MenuTool extends BaseTool {
     const { command_name } = args;
 
     if (command_name) {
-      const tool = tools.find(
+      const tool = this.tools.find(
         (t) => t.name === command_name.toLowerCase() || t.aliases.includes(command_name.toLowerCase())
       );
 
@@ -78,7 +83,7 @@ export class MenuTool extends BaseTool {
 
     // Group tools by category
     const categories: Record<string, BaseTool[]> = {};
-    for (const tool of tools) {
+    for (const tool of this.tools) {
       if (!categories[tool.category]) {
         categories[tool.category] = [];
       }

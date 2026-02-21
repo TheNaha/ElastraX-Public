@@ -5,12 +5,17 @@ import { MakeStickerTool } from './MakeStickerTool';
 import { GroupAdminTool } from './GroupAdminTool';
 
 // Instantiate all active tools here
+const menuTool = new MenuTool();
+
 export const tools: BaseTool[] = [
   new WebSearchTool(),
-  new MenuTool(),
+  menuTool,
   new MakeStickerTool(),
   new GroupAdminTool(),
 ];
+
+// Inject the tools list into the menu tool to resolve circular dependency
+menuTool.setTools(tools);
 
 // Helper to easily grab an instance by name
 export function getToolByName(name: string): BaseTool | undefined {
