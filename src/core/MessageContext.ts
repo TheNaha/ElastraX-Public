@@ -49,6 +49,11 @@ export interface MessageContext {
   updateGroupParticipants?(action: 'add' | 'remove', userIds: string[]): Promise<void>;
 
   /**
+   * Check if the sender has the required permissions
+   */
+  checkPermissions(required: 'user' | 'admin' | 'owner'): Promise<boolean>;
+
+  /**
    * The raw original message metadata/object from the provider.
    * Useful for provider-specific edge cases.
    */
