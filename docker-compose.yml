@@ -4,7 +4,10 @@ services:
       context: .
       dockerfile: Dockerfile
     volumes:
+      - ./:/usr/src/app
+      - /usr/src/app/node_modules
       - ./data:/usr/src/app/data
     restart: unless-stopped
     env_file:
       - .env
+    command: bun run --watch src/index.ts

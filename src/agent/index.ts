@@ -8,10 +8,11 @@ import { getToolDefinitions, getToolByName } from '../tools';
 
 const aiClient = new AIClient();
 
-const DEFAULT_SYSTEM_PROMPT = `You are ElastraGPBOT, a helpful, concise AI personal assistant. 
+const DEFAULT_SYSTEM_PROMPT = `You are Elastra BOT, a helpful, concise AI personal assistant. 
 You are communicating via a messaging app (WhatsApp/Discord).
 Keep your answers relatively short unless asked for detail. Use formatting where appropriate.
-If a user asks a question requiring recent information, facts, or news, you MUST use the "web_search" tool to find the answer before responding.`;
+If a user asks a question requiring recent information, facts, or news, you MUST use the "web_search" tool to find the answer.
+When using "web_search", always provide a summary of the findings first, and then explicitly provide a list of the source URLs you used at the bottom of your message.`;
 
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
@@ -33,7 +34,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
   if (!userContent) return;
 
-  logger.info({ chatId, isGroup, senderName, content: userContent }, 'Processing incoming message');
+  const chatType = isGroup ? 'Group' : 'Private';
+  logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent}`);
 
   try {
     // 1. Ensure ChatRoom exists
@@ -104,7 +106,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             let toolResultStr = '';
             
             if (tool) {
-              logger.info({ toolName, args }, 'Agent invoked tool');
+              logger.info(`[Agent] Invoked tool: ${toolName} with args: ${JSON.stringify(args)}`);
               await ctx.react?.('🔍'); // Feedback to user
               toolResultStr = await tool.execute(args, ctx);
             } else {
