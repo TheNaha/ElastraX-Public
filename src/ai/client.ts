@@ -9,25 +9,39 @@ export interface AIChatMessage {
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
 
+export interface AIClientConfig {
+  baseUrl?: string;
+  apiKey?: string;
+  modelName?: string;
+}
+
 export class AIClient {
   private baseUrl: string;
   private apiKey: string;
   private modelName: string;
 
-  constructor() {
-    // If no URL is provided, it falls back to a placeholder Modal URL that you will get after running `modal deploy`
+  constructor(config?: AIClientConfig) {
+    // If no URL is provided, it falls back to empty string or env var
     // Alternatively, for Google AI Studio (Gemini), use: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    this.baseUrl = process.env.AI_API_BASE_URL || 'https://<your-username>--elastra-gpbot-vllm-fastapi-app.modal.run/v1';
-    this.apiKey = process.env.AI_API_KEY || 'dummy';
+    this.baseUrl = config?.baseUrl || process.env.AI_API_BASE_URL || '';
+    this.apiKey = config?.apiKey || process.env.AI_API_KEY || 'dummy';
     // Model name defaults to the Llama 3 model deployed on Modal. 
     // If using Gemini, set this to e.g., "gemini-2.5-flash"
-    this.modelName = process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
+    this.modelName = config?.modelName || process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
+
+    if (!this.baseUrl || this.baseUrl.includes('<your-username>')) {
+      logger.warn('AI_API_BASE_URL is not configured or contains placeholders. AI features will not work.');
+    }
   }
 
   async chatCompletion(
     messages: AIChatMessage[],
     tools?: ToolDefinition[]
   ): Promise<any> {
+    if (!this.baseUrl || this.baseUrl.includes('<your-username>')) {
+      throw new Error('AI_API_BASE_URL is not configured properly.');
+    }
+
     const payload: any = {
       model: this.modelName,
       messages,
