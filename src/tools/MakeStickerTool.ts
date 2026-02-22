@@ -37,17 +37,25 @@ export class MakeStickerTool extends BaseTool {
       return t(ctx.language, 'sticker.no_media');
     }
     try {
-      // 2. Resolve Media Buffer natively from cached disk or fallback download
+      // 2. Await background media download (started immediately when the message was received).
+      //    If the download is already done this resolves instantly; otherwise we wait.
+      //    We show 📥 to let the user know we're fetching their media.
       const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
+
+      if (!targetMessage.mediaPath) {
+        await ctx.react?.('📥');
+        await ctx.mediaReady;
+      }
+
       let buffer: Buffer | null = null;
       let mime = targetMessage.mimeType || '';
 
       if (targetMessage.mediaPath && existsSync(targetMessage.mediaPath)) {
         buffer = await readFile(targetMessage.mediaPath);
       } else if (ctx.downloadMedia) {
-        await ctx.react?.('⏳'); // show working progress usually when downloading takes time
+        // Fallback: download hasn't completed (e.g. expired CDN link) — try again directly.
+        await ctx.react?.('⏳');
         buffer = await ctx.downloadMedia();
-        // Fallback mime lookup from rawMessage if we had to download
         if (!mime) {
           const msg = (targetMessage as any).rawMessage?.message;
           mime = msg?.imageMessage?.mimetype || msg?.videoMessage?.mimetype || msg?.documentMessage?.mimetype || '';

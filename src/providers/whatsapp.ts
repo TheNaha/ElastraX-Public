@@ -188,11 +188,14 @@ export class WhatsAppProvider implements BotProvider {
       };
     }
 
-    // Auto-download logic for conversational media caching
+    // Media downloads run in the background immediately after context creation.
+    // The main message handler is NOT blocked — it proceeds straight to AI/tool processing.
+    // Tools that need media (e.g. MakeStickerTool) call `await ctx.mediaReady` to wait
+    // only as long as needed, then read ctx.mediaPath / ctx.mimeType.
     let mediaPath: string | undefined;
     let mimeType: string | undefined;
-    
-    // helper to save buffer
+
+    // helper to save buffer to disk
     const saveBuffer = async (buffer: Buffer): Promise<{ path: string, mime: string } | null> => {
       try {
         const typeInfo = await fileTypeFromBuffer(buffer);
@@ -208,29 +211,42 @@ export class WhatsAppProvider implements BotProvider {
       }
     };
 
-    if (hasMedia && !skipMediaDownload) {
-      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage }).catch(() => null) as Buffer | null;
-      if (buffer) {
-        const saved = await saveBuffer(buffer);
-        if (saved) {
-          mediaPath = saved.path;
-          mimeType = saved.mime;
-        }
-      }
-    }
+    // Build a single Promise that downloads both the main message media AND
+    // the quoted media concurrently. Resolves immediately if nothing to download.
+    const mediaReadyPromise: Promise<void> = (async () => {
+      if (skipMediaDownload) return;
+      const tasks: Promise<void>[] = [];
 
-    if (quoted?.hasMedia && !skipMediaDownload) {
-      // For quoted messages, we check if we already have it in the DB later. 
-      // But we can also auto-download it right here to be safe and thorough.
-      const buffer = await downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage }).catch(() => null) as Buffer | null;
-      if (buffer) {
-        const saved = await saveBuffer(buffer);
-        if (saved) {
-          quoted.mediaPath = saved.path;
-          quoted.mimeType = saved.mime;
-        }
+      if (hasMedia) {
+        tasks.push(
+          downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+            .then(async (buf) => {
+              const buffer = buf as Buffer | null;
+              if (buffer) {
+                const saved = await saveBuffer(buffer);
+                if (saved) { mediaPath = saved.path; mimeType = saved.mime; }
+              }
+            })
+            .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download message media'))
+        );
       }
-    }
+
+      if (quoted?.hasMedia) {
+        tasks.push(
+          downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+            .then(async (buf) => {
+              const buffer = buf as Buffer | null;
+              if (buffer) {
+                const saved = await saveBuffer(buffer);
+                if (saved && quoted) { quoted.mediaPath = saved.path; quoted.mimeType = saved.mime; }
+              }
+            })
+            .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download quoted media'))
+        );
+      }
+
+      await Promise.allSettled(tasks);
+    })();
 
     const downloadMedia = async (): Promise<Buffer | null> => {
       // Legacy compatibility: some tools might still call this, or it can fall back to the newly saved paths if we want.
@@ -260,6 +276,7 @@ export class WhatsAppProvider implements BotProvider {
       hasMedia,
       mediaPath,
       mimeType,
+      mediaReady: mediaReadyPromise,
       quoted,
       rawMessage: msg,
       downloadMedia,

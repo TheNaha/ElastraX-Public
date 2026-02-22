@@ -127,8 +127,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // Room is already fetched above; derive the language label for the system prompt.
     const langFull = room.language === 'id' ? 'Indonesian (Bahasa Indonesia)' : 'English';
 
-    // 1. Save User Message
-    await db.insert(messages).values({
+    // 1. Save User Message (idempotent - Baileys can emit the same message event twice on reconnect/history sync)
+    const insertResult = await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: ctx.senderId,
       senderName,
@@ -139,7 +139,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       mediaPath: ctx.mediaPath,
       mimeType: ctx.mimeType,
       created_at: new Date(),
-    });
+    }).onConflictDoNothing();
+
 
     // 2. Retrieve Context
     const history = await db.select()

@@ -160,6 +160,7 @@ export class DiscordProvider implements BotProvider {
       hasMedia,
       mediaPath,
       mimeType,
+      mediaReady: Promise.resolve(), // Discord has no background download — always ready
       quoted,
       rawMessage: msg,
       downloadMedia,

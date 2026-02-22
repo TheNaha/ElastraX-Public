@@ -29,6 +29,14 @@ export interface MessageContext {
   mimeType?: string;
 
   /**
+   * A Promise that resolves once background media download has completed.
+   * Tools that require the media buffer should `await ctx.mediaReady` before
+   * reading `ctx.mediaPath` / `ctx.mimeType`. Resolves immediately if there
+   * is nothing to download.
+   */
+  mediaReady: Promise<void>;
+
+  /**
    * If this message is a reply to another message, this contains the quoted message context
    */
   quoted?: {
