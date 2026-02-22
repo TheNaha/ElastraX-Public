@@ -35,6 +35,6 @@ export type Message = typeof messages.$inferSelect;
 export const waAuthState = sqliteTable('wa_auth_state', {
   // Baileys keys like 'creds' or 'app-state-sync-key-XYZ'
   id: text('id').primaryKey(),
-  // JSON serialized data
-  data: text('data', { mode: 'json' }).notNull(),
+  // JSON serialized data directly stringified with Baileys' custom replacer
+  data: text('data').notNull(),
 });

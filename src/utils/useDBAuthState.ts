@@ -31,18 +31,12 @@ export const useDBAuthState = async (): Promise<{
       // Drizzle's `mode: 'json'` expects a raw object and stringifies natively, skipping the replacer.
       // So we must manually stringify it here, and store the raw string, treating the SQLite column dynamically.
       const stringified = JSON.stringify(data, BufferJSON.replacer);
-      // Wait, Drizzle mode='json' will try to `JSON.parse` whatever we pass it. If we pass a string, it might double-parse or crash.
-      // Actually, if we pass a pre-stringified string to Drizzle mode=json, we can just `JSON.parse` it right back into an object
-      // so Drizzle stringifies it again into the DB. BUT we lose Buffer tracking!
-      // Better approach: Since waAuthState.data is `text({ mode: 'json' })`, let's just let it be text!
-      // But we can't change the schema now easily without a migration.
-      // So let's pass the object wrapped back up via JSON.parse of the replacer output.
-      const parsedObject = JSON.parse(stringified);
-      
-      await db.insert(waAuthState).values({ id, data: parsedObject })
+      // We must pass the raw string into SQLite. 
+      // Drizzle's schema for `waAuthState.data` is now `text()` without `mode: json`!
+      await db.insert(waAuthState).values({ id, data: stringified })
         .onConflictDoUpdate({
           target: waAuthState.id,
-          set: { data: parsedObject },
+          set: { data: stringified },
         });
     } catch (e) {
       logger.error({ id, e }, 'Failed to save auth state data to SQLite');
