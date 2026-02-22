@@ -8,6 +8,8 @@ import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tool
 import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 
 const aiClient = new AIClient();
 
@@ -92,10 +94,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     ? text.substring(5).trim() 
     : text;
 
-  if (!userContent) return;
+  if (!userContent && !ctx.hasMedia) return;
 
   const chatType = isGroup ? 'Group' : 'Private';
-  logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent}`);
+  logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent || '<media only>'}`);
 
   try {
     // Room is already fetched above; derive the language label for the system prompt.
@@ -108,7 +110,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       senderName,
       role: 'user',
       content: userContent,
+      providerMessageId: ctx.messageId,
       rawMessage: JSON.stringify(ctx.rawMessage),
+      mediaPath: ctx.mediaPath,
+      mimeType: ctx.mimeType,
       created_at: new Date(),
     });
 
@@ -127,13 +132,38 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     
     // Assemble AI context
     const messagesForAI: AIChatMessage[] = [
-      { role: 'system', content: systemPromptText },
-      ...history.map(m => ({
-        role: m.role as 'user' | 'assistant',
-        // Prepend sender name for group context if user
-        content: m.role === 'user' ? `[${m.senderName}]: ${m.content}` : m.content,
-      }))
+      { role: 'system', content: systemPromptText }
     ];
+
+    for (const m of history) {
+      const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
+      const textContent = textPrefix + m.content;
+      
+      let finalContent: AIChatMessage['content'] = textContent;
+
+      // Handle multimodal vision if message has media
+      if (m.mediaPath && m.mimeType?.startsWith('image/')) {
+        if (existsSync(m.mediaPath)) {
+          try {
+            const fileBuffer = await readFile(m.mediaPath);
+            const base64Data = fileBuffer.toString('base64');
+            const dataUri = `data:${m.mimeType};base64,${base64Data}`;
+            
+            finalContent = [
+              { type: 'text', text: textContent },
+              { type: 'image_url', image_url: { url: dataUri } }
+            ];
+          } catch (err) {
+            logger.error({ err, path: m.mediaPath }, 'Failed to read media for AI context');
+          }
+        }
+      }
+
+      messagesForAI.push({
+        role: m.role as 'user' | 'assistant',
+        content: finalContent,
+      });
+    }
 
     // 3. Generate AI Response (Recursive for tools)
     await ctx.react?.('⏳');
@@ -200,6 +230,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       senderName: 'ElastraX',
       role: 'assistant',
       content: finalAiResponseText,
+      // AI messages usually don't have a strict provider ID until sent, 
+      // but we can generate a unique local one or leave it null.
       created_at: new Date(),
     });
 

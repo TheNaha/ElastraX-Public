@@ -1,9 +1,9 @@
 import makeWASocket, {
   DisconnectReason,
-  useMultiFileAuthState,
   WAMessage,
   proto,
   downloadMediaMessage,
+  getDevice
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
@@ -11,15 +11,20 @@ import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { checkPermissions } from '../utils/permissions';
+import { useDBAuthState } from '../utils/useDBAuthState';
+import { randomUUID } from 'crypto';
+import { join } from 'path';
+import { writeFile } from 'fs/promises';
+import { fileTypeFromBuffer } from 'file-type';
+import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
-  private authDir = './data/auth_info_baileys';
 
   async start(): Promise<void> {
-    const { state, saveCreds } = await useMultiFileAuthState(this.authDir);
+    const { state, saveCreds } = await useDBAuthState();
 
     // We can pass our custom logger, but Baileys is very noisy on info/debug.
     // It's usually best to keep Baileys internal logger silent/warn unless debugging connection issues.
@@ -64,11 +69,39 @@ export class WhatsAppProvider implements BotProvider {
       if (m.type !== 'notify') return;
 
       if (this.messageHandler) {
-        const ctx = this.createContext(msg);
+        const ctx = await this.createContext(msg);
         if (ctx) {
           await this.messageHandler(ctx);
         }
       }
+    });
+
+    this.sock.ev.on('messaging-history.set', async ({ messages }) => {
+      logger.info(`[WhatsApp] Received history sync with ${messages.length} messages.`);
+      
+      const contexts: MessageContext[] = [];
+      for (const msg of messages) {
+        if (!msg.message) continue;
+        
+        // Disable auto-download during bulk history sync via an internal flag if necessary, 
+        // or just let createContext run. createContext only auto-downloads if we tell it to.
+        // Wait, createContext automatically downloads media if hasMedia is true. 
+        // We probably don't want to download thousands of historical images right now.
+        // Let's pass a flag to createContext to skip bulk downloads.
+        try {
+          const ctx = await this.createContext(msg, true); // true = skipMediaDownload
+          if (ctx) {
+            contexts.push(ctx);
+          }
+        } catch (e) {
+          logger.warn({ id: msg.key.id }, 'Failed to parse historical message context');
+        }
+      }
+
+      // Send them to the background sync engine
+      syncHistoricalDatabase(contexts).catch(err => {
+        logger.error(err, 'Background history sync failed');
+      });
     });
   }
 
@@ -80,7 +113,7 @@ export class WhatsAppProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
-  private createContext(msg: WAMessage): MessageContext | null {
+  private async createContext(msg: WAMessage, skipMediaDownload: boolean = false): Promise<MessageContext | null> {
     if (!this.sock) return null;
     const jid = msg.key.remoteJid;
     if (!jid) return null;
@@ -154,7 +187,53 @@ export class WhatsAppProvider implements BotProvider {
       };
     }
 
+    // Auto-download logic for conversational media caching
+    let mediaPath: string | undefined;
+    let mimeType: string | undefined;
+    
+    // helper to save buffer
+    const saveBuffer = async (buffer: Buffer): Promise<{ path: string, mime: string } | null> => {
+      try {
+        const typeInfo = await fileTypeFromBuffer(buffer);
+        const mime = typeInfo?.mime || 'application/octet-stream';
+        const ext = typeInfo?.ext || 'bin';
+        const filename = `${randomUUID()}.${ext}`;
+        const filepath = join('./data/media', filename);
+        await writeFile(filepath, buffer);
+        return { path: filepath, mime };
+      } catch (err) {
+        logger.error(err, 'Failed to save buffer to disk');
+        return null;
+      }
+    };
+
+    if (hasMedia && !skipMediaDownload) {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage }).catch(() => null) as Buffer | null;
+      if (buffer) {
+        const saved = await saveBuffer(buffer);
+        if (saved) {
+          mediaPath = saved.path;
+          mimeType = saved.mime;
+        }
+      }
+    }
+
+    if (quoted?.hasMedia && !skipMediaDownload) {
+      // For quoted messages, we check if we already have it in the DB later. 
+      // But we can also auto-download it right here to be safe and thorough.
+      const buffer = await downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage }).catch(() => null) as Buffer | null;
+      if (buffer) {
+        const saved = await saveBuffer(buffer);
+        if (saved) {
+          quoted.mediaPath = saved.path;
+          quoted.mimeType = saved.mime;
+        }
+      }
+    }
+
     const downloadMedia = async (): Promise<Buffer | null> => {
+      // Legacy compatibility: some tools might still call this, or it can fall back to the newly saved paths if we want.
+      // Easiest is to keep functionality identical as before for tools that don't transition to mediaPath immediately.
       try {
         if (hasMedia) {
            return (await downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })) as Buffer;
@@ -170,6 +249,7 @@ export class WhatsAppProvider implements BotProvider {
 
     return {
       platform: 'whatsapp',
+      messageId: msg.key.id || 'unknown',
       chatId: jid,
       senderId: senderId || jid,
       senderName: msg.pushName || 'Unknown',
@@ -177,6 +257,8 @@ export class WhatsAppProvider implements BotProvider {
       isGroup,
       mentionedIds,
       hasMedia,
+      mediaPath,
+      mimeType,
       quoted,
       rawMessage: msg,
       downloadMedia,

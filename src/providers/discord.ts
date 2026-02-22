@@ -2,6 +2,10 @@ import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, Attachm
 import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { randomUUID } from 'crypto';
+import { join } from 'path';
+import { writeFile } from 'fs/promises';
+import { fileTypeFromBuffer } from 'file-type';
 
 export class DiscordProvider implements BotProvider {
   name = 'discord' as const;
@@ -95,6 +99,46 @@ export class DiscordProvider implements BotProvider {
       }
     };
 
+    let mediaPath: string | undefined;
+    let mimeType: string | undefined;
+
+    const saveBuffer = async (buffer: Buffer): Promise<{ path: string, mime: string } | null> => {
+      try {
+        const typeInfo = await fileTypeFromBuffer(buffer);
+        const mime = typeInfo?.mime || 'application/octet-stream';
+        const ext = typeInfo?.ext || 'bin';
+        const filename = `${randomUUID()}.${ext}`;
+        const filepath = join('./data/media', filename);
+        await writeFile(filepath, buffer);
+        return { path: filepath, mime };
+      } catch (err) {
+        logger.error(err, 'Failed to save buffer to disk');
+        return null;
+      }
+    };
+
+    if (hasMedia) {
+      const buffer = await downloadMediaFn(msg);
+      if (buffer) {
+        const saved = await saveBuffer(buffer);
+        if (saved) {
+          mediaPath = saved.path;
+          mimeType = saved.mime;
+        }
+      }
+    }
+
+    if (quoted?.hasMedia) {
+      const buffer = await downloadMediaFn(quoted.rawMessage as DiscordMessage);
+      if (buffer) {
+        const saved = await saveBuffer(buffer);
+        if (saved) {
+          quoted.mediaPath = saved.path;
+          quoted.mimeType = saved.mime;
+        }
+      }
+    }
+
     const downloadMedia = async (): Promise<Buffer | null> => {
       if (hasMedia) {
         return downloadMediaFn(msg);
@@ -106,6 +150,7 @@ export class DiscordProvider implements BotProvider {
 
     return {
       platform: 'discord',
+      messageId: msg.id,
       chatId: msg.channelId,
       senderId: msg.author.id,
       senderName: msg.author.username,
@@ -113,6 +158,8 @@ export class DiscordProvider implements BotProvider {
       isGroup,
       mentionedIds,
       hasMedia,
+      mediaPath,
+      mimeType,
       quoted,
       rawMessage: msg,
       downloadMedia,

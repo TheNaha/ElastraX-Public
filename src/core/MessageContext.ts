@@ -19,15 +19,32 @@ export interface MessageContext {
   hasMedia: boolean;
 
   /**
+   * V7.2 Local cached path of the downloaded media (if applicable)
+   */
+  mediaPath?: string;
+
+  /**
+   * V7.2 Mime type of the media (if applicable)
+   */
+  mimeType?: string;
+
+  /**
    * If this message is a reply to another message, this contains the quoted message context
    */
   quoted?: {
     senderId: string;
     text: string;
     hasMedia: boolean;
+    mediaPath?: string;
+    mimeType?: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     rawMessage: any;
   };
+
+  /**
+   * V7.4 Unique identifier of the message from the provider system
+   */
+  messageId: string;
 
   /**
    * Send a text message back to the same chat

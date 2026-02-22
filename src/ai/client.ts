@@ -1,6 +1,10 @@
 export interface AIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string;
+  content: string | Array<{
+    type: 'text' | 'image_url';
+    text?: string;
+    image_url?: { url: string };
+  }>;
   name?: string;
   tool_calls?: any[];
   tool_call_id?: string;

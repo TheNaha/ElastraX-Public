@@ -3,6 +3,8 @@ import { MessageContext } from '../core/MessageContext';
 import { StickerUtils } from '../utils/StickerUtils';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
+import { readFile } from 'fs/promises';
+import { existsSync } from 'fs';
 
 export class MakeStickerTool extends BaseTool {
   readonly name = 'sticker';
@@ -34,33 +36,31 @@ export class MakeStickerTool extends BaseTool {
     if (!ctx.hasMedia && !ctx.quoted?.hasMedia) {
       return t(ctx.language, 'sticker.no_media');
     }
-
     try {
-      // 2. Download Media using MessageContext
+      // 2. Resolve Media Buffer natively from cached disk or fallback download
       const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
+      let buffer: Buffer | null = null;
+      let mime = targetMessage.mimeType || '';
 
-      if (!ctx.downloadMedia) {
-         return t(ctx.language, 'sticker.download_not_supported');
+      if (targetMessage.mediaPath && existsSync(targetMessage.mediaPath)) {
+        buffer = await readFile(targetMessage.mediaPath);
+      } else if (ctx.downloadMedia) {
+        await ctx.react?.('⏳'); // show working progress usually when downloading takes time
+        buffer = await ctx.downloadMedia();
+        // Fallback mime lookup from rawMessage if we had to download
+        if (!mime) {
+          const msg = (targetMessage as any).rawMessage?.message;
+          mime = msg?.imageMessage?.mimetype || msg?.videoMessage?.mimetype || msg?.documentMessage?.mimetype || '';
+        }
+      } else {
+        return t(ctx.language, 'sticker.download_not_supported');
       }
-
-      await ctx.react?.('⏳'); // show working progress
-
-      const buffer = await ctx.downloadMedia();
 
       if (!buffer) {
          return t(ctx.language, 'sticker.download_failed');
       }
 
       // 3. Determine type and convert to WebP
-      // Extract mimetype from the raw message structure (Baileys specific fallback if needed)
-      let mime = '';
-      if (ctx.hasMedia) {
-          const msg = ctx.rawMessage?.message;
-          mime = msg?.imageMessage?.mimetype || msg?.videoMessage?.mimetype || msg?.documentMessage?.mimetype || '';
-      } else {
-          const msg = ctx.quoted?.rawMessage?.message;
-          mime = msg?.imageMessage?.mimetype || msg?.videoMessage?.mimetype || msg?.documentMessage?.mimetype || '';
-      }
 
       let webpBuffer: Buffer;
 
