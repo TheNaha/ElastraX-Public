@@ -1,0 +1,35 @@
+{
+  "key": {
+    "remoteJid": "62895320460745@s.whatsapp.net",
+    "fromMe": false,
+    "id": "ACAD4BBB7106A240DEEAE15BB8F88FCB",
+    "senderLid": "27870210576446@lid"
+  },
+  "messageTimestamp": 1757423800,
+  "pushName": "Naufal Hafizd Prayoga",
+  "broadcast": false,
+  "message": {
+    "extendedTextMessage": {
+      "text": "reply normal test",
+      "previewType": "NONE",
+      "contextInfo": {
+        "stanzaId": "ACB4EE458632E4FA5DC6801688CC80DB",
+        "participant": "62895320460745@s.whatsapp.net",
+        "quotedMessage": {
+          "conversation": "testing"
+        }
+      },
+      "inviteLinkGroupTypeV2": "DEFAULT"
+    },
+    "messageContextInfo": {
+      "deviceListMetadata": {
+        "senderKeyHash": "th+/YakOdB+6kQ==",
+        "senderTimestamp": "1757256814",
+        "recipientKeyHash": "N2pne2IfIhQegg==",
+        "recipientTimestamp": "1757418864"
+      },
+      "deviceListMetadataVersion": 2,
+      "messageSecret": "UqtN8bNug8t1R3z0cPzVh/EDc33QAcKLpI1jX49aUpc="
+    }
+  }
+}

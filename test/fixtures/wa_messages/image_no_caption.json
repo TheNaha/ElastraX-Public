@@ -1,0 +1,16 @@
+{
+  "key": {
+    "remoteJid": "628123456789@s.whatsapp.net",
+    "fromMe": false,
+    "id": "IMG002"
+  },
+  "pushName": "Alice",
+  "message": {
+    "imageMessage": {
+      "caption": "",
+      "mimetype": "image/jpeg",
+      "url": "https://mmg.whatsapp.net/fake"
+    }
+  },
+  "messageTimestamp": 1700000002
+}

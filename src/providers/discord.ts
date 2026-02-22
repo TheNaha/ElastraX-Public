@@ -73,11 +73,14 @@ export class DiscordProvider implements BotProvider {
       try {
         const fetchMsg = await msg.channel.messages.fetch(msg.reference.messageId);
         if (fetchMsg) {
+          const isFromBot = fetchMsg.author.id === this.client?.user?.id;
           quoted = {
-            rawMessage: fetchMsg,
-            senderId: fetchMsg.author.id,
+            messageType: fetchMsg.attachments.size > 0 ? 'document' : 'conversation',
+            body: fetchMsg.content,
             text: fetchMsg.content,
+            senderId: fetchMsg.author.id,
             hasMedia: fetchMsg.attachments.size > 0,
+            rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }),
           };
         }
       } catch (e) {
@@ -155,15 +158,30 @@ export class DiscordProvider implements BotProvider {
       senderId: msg.author.id,
       senderName: msg.author.username,
       text: msg.content,
+      messageType: hasMedia ? 'document' : 'conversation',
       isGroup,
       mentionedIds,
       hasMedia,
       mediaPath,
       mimeType,
-      mediaReady: Promise.resolve(), // Discord has no background download — always ready
+      mediaReady: Promise.resolve(),
       quoted,
       rawMessage: msg,
       downloadMedia,
+
+      sendMedia: async (buffer: Buffer, options = {}) => {
+        const attachment = new AttachmentBuilder(buffer, { name: options.filename ?? 'file' });
+        await msg.reply({ files: [attachment], content: options.caption });
+      },
+
+      deleteMessage: async (_key?: any) => {
+        try { await msg.delete(); } catch { /* already deleted or no permission */ }
+      },
+
+      forwardMessage: async (_targetJid: string) => {
+        // Discord channels use different routing, no-op for now
+      },
+
       reply: async (replyText: string) => {
         await msg.reply({ content: replyText });
       },
@@ -183,7 +201,6 @@ export class DiscordProvider implements BotProvider {
         if (action === 'add') {
           throw new Error("Discord bots cannot add users to a guild arbitrarily without OAuth2 flow.");
         }
-        
         for (const userId of userIds) {
           try {
             await msg.guild.members.kick(userId, 'Automated by ElastraX GroupAdmin wrapper');
@@ -195,18 +212,13 @@ export class DiscordProvider implements BotProvider {
       checkPermissions: async (required: 'user' | 'admin' | 'owner') => {
         if (required === 'user') return true;
         if (!isGroup || !msg.guild) return false;
-        
         const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
         if (!member) return false;
-
-        if (required === 'owner') {
-          return msg.guild.ownerId === msg.author.id;
-        }
-
+        if (required === 'owner') return msg.guild.ownerId === msg.author.id;
         if (required === 'admin') {
-          return member.permissions.has(PermissionsBitField.Flags.Administrator) || member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+          return member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                 member.permissions.has(PermissionsBitField.Flags.ManageGuild);
         }
-
         return false;
       },
     };

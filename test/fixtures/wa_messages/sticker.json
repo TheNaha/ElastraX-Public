@@ -1,0 +1,40 @@
+{
+  "key": {
+    "remoteJid": "62895320460745@s.whatsapp.net",
+    "fromMe": false,
+    "id": "AC07E4BDF4F4F01E4DB5B026DBC724A8",
+    "senderLid": "27870210576446@lid"
+  },
+  "messageTimestamp": 1757424025,
+  "pushName": "Naufal Hafizd Prayoga",
+  "broadcast": false,
+  "message": {
+    "stickerMessage": {
+      "url": "https://mmg.whatsapp.net/v/t62.15575-24/31202262_1376550463890561_11132742063298224_n.enc?ccb=11-4&oh=01_Q5Aa2gH97bZAo_Cfc-N-dQK1Hl0nXa34lbTx4msAhR_ebJNEgA&oe=68E78E91&_nc_sid=5e03e0&mms3=true",
+      "fileSha256": "pcePSZ1Miif39q5i0oMXTJiG02zOUeRDkLGTR0tONIU=",
+      "fileEncSha256": "v96xEygNNkhm+yL8ZbnILDZFCcMYxRli9hzLpFJgd7A=",
+      "mediaKey": "3MtBqrXuZj0ru+0SbD+xVbnNJQwSmV7NkuREv+C4/Ps=",
+      "mimetype": "image/webp",
+      "directPath": "/v/t62.15575-24/31202262_1376550463890561_11132742063298224_n.enc?ccb=11-4&oh=01_Q5Aa2gH97bZAo_Cfc-N-dQK1Hl0nXa34lbTx4msAhR_ebJNEgA&oe=68E78E91&_nc_sid=5e03e0",
+      "fileLength": "421830",
+      "mediaKeyTimestamp": "1744803467028",
+      "firstFrameLength": 421406,
+      "firstFrameSidecar": "O+0Q474SwiZvXQ==",
+      "isAnimated": true,
+      "stickerSentTs": "1757424023513",
+      "isAvatar": false,
+      "isAiSticker": false,
+      "isLottie": false
+    },
+    "messageContextInfo": {
+      "deviceListMetadata": {
+        "senderKeyHash": "th+/YakOdB+6kQ==",
+        "senderTimestamp": "1757256814",
+        "recipientKeyHash": "N2pne2IfIhQegg==",
+        "recipientTimestamp": "1757418864"
+      },
+      "deviceListMetadataVersion": 2,
+      "messageSecret": "j1KF/kDX1Sw9KDh2aUNoiMsT/zAQDt3HKZgNFxSmAKc="
+    }
+  }
+}

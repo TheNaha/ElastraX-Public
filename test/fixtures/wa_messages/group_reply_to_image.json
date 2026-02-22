@@ -1,0 +1,58 @@
+{
+  "key": {
+    "remoteJid": "62895320460745@s.whatsapp.net",
+    "fromMe": false,
+    "id": "ACC5B101F053616B01FC0A55696432ED",
+    "senderLid": "27870210576446@lid"
+  },
+  "messageTimestamp": 1757431553,
+  "pushName": "Naufal Hafizd Prayoga",
+  "broadcast": false,
+  "message": {
+    "extendedTextMessage": {
+      "text": "jsksjaja",
+      "previewType": "NONE",
+      "contextInfo": {
+        "stanzaId": "ACAFA26F7B0D62578094E05B480B81AF",
+        "participant": "62895320460745@s.whatsapp.net",
+        "quotedMessage": {
+          "imageMessage": {
+            "url": "https://mmg.whatsapp.net/v/t62.7118-24/56159178_1450854666120556_5899556285367915489_n.enc?ccb=11-4&oh=01_Q5Aa2gGfo09X_wKz9sLCVnC1vOzEAHVWY5LSG3kf-T55yNYAMQ&oe=68E7B8F6&_nc_sid=5e03e0&mms3=true",
+            "mimetype": "image/jpeg",
+            "fileSha256": "JdHT42k6zVY9S8n6otjdNROwgyqH0pV0mAIJdb825HM=",
+            "fileLength": "52561",
+            "height": 1280,
+            "width": 720,
+            "mediaKey": "eltMwq9LOhdG2K35yAUWfNxPJlK0t5XK8CCypUDbf/g=",
+            "fileEncSha256": "Dfzxw6bSg7tqZ/JOyEfqm0BCnfyJZAeidUh9f1uDet0=",
+            "directPath": "/v/t62.7118-24/56159178_1450854666120556_5899556285367915489_n.enc?ccb=11-4&oh=01_Q5Aa2gGfo09X_wKz9sLCVnC1vOzEAHVWY5LSG3kf-T55yNYAMQ&oe=68E7B8F6&_nc_sid=5e03e0",
+            "mediaKeyTimestamp": "1757423817",
+            "jpegThumbnail": "/9j/4AAQSkZJRgABAQAAAQABAAD/2wCEABsbGxscGx4hIR4qLSgtKj04MzM4PV1CR0JHQl2NWGdYWGdYjX2Xe3N7l33gsJycsOD/2c7Z//////////////8BGxsbGxwbHiEhHiotKC0qPTgzMzg9XUJHQkdCXY1YZ1hYZ1iNfZd7c3uXfeCwnJyw4P/Zztn////////////////CABEIADwAIQMBIgACEQEDEQH/xAAuAAACAwEAAAAAAAAAAAAAAAAAAwIEBQEBAAMBAAAAAAAAAAAAAAAAAAABAgP/2gAMAwEAAhADEAAAAM1i9W29/SFEpAVNivbb6SJKJbBLmuY2cjnCsmGTG5JRWk8xueO2Wgj/xAAiEAACAgICAgIDAAAAAAAAAAAAAQIRAxIEEBRSISIxQlH/2gAIAQEAAT8AnIxY7MOPSJXWOOztnGxfsUSesWzy16mGG0lFEYqKSXTVpo8OBx8Wkbf5Yu90IXUmqqz59xMRZzMrpnkv+S62Jz1i2Z8u31PEfsWWcmbtIi9ssEyz/8QAGBEAAgMAAAAAAAAAAAAAAAAAASAQIVH/2gAIAQIBAT8AklbxP//EABsRAAIBBQAAAAAAAAAAAAAAAAABAhAREiBS/9oACAEDAQE/AN2ZS5pEsj//2Q==",
+            "contextInfo": {
+              "pairedMediaType": "NOT_PAIRED_MEDIA"
+            },
+            "scansSidecar": "iKbb4lNpkRsJFKOSyp4hDS2ul69e9mo/KDcicqqZ7HGaUuxopQ1RwA==",
+            "scanLengths": [
+              6191,
+              10962,
+              7119,
+              28289
+            ],
+            "midQualityFileSha256": "yMGbDvRief7wNwIge5qyoH8LyNa8bwi0Kvj/HaAokDc="
+          }
+        }
+      },
+      "inviteLinkGroupTypeV2": "DEFAULT"
+    },
+    "messageContextInfo": {
+      "deviceListMetadata": {
+        "senderKeyHash": "th+/YakOdB+6kQ==",
+        "senderTimestamp": "1757256814",
+        "recipientKeyHash": "ZUFqMVSOLR5d9g==",
+        "recipientTimestamp": "1757430092"
+      },
+      "deviceListMetadataVersion": 2,
+      "messageSecret": "hO8lzUUo6UVBg/OMZLCfji+CXCyb8KJK8mv7QM/6vak="
+    }
+  }
+}

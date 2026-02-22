@@ -1,0 +1,24 @@
+{
+  "key": {
+    "remoteJid": "62895320460745@s.whatsapp.net",
+    "fromMe": false,
+    "id": "ACB4EE458632E4FA5DC6801688CC80DB",
+    "senderLid": "27870210576446@lid"
+  },
+  "messageTimestamp": 1757423779,
+  "pushName": "Naufal Hafizd Prayoga",
+  "broadcast": false,
+  "message": {
+    "conversation": "testing",
+    "messageContextInfo": {
+      "deviceListMetadata": {
+        "senderKeyHash": "th+/YakOdB+6kQ==",
+        "senderTimestamp": "1757256814",
+        "recipientKeyHash": "N2pne2IfIhQegg==",
+        "recipientTimestamp": "1757418864"
+      },
+      "deviceListMetadataVersion": 2,
+      "messageSecret": "bY82ygswdeEaLnPzlztu543auUFSVk8HKMxPb8lozQc="
+    }
+  }
+}

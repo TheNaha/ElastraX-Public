@@ -1,0 +1,20 @@
+{
+  "key": {
+    "remoteJid": "628123456789@s.whatsapp.net",
+    "fromMe": false,
+    "id": "ONCE001"
+  },
+  "pushName": "Alice",
+  "message": {
+    "viewOnceMessageV2": {
+      "message": {
+        "imageMessage": {
+          "caption": "",
+          "mimetype": "image/jpeg",
+          "url": "https://mmg.whatsapp.net/fake-viewonce"
+        }
+      }
+    }
+  },
+  "messageTimestamp": 1700000009
+}

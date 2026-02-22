@@ -1,3 +1,11 @@
+export interface SendMediaOptions {
+  caption?: string;
+  mimetype?: string;
+  filename?: string;
+  /** If true, audio is sent as a WhatsApp voice note (PTT) */
+  ptt?: boolean;
+}
+
 export interface MessageContext {
   platform: 'whatsapp' | 'discord';
   chatId: string;
@@ -12,6 +20,12 @@ export interface MessageContext {
    * before invoking tools so that responses can be localized.  Defaults to 'en'.
    */
   language?: string;
+
+  /**
+   * Canonical Baileys message type, e.g. 'imageMessage', 'audioMessage', 'conversation'.
+   * viewOnce messages are unwrapped to their inner type.
+   */
+  messageType: string;
 
   /**
    * True if the message contains an image, video, audio, or document
@@ -40,8 +54,13 @@ export interface MessageContext {
    * If this message is a reply to another message, this contains the quoted message context
    */
   quoted?: {
-    senderId: string;
+    /** Canonical Baileys message type of the quoted message */
+    messageType: string;
+    /** Multi-source text: text || caption || contentText || selectedDisplayText || title */
+    body: string;
+    /** Retained for backwards-compat — same as body */
     text: string;
+    senderId: string;
     hasMedia: boolean;
     mediaPath?: string;
     mimeType?: string;
@@ -65,14 +84,32 @@ export interface MessageContext {
   react?(emoji: string): Promise<void>;
 
   /**
-   * Download the media buffer from the current OR quoted message (if applicable)
+   * Download the media buffer from the current OR quoted message (if applicable).
+   * Prefer using mediaReady + mediaPath when possible to avoid re-downloading.
    */
   downloadMedia?(): Promise<Buffer | null>;
+
+  /**
+   * Send a binary media file back to the same chat (image, audio, video, document).
+   * For WhatsApp stickers, use sendSticker instead.
+   */
+  sendMedia?(buffer: Buffer, options?: SendMediaOptions): Promise<void>;
 
   /**
    * Send a composed webp sticker natively back to the current chat
    */
   sendSticker?(buffer: Buffer): Promise<void>;
+
+  /**
+   * Delete a message. Defaults to the current incoming message if no key is provided.
+   * On WhatsApp, only the bot's own messages can be deleted for everyone.
+   */
+  deleteMessage?(key?: any): Promise<void>;
+
+  /**
+   * Forward the current message to another chat JID / channel ID.
+   */
+  forwardMessage?(targetJid: string): Promise<void>;
 
   /**
    * Action methods for Group Administration

@@ -1,0 +1,21 @@
+{
+  "key": {
+    "remoteJid": "628123456789@s.whatsapp.net",
+    "fromMe": false,
+    "id": "REPLYBOT001"
+  },
+  "pushName": "Alice",
+  "message": {
+    "extendedTextMessage": {
+      "text": "Can you elaborate on that?",
+      "contextInfo": {
+        "stanzaId": "BOTMSG001",
+        "participant": "6281999000111:15@s.whatsapp.net",
+        "quotedMessage": {
+          "conversation": "Sure! ElastraX is an AI-powered WhatsApp bot."
+        }
+      }
+    }
+  },
+  "messageTimestamp": 1700000007
+}

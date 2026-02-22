@@ -1,0 +1,18 @@
+{
+  "key": {
+    "remoteJid": "120363401925802611@g.us",
+    "fromMe": false,
+    "id": "ACC0F16C4DB1A7BA4E476A0FEBB66DFA",
+    "participant": "27870210576446@lid",
+    "participantPn": "62895320460745@s.whatsapp.net"
+  },
+  "messageTimestamp": 1757431439,
+  "pushName": "Naufal Hafizd Prayoga",
+  "broadcast": false,
+  "message": {
+    "conversation": "bxhsjsjaja",
+    "messageContextInfo": {
+      "messageSecret": "6ULfEvyzLtMCJz3mwJnqJgGFegE2ndwgRwzeKrodnK4="
+    }
+  }
+}
