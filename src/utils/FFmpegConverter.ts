@@ -2,13 +2,14 @@ import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
+import * as os from 'os';
 
 export class FFmpegConverter {
   /**
    * Spawns an FFmpeg process to seamlessly handle buffer-to-buffer conversion.
    */
   static async convert(inputBuffer: Buffer, args: string[], extIn: string, extOut: string): Promise<Buffer> {
-    const tmpDir = path.join(process.cwd(), 'tmp');
+    const tmpDir = path.join(os.tmpdir(), 'elastrax-tmp');
     await fs.mkdir(tmpDir, { recursive: true });
 
     const randId = crypto.randomBytes(8).toString('hex');
