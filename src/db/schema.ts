@@ -1,10 +1,18 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
   platform: text('platform').notNull(), // 'whatsapp' | 'discord'
   language: text('language').default('en').notNull(), // 'en' | 'id'
-  systemPrompt: text('system_prompt'), // Optional custom constraint
+  
+  // V7.5 Dynamic Configuration Overrides (nullable means fallback to .env)
+  systemPrompt: text('system_prompt'), 
+  contextLimit: integer('context_limit'),
+  temperature: integer('temperature', { mode: 'number' }), // SQLite REAL requires integer/decimal mapping depending on driver, drizzle uses integer or real
+  // actually drizzle has `real` type for floats
+  allowTools: integer('allow_tools', { mode: 'boolean' }),
+  autoReplyAll: integer('auto_reply_all', { mode: 'boolean' }),
+  
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 

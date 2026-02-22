@@ -4,6 +4,7 @@ import { MenuTool } from './MenuTool';
 import { MakeStickerTool } from './MakeStickerTool';
 import { GroupAdminTool } from './GroupAdminTool';
 import { LanguageTool } from './LanguageTool';
+import { ConfigTool } from './ConfigTool';
 
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
@@ -15,6 +16,7 @@ toolsList.push(new MenuTool(() => toolsList));
 toolsList.push(new MakeStickerTool());
 toolsList.push(new GroupAdminTool());
 toolsList.push(new LanguageTool());
+toolsList.push(new ConfigTool());
 
 
 

@@ -40,7 +40,8 @@ export class AIClient {
 
   async chatCompletion(
     messages: AIChatMessage[],
-    tools?: ToolDefinition[]
+    tools?: ToolDefinition[],
+    temperature: number = 0.7
   ): Promise<any> {
     if (!this.baseUrl || this.baseUrl.includes('<your-username>')) {
       throw new Error('AI_API_BASE_URL is not configured properly.');
@@ -49,7 +50,7 @@ export class AIClient {
     const payload: any = {
       model: this.modelName,
       messages,
-      temperature: 0.7,
+      temperature,
       max_tokens: 1000,
     };
 

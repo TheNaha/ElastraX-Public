@@ -10,49 +10,14 @@ import { FlowHandler } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
+import { ConfigService } from '../utils/ConfigService';
 
 const aiClient = new AIClient();
 
-const DEFAULT_SYSTEM_PROMPT = `You are ElastraX, a helpful and friendly female AI personal assistant.
-You are communicating via a messaging app (WhatsApp/Discord).
-If someone asks your name or identity, strictly introduce yourself as ElastraX.
-Be concise but warmly conversational. Use emojis naturally where appropriate, but don't overdo it.
-Do not use markdown formatting that is not supported by WhatsApp (e.g. headers). Bold and italic are fine.
-If a user asks a question requiring recent information, facts, or news, you MUST use the "web_search" tool to find the answer.
-When using "web_search", always provide a summary of the findings first, and then explicitly provide a list of the source URLs you used at the bottom of your message.
 
-CRITICAL LOCALIZATION INSTRUCTION:
-You MUST respond entirely in the language specified by the user's chat room setting.
-Current Room Language: {{LANGUAGE}}`;
 
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
-
-  // We will always process the message to save it to context history
-  // But we use this flag to decide if the AI should actually generate a reply
-  let shouldTriggerAI = !isGroup;
-
-  if (isGroup) {
-    if (text.toLowerCase().startsWith('/chat') || text.startsWith('/')) {
-      shouldTriggerAI = true;
-    }
-    // Check if the bot was explicitly mentioned using its ID.
-    // mentionedIds contains the JIDs of tagged users.
-    // For WhatsApp, the bot's JID would be in that array if tagged.
-    // Since we don't have the bot's exact JID exported everywhere easily, 
-    // we'll rely on text inclusion of the bot's name or any mentioned IDs.
-    // For a more robust approach: if mentionedIds has items, we assume it *might* be for us if the text implies it,
-    // OR just trigger if mentionedIds is not empty (as a test) and refine later if it triggers on other people's tags.
-    // Alternatively, if the text contains @ElastraX or similar.
-    if (mentionedIds && mentionedIds.length > 0) {
-      // Assuming if the bot is tagged, it's meant to reply
-      shouldTriggerAI = true;
-    }
-    // Check if the user is replying to a message originally sent by the bot
-    if (ctx.quoted?.rawMessage?.key?.fromMe) {
-      shouldTriggerAI = true;
-    }
-  }
 
   // Fetch or create the chat room early so that ctx.language is available to all
   // tools and flow handlers before any routing takes place.
@@ -68,6 +33,32 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     room = newRoom as any;
   }
   ctx.language = room.language;
+
+  // Resolve dynamic configurations for this room
+  const config = ConfigService.getResolvedConfig(room);
+
+  // We will always process the message to save it to context history
+  // But we use this flag to decide if the AI should actually generate a reply
+  let shouldTriggerAI = !isGroup;
+
+  if (isGroup) {
+    // If the room has auto-reply all enabled, the bot treats it like a DM
+    if (config.autoReplyAll) {
+      shouldTriggerAI = true;
+    }
+
+    if (text.toLowerCase().startsWith('/chat') || text.startsWith('/')) {
+      shouldTriggerAI = true;
+    }
+    // Check if the bot was explicitly mentioned using its ID.
+    if (mentionedIds && mentionedIds.length > 0) {
+      shouldTriggerAI = true;
+    }
+    // Check if the user is replying to a message originally sent by the bot
+    if (ctx.quoted?.rawMessage?.key?.fromMe) {
+      shouldTriggerAI = true;
+    }
+  }
 
   // Handle active interactive sessions (bypass normal commands and AI)
   const inFlow = await FlowHandler.handle(ctx);
@@ -150,18 +141,18 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     });
 
-    // 2. Retrieve Context (last 10 messages)
+    // 2. Retrieve Context
     const history = await db.select()
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
       .orderBy(desc(messages.created_at))
-      .limit(10);
+      .limit(config.contextLimit);
     
     // Reverse to put chronological order back
     history.reverse();
 
     // Assemble system prompt with localized injection
-    const systemPromptText = (room.systemPrompt || DEFAULT_SYSTEM_PROMPT).replace('{{LANGUAGE}}', langFull);
+    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull);
     
     // Assemble AI context
     const messagesForAI: AIChatMessage[] = [
@@ -209,11 +200,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     
     let isDone = false;
     let finalAiResponseText = '';
-    const availableTools = getToolDefinitions();
+    const availableTools = config.allowTools ? getToolDefinitions() : undefined;
 
     while (!isDone) {
       try {
-        const aiMsgObj = await aiClient.chatCompletion(messagesForAI, availableTools);
+        const aiMsgObj = await aiClient.chatCompletion(messagesForAI, availableTools, config.temperature);
 
         // Append the AI's step back to the context
         messagesForAI.push(aiMsgObj);

@@ -16,6 +16,10 @@ describe('Schema Compatibility', () => {
         platform TEXT NOT NULL,
         language TEXT DEFAULT 'en' NOT NULL,
         system_prompt TEXT,
+        context_limit INTEGER,
+        temperature REAL,
+        allow_tools INTEGER,
+        auto_reply_all INTEGER,
         created_at INTEGER NOT NULL
       )
     `);
