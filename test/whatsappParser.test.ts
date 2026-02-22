@@ -203,4 +203,53 @@ describe('parseWhatsAppMessage — edge cases', () => {
     const r = parseWhatsAppMessage(raw as any, null);
     expect(r.quoted!.fromMe).toBe(false);
   });
+
+  test('fromMe is true when botUserId (PN JID) matches quotedParticipant (PN JID)', () => {
+    const raw = {
+      key: { remoteJid: 'group@g.us', id: 'abc', fromMe: false },
+      message: {
+        extendedTextMessage: {
+          text: 'hello',
+          contextInfo: {
+            stanzaId: 'bot-msg-1',
+            participant: '6281999000111@s.whatsapp.net',
+            quotedMessage: { conversation: 'I am working!' },
+          },
+        },
+      },
+    };
+    // BOT_JID includes device suffix — normalizeJid strips it before comparing
+    const r = parseWhatsAppMessage(raw as any, BOT_JID);
+    expect(r.quoted!.fromMe).toBe(true);
+    expect(r.quoted!.stanzaId).toBe('bot-msg-1');
+  });
+
+  test('fromMe is FALSE when botUserId (PN JID) vs quotedParticipant (LID) — provider must apply fallback', () => {
+    // This is the WhatsApp V7 LID mismatch scenario:
+    // - Bot's sock.user.id = phone-number JID ("628xxx@s.whatsapp.net:0")
+    // - contextInfo.participant = LID ("265841933336713@lid")
+    // The parser correctly returns fromMe=false here; the WhatsAppProvider
+    // must then fix it via the sentMessageIds set or DB lookup.
+    const raw = {
+      key: { remoteJid: 'group@g.us', id: 'user-msg-2', fromMe: false },
+      message: {
+        extendedTextMessage: {
+          text: 'hello',
+          contextInfo: {
+            stanzaId: 'bot-msg-lid-1',
+            participant: '265841933336713@lid',
+            quotedMessage: { conversation: 'Yes, I am working!' },
+          },
+        },
+      },
+    };
+    // BOT_JID is phone-number format, NOT matching the LID
+    const r = parseWhatsAppMessage(raw as any, BOT_JID);
+    // Parser alone cannot resolve the LID mismatch — fromMe is false
+    expect(r.quoted!.fromMe).toBe(false);
+    // stanzaId is available for the provider to do the fallback lookup
+    expect(r.quoted!.stanzaId).toBe('bot-msg-lid-1');
+    // The quoted body is still correctly extracted
+    expect(r.quoted!.body).toBe('Yes, I am working!');
+  });
 });

@@ -19,12 +19,20 @@ import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 import { parseWhatsAppMessage } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, and, isNull, desc, gte } from 'drizzle-orm';
 
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
+  /**
+   * In-memory set of message IDs sent by this bot instance.
+   * Used as a fast fallback for fromMe detection when the JID-based comparison
+   * in the parser fails (e.g., LID vs phone-number JID mismatch in WA V7).
+   * Capped at MAX_SENT_IDS entries to prevent unbounded memory growth.
+   */
+  private sentMessageIds = new Set<string>();
+  private static readonly MAX_SENT_IDS = 1000;
 
   async start(): Promise<void> {
     const { state, saveCreds } = await useDBAuthState();
@@ -79,6 +87,49 @@ export class WhatsAppProvider implements BotProvider {
     });
 
     this.sock.ev.on('messages.upsert', async (m) => {
+      // ── Track our own sent messages for reliable fromMe detection ────────────
+      // In WhatsApp V7 LID-based sessions the parser's JID comparison can fail:
+      // sock.user.id is a phone-number JID but contextInfo.participant is a LID.
+      // We resolve this by keeping an in-memory set of our own message IDs and
+      // updating the corresponding DB row so detection survives a bot restart.
+      for (const fmMsg of m.messages) {
+        if (fmMsg.key.fromMe && fmMsg.key.id) {
+          // Cap the set to avoid unbounded memory growth
+          if (this.sentMessageIds.size >= WhatsAppProvider.MAX_SENT_IDS) {
+            this.sentMessageIds.clear();
+          }
+          this.sentMessageIds.add(fmMsg.key.id);
+          // Update the most recently saved, unpublished assistant message for
+          // this chat to record the real provider message ID. We restrict to
+          // messages created in the last 60 s to avoid mismatching rows in
+          // high-throughput or race-condition scenarios.
+          if (fmMsg.key.remoteJid) {
+            try {
+              const cutoff = new Date(Date.now() - 60_000);
+              const unpublished = await db.select({ id: messages.id })
+                .from(messages)
+                .where(
+                  and(
+                    eq(messages.chatRoomId, fmMsg.key.remoteJid),
+                    eq(messages.role, 'assistant'),
+                    isNull(messages.providerMessageId),
+                    gte(messages.created_at, cutoff),
+                  )
+                )
+                .orderBy(desc(messages.created_at))
+                .limit(1);
+              if (unpublished[0]) {
+                await db.update(messages)
+                  .set({ providerMessageId: fmMsg.key.id })
+                  .where(eq(messages.id, unpublished[0].id));
+              }
+            } catch (err) {
+              logger.debug({ err }, '[WhatsApp] Failed to update providerMessageId for sent message');
+            }
+          }
+        }
+      }
+
       const msg = m.messages[0];
       if (!msg.message || msg.key.fromMe) return;
       if (m.type !== 'notify') return;
@@ -165,6 +216,31 @@ export class WhatsAppProvider implements BotProvider {
           message: q.rawMessage,
         },
       };
+    }
+
+    // ── fromMe fallback for LID/PN JID mismatch (WhatsApp V7) ───────────────
+    // The parser compares sock.user.id (phone JID) with contextInfo.participant
+    // (may be a LID like "265841933336713@lid"). If they differ, fromMe is
+    // incorrectly false. We fix it by checking the in-memory sent-ID set first
+    // (fast, current session), then falling back to a DB lookup by stanzaId
+    // (handles the case where the bot was restarted between sends).
+    if (quoted && !quoted.rawMessage.key.fromMe && parsed.quoted?.stanzaId) {
+      const stanzaId = parsed.quoted.stanzaId;
+      if (this.sentMessageIds.has(stanzaId)) {
+        quoted.rawMessage.key.fromMe = true;
+      } else {
+        try {
+          const row = await db.select({ role: messages.role })
+            .from(messages)
+            .where(eq(messages.providerMessageId, stanzaId))
+            .limit(1);
+          if (row[0]?.role === 'assistant') {
+            quoted.rawMessage.key.fromMe = true;
+          }
+        } catch (err) {
+          logger.debug({ err }, '[WhatsApp] fromMe DB lookup failed');
+        }
+      }
     }
 
     // ── Media saving helper ──────────────────────────────────────────────────
