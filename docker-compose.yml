@@ -1,13 +1,15 @@
 services:
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    # Pull the pre-built image from GitHub Container Registry
+    # Replace "your-username" with your actual GitHub username!
+    image: ghcr.io/TheNaha/ElastraX:latest
+    container_name: elastrax-bot
     volumes:
-      - ./:/usr/src/app
-      - /usr/src/app/node_modules
+      # We only need to mount the persistent data and logs now!
+      # We no longer mount the live source code or node_modules because it is baked into the image.
       - ./data:/usr/src/app/data
     restart: unless-stopped
     env_file:
       - .env
-    command: bun run --watch src/index.ts
+    # We no longer need the command override since the Dockerfile CMD will run the compiled app
+
