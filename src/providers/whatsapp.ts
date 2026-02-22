@@ -172,7 +172,7 @@ export class WhatsAppProvider implements BotProvider {
       const reconstructedQuotedWAMessage: WAMessage = {
          key: {
             remoteJid: jid,
-            fromMe: quotedParticipant === sock.user?.id,
+            fromMe: sock.user?.id ? sock.user.id.split(':')[0] === quotedParticipant.split('@')[0] : false,
             id: contextInfo?.stanzaId,
             participant: quotedParticipant
          },
