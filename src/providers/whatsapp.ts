@@ -25,6 +25,18 @@ export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
+  /**
+   * The bot's own LID JID (e.g. "265841933336713@lid"), resolved once the
+   * connection is open via sock.signalRepository.lidMapping.getLIDForPN().
+   * Used to correctly detect `fromMe` in V7 LID-based sessions where
+   * contextInfo.participant is a LID rather than a phone-number JID.
+   */
+  private botLid: string | null = null;
+
+  /** Convert sock.user.id (e.g. "628xxx:0@s.whatsapp.net") to a bare PN JID. */
+  private static botPnJid(userId: string): string {
+    return userId.split(':')[0].split('@')[0] + '@s.whatsapp.net';
+  }
 
   async start(): Promise<void> {
     const { state, saveCreds } = await useDBAuthState();
@@ -54,7 +66,7 @@ export class WhatsAppProvider implements BotProvider {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('connection.update', (update) => {
+    this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         logger.info('[WhatsApp] Scan this QR code to login:');
@@ -75,6 +87,20 @@ export class WhatsAppProvider implements BotProvider {
         }
       } else if (connection === 'open') {
         logger.info('[WhatsApp] Connected successfully!');
+        // Resolve the bot's LID via Baileys' LID-PN mapping store.
+        // In WA V7 sessions, contextInfo.participant uses LIDs so we need
+        // the bot's own LID to correctly set `fromMe` on quoted messages.
+        if (this.sock?.user?.id) {
+          const botPn = WhatsAppProvider.botPnJid(this.sock.user.id);
+          try {
+            this.botLid = await (this.sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+            if (this.botLid) {
+              logger.info({ botLid: this.botLid }, '[WhatsApp] Resolved bot LID');
+            }
+          } catch (err) {
+            logger.debug({ err }, '[WhatsApp] Could not resolve bot LID (will retry per-message)');
+          }
+        }
       }
     });
 
@@ -126,7 +152,15 @@ export class WhatsAppProvider implements BotProvider {
     if (!jid) return null;
 
     // ── Parse the raw message (pure, testable) ──────────────────────────────
-    const parsed = parseWhatsAppMessage(msg, sock.user?.id);
+    // If botLid hasn't been resolved yet (e.g. very first message before
+    // the mapping was available), attempt a lazy lookup now.
+    if (!this.botLid && sock.user?.id) {
+      const botPn = WhatsAppProvider.botPnJid(sock.user.id);
+      try {
+        this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+      } catch { /* best-effort; PN comparison still works for non-LID sessions */ }
+    }
+    const parsed = parseWhatsAppMessage(msg, sock.user?.id, this.botLid);
 
     const isGroup = jid.endsWith('@g.us');
 

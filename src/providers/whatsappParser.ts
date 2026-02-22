@@ -77,11 +77,16 @@ function hasMediaContent(msgObj: proto.IMessage | null | undefined): boolean {
  * Safe to call from unit tests with fixture JSON.
  *
  * @param msg       The raw WAMessage from Baileys
- * @param botUserId The bot's own JID (used to determine `quoted.fromMe`)
+ * @param botUserId The bot's own phone-number JID (e.g. "628xxx:0@s.whatsapp.net")
+ * @param botLid    The bot's own LID JID (e.g. "2658xxx@lid"), resolved via
+ *                  `sock.signalRepository.lidMapping.getLIDForPN()`.
+ *                  Required so that `fromMe` is correctly set in WhatsApp V7
+ *                  LID sessions where `contextInfo.participant` is a LID.
  */
 export function parseWhatsAppMessage(
   msg: WAMessage,
-  botUserId: string | null | undefined
+  botUserId: string | null | undefined,
+  botLid?: string | null
 ): ParsedWAMessage {
   const rawMsg = msg.message;
 
@@ -158,8 +163,10 @@ export function parseWhatsAppMessage(
       messageType: qType,
       body,
       senderId: quotedParticipant,
-      fromMe: normalizeJid(botUserId) !== '' &&
-        normalizeJid(botUserId) === normalizeJid(quotedParticipant),
+      fromMe: (normalizeJid(botUserId) !== '' &&
+        normalizeJid(botUserId) === normalizeJid(quotedParticipant)) ||
+        (normalizeJid(botLid) !== '' &&
+        normalizeJid(botLid) === normalizeJid(quotedParticipant)),
       hasMedia: hasMediaContent(quotedMessage),
       stanzaId: contextInfo?.stanzaId,
       rawMessage: quotedMessage,
