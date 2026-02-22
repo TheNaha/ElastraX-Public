@@ -23,7 +23,7 @@ export class ConfigTool extends BaseTool {
           type: 'object' as const,
           properties: {
             action: { type: 'string', description: 'get, set, or reset', enum: ['get', 'set', 'reset'] },
-            key: { type: 'string', description: 'The config key (e.g. systemPrompt, contextLimit, temperature, allowTools, autoReplyAll)' },
+            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'allowTools', 'autoReplyAll'] },
             value: { type: 'string', description: 'The new value' }
           },
           required: ['action']
@@ -36,6 +36,16 @@ export class ConfigTool extends BaseTool {
     super();
   }
 
+  private buildKeyListing(room: any, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
+    return [
+      `  *systemPrompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,
+      `  *contextLimit*: ${room.contextLimit ?? `[DEFAULT: ${resolved.contextLimit}]`}`,
+      `  *temperature*: ${room.temperature ?? `[DEFAULT: ${resolved.temperature}]`}`,
+      `  *allowTools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
+      `  *autoReplyAll*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
+    ].join('\n');
+  }
+
   async execute(args: any, ctx: MessageContext): Promise<string> {
     const { action, key, value } = args;
 
@@ -44,20 +54,15 @@ export class ConfigTool extends BaseTool {
     if (!room) return 'Error: Chat room not found in database.';
 
     const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'allowTools', 'autoReplyAll'];
+    const resolved = ConfigService.getResolvedConfig(room);
 
     if (action === 'get') {
-      const resolved = ConfigService.getResolvedConfig(room);
-      return `*Current Configuration for ${ctx.chatId}*\n\n` +
-             `*System Prompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}\n` +
-             `*Context Limit*: ${room.contextLimit !== null ? room.contextLimit : `[DEFAULT: ${resolved.contextLimit}]`}\n` +
-             `*Temperature*: ${room.temperature !== null ? room.temperature : `[DEFAULT: ${resolved.temperature}]`}\n` +
-             `*Allow Tools*: ${room.allowTools !== null ? room.allowTools : `[DEFAULT: ${resolved.allowTools}]`}\n` +
-             `*Auto Reply All*: ${room.autoReplyAll !== null ? room.autoReplyAll : `[DEFAULT: ${resolved.autoReplyAll}]`}`;
+      return `*Current Configuration for ${ctx.chatId}*\n\n${this.buildKeyListing(room, resolved)}`;
     }
 
     if (action === 'reset') {
       if (!key || !validKeys.includes(key as string)) {
-        return `Please provide a valid key to reset to global default: ${validKeys.join(', ')}`;
+        return `Please provide a valid key to reset to global default.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
       const updateData: any = {};
       updateData[key] = null;
@@ -67,7 +72,7 @@ export class ConfigTool extends BaseTool {
 
     if (action === 'set') {
       if (!key || !validKeys.includes(key as string)) {
-        return `Please provide a valid key: ${validKeys.join(', ')}`;
+        return `Please provide a valid key to set.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
       if (value === undefined || value === '') {
         return `Please provide a value for ${key}.`;
@@ -101,6 +106,6 @@ export class ConfigTool extends BaseTool {
       }
     }
 
-    return 'Usage: /config [get|set|reset] [key] [value]';
+    return `*Config Usage:* /config <get|set|reset> [key] [value]\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
   }
 }

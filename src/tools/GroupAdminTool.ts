@@ -19,7 +19,7 @@ export class GroupAdminTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            action: { type: 'string', description: 'Action to perform: "add" or "remove"' },
+            action: { type: 'string', description: 'Action to perform: "add" or "remove"', enum: ['add', 'remove'] },
             user: { type: 'string', description: 'Phone number of the user (e.g., 6281234567890)' }
           },
           required: ['action', 'user']
