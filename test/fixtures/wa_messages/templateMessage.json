@@ -1,0 +1,65 @@
+{
+  "key": {
+    "remoteJid": "0@s.whatsapp.net",
+    "fromMe": false,
+    "id": "4345668452323188-1"
+  },
+  "message": {
+    "templateMessage": {
+      "hydratedFourRowTemplate": {
+        "videoMessage": {
+          "mimetype": "video/mp4",
+          "fileLength": "4045917",
+          "seconds": 12,
+          "caption": "*Explore the directory to find channels you’ll 💚*\nFrom sports to lifestyle and more, there are so many channels to explore and follow—including our very own WhatsApp channel.\n\nHead to the Updates tab and tap Explore.",
+          "height": 1080,
+          "width": 1080,
+          "contextInfo": {
+            "pairedMediaType": "NOT_PAIRED_MEDIA"
+          },
+          "staticUrl": "https://static.whatsapp.net/downloadable?category=PSA&id=345420551180570107&num=9e8a796f-d616-4492-92e4-0f56efe757c0&_nc_cat=1"
+        },
+        "hydratedContentText": "*Explore the directory to find channels you’ll 💚*\nFrom sports to lifestyle and more, there are so many channels to explore and follow—including our very own WhatsApp channel.\n\nHead to the Updates tab and tap Explore.",
+        "hydratedButtons": [
+          {
+            "urlButton": {
+              "displayText": "Get started",
+              "url": "https://whatsapp.com/channel/directory"
+            },
+            "index": 0
+          }
+        ]
+      },
+      "hydratedTemplate": {
+        "videoMessage": {
+          "mimetype": "video/mp4",
+          "fileLength": "4045917",
+          "seconds": 12,
+          "caption": "*Explore the directory to find channels you’ll 💚*\nFrom sports to lifestyle and more, there are so many channels to explore and follow—including our very own WhatsApp channel.\n\nHead to the Updates tab and tap Explore.",
+          "height": 1080,
+          "width": 1080,
+          "contextInfo": {
+            "pairedMediaType": "NOT_PAIRED_MEDIA"
+          },
+          "staticUrl": "https://static.whatsapp.net/downloadable?category=PSA&id=345420551180570107&num=9e8a796f-d616-4492-92e4-0f56efe757c0&_nc_cat=1"
+        },
+        "hydratedContentText": "*Explore the directory to find channels you’ll 💚*\nFrom sports to lifestyle and more, there are so many channels to explore and follow—including our very own WhatsApp channel.\n\nHead to the Updates tab and tap Explore.",
+        "hydratedButtons": [
+          {
+            "urlButton": {
+              "displayText": "Get started",
+              "url": "https://whatsapp.com/channel/directory"
+            },
+            "index": 0
+          }
+        ]
+      }
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1771752820",
+  "mediaData": {
+    "localPath": "Media/WhatsApp Video/Private/null-20260222-WA0000.mp4"
+  },
+  "isMentionedInStatus": false
+}

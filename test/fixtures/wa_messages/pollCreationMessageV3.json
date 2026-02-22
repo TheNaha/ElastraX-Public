@@ -1,0 +1,25 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AB997F1FA4B5097953E05AA46A4478E9"
+  },
+  "message": {
+    "messageContextInfo": {},
+    "pollCreationMessageV3": {
+      "name": "better mana",
+      "options": [
+        {
+          "optionName": "di bogor, animalium, biaya ongkos + hidup kos"
+        },
+        {
+          "optionName": "di tj.priuk, biaya ongkos + pp rumah"
+        }
+      ],
+      "selectableOptionsCount": 0
+    }
+  },
+  "messageTimestamp": "1749390874",
+  "participant": "6281213389359@s.whatsapp.net",
+  "isMentionedInStatus": false
+}

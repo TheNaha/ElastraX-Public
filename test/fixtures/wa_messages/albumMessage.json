@@ -1,0 +1,17 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC52466D3F2564873A9B682A85D352B5"
+  },
+  "message": {
+    "messageContextInfo": {},
+    "albumMessage": {
+      "expectedImageCount": 2,
+      "expectedVideoCount": 0
+    }
+  },
+  "messageTimestamp": "1767925651",
+  "participant": "124730195636296@lid",
+  "isMentionedInStatus": false
+}

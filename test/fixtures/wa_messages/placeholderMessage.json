@@ -1,0 +1,14 @@
+{
+  "key": {
+    "remoteJid": "6281519434797@s.whatsapp.net",
+    "fromMe": false,
+    "id": "F79298A59D1F922C75"
+  },
+  "message": {
+    "placeholderMessage": {
+      "type": "MASK_LINKED_DEVICES"
+    }
+  },
+  "messageTimestamp": "1740642662",
+  "isMentionedInStatus": false
+}

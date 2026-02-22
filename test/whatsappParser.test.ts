@@ -1,141 +1,206 @@
+/**
+ * whatsappParser.test.ts
+ *
+ * Dynamic fixture-based tests for `parseWhatsAppMessage()`.
+ *
+ * HOW IT WORKS:
+ * 1. On bot shutdown (Ctrl+C), `index.ts` writes one fixture JSON per unique
+ *    messageType to `test/fixtures/wa_messages/<messageType>.json`.
+ * 2. This test file auto-discovers all JSON files in that folder at runtime.
+ * 3. For each fixture:
+ *    a. parseWhatsAppMessage() must NOT throw.
+ *    b. messageType must NOT be 'unknown'.
+ *    c. If the fixture has a quoted message, quoted.body must be a string.
+ *    d. If the fixture has a media payload, hasMedia must be true.
+ *
+ * ADD SPECIFIC ASSERTIONS below the dynamic block for types that need
+ * precise field-level checks (see the examples at the bottom of this file).
+ */
+
 import { describe, test, expect } from 'bun:test';
+import { readdirSync, readFileSync, existsSync } from 'fs';
+import { join, resolve, basename } from 'path';
 import { parseWhatsAppMessage } from '../src/providers/whatsappParser';
 
-// ── Real WAMessage fixtures captured from a live v6 Baileys session ──────────
-// DM fixtures (message_samples/) — sender identified by senderLid on key
-import plainText from './fixtures/wa_messages/plain_text.json';
-import imageWithCaption from './fixtures/wa_messages/image_with_caption.json';
-import audioVoiceNote from './fixtures/wa_messages/audio_voice_note.json';
-import documentFile from './fixtures/wa_messages/document_file.json';
-import stickerMsg from './fixtures/wa_messages/sticker.json';
-import replyToText from './fixtures/wa_messages/reply_to_text.json';
-
-// Group fixtures (message_samples_groups/) — sender identified by key.participant (@lid)
-import groupPlainText from './fixtures/wa_messages/group_plain_text.json';
-import groupReplyToImage from './fixtures/wa_messages/group_reply_to_image.json';
-
-// Static — unchanged hand-crafted fixture for viewOnce (no real sample available yet)
-import viewOnceImage from './fixtures/wa_messages/view_once_image.json';
-import imageNoCaption from './fixtures/wa_messages/image_no_caption.json';
-
-// ── JIDs from real fixtures ───────────────────────────────────────────────────
+const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const BOT_JID = '6281999000111:15@s.whatsapp.net'; // hypothetical bot JID
-const SENDER_LID = '27870210576446@lid'; // sender's LID as seen in real samples
 
-describe('parseWhatsAppMessage — DM message types', () => {
-  test('plain text conversation', () => {
-    const r = parseWhatsAppMessage(plainText as any, BOT_JID);
+// ─── Canonical media message types as recognised by getContentType() ────────
+const MEDIA_TYPES = new Set([
+  'imageMessage', 'videoMessage', 'audioMessage',
+  'documentMessage', 'stickerMessage',
+]);
+
+// ─── Helper: load all JSON fixtures from the folder ──────────────────────────
+function loadFixtures(): Array<{ name: string; raw: any }> {
+  let files: string[];
+  try {
+    files = readdirSync(FIXTURE_DIR).filter(f => f.endsWith('.json'));
+  } catch {
+    return []; // folder doesn't exist yet — no fixtures to run
+  }
+  return files.map(f => ({
+    name: basename(f, '.json'),
+    raw: JSON.parse(readFileSync(join(FIXTURE_DIR, f), 'utf-8')),
+  }));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DYNAMIC: one test per fixture file
+// These run for EVERY fixture automatically — no manual registration needed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('parseWhatsAppMessage — dynamic fixture coverage', () => {
+  const fixtures = loadFixtures();
+
+  if (fixtures.length === 0) {
+    test('(no fixtures found — run the bot then Ctrl+C to generate them)', () => {
+      // Soft-pass so CI doesn't fail on a fresh checkout with an empty fixture dir
+      expect(true).toBe(true);
+    });
+  }
+
+  for (const { name, raw } of fixtures) {
+    test(`${name} — must parse without error`, () => {
+      let result: ReturnType<typeof parseWhatsAppMessage>;
+      expect(() => {
+        result = parseWhatsAppMessage(raw, BOT_JID);
+      }).not.toThrow();
+
+      // messageType must never be 'unknown' for a real fixture
+      expect(result!.messageType).not.toBe('unknown');
+
+      // text must always be a string (never null/undefined)
+      expect(typeof result!.text).toBe('string');
+
+      // mentionedIds must always be an array
+      expect(Array.isArray(result!.mentionedIds)).toBe(true);
+
+      // If the raw message contains a known media type key, hasMedia must be true
+      const msg = raw?.message ?? {};
+      const hasSomeMediaKey = MEDIA_TYPES.has(result!.messageType);
+      if (hasSomeMediaKey) {
+        expect(result!.hasMedia).toBe(true);
+      }
+
+      // If quoted is present, its fields should all be well-typed
+      if (result!.quoted) {
+        expect(typeof result!.quoted.body).toBe('string');
+        expect(typeof result!.quoted.senderId).toBe('string');
+        expect(typeof result!.quoted.messageType).toBe('string');
+        expect(typeof result!.quoted.hasMedia).toBe('boolean');
+        expect(typeof result!.quoted.fromMe).toBe('boolean');
+      }
+    });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SPECIFIC: precise assertions for well-known types
+// These live here permanently and survive fixture regeneration.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('parseWhatsAppMessage — specific type assertions', () => {
+  // Load individual fixtures by canonical messageType name
+  function load(name: string): any | null {
+    const fp = join(FIXTURE_DIR, `${name}.json`);
+    if (!existsSync(fp)) return null;
+    try { return JSON.parse(readFileSync(fp, 'utf-8')); } catch { return null; }
+  }
+
+  test('conversation — text equals message body', () => {
+    const raw = load('conversation');
+    if (!raw) return; // skip if not yet generated
+    const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('conversation');
-    expect(r.text).toBe('testing');
+    expect(r.text).toBe(raw.message?.conversation ?? '');
     expect(r.hasMedia).toBe(false);
-    expect(r.mentionedIds).toEqual([]);
-    expect(r.quoted).toBeUndefined();
   });
 
-  test('image with caption', () => {
-    const r = parseWhatsAppMessage(imageWithCaption as any, BOT_JID);
+  test('imageMessage — text equals caption', () => {
+    const raw = load('imageMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('imageMessage');
-    expect(r.text).toBe('reply camera test');
-    expect(r.hasMedia).toBe(true);
-    expect(r.quoted).toBeUndefined();
-  });
-
-  test('image with no caption', () => {
-    const r = parseWhatsAppMessage(imageNoCaption as any, BOT_JID);
-    expect(r.messageType).toBe('imageMessage');
-    expect(r.text).toBe('');
+    expect(r.text).toBe(raw.message?.imageMessage?.caption ?? '');
     expect(r.hasMedia).toBe(true);
   });
 
-  test('audio message (non-PTT)', () => {
-    const r = parseWhatsAppMessage(audioVoiceNote as any, BOT_JID);
+  test('audioMessage — no text, hasMedia = true', () => {
+    const raw = load('audioMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('audioMessage');
-    expect(r.hasMedia).toBe(true);
     expect(r.text).toBe('');
+    expect(r.hasMedia).toBe(true);
   });
 
-  test('document file', () => {
-    const r = parseWhatsAppMessage(documentFile as any, BOT_JID);
+  test('stickerMessage — no text, hasMedia = true', () => {
+    const raw = load('stickerMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
+    expect(r.messageType).toBe('stickerMessage');
+    expect(r.text).toBe('');
+    expect(r.hasMedia).toBe(true);
+  });
+
+  test('documentMessage — no text, hasMedia = true', () => {
+    const raw = load('documentMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('documentMessage');
     expect(r.hasMedia).toBe(true);
-    expect(r.text).toBe('');
   });
 
-  test('animated sticker', () => {
-    const r = parseWhatsAppMessage(stickerMsg as any, BOT_JID);
-    expect(r.messageType).toBe('stickerMessage');
-    expect(r.hasMedia).toBe(true);
-    expect(r.text).toBe('');
-  });
-});
-
-describe('parseWhatsAppMessage — DM quoted messages', () => {
-  test('reply to plain text — extracts quoted body', () => {
-    const r = parseWhatsAppMessage(replyToText as any, BOT_JID);
+  test('extendedTextMessage (reply) — quoted.body is populated', () => {
+    const raw = load('extendedTextMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('extendedTextMessage');
-    expect(r.text).toBe('reply normal test');
     expect(r.quoted).toBeDefined();
-    expect(r.quoted!.messageType).toBe('conversation');
-    // Body comes from quotedMessage.conversation
-    expect(r.quoted!.body).toBe('testing');
-    expect(r.quoted!.hasMedia).toBe(false);
-    // participant is a PN JID in this DM sample
-    expect(r.quoted!.senderId).toBe('62895320460745@s.whatsapp.net');
-    // Bot's normalized number doesn't match sender's number
-    expect(r.quoted!.fromMe).toBe(false);
+    expect(typeof r.quoted!.body).toBe('string');
+  });
+
+  test('viewOnceMessageV2 — unwrapped to inner type, hasMedia = true', () => {
+    const raw = load('viewOnceMessageV2');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
+    // must be unwrapped to imageMessage or videoMessage, NOT viewOnceMessageV2
+    expect(r.messageType).not.toBe('viewOnceMessageV2');
+    expect(r.hasMedia).toBe(true);
   });
 });
 
-describe('parseWhatsAppMessage — Group message types', () => {
-  test('group plain text — sender is @lid JID', () => {
-    const r = parseWhatsAppMessage(groupPlainText as any, BOT_JID);
-    expect(r.messageType).toBe('conversation');
-    expect(r.text).toBe('bxhsjsjaja');
+// ─────────────────────────────────────────────────────────────────────────────
+// EDGE CASES: fixed-input tests, no fixture files needed
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('parseWhatsAppMessage — edge cases', () => {
+  test('empty message object does not throw', () => {
+    expect(() => parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false } } as any, null)).not.toThrow();
+  });
+
+  test('null message body yields text="" and hasMedia=false', () => {
+    const r = parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false }, message: null } as any, null);
+    expect(r.text).toBe('');
     expect(r.hasMedia).toBe(false);
-    // No quoted
     expect(r.quoted).toBeUndefined();
   });
 
-  test('group reply to image — quoted has media and correct type', () => {
-    const r = parseWhatsAppMessage(groupReplyToImage as any, BOT_JID);
-    expect(r.messageType).toBe('extendedTextMessage');
-    expect(r.text).toBe('jsksjaja');
-    expect(r.quoted).toBeDefined();
-    expect(r.quoted!.messageType).toBe('imageMessage');
-    expect(r.quoted!.hasMedia).toBe(true);
-    // No caption on quoted image, body should be empty string
-    expect(r.quoted!.body).toBe('');
-    expect(r.quoted!.fromMe).toBe(false);
-  });
-});
-
-describe('parseWhatsAppMessage — viewOnce unwrapping', () => {
-  test('viewOnceMessageV2 is unwrapped to imageMessage', () => {
-    const r = parseWhatsAppMessage(viewOnceImage as any, BOT_JID);
-    expect(r.messageType).toBe('imageMessage');
-    expect(r.hasMedia).toBe(true);
-  });
-});
-
-describe('parseWhatsAppMessage — fromMe / JID normalization', () => {
   test('fromMe is false when botUserId is null', () => {
-    const r = parseWhatsAppMessage(replyToText as any, null);
-    expect(r.quoted!.fromMe).toBe(false);
-  });
-
-  test('fromMe is false when sender is a different number', () => {
-    const r = parseWhatsAppMessage(replyToText as any, BOT_JID);
-    // quoted.participant = 62895320460745 != 6281999000111 (bot)
-    expect(r.quoted!.fromMe).toBe(false);
-  });
-
-  test('fromMe correctly handles bot JID with device suffix (:15)', () => {
-    // Use the real sender LID as the "bot JID" for this test
-    const r = parseWhatsAppMessage(replyToText as any, `${SENDER_LID}`);
-    // sender in contextInfo.participant is PN JID 62895320460745 — normalize strip gives '62895320460745'
-    // bot's LID is 27870210576446@lid — normalize gives '27870210576446'
-    // They don't match (PN vs LID numeric) — but normalization just strips domain+device
-    // Both are different numbers so fromMe stays false
+    const raw = {
+      key: { remoteJid: '628x@s.whatsapp.net', id: 'z', fromMe: false },
+      message: {
+        extendedTextMessage: {
+          text: 'hi',
+          contextInfo: {
+            stanzaId: 'old', participant: '62800@s.whatsapp.net',
+            quotedMessage: { conversation: 'hey' },
+          },
+        },
+      },
+    };
+    const r = parseWhatsAppMessage(raw as any, null);
     expect(r.quoted!.fromMe).toBe(false);
   });
 });

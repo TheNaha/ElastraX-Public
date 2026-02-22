@@ -1,0 +1,29 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "ACE2CF3577D9F56590885A00AC6A3C08"
+  },
+  "message": {
+    "protocolMessage": {
+      "key": {
+        "remoteJid": "62895320460745-1601116727@g.us",
+        "fromMe": false,
+        "id": "ACE34C4CDE48EDEDC331956D720A14B4",
+        "participant": "228973531406343@lid"
+      },
+      "type": "MESSAGE_EDIT",
+      "editedMessage": {
+        "conversation": "I've read the synopsis"
+      },
+      "timestampMs": "1771411095080"
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1771411084",
+  "participant": "228973531406343@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "ARBTUg4Rz64Ejv5xNDNTkxbYogY="
+  },
+  "isMentionedInStatus": false
+}

@@ -1,0 +1,34 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC0251D4BD644051AE2940246820F044"
+  },
+  "message": {
+    "messageContextInfo": {},
+    "lottieStickerMessage": {
+      "message": {
+        "stickerMessage": {
+          "url": "https://mmg.whatsapp.net/v/t62.15575-24/557991255_924768316561934_4589222038315666059_n.enc?ccb=11-4&oh=01_Q5Aa3gHVYLN56vFAvzcBQx21E-tvGQiClVcKLFPljCPSteHTTw&oe=69A160F3&_nc_sid=5e03e0&mms3=true",
+          "mimetype": "application/was",
+          "height": 512,
+          "width": 512,
+          "directPath": "/v/t62.15575-24/557991255_924768316561934_4589222038315666059_n.enc?ccb=11-4&oh=01_Q5Aa3gHVYLN56vFAvzcBQx21E-tvGQiClVcKLFPljCPSteHTTw&oe=69A160F3&_nc_sid=5e03e0",
+          "fileLength": "25155",
+          "mediaKeyTimestamp": "1769600052",
+          "isAnimated": true,
+          "stickerSentTs": "1769600059000",
+          "isAvatar": false,
+          "isAiSticker": false,
+          "isLottie": true
+        }
+      }
+    }
+  },
+  "messageTimestamp": "1769600059",
+  "participant": "193871132815361@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "AQ8lomOTpiQHfelRT1krjjv7j68="
+  },
+  "isMentionedInStatus": false
+}

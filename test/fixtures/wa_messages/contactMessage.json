@@ -1,0 +1,20 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "ACC44AC4100A034C665A0854D6D117D7"
+  },
+  "message": {
+    "contactMessage": {
+      "displayName": "Sniftyska.edu (tukang turnitin)",
+      "vcard": "BEGIN:VCARD\nVERSION:3.0\nN:;Sniftyska.edu (tukang turnitin);;;\nFN:Sniftyska.edu (tukang turnitin)\nTEL;type=Mobile;waid=6282121512002:+62 821-2151-2002\nX-WA-BIZ-DESCRIPTION:Selamat datang di Sniftyska X Robotecno!\nX-WA-BIZ-NAME:Sniftyska.edu (tukang turnitin)\nEND:VCARD"
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1769511517",
+  "participant": "228973531406343@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "AQ8N1Mf44NWISylPc8jJE++o1jM="
+  },
+  "isMentionedInStatus": false
+}

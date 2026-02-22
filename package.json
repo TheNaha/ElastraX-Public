@@ -10,7 +10,8 @@
     "db:generate": "bun x drizzle-kit generate",
     "db:push": "bun x drizzle-kit push",
     "db:migrate": "bun x drizzle-kit migrate",
-    "db:studio": "bun x drizzle-kit studio"
+    "db:studio": "bun x drizzle-kit studio",
+    "fixtures:dump": "bun run scripts/dumpFixtures.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.20.0",

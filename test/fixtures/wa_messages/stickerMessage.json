@@ -1,0 +1,34 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC7B186CBF06140CAE6A83605C8DD378"
+  },
+  "message": {
+    "stickerMessage": {
+      "url": "https://mmg.whatsapp.net/v/t62.15575-24/641162953_1511356740993365_414292450674969502_n.enc?ccb=11-4&oh=01_Q5Aa3wHTuSUB6u112foKB6qce2fR2i96BhtNJQlrEDYmZA7dNw&oe=69C0B031&_nc_sid=5e03e0&mms3=true",
+      "mimetype": "image/webp",
+      "height": 64,
+      "width": 64,
+      "directPath": "/v/t62.15575-24/641162953_1511356740993365_414292450674969502_n.enc?ccb=11-4&oh=01_Q5Aa3wHTuSUB6u112foKB6qce2fR2i96BhtNJQlrEDYmZA7dNw&oe=69C0B031&_nc_sid=5e03e0",
+      "fileLength": "366278",
+      "mediaKeyTimestamp": "1771649907",
+      "firstFrameLength": 365862,
+      "isAnimated": true,
+      "stickerSentTs": "1771649927000",
+      "isAvatar": false,
+      "isAiSticker": false,
+      "isLottie": false
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1771649927",
+  "participant": "228973531406343@lid",
+  "mediaData": {
+    "localPath": "Media/WhatsApp Stickers/STK-20251014-WA0006.webp"
+  },
+  "reportingTokenInfo": {
+    "reportingTag": "ARCgHl2nLe7hvVZjto69BvIHS9A="
+  },
+  "isMentionedInStatus": false
+}

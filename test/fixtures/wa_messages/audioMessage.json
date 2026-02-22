@@ -1,0 +1,21 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC1E8970BEA2FEE348237EC436490FC5"
+  },
+  "message": {
+    "audioMessage": {
+      "mimetype": "audio/ogg; codecs=opus",
+      "fileLength": "125682",
+      "seconds": 53,
+      "ptt": true,
+      "mediaKeyTimestamp": "1765026483",
+      "viewOnce": true
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1765026536",
+  "participant": "228973531406343@lid",
+  "isMentionedInStatus": false
+}

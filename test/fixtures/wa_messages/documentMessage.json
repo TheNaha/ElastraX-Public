@@ -1,0 +1,30 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "ACAAC67EDCD9F2CAA5E5A1C71CFE43C0"
+  },
+  "message": {
+    "documentMessage": {
+      "url": "https://mmg.whatsapp.net/v/t62.7119-24/618121721_5243876755836668_7172255025740121643_n.enc?ccb=11-4&oh=01_Q5Aa3gGVmLLeBLQRuU7ThC8u2md6SYJ0J8o4rOn0fCBYkzaPpw&oe=6993DA4A&_nc_sid=5e03e0&mms3=true",
+      "mimetype": "application/pdf",
+      "fileLength": "12775466",
+      "pageCount": 43,
+      "fileName": "G20ysa.pdf",
+      "directPath": "/v/t62.7119-24/618121721_5243876755836668_7172255025740121643_n.enc?ccb=11-4&oh=01_Q5Aa3gGVmLLeBLQRuU7ThC8u2md6SYJ0J8o4rOn0fCBYkzaPpw&oe=6993DA4A&_nc_sid=5e03e0",
+      "mediaKeyTimestamp": "1768716966",
+      "thumbnailDirectPath": "/v/t62.36145-24/567967456_1606851113668973_1123425139822829650_n.enc?ccb=11-4&oh=01_Q5Aa3gFsSW2yN5_8ZKJlDnv2KkDX8OAqbq5xMirMqev63DA-DA&oe=6993D742&_nc_sid=5e03e0",
+      "thumbnailSha256": "0mLEVWpgdS+K9m4wbtCldnuBgWoCoDawlhA3t6vMMNo=",
+      "thumbnailEncSha256": "La6o/Hj2SneofjNSCPWK6lTjNSSvrwENebmHr85rClY=",
+      "thumbnailHeight": 480,
+      "thumbnailWidth": 339
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1768716974",
+  "participant": "124730195636296@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "AQ8KzECBl0iJEB4vLbZtyUMA6NU="
+  },
+  "isMentionedInStatus": false
+}

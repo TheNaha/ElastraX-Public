@@ -1,0 +1,20 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "CAA83969B377DE8849D7A17A745AFD63"
+  },
+  "message": {
+    "liveLocationMessage": {
+      "degreesLatitude": -6.4898167,
+      "degreesLongitude": 106.8442796,
+      "caption": "Balik ges balik :v",
+      "sequenceNumber": "1741336548883001"
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1741336550",
+  "participant": "62895320460745@s.whatsapp.net",
+  "duration": 28800,
+  "isMentionedInStatus": false
+}

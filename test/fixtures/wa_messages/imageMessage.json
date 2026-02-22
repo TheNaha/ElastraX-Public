@@ -1,0 +1,38 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC438A62DE5555DE4E08360D2CB63B7E"
+  },
+  "message": {
+    "imageMessage": {
+      "url": "https://mmg.whatsapp.net/v/t62.7118-24/591026784_728332116880454_3520657920824929400_n.enc?ccb=11-4&oh=01_Q5Aa3wFDFu8RkPyXfPxU5ThpNS5QcltbDx0123oMFYrl1SpmJA&oe=69BFB7F2&_nc_sid=5e03e0&mms3=true",
+      "mimetype": "image/jpeg",
+      "caption": "JADI SEGINU",
+      "fileLength": "59312",
+      "height": 683,
+      "width": 1080,
+      "directPath": "/v/t62.7118-24/591026784_728332116880454_3520657920824929400_n.enc?ccb=11-4&oh=01_Q5Aa3wFDFu8RkPyXfPxU5ThpNS5QcltbDx0123oMFYrl1SpmJA&oe=69BFB7F2&_nc_sid=5e03e0",
+      "mediaKeyTimestamp": "1771584525",
+      "contextInfo": {
+        "pairedMediaType": "NOT_PAIRED_MEDIA"
+      },
+      "scanLengths": [
+        5858,
+        28249,
+        10817,
+        14388
+      ]
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1771584526",
+  "participant": "124730195636296@lid",
+  "mediaData": {
+    "localPath": "Media/WhatsApp Images/IMG-20260222-WA0005.jpg"
+  },
+  "reportingTokenInfo": {
+    "reportingTag": "ARBS9qVn3Y056fFrZH0Rsp+iZiA="
+  },
+  "isMentionedInStatus": false
+}

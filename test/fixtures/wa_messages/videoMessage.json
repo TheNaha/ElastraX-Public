@@ -1,0 +1,33 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC6985A879B85C4AA9C562B349EC4B19"
+  },
+  "message": {
+    "videoMessage": {
+      "url": "https://mmg.whatsapp.net/v/t62.7161-24/563793073_3820854344882438_1469455233802502607_n.enc?ccb=11-4&oh=01_Q5Aa3gG1deHWwyxvU_1lGvRTfDpAzUZQD3SHyYpPdimjPMXXqQ&oe=6993E7BF&_nc_sid=5e03e0&mms3=true",
+      "mimetype": "video/mp4",
+      "fileLength": "1725548",
+      "seconds": 8,
+      "height": 850,
+      "width": 478,
+      "directPath": "/v/t62.7161-24/563793073_3820854344882438_1469455233802502607_n.enc?ccb=11-4&oh=01_Q5Aa3gG1deHWwyxvU_1lGvRTfDpAzUZQD3SHyYpPdimjPMXXqQ&oe=6993E7BF&_nc_sid=5e03e0&_nc_hot=1768829311",
+      "mediaKeyTimestamp": "1768699314",
+      "contextInfo": {
+        "forwardingScore": 127,
+        "isForwarded": true,
+        "pairedMediaType": "NOT_PAIRED_MEDIA",
+        "forwardOrigin": "UNKNOWN"
+      },
+      "streamingSidecar": "Q041OFjf4d5sfcokrby4geae0+c29PQdDFQ/IXB11ZBwvysAKgMib+CleLXD/4wUqcytXpMWDdrCbN0pYyajT1cM3mnhZEPVq8QOLGvfaTxaWCAXxa2B+ev3tupAj1aI/Vfolip3lYjycKNq7lGvH84lMMTiwpPOAGmWUKRORdMrgooyckdr1JlCe9Rj6Xf/MH0XtwbkZJqDQ3Zc/GkvO8e5q7EcL0/fOEoJ/+XxZ5nFmBDhKnJRbk8e2wouuA7L4fe0ie+77fu29bV+5Pe0EAlvB44ilZHEp/+khze6Up53uox8+ZWGOpmnywatdWqQxlM+MUENA85kzG4cXVPESXHAkzZOqamGv1XzKz25"
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1768829311",
+  "participant": "124730195636296@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "AQ+MrLD6B64fifQE9MoiXX7DHIE="
+  },
+  "isMentionedInStatus": false
+}

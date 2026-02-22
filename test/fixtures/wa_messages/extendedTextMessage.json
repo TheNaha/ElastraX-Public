@@ -1,0 +1,26 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "AC7756D36A14F3E93A46D18577B1ED41"
+  },
+  "message": {
+    "extendedTextMessage": {
+      "text": "@265841933336713 Hello, how are you?",
+      "previewType": "NONE",
+      "contextInfo": {
+        "mentionedJid": [
+          "265841933336713@lid"
+        ]
+      },
+      "inviteLinkGroupTypeV2": "DEFAULT"
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1771754223",
+  "participant": "27870210576446@lid",
+  "reportingTokenInfo": {
+    "reportingTag": "ARBWZgwm5U5pKi8iI5GjFT1pT/g="
+  },
+  "isMentionedInStatus": false
+}

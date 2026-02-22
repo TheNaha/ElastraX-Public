@@ -1,0 +1,17 @@
+{
+  "key": {
+    "remoteJid": "120363418247447171@g.us",
+    "fromMe": false,
+    "id": "0C841F4D9AC6305FD2155D6B3CC1E520"
+  },
+  "message": {
+    "locationMessage": {
+      "degreesLatitude": -6.8746419,
+      "degreesLongitude": 107.6030193
+    },
+    "messageContextInfo": {}
+  },
+  "messageTimestamp": "1743586580",
+  "participant": "62895320460745@s.whatsapp.net",
+  "isMentionedInStatus": false
+}

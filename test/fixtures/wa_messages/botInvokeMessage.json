@@ -1,0 +1,30 @@
+{
+  "key": {
+    "remoteJid": "62895320460745-1601116727@g.us",
+    "fromMe": false,
+    "id": "16C1ACA4BAC31E19DB2671D79732F4AB"
+  },
+  "message": {
+    "messageContextInfo": {
+      "botMetadata": {}
+    },
+    "botInvokeMessage": {
+      "message": {
+        "extendedTextMessage": {
+          "text": "@867051314767696 Do you know about Honor of Kings?",
+          "previewType": "NONE",
+          "contextInfo": {
+            "mentionedJid": [
+              "867051314767696@bot"
+            ]
+          },
+          "inviteLinkGroupTypeV2": "DEFAULT"
+        }
+      }
+    }
+  },
+  "messageTimestamp": "1752467823",
+  "participant": "62895320460745@s.whatsapp.net",
+  "botMessageInvokerJid": "62895320460745@s.whatsapp.net",
+  "isMentionedInStatus": false
+}
