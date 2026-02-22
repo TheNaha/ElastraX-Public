@@ -1,5 +1,6 @@
 import { AuthenticationState, initAuthCreds, proto } from '@whiskeysockets/baileys';
 import { db } from '../db';
+import { logger } from './logger';
 import { waAuthState } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { BufferJSON } from '@whiskeysockets/baileys/lib/Utils/generics';
@@ -44,7 +45,7 @@ export const useDBAuthState = async (): Promise<{
           set: { data: parsedObject },
         });
     } catch (e) {
-      // ignore
+      logger.error({ id, e }, 'Failed to save auth state data to SQLite');
     }
   };
 
@@ -52,7 +53,7 @@ export const useDBAuthState = async (): Promise<{
     try {
       await db.delete(waAuthState).where(eq(waAuthState.id, id));
     } catch (e) {
-      // ignore
+      logger.error({ id, e }, 'Failed to remove auth state data from SQLite');
     }
   };
 
@@ -76,16 +77,19 @@ export const useDBAuthState = async (): Promise<{
           return data;
         },
         set: async (data: any) => {
-          const tasks: Promise<void>[] = [];
+          const tasks: (() => Promise<void>)[] = [];
           for (const category in data) {
             const catData = data[category] as any;
             for (const id in catData) {
               const value = catData[id];
               const fileId = `${category}-${id}`;
-              tasks.push(value ? writeData(value, fileId) : removeData(fileId));
+              // Queue them as thunks so we can await them sequentially to avoid SQLITE_BUSY locks
+              tasks.push(() => (value ? writeData(value, fileId) : removeData(fileId)));
             }
           }
-          await Promise.all(tasks);
+          for (const task of tasks) {
+            await task();
+          }
         },
       },
     },
