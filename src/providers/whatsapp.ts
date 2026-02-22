@@ -169,10 +169,11 @@ export class WhatsAppProvider implements BotProvider {
         '';
 
       // Reconstruct a WAMessage-like structure for the quoted message
+      const normalizeJid = (jid?: string | null) => jid ? jid.split('@')[0].split(':')[0] : '';
       const reconstructedQuotedWAMessage: WAMessage = {
          key: {
             remoteJid: jid,
-            fromMe: sock.user?.id ? sock.user.id.split(':')[0] === quotedParticipant.split('@')[0] : false,
+            fromMe: normalizeJid(sock.user?.id) === normalizeJid(quotedParticipant),
             id: contextInfo?.stanzaId,
             participant: quotedParticipant
          },
