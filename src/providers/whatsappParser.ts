@@ -18,6 +18,8 @@ export interface ParsedWAMessage {
   quoted: ParsedQuotedMessage | undefined;
 }
 
+export type LidResolver = (jid: string) => Promise<string>;
+
 export interface ParsedQuotedMessage {
   /** Canonical Baileys message type of the quoted message */
   messageType: string;
@@ -82,12 +84,14 @@ function hasMediaContent(msgObj: proto.IMessage | null | undefined): boolean {
  *                  `sock.signalRepository.lidMapping.getLIDForPN()`.
  *                  Required so that `fromMe` is correctly set in WhatsApp V7
  *                  LID sessions where `contextInfo.participant` is a LID.
+ * @param resolveLid Async function to resolve any PN JIDs to LID JIDs.
  */
-export function parseWhatsAppMessage(
+export async function parseWhatsAppMessage(
   msg: WAMessage,
   botUserId: string | null | undefined,
-  botLid?: string | null
-): ParsedWAMessage {
+  botLid?: string | null,
+  resolveLid?: LidResolver
+): Promise<ParsedWAMessage> {
   const rawMsg = msg.message;
 
   // ── 1. Detect canonical message type, unwrap viewOnce ────────────────────
@@ -130,13 +134,20 @@ export function parseWhatsAppMessage(
     messageContent?.contextInfo ||
     null;
 
-  const mentionedIds: string[] = contextInfo?.mentionedJid ?? [];
+  let mentionedIds: string[] = contextInfo?.mentionedJid ?? [];
+  if (resolveLid) {
+    mentionedIds = await Promise.all(mentionedIds.map(resolveLid));
+  }
 
   // ── 4. Parse quoted message ───────────────────────────────────────────────
   let quoted: ParsedQuotedMessage | undefined;
 
   const quotedMessage = contextInfo?.quotedMessage;
-  const quotedParticipant = contextInfo?.participant;
+  let quotedParticipant = contextInfo?.participant;
+
+  if (resolveLid && quotedParticipant) {
+    quotedParticipant = await resolveLid(quotedParticipant);
+  }
 
   if (quotedMessage && quotedParticipant) {
     // Detect quoted message type, unwrap productMessage nesting

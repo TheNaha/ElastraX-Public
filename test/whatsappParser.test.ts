@@ -20,10 +20,12 @@
 import { describe, test, expect } from 'bun:test';
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
-import { parseWhatsAppMessage } from '../src/providers/whatsappParser';
+import { parseWhatsAppMessage, LidResolver } from '../src/providers/whatsappParser';
 
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const BOT_JID = '6281999000111:15@s.whatsapp.net'; // hypothetical bot JID
+
+const dummyResolver: LidResolver = async (jid) => jid;
 
 // ─── Canonical media message types as recognised by getContentType() ────────
 const MEDIA_TYPES = new Set([
@@ -61,11 +63,16 @@ describe('parseWhatsAppMessage — dynamic fixture coverage', () => {
   }
 
   for (const { name, raw } of fixtures) {
-    test(`${name} — must parse without error`, () => {
-      let result: ReturnType<typeof parseWhatsAppMessage>;
-      expect(() => {
-        result = parseWhatsAppMessage(raw, BOT_JID);
-      }).not.toThrow();
+    test(`${name} — must parse without error`, async () => {
+      let result: ReturnType<typeof parseWhatsAppMessage> extends Promise<infer U> ? U : never;
+      
+      let didThrow = false;
+      try {
+        result = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
+      } catch (e) {
+        didThrow = true;
+      }
+      expect(didThrow).toBe(false);
 
       // messageType must never be 'unknown' for a real fixture
       expect(result!.messageType).not.toBe('unknown');
@@ -108,72 +115,72 @@ describe('parseWhatsAppMessage — specific type assertions', () => {
     try { return JSON.parse(readFileSync(fp, 'utf-8')); } catch { return null; }
   }
 
-  test('conversation — text equals message body', () => {
+  test('conversation — text equals message body', async () => {
     const raw = load('conversation');
     if (!raw) return; // skip if not yet generated
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('conversation');
     expect(r.text).toBe(raw.message?.conversation ?? '');
     expect(r.hasMedia).toBe(false);
   });
 
-  test('imageMessage — text equals caption', () => {
+  test('imageMessage — text equals caption', async () => {
     const raw = load('imageMessage');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('imageMessage');
     expect(r.text).toBe(raw.message?.imageMessage?.caption ?? '');
     expect(r.hasMedia).toBe(true);
   });
 
-  test('audioMessage — no text, hasMedia = true', () => {
+  test('audioMessage — no text, hasMedia = true', async () => {
     const raw = load('audioMessage');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('audioMessage');
     expect(r.text).toBe('');
     expect(r.hasMedia).toBe(true);
   });
 
-  test('stickerMessage — no text, hasMedia = true', () => {
+  test('stickerMessage — no text, hasMedia = true', async () => {
     const raw = load('stickerMessage');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('stickerMessage');
     expect(r.text).toBe('');
     expect(r.hasMedia).toBe(true);
   });
 
-  test('documentMessage — no text, hasMedia = true', () => {
+  test('documentMessage — no text, hasMedia = true', async () => {
     const raw = load('documentMessage');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('documentMessage');
     expect(r.hasMedia).toBe(true);
   });
 
-  test('extendedTextMessage (reply) — quoted.body is populated', () => {
+  test('extendedTextMessage (reply) — quoted.body is populated', async () => {
     const raw = load('reply_to_text');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('extendedTextMessage');
     expect(r.quoted).toBeDefined();
     expect(typeof r.quoted!.body).toBe('string');
   });
 
-  test('extendedTextMessage (mention) — quoted is undefined', () => {
+  test('extendedTextMessage (mention) — quoted is undefined', async () => {
     const raw = load('extendedTextMessage');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     expect(r.messageType).toBe('extendedTextMessage');
     expect(r.quoted).toBeUndefined();
     expect(r.mentionedIds.length).toBeGreaterThan(0);
   });
 
-  test('viewOnceMessageV2 — unwrapped to inner type, hasMedia = true', () => {
+  test('viewOnceMessageV2 — unwrapped to inner type, hasMedia = true', async () => {
     const raw = load('viewOnceMessageV2');
     if (!raw) return;
-    const r = parseWhatsAppMessage(raw, BOT_JID);
+    const r = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
     // must be unwrapped to imageMessage or videoMessage, NOT viewOnceMessageV2
     expect(r.messageType).not.toBe('viewOnceMessageV2');
     expect(r.hasMedia).toBe(true);
@@ -185,18 +192,20 @@ describe('parseWhatsAppMessage — specific type assertions', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('parseWhatsAppMessage — edge cases', () => {
-  test('empty message object does not throw', () => {
-    expect(() => parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false } } as any, null)).not.toThrow();
+  test('empty message object does not throw', async () => {
+    let err = false;
+    try { await parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false } } as any, null, null, dummyResolver); } catch(e) { err = true; };
+    expect(err).toBe(false);
   });
 
-  test('null message body yields text="" and hasMedia=false', () => {
-    const r = parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false }, message: null } as any, null);
+  test('null message body yields text="" and hasMedia=false', async () => {
+    const r = await parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false }, message: null } as any, null, null, dummyResolver);
     expect(r.text).toBe('');
     expect(r.hasMedia).toBe(false);
     expect(r.quoted).toBeUndefined();
   });
 
-  test('fromMe is false when botUserId is null', () => {
+  test('fromMe is false when botUserId is null', async () => {
     const raw = {
       key: { remoteJid: '628x@s.whatsapp.net', id: 'z', fromMe: false },
       message: {
@@ -209,11 +218,11 @@ describe('parseWhatsAppMessage — edge cases', () => {
         },
       },
     };
-    const r = parseWhatsAppMessage(raw as any, null);
+    const r = await parseWhatsAppMessage(raw as any, null, null, dummyResolver);
     expect(r.quoted!.fromMe).toBe(false);
   });
 
-  test('fromMe is true when botUserId (PN JID) matches quotedParticipant (PN JID)', () => {
+  test('fromMe is true when botUserId (PN JID) matches quotedParticipant (PN JID)', async () => {
     const raw = {
       key: { remoteJid: 'group@g.us', id: 'abc', fromMe: false },
       message: {
@@ -228,12 +237,12 @@ describe('parseWhatsAppMessage — edge cases', () => {
       },
     };
     // BOT_JID includes device suffix — normalizeJid strips it before comparing
-    const r = parseWhatsAppMessage(raw as any, BOT_JID);
+    const r = await parseWhatsAppMessage(raw as any, BOT_JID, null, dummyResolver);
     expect(r.quoted!.fromMe).toBe(true);
     expect(r.quoted!.stanzaId).toBe('bot-msg-1');
   });
 
-  test('fromMe is FALSE when botUserId (PN JID) vs quotedParticipant (LID) — without botLid', () => {
+  test('fromMe is FALSE when botUserId (PN JID) vs quotedParticipant (LID) — without botLid', async () => {
     // This is the WhatsApp V7 LID mismatch scenario without the botLid parameter.
     // The parser returns fromMe=false when no botLid is provided.
     const raw = {
@@ -250,13 +259,13 @@ describe('parseWhatsAppMessage — edge cases', () => {
       },
     };
     // BOT_JID is phone-number format, NOT matching the LID — no botLid provided
-    const r = parseWhatsAppMessage(raw as any, BOT_JID);
+    const r = await parseWhatsAppMessage(raw as any, BOT_JID, null, dummyResolver);
     expect(r.quoted!.fromMe).toBe(false);
     expect(r.quoted!.stanzaId).toBe('bot-msg-lid-1');
     expect(r.quoted!.body).toBe('Yes, I am working!');
   });
 
-  test('fromMe is TRUE when botLid (LID JID) matches quotedParticipant (LID) — WA V7 fix', () => {
+  test('fromMe is TRUE when botLid (LID JID) matches quotedParticipant (LID) — WA V7 fix', async () => {
     // The proper Baileys V7 fix: pass the bot's LID (resolved via
     // sock.signalRepository.lidMapping.getLIDForPN()) to parseWhatsAppMessage().
     const raw = {
@@ -273,12 +282,12 @@ describe('parseWhatsAppMessage — edge cases', () => {
       },
     };
     const BOT_LID = '265841933336713@lid'; // would come from getLIDForPN(botPn)
-    const r = parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID);
+    const r = await parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID, dummyResolver);
     expect(r.quoted!.fromMe).toBe(true);
     expect(r.quoted!.body).toBe('Yes, I am working!');
   });
 
-  test('fromMe stays false when botLid does not match quotedParticipant LID', () => {
+  test('fromMe stays false when botLid does not match quotedParticipant LID', async () => {
     const raw = {
       key: { remoteJid: 'group@g.us', id: 'user-msg-4', fromMe: false },
       message: {
@@ -293,7 +302,7 @@ describe('parseWhatsAppMessage — edge cases', () => {
       },
     };
     const BOT_LID = '265841933336713@lid';
-    const r = parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID);
+    const r = await parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID, dummyResolver);
     expect(r.quoted!.fromMe).toBe(false);
   });
 });

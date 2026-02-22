@@ -160,19 +160,34 @@ export class WhatsAppProvider implements BotProvider {
         this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
       } catch { /* best-effort; PN comparison still works for non-LID sessions */ }
     }
-    const parsed = parseWhatsAppMessage(msg, sock.user?.id, this.botLid);
+
+    const resolveLid = async (targetJid: string): Promise<string> => {
+      if (!targetJid) return targetJid;
+      if (targetJid.includes('@lid') || targetJid.includes('@g.us') || targetJid.includes('@broadcast')) {
+        return targetJid;
+      }
+      try {
+        const lid = await (sock as any).signalRepository.lidMapping.getLIDForPN(targetJid);
+        if (lid) return lid;
+      } catch { /* ignore */ }
+      return targetJid; // fallback to PN
+    };
+
+    const parsed = await parseWhatsAppMessage(msg, sock.user?.id, this.botLid, resolveLid);
 
     const isGroup = jid.endsWith('@g.us');
 
     // ── V7 LID-first sender resolution ──────────────────────────────────────
     // Groups: key.participant   = @lid JID (preferred), key.participantPn = PN fallback
     // DMs:    key.senderLid     = @lid JID (preferred), key.remoteJid     = PN fallback
-    // NOTE: senderLid / participantPn exist on the runtime object but Baileys types
-    //       haven't caught up yet, hence the `as any` casts.
     const keyAny = msg.key as any;
-    const senderId: string = isGroup
+    let rawSender: string = isGroup
       ? (msg.key.participant ?? msg.key.remoteJid ?? jid)
       : (keyAny.senderLid ?? jid);
+
+    // Mandate LID for sender
+    const senderId: string = await resolveLid(rawSender);
+
     // Best-effort phone number — may be absent for LID-only sessions
     const _senderPn: string | undefined = isGroup
       ? (keyAny.participantPn ?? undefined)

@@ -56,7 +56,7 @@ export async function scanParserCoverage(
     total++;
 
     try {
-      const parsed = parseWhatsAppMessage(raw, botUserId);
+      const parsed = await parseWhatsAppMessage(raw, botUserId);
 
       // Track one sample per unique type (prefer messages without large blobs)
       if (!uniqueByType.has(parsed.messageType)) {
