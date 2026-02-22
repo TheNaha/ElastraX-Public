@@ -153,12 +153,21 @@ describe('parseWhatsAppMessage — specific type assertions', () => {
   });
 
   test('extendedTextMessage (reply) — quoted.body is populated', () => {
-    const raw = load('extendedTextMessage');
+    const raw = load('reply_to_text');
     if (!raw) return;
     const r = parseWhatsAppMessage(raw, BOT_JID);
     expect(r.messageType).toBe('extendedTextMessage');
     expect(r.quoted).toBeDefined();
     expect(typeof r.quoted!.body).toBe('string');
+  });
+
+  test('extendedTextMessage (mention) — quoted is undefined', () => {
+    const raw = load('extendedTextMessage');
+    if (!raw) return;
+    const r = parseWhatsAppMessage(raw, BOT_JID);
+    expect(r.messageType).toBe('extendedTextMessage');
+    expect(r.quoted).toBeUndefined();
+    expect(r.mentionedIds.length).toBeGreaterThan(0);
   });
 
   test('viewOnceMessageV2 — unwrapped to inner type, hasMedia = true', () => {
