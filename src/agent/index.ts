@@ -28,9 +28,29 @@ Current Room Language: {{LANGUAGE}}`;
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
 
+  // We will always process the message to save it to context history
+  // But we use this flag to decide if the AI should actually generate a reply
+  let shouldTriggerAI = !isGroup;
+
   if (isGroup) {
-    if (!text.toLowerCase().startsWith('/chat') && !text.startsWith('/')) {
-      return; // Ignore general group chatter unless explicitly commanded
+    if (text.toLowerCase().startsWith('/chat') || text.startsWith('/')) {
+      shouldTriggerAI = true;
+    }
+    // Check if the bot was explicitly mentioned using its ID.
+    // mentionedIds contains the JIDs of tagged users.
+    // For WhatsApp, the bot's JID would be in that array if tagged.
+    // Since we don't have the bot's exact JID exported everywhere easily, 
+    // we'll rely on text inclusion of the bot's name or any mentioned IDs.
+    // For a more robust approach: if mentionedIds has items, we assume it *might* be for us if the text implies it,
+    // OR just trigger if mentionedIds is not empty (as a test) and refine later if it triggers on other people's tags.
+    // Alternatively, if the text contains @ElastraX or similar.
+    if (mentionedIds && mentionedIds.length > 0) {
+      // Assuming if the bot is tagged, it's meant to reply
+      shouldTriggerAI = true;
+    }
+    // Check if the user is replying to a message originally sent by the bot
+    if (ctx.quoted?.rawMessage?.key?.fromMe) {
+      shouldTriggerAI = true;
     }
   }
 
@@ -90,9 +110,22 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   }
 
   // Clean the text for conversational flow
-  const userContent = isGroup && text.toLowerCase().startsWith('/chat') 
+  let userContent = isGroup && text.toLowerCase().startsWith('/chat') 
     ? text.substring(5).trim() 
     : text;
+
+  // Emphasize quoted context by prepending it directly to the user's message payload
+  if (ctx.quoted) {
+    const isFromBot = ctx.quoted.rawMessage?.key?.fromMe;
+    const quoteSender = isFromBot ? 'ElastraX (You)' : ctx.quoted.senderId.split('@')[0];
+    let quoteText = ctx.quoted.text || '';
+    if (quoteText.length > 150) quoteText = quoteText.substring(0, 150) + '...';
+    
+    const mediaNote = ctx.quoted.hasMedia ? '<Media attached>' : '';
+    const combinedQuoteText = quoteText ? `"${quoteText}"` : mediaNote;
+    
+    userContent = `[Replying to ${quoteSender}: ${combinedQuoteText}]\n${userContent}`;
+  }
 
   if (!userContent && !ctx.hasMedia) return;
 
@@ -165,7 +198,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       });
     }
 
-    // 3. Generate AI Response (Recursive for tools)
+    // 3. Check if we should actually generate a response
+    if (!shouldTriggerAI) {
+       // Since it's casual chatter, we saved it to context, but we don't reply!
+       return; 
+    }
+
+    // 4. Generate AI Response (Recursive for tools)
     await ctx.react?.('⏳');
     
     let isDone = false;
