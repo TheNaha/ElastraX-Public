@@ -19,20 +19,24 @@ import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 import { parseWhatsAppMessage } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
-import { eq, and, isNull, desc, gte } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
   /**
-   * In-memory set of message IDs sent by this bot instance.
-   * Used as a fast fallback for fromMe detection when the JID-based comparison
-   * in the parser fails (e.g., LID vs phone-number JID mismatch in WA V7).
-   * Capped at MAX_SENT_IDS entries to prevent unbounded memory growth.
+   * The bot's own LID JID (e.g. "265841933336713@lid"), resolved once the
+   * connection is open via sock.signalRepository.lidMapping.getLIDForPN().
+   * Used to correctly detect `fromMe` in V7 LID-based sessions where
+   * contextInfo.participant is a LID rather than a phone-number JID.
    */
-  private sentMessageIds = new Set<string>();
-  private static readonly MAX_SENT_IDS = 1000;
+  private botLid: string | null = null;
+
+  /** Convert sock.user.id (e.g. "628xxx:0@s.whatsapp.net") to a bare PN JID. */
+  private static botPnJid(userId: string): string {
+    return userId.split(':')[0].split('@')[0] + '@s.whatsapp.net';
+  }
 
   async start(): Promise<void> {
     const { state, saveCreds } = await useDBAuthState();
@@ -62,7 +66,7 @@ export class WhatsAppProvider implements BotProvider {
 
     this.sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('connection.update', (update) => {
+    this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         logger.info('[WhatsApp] Scan this QR code to login:');
@@ -83,53 +87,24 @@ export class WhatsAppProvider implements BotProvider {
         }
       } else if (connection === 'open') {
         logger.info('[WhatsApp] Connected successfully!');
+        // Resolve the bot's LID via Baileys' LID-PN mapping store.
+        // In WA V7 sessions, contextInfo.participant uses LIDs so we need
+        // the bot's own LID to correctly set `fromMe` on quoted messages.
+        if (this.sock?.user?.id) {
+          const botPn = WhatsAppProvider.botPnJid(this.sock.user.id);
+          try {
+            this.botLid = await (this.sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+            if (this.botLid) {
+              logger.info({ botLid: this.botLid }, '[WhatsApp] Resolved bot LID');
+            }
+          } catch (err) {
+            logger.debug({ err }, '[WhatsApp] Could not resolve bot LID (will retry per-message)');
+          }
+        }
       }
     });
 
     this.sock.ev.on('messages.upsert', async (m) => {
-      // ── Track our own sent messages for reliable fromMe detection ────────────
-      // In WhatsApp V7 LID-based sessions the parser's JID comparison can fail:
-      // sock.user.id is a phone-number JID but contextInfo.participant is a LID.
-      // We resolve this by keeping an in-memory set of our own message IDs and
-      // updating the corresponding DB row so detection survives a bot restart.
-      for (const fmMsg of m.messages) {
-        if (fmMsg.key.fromMe && fmMsg.key.id) {
-          // Cap the set to avoid unbounded memory growth
-          if (this.sentMessageIds.size >= WhatsAppProvider.MAX_SENT_IDS) {
-            this.sentMessageIds.clear();
-          }
-          this.sentMessageIds.add(fmMsg.key.id);
-          // Update the most recently saved, unpublished assistant message for
-          // this chat to record the real provider message ID. We restrict to
-          // messages created in the last 60 s to avoid mismatching rows in
-          // high-throughput or race-condition scenarios.
-          if (fmMsg.key.remoteJid) {
-            try {
-              const cutoff = new Date(Date.now() - 60_000);
-              const unpublished = await db.select({ id: messages.id })
-                .from(messages)
-                .where(
-                  and(
-                    eq(messages.chatRoomId, fmMsg.key.remoteJid),
-                    eq(messages.role, 'assistant'),
-                    isNull(messages.providerMessageId),
-                    gte(messages.created_at, cutoff),
-                  )
-                )
-                .orderBy(desc(messages.created_at))
-                .limit(1);
-              if (unpublished[0]) {
-                await db.update(messages)
-                  .set({ providerMessageId: fmMsg.key.id })
-                  .where(eq(messages.id, unpublished[0].id));
-              }
-            } catch (err) {
-              logger.debug({ err }, '[WhatsApp] Failed to update providerMessageId for sent message');
-            }
-          }
-        }
-      }
-
       const msg = m.messages[0];
       if (!msg.message || msg.key.fromMe) return;
       if (m.type !== 'notify') return;
@@ -177,7 +152,15 @@ export class WhatsAppProvider implements BotProvider {
     if (!jid) return null;
 
     // ── Parse the raw message (pure, testable) ──────────────────────────────
-    const parsed = parseWhatsAppMessage(msg, sock.user?.id);
+    // If botLid hasn't been resolved yet (e.g. very first message before
+    // the mapping was available), attempt a lazy lookup now.
+    if (!this.botLid && sock.user?.id) {
+      const botPn = WhatsAppProvider.botPnJid(sock.user.id);
+      try {
+        this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+      } catch { /* best-effort; PN comparison still works for non-LID sessions */ }
+    }
+    const parsed = parseWhatsAppMessage(msg, sock.user?.id, this.botLid);
 
     const isGroup = jid.endsWith('@g.us');
 
@@ -216,31 +199,6 @@ export class WhatsAppProvider implements BotProvider {
           message: q.rawMessage,
         },
       };
-    }
-
-    // ── fromMe fallback for LID/PN JID mismatch (WhatsApp V7) ───────────────
-    // The parser compares sock.user.id (phone JID) with contextInfo.participant
-    // (may be a LID like "265841933336713@lid"). If they differ, fromMe is
-    // incorrectly false. We fix it by checking the in-memory sent-ID set first
-    // (fast, current session), then falling back to a DB lookup by stanzaId
-    // (handles the case where the bot was restarted between sends).
-    if (quoted && !quoted.rawMessage.key.fromMe && parsed.quoted?.stanzaId) {
-      const stanzaId = parsed.quoted.stanzaId;
-      if (this.sentMessageIds.has(stanzaId)) {
-        quoted.rawMessage.key.fromMe = true;
-      } else {
-        try {
-          const row = await db.select({ role: messages.role })
-            .from(messages)
-            .where(eq(messages.providerMessageId, stanzaId))
-            .limit(1);
-          if (row[0]?.role === 'assistant') {
-            quoted.rawMessage.key.fromMe = true;
-          }
-        } catch (err) {
-          logger.debug({ err }, '[WhatsApp] fromMe DB lookup failed');
-        }
-      }
     }
 
     // ── Media saving helper ──────────────────────────────────────────────────

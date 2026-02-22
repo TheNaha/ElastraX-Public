@@ -224,12 +224,9 @@ describe('parseWhatsAppMessage — edge cases', () => {
     expect(r.quoted!.stanzaId).toBe('bot-msg-1');
   });
 
-  test('fromMe is FALSE when botUserId (PN JID) vs quotedParticipant (LID) — provider must apply fallback', () => {
-    // This is the WhatsApp V7 LID mismatch scenario:
-    // - Bot's sock.user.id = phone-number JID ("628xxx@s.whatsapp.net:0")
-    // - contextInfo.participant = LID ("265841933336713@lid")
-    // The parser correctly returns fromMe=false here; the WhatsAppProvider
-    // must then fix it via the sentMessageIds set or DB lookup.
+  test('fromMe is FALSE when botUserId (PN JID) vs quotedParticipant (LID) — without botLid', () => {
+    // This is the WhatsApp V7 LID mismatch scenario without the botLid parameter.
+    // The parser returns fromMe=false when no botLid is provided.
     const raw = {
       key: { remoteJid: 'group@g.us', id: 'user-msg-2', fromMe: false },
       message: {
@@ -243,13 +240,51 @@ describe('parseWhatsAppMessage — edge cases', () => {
         },
       },
     };
-    // BOT_JID is phone-number format, NOT matching the LID
+    // BOT_JID is phone-number format, NOT matching the LID — no botLid provided
     const r = parseWhatsAppMessage(raw as any, BOT_JID);
-    // Parser alone cannot resolve the LID mismatch — fromMe is false
     expect(r.quoted!.fromMe).toBe(false);
-    // stanzaId is available for the provider to do the fallback lookup
     expect(r.quoted!.stanzaId).toBe('bot-msg-lid-1');
-    // The quoted body is still correctly extracted
     expect(r.quoted!.body).toBe('Yes, I am working!');
+  });
+
+  test('fromMe is TRUE when botLid (LID JID) matches quotedParticipant (LID) — WA V7 fix', () => {
+    // The proper Baileys V7 fix: pass the bot's LID (resolved via
+    // sock.signalRepository.lidMapping.getLIDForPN()) to parseWhatsAppMessage().
+    const raw = {
+      key: { remoteJid: 'group@g.us', id: 'user-msg-3', fromMe: false },
+      message: {
+        extendedTextMessage: {
+          text: 'hello',
+          contextInfo: {
+            stanzaId: 'bot-msg-lid-2',
+            participant: '265841933336713@lid',
+            quotedMessage: { conversation: 'Yes, I am working!' },
+          },
+        },
+      },
+    };
+    const BOT_LID = '265841933336713@lid'; // would come from getLIDForPN(botPn)
+    const r = parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID);
+    expect(r.quoted!.fromMe).toBe(true);
+    expect(r.quoted!.body).toBe('Yes, I am working!');
+  });
+
+  test('fromMe stays false when botLid does not match quotedParticipant LID', () => {
+    const raw = {
+      key: { remoteJid: 'group@g.us', id: 'user-msg-4', fromMe: false },
+      message: {
+        extendedTextMessage: {
+          text: 'hello',
+          contextInfo: {
+            stanzaId: 'other-msg-1',
+            participant: '999999999@lid',
+            quotedMessage: { conversation: 'Someone else said this' },
+          },
+        },
+      },
+    };
+    const BOT_LID = '265841933336713@lid';
+    const r = parseWhatsAppMessage(raw as any, BOT_JID, BOT_LID);
+    expect(r.quoted!.fromMe).toBe(false);
   });
 });
