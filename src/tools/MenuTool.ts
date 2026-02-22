@@ -74,7 +74,11 @@ export class MenuTool extends BaseTool {
       if (Object.keys(props).length > 0) {
         help += `${t(lang, 'menu.parameters')}\n`;
         for (const [key, prop] of Object.entries(props)) {
-          help += `  - *${key}*: ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})\n`;
+          help += `  - *${key}*: ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
+          if (prop.enum && prop.enum.length > 0) {
+            help += `\n    *${t(lang, 'menu.options')}* ${prop.enum.join(' | ')}`;
+          }
+          help += '\n';
         }
       }
 

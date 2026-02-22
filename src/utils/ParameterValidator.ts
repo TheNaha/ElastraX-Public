@@ -77,6 +77,15 @@ export class ParameterValidator {
     }
 
     help += `\n\n*Description:*\n${tool.description}`;
+
+    const enumEntries = Object.entries(props).filter(([, prop]) => prop.enum && prop.enum.length > 0);
+    if (enumEntries.length > 0) {
+      help += `\n\n*Available Options:*`;
+      for (const [key, prop] of enumEntries) {
+        help += `\n  *${key}:* ${prop.enum!.join(' | ')}`;
+      }
+    }
+
     return help;
   }
 }
