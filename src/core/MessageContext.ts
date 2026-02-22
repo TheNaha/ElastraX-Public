@@ -62,6 +62,7 @@ export interface MessageContext {
     text: string;
     senderId: string;
     hasMedia: boolean;
+    stanzaId?: string;
     mediaPath?: string;
     mimeType?: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

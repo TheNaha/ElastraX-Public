@@ -209,6 +209,7 @@ export class WhatsAppProvider implements BotProvider {
         text: q.body,       // backwards compat alias
         senderId: q.senderId,
         hasMedia: q.hasMedia,
+        stanzaId: q.stanzaId ?? undefined,
         rawMessage: {
           key: reconstructedKey,
           message: q.rawMessage,

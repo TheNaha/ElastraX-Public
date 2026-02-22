@@ -54,17 +54,25 @@ const MEDIA_TYPES = new Set([
   'viewOnceMessage',
   'viewOnceMessageV2',
   'viewOnceMessageV2Extension',
+  'documentWithCaptionMessage',
 ]);
 
 function hasMediaContent(msgObj: proto.IMessage | null | undefined): boolean {
   if (!msgObj) return false;
   const type = getContentType(msgObj) ?? '';
   if (MEDIA_TYPES.has(type)) return true;
-  // viewOnce inner check
-  if (
-    msgObj.viewOnceMessageV2?.message?.imageMessage ||
-    msgObj.viewOnceMessageV2?.message?.videoMessage
-  ) return true;
+  
+  // Unwrap nested containers to check for media
+  const innerMsg = 
+    msgObj.viewOnceMessage?.message ||
+    msgObj.viewOnceMessageV2?.message ||
+    msgObj.viewOnceMessageV2Extension?.message ||
+    msgObj.documentWithCaptionMessage?.message;
+    
+  if (innerMsg) {
+    const innerType = getContentType(innerMsg);
+    if (innerType && MEDIA_TYPES.has(innerType)) return true;
+  }
   return false;
 }
 
@@ -94,17 +102,18 @@ export async function parseWhatsAppMessage(
 ): Promise<ParsedWAMessage> {
   const rawMsg = msg.message;
 
-  // ── 1. Detect canonical message type, unwrap viewOnce ────────────────────
+  // ── 1. Detect canonical message type, unwrap nested containers ──────────────
   const rawType = (rawMsg ? getContentType(rawMsg) : null) ?? 'unknown';
-  const isViewOnce =
+  const isWrapper =
     rawType === 'viewOnceMessage' ||
     rawType === 'viewOnceMessageV2' ||
-    rawType === 'viewOnceMessageV2Extension';
+    rawType === 'viewOnceMessageV2Extension' ||
+    rawType === 'documentWithCaptionMessage';
 
   let messageType = rawType;
   let messageContent: any = rawMsg?.[rawType as keyof proto.IMessage];
 
-  if (isViewOnce) {
+  if (isWrapper) {
     const inner = (messageContent as any)?.message;
     const innerType = inner ? getContentType(inner) : null;
     if (innerType) {
@@ -154,7 +163,20 @@ export async function parseWhatsAppMessage(
     let qType = getContentType(quotedMessage) ?? 'unknown';
     let qContent: any = quotedMessage[qType as keyof proto.IMessage];
 
-    if (qType === 'productMessage') {
+    const isQWrapper =
+      qType === 'viewOnceMessage' ||
+      qType === 'viewOnceMessageV2' ||
+      qType === 'viewOnceMessageV2Extension' ||
+      qType === 'documentWithCaptionMessage';
+
+    if (isQWrapper) {
+      const inner = (qContent as any)?.message;
+      const innerType = inner ? getContentType(inner) : null;
+      if (innerType) {
+        qType = innerType;
+        qContent = inner?.[innerType as keyof proto.IMessage];
+      }
+    } else if (qType === 'productMessage') {
       const inner = getContentType(qContent);
       if (inner) { qType = inner; qContent = qContent[inner]; }
     }

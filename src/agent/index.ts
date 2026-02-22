@@ -136,13 +136,44 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       content: userContent,
       providerMessageId: ctx.messageId,
       rawMessage: JSON.stringify(ctx.rawMessage),
-      mediaPath: ctx.mediaPath,
+      mediaPath: ctx.mediaPath, // likely undefined at this moment
       mimeType: ctx.mimeType,
       created_at: new Date(),
     }).onConflictDoNothing();
 
+    // 1.5 Handle Async Media Downloading 
+    // WhatsApp/Discord begin their downloads in the background when the message arrives.
+    if (ctx.hasMedia || ctx.quoted?.hasMedia) {
+      const syncDbMedia = async () => {
+        try {
+          if (ctx.mediaPath) {
+            await db.update(messages)
+              .set({ mediaPath: ctx.mediaPath, mimeType: ctx.mimeType })
+              .where(eq(messages.providerMessageId, ctx.messageId));
+          }
+          if (ctx.quoted?.mediaPath && ctx.quoted.stanzaId) {
+            // Also update the quoted message in DB if it was downloaded here
+            await db.update(messages)
+              .set({ mediaPath: ctx.quoted.mediaPath, mimeType: ctx.quoted.mimeType })
+              .where(eq(messages.providerMessageId, ctx.quoted.stanzaId));
+          }
+        } catch (err) {
+          logger.error({ err }, 'Failed to sync DB with downloaded media paths');
+        }
+      };
 
-    // 2. Retrieve Context
+      if (shouldTriggerAI) {
+        // Block execution so AI can see the media in context
+        await ctx.react?.('📥');
+        await ctx.mediaReady;
+        await syncDbMedia();
+      } else {
+        // Non-blocking background sync for passive ingestion
+        ctx.mediaReady.then(syncDbMedia).catch(() => {});
+      }
+    }
+
+    // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     const history = await db.select()
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))

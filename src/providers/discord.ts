@@ -80,6 +80,7 @@ export class DiscordProvider implements BotProvider {
             text: fetchMsg.content,
             senderId: fetchMsg.author.id,
             hasMedia: fetchMsg.attachments.size > 0,
+            stanzaId: fetchMsg.id,
             rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }),
           };
         }
