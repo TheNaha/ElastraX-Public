@@ -12,9 +12,18 @@ mock.module('../src/utils/logger', () => ({
 
 describe('AIClient – edge cases', () => {
   const originalFetch = global.fetch;
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.AI_API_BASE_URL;
+    delete process.env.AI_API_KEY;
+    delete process.env.AI_MODEL_NAME;
+  });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    process.env = originalEnv;
   });
 
   test('should use default model name when none is provided', () => {
@@ -23,7 +32,6 @@ describe('AIClient – edge cases', () => {
   });
 
   test('should use "dummy" as default apiKey when none provided', () => {
-    delete process.env.AI_API_KEY;
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
     expect((client as any).apiKey).toBe('dummy');
   });
