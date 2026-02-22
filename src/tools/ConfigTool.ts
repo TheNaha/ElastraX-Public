@@ -38,11 +38,11 @@ export class ConfigTool extends BaseTool {
 
   private buildKeyListing(room: any, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
     return [
-      `  *systemPrompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,
-      `  *contextLimit*: ${room.contextLimit ?? `[DEFAULT: ${resolved.contextLimit}]`}`,
-      `  *temperature*: ${room.temperature ?? `[DEFAULT: ${resolved.temperature}]`}`,
-      `  *allowTools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
-      `  *autoReplyAll*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
+      `  *System Prompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,
+      `  *Context Limit*: ${room.contextLimit ?? `[DEFAULT: ${resolved.contextLimit}]`}`,
+      `  *Temperature*: ${room.temperature ?? `[DEFAULT: ${resolved.temperature}]`}`,
+      `  *Allow Tools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
+      `  *Auto Reply All*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
     ].join('\n');
   }
 
