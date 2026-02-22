@@ -12,14 +12,10 @@ export const useDBAuthState = async (): Promise<{
   const readData = async (id: string): Promise<any | null> => {
     try {
       const records = await db.select().from(waAuthState).where(eq(waAuthState.id, id)).limit(1);
-      if (records.length > 0) {
-        // We stored it as a JSON string, let's parse it correctly with Baileys' reviver 
-        // Note: text('data', { mode: 'json' }) automatically parses regular JSON, 
-        // but Baileys has custom Buffer reviving. If Drizzle Auto-parsed it, we re-stringify and revive.
-        const parsed = typeof records[0].data === 'string' 
-          ? JSON.parse(records[0].data as string, BufferJSON.reviver)
-          : JSON.parse(JSON.stringify(records[0].data), BufferJSON.reviver);
-        return parsed;
+      if (records.length > 0 && records[0].data) {
+        // Drizzle reads the JSON/string back. Baileys requires BufferJSON.reviver to reconstruct proto objects.
+        const dataStr = typeof records[0].data === 'string' ? records[0].data : JSON.stringify(records[0].data);
+        return JSON.parse(dataStr, BufferJSON.reviver);
       }
       return null;
     } catch (e) {
@@ -30,16 +26,22 @@ export const useDBAuthState = async (): Promise<{
   // Utility for writing data to SQLite
   const writeData = async (data: any, id: string): Promise<void> => {
     try {
-      // Stringify using Baileys' replacer, so Drizzle inserting it as a JSON mode text column
-      // receives the perfectly formatted object (or we can just store the raw string)
-      const dataString = JSON.stringify(data, BufferJSON.replacer);
-      // Drizzle's text({mode: 'json'}) expects a Javascript Object and will stringify it normally.
-      // But since Baileys has a custom replacer stringifier, we should bypass Drizzle's auto-stringify 
-      // by just casting the JSON string to `any` because SQLite ultimately just wants a string.
-      await db.insert(waAuthState).values({ id, data: JSON.parse(dataString) })
+      // Baileys has heavily complex Buffers inside its state. We MUST use BufferJSON.replacer
+      // Drizzle's `mode: 'json'` expects a raw object and stringifies natively, skipping the replacer.
+      // So we must manually stringify it here, and store the raw string, treating the SQLite column dynamically.
+      const stringified = JSON.stringify(data, BufferJSON.replacer);
+      // Wait, Drizzle mode='json' will try to `JSON.parse` whatever we pass it. If we pass a string, it might double-parse or crash.
+      // Actually, if we pass a pre-stringified string to Drizzle mode=json, we can just `JSON.parse` it right back into an object
+      // so Drizzle stringifies it again into the DB. BUT we lose Buffer tracking!
+      // Better approach: Since waAuthState.data is `text({ mode: 'json' })`, let's just let it be text!
+      // But we can't change the schema now easily without a migration.
+      // So let's pass the object wrapped back up via JSON.parse of the replacer output.
+      const parsedObject = JSON.parse(stringified);
+      
+      await db.insert(waAuthState).values({ id, data: parsedObject })
         .onConflictDoUpdate({
           target: waAuthState.id,
-          set: { data: JSON.parse(dataString) },
+          set: { data: parsedObject },
         });
     } catch (e) {
       // ignore

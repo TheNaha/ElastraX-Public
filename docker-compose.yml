@@ -1,8 +1,13 @@
 services:
   bot:
-    # Pull the pre-built image from GitHub Container Registry
-    # Replace "your-username" with your actual GitHub username!
-    image: ghcr.io/TheNaha/ElastraX:latest
+    # --- OPTION 1: Pull pre-built from GitHub (Recommended for VPSS/Servers) ---
+    image: ghcr.io/thenaha/elastrax:latest
+    
+    # --- OPTION 2: Build Locally (Uncomment below and comment OPTION 1) ---
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+
     container_name: elastrax-bot
     volumes:
       # We only need to mount the persistent data and logs now!
