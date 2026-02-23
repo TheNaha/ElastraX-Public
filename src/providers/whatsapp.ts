@@ -16,10 +16,12 @@ import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import { fileTypeFromBuffer } from 'file-type';
 import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
-import { parseWhatsAppMessage } from './whatsappParser';
+import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
+
+const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50MB
 
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
@@ -181,7 +183,7 @@ export class WhatsAppProvider implements BotProvider {
     // Groups: key.participant   = @lid JID (preferred), key.participantPn = PN fallback
     // DMs:    key.senderLid     = @lid JID (preferred), key.remoteJid     = PN fallback
     const keyAny = msg.key as any;
-    let rawSender: string = isGroup
+    const rawSender: string = isGroup
       ? (msg.key.participant ?? msg.key.remoteJid ?? jid)
       : (keyAny.senderLid ?? jid);
 
@@ -244,31 +246,41 @@ export class WhatsAppProvider implements BotProvider {
       const tasks: Promise<void>[] = [];
 
       if (parsed.hasMedia) {
-        tasks.push(
-          downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
-            .then(async (buf) => {
-              const buffer = buf as Buffer | null;
-              if (buffer) {
-                const saved = await saveBuffer(buffer);
-                if (saved) { mediaPath = saved.path; mimeType = saved.mime; }
-              }
-            })
-            .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download message media'))
-        );
+        const size = getFileLength(msg.message);
+        if (size && size > MAX_MEDIA_SIZE) {
+          logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large media download');
+        } else {
+          tasks.push(
+            downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+              .then(async (buf) => {
+                const buffer = buf as Buffer | null;
+                if (buffer) {
+                  const saved = await saveBuffer(buffer);
+                  if (saved) { mediaPath = saved.path; mimeType = saved.mime; }
+                }
+              })
+              .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download message media'))
+          );
+        }
       }
 
       if (quoted?.hasMedia) {
-        tasks.push(
-          downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
-            .then(async (buf) => {
-              const buffer = buf as Buffer | null;
-              if (buffer) {
-                const saved = await saveBuffer(buffer);
-                if (saved && quoted) { quoted.mediaPath = saved.path; quoted.mimeType = saved.mime; }
-              }
-            })
-            .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download quoted media'))
-        );
+        const size = getFileLength(quoted.rawMessage);
+        if (size && size > MAX_MEDIA_SIZE) {
+          logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large quoted media download');
+        } else {
+          tasks.push(
+            downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+              .then(async (buf) => {
+                const buffer = buf as Buffer | null;
+                if (buffer) {
+                  const saved = await saveBuffer(buffer);
+                  if (saved && quoted) { quoted.mediaPath = saved.path; quoted.mimeType = saved.mime; }
+                }
+              })
+              .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download quoted media'))
+          );
+        }
       }
 
       await Promise.allSettled(tasks);

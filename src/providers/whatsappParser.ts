@@ -41,6 +41,35 @@ export interface ParsedQuotedMessage {
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Extract file length from a message object, handling wrappers.
+ */
+export function getFileLength(msgObj: proto.IMessage | null | undefined): number | null {
+  if (!msgObj) return null;
+  const type = getContentType(msgObj) ?? '';
+  let content = (msgObj as any)[type];
+
+  // Unwrap nested containers
+  const innerMsg =
+    msgObj.viewOnceMessage?.message ||
+    msgObj.viewOnceMessageV2?.message ||
+    msgObj.viewOnceMessageV2Extension?.message ||
+    msgObj.documentWithCaptionMessage?.message;
+
+  if (innerMsg) {
+    const innerType = getContentType(innerMsg);
+    if (innerType) {
+      content = (innerMsg as any)[innerType];
+    }
+  }
+
+  if (content && typeof content === 'object' && 'fileLength' in content) {
+    const len = (content as any).fileLength;
+    return len ? Number(len) : null;
+  }
+  return null;
+}
+
 /** Strip domain suffix and device-session suffix from a JID so we can compare bare phone numbers. */
 export const normalizeJid = (jid?: string | null): string =>
   jid ? jid.split('@')[0].split(':')[0] : '';
