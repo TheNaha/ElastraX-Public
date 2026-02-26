@@ -56,6 +56,19 @@ describe('checkPermissions', () => {
     expect(result).toBe(false);
   });
 
+  test('should return false for owner permission if BOT_OWNER_JID is not configured', async () => {
+    const originalEnv = process.env.BOT_OWNER_JID;
+    delete process.env.BOT_OWNER_JID;
+    try {
+      // We try to check permissions for a user that IS the owner (if configured)
+      // but since config is missing, it should fail.
+      const result = await checkPermissions(mockSock, chatId, 'owner@s.whatsapp.net', true, 'owner');
+      expect(result).toBe(false);
+    } finally {
+      process.env.BOT_OWNER_JID = originalEnv;
+    }
+  });
+
   test('should return true for admin permission in private chat', async () => {
     const result = await checkPermissions(mockSock, 'privateChatId', senderId, false, 'admin');
     expect(result).toBe(true);
