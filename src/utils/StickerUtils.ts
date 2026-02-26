@@ -2,6 +2,8 @@ import { FFmpegConverter } from './FFmpegConverter';
 import nodeWebpmux from 'node-webpmux';
 
 export class StickerUtils {
+  private static readonly WEBP_FILTER = "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse";
+
   /**
    * Translates a static image to WEBP formatted properly for WhatsApp Stickers.
    */
@@ -9,7 +11,7 @@ export class StickerUtils {
     return FFmpegConverter.convert(media, [
       '-vcodec', 'libwebp',
       '-vf', 
-      "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse"
+      this.WEBP_FILTER
     ], 'img', 'webp');
   }
 
@@ -20,7 +22,7 @@ export class StickerUtils {
     return FFmpegConverter.convert(media, [
       '-vcodec', 'libwebp',
       '-vf', 
-      "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse",
+      this.WEBP_FILTER,
       '-loop', '0',
       '-ss', '00:00:00',
       '-t', '00:00:05',
