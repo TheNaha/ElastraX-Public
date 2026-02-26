@@ -198,6 +198,13 @@ export class WhatsAppProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
+  async sendMessage(chatId: string, text: string): Promise<void> {
+    if (!this.sock) {
+      throw new Error('WhatsApp socket is not initialized.');
+    }
+    await this.sock.sendMessage(chatId, { text });
+  }
+
   /**
    * Converts a raw Baileys `WAMessage` into the normalised `MessageContext` used by
    * the agent and tools.
@@ -391,7 +398,8 @@ export class WhatsAppProvider implements BotProvider {
 
     // ── Assemble the full MessageContext ────────────────────────────────────
     return {
-      platform: 'whatsapp',
+      platform: 'whatsapp',      
+      receivedAt: Date.now(),      
       messageId: msg.key.id ?? 'unknown',
       chatId: jid,
       senderId,
@@ -428,13 +436,28 @@ export class WhatsAppProvider implements BotProvider {
         await sock.sendMessage(target.remoteJid ?? jid, { delete: target });
       },
 
-      forwardMessage: async (targetJid: string) => {
-        await sock.sendMessage(targetJid, { forward: msg });
+
+      forwardMessage: async (targetJid: string, text?: string) => {
+        if (text) {
+          // Send a custom text message to the target, not the original message
+          await sock.sendMessage(targetJid, { text });
+        } else {
+          await sock.sendMessage(targetJid, { forward: msg });
+        }
       },
 
-      updateGroupParticipants: async (action: 'add' | 'remove', userIds: string[]) => {
+      updateGroupParticipants: async (action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]) => {
         if (!isGroup) throw new Error('Not inside a group.');
-        await sock.groupParticipantsUpdate(jid, userIds, action);
+        await sock.groupParticipantsUpdate(jid, userIds, action as any);
+      },
+
+      getGroupInviteLink: async (chatId: string) => {
+        const code = await sock.groupInviteCode(chatId);
+        return `https://chat.whatsapp.com/${code}`;
+      },
+
+      setGroupSettings: async (chatId: string, setting: 'announcement' | 'not_announcement') => {
+        await sock.groupSettingUpdate(chatId, setting);
       },
 
       checkPermissions: async (required: 'user' | 'admin' | 'owner') => {

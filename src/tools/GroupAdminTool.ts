@@ -1,18 +1,24 @@
 /**
  * @file src/tools/GroupAdminTool.ts
- * @description Group participant management tool (add / remove members).
+ * @description Comprehensive group management tool for WhatsApp groups.
  *
- * Allows group admins to add or remove participants from the active WhatsApp group.
- * The tool normalises the provided phone number to a WhatsApp JID and delegates the
- * actual participant update to `ctx.updateGroupParticipants()`.
+ * Handles all common group administration tasks:
+ *   add      — Add a participant by phone number.
+ *   remove   — Remove (kick) a participant.
+ *   promote  — Promote a participant to group admin.
+ *   demote   — Remove admin rights from a participant.
+ *   mute     — Restrict who can send messages (admins only / everyone).
+ *   link     — Get the group's invite link.
  *
  * Phone number normalisation:
  *  - Non-digit characters are stripped.
  *  - Numbers starting with `0` are assumed to be Indonesian and prefixed with `62`.
  *  - The result is appended with `@s.whatsapp.net` to form a valid JID.
  *
- * Permissions required: `admin` (caller must be a group admin or super-admin).
- * Slash command aliases: `/kick`, `/add`
+ * Works conversationally ("kick @John", "promote this user to admin")
+ * and via slash commands: /kick, /add, /promote, /demote, /mute, /grouplink
+ *
+ * Permissions: admin
  */
 
 import { BaseTool, ToolDefinition } from './BaseTool';
@@ -20,10 +26,17 @@ import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 
+function normaliseJid(input: string): string | null {
+  const digits = input.replace(/[^0-9]/g, '');
+  if (!digits) return null;
+  const normalized = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
+  return `${normalized}@s.whatsapp.net`;
+}
+
 export class GroupAdminTool extends BaseTool {
-  readonly name = 'groupadmin';
-  readonly description = 'Manage group participants (kick or add users to a WhatsApp group).';
-  readonly aliases = ['kick', 'add'];
+  readonly name = 'group_admin';
+  readonly description = 'Manage a WhatsApp group: add or remove participants, promote/demote admins, mute/unmute the group, or get the invite link. Only works in groups and requires the bot to be a group admin.';
+  readonly aliases = ['kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   readonly category = 'admin';
   readonly permissions = 'admin';
 
@@ -36,50 +49,105 @@ export class GroupAdminTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            action: { type: 'string', description: 'Action to perform: "add" or "remove"', enum: ['add', 'remove'] },
-            user: { type: 'string', description: 'Phone number of the user (e.g., 6281234567890)' }
+            action: {
+              type: 'string',
+              enum: ['add', 'remove', 'promote', 'demote', 'mute', 'unmute', 'link'],
+              description: 'The group action to perform.',
+            },
+            user: {
+              type: 'string',
+              description: 'Phone number or JID of the target user. Required for add/remove/promote/demote.',
+            },
           },
-          required: ['action', 'user']
-        }
-      }
+          required: ['action'],
+        },
+      },
     };
   }
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
-    if (!ctx.isGroup) {
-      return t(ctx.language, 'group.not_in_group');
-    }
+    const lang = ctx.language ?? 'en';
+    let { action, user } = args;
+    const cmd = String(args.__command || '').toLowerCase();
 
-    const { action, user } = args;
-
-    if (action !== 'add' && action !== 'remove') {
-      return t(ctx.language, 'group.invalid_action');
-    }
-
-    // Attempt to format the phone number as a WhatsApp JID natively
-    let rawNumber = user.replace(/[^0-9]/g, '');
-    if (!rawNumber) return t(ctx.language, 'group.invalid_phone');
-
-    // Default country code logic simplified: if starts with 0 replace with indonesian +62 code
-    if (rawNumber.startsWith('0')) {
-        rawNumber = '62' + rawNumber.slice(1);
-    }
-    const userJid = `${rawNumber}@s.whatsapp.net`;
-
-    try {
-      if (!ctx.updateGroupParticipants) {
-        return t(ctx.language, 'group.not_supported');
+    // Slash-command shorthand support:
+    // /kick 628...  -> action inferred from alias, first arg treated as user
+    const actionAliases: Record<string, string> = {
+      kick: 'remove',
+      add: 'add',
+      promote: 'promote',
+      demote: 'demote',
+      mute: 'mute',
+      unmute: 'unmute',
+      grouplink: 'link',
+    };
+    const inferredAction = actionAliases[cmd];
+    if (inferredAction) {
+      if (!user && typeof action === 'string' && !['add', 'remove', 'promote', 'demote', 'mute', 'unmute', 'link'].includes(action)) {
+        user = action;
       }
-
-      await ctx.react?.('⏳');
-      await ctx.updateGroupParticipants(action, [userJid]);
-
-      const key = action === 'add' ? 'group.success_add' : 'group.success_remove';
-      return t(ctx.language, key, { jid: userJid });
-
-    } catch (e: any) {
-      logger.error(e, 'Failed to administer group');
-      return t(ctx.language, 'group.error', { msg: e.message || 'Unknown error' });
+      action = inferredAction;
     }
+
+    if (!ctx.isGroup) return t(lang, 'group.not_in_group');
+
+    // ── INVITE LINK ────────────────────────────────────────────────────────────
+    if (action === 'link') {
+      if (!ctx.getGroupInviteLink) return t(lang, 'group.link_not_supported');
+      try {
+        const link = await ctx.getGroupInviteLink(ctx.chatId);
+        return t(lang, 'group.link_success', { link });
+      } catch (e: any) {
+        return t(lang, 'group.error', { msg: e.message });
+      }
+    }
+
+    // ── MUTE / UNMUTE ──────────────────────────────────────────────────────────
+    if (action === 'mute' || action === 'unmute') {
+      if (!ctx.setGroupSettings) return t(lang, 'group.not_supported');
+      try {
+        await ctx.setGroupSettings(ctx.chatId, action === 'mute' ? 'announcement' : 'not_announcement');
+        const status = action === 'mute' ? 'muted (admins only)' : 'unmuted (everyone)';
+        return t(lang, 'group.mute_success', { status });
+      } catch (e: any) {
+        return t(lang, 'group.error', { msg: e.message });
+      }
+    }
+
+    // ── PARTICIPANT ACTIONS (require user JID) ─────────────────────────────────
+    if (!user) return t(lang, 'group.invalid_phone');
+
+    const userJid = normaliseJid(String(user));
+    if (!userJid) return t(lang, 'group.invalid_phone');
+
+    if (action === 'add' || action === 'remove') {
+      if (!ctx.updateGroupParticipants) return t(lang, 'group.not_supported');
+      try {
+        await ctx.react?.('⏳');
+        await ctx.updateGroupParticipants(action, [userJid]);
+        const key = action === 'add' ? 'group.success_add' : 'group.success_remove';
+        return t(lang, key, { jid: userJid });
+      } catch (e: any) {
+        logger.error(e, '[GroupAdminTool] add/remove failed');
+        return t(lang, 'group.error', { msg: e.message });
+      }
+    }
+
+    if (action === 'promote' || action === 'demote') {
+      if (!ctx.updateGroupParticipants) return t(lang, 'group.not_supported');
+      try {
+        await ctx.react?.('⏳');
+        // Baileys uses 'promote'/'demote' directly in updateGroupParticipants
+        await ctx.updateGroupParticipants(action as any, [userJid]);
+        const key = action === 'promote' ? 'group.promote_success' : 'group.demote_success';
+        return t(lang, key, { jid: userJid });
+      } catch (e: any) {
+        logger.error(e, '[GroupAdminTool] promote/demote failed');
+        return t(lang, 'group.error', { msg: e.message });
+      }
+    }
+
+    return t(lang, 'group.invalid_action');
   }
 }
+

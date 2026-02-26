@@ -25,22 +25,52 @@ import { logger } from '../utils/logger';
  */
 export function validateEnv(env: Record<string, string | undefined> = process.env): void {
   const errors: string[] = [];
-  const requiredVars = ['AI_API_KEY', 'AI_MODEL_NAME', 'AI_API_BASE_URL'];
+  const providerList = env.AI_PROVIDERS?.trim();
 
-  for (const key of requiredVars) {
-    const val = env[key];
-    if (!val || val.trim() === '') {
-      errors.push(`${key} is missing or empty`);
+  if (!providerList) {
+    // Legacy single-provider mode
+    const requiredVars = ['AI_API_KEY', 'AI_MODEL_NAME', 'AI_API_BASE_URL'];
+    for (const key of requiredVars) {
+      const val = env[key];
+      if (!val || val.trim() === '') {
+        errors.push(`${key} is missing or empty`);
+      }
     }
-  }
 
-  // Specific validation for AI_API_BASE_URL - check only if present (to avoid double error)
-  const baseUrl = env.AI_API_BASE_URL;
-  if (baseUrl && baseUrl.trim() !== '') {
-    try {
-      new URL(baseUrl);
-    } catch {
-      errors.push(`AI_API_BASE_URL is not a valid URL: "${baseUrl}"`);
+    const baseUrl = env.AI_API_BASE_URL;
+    if (baseUrl && baseUrl.trim() !== '') {
+      try {
+        new URL(baseUrl);
+      } catch {
+        errors.push(`AI_API_BASE_URL is not a valid URL: "${baseUrl}"`);
+      }
+    }
+  } else {
+    // Multi-provider failover mode
+    const providers = providerList.split(',').map(p => p.trim().toUpperCase()).filter(Boolean);
+    if (providers.length === 0) {
+      errors.push('AI_PROVIDERS is set but empty after parsing.');
+    }
+
+    for (const provider of providers) {
+      const baseKey = `AI_${provider}_BASE_URL`;
+      const modelKey = `AI_${provider}_MODEL`;
+      const baseUrl = env[baseKey];
+      const modelName = env[modelKey];
+
+      if (!baseUrl || baseUrl.trim() === '') {
+        errors.push(`${baseKey} is missing or empty`);
+      } else {
+        try {
+          new URL(baseUrl);
+        } catch {
+          errors.push(`${baseKey} is not a valid URL: "${baseUrl}"`);
+        }
+      }
+
+      if (!modelName || modelName.trim() === '') {
+        errors.push(`${modelKey} is missing or empty`);
+      }
     }
   }
 

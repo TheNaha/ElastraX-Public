@@ -28,6 +28,17 @@ import { MakeStickerTool } from './MakeStickerTool';
 import { GroupAdminTool } from './GroupAdminTool';
 import { LanguageTool } from './LanguageTool';
 import { ConfigTool } from './ConfigTool';
+import { PingTool } from './PingTool';
+import { IDTool } from './IDTool';
+import { StatsTool } from './StatsTool';
+import { TranslateTool } from './TranslateTool';
+import { DeleteMessageTool } from './DeleteMessageTool';
+import { DownloadTool } from './DownloadTool';
+import { MediaConvertTool } from './MediaConvertTool';
+import { PDFTool } from './PDFTool';
+import { ReminderTool } from './ReminderTool';
+import { MenfessTool } from './MenfessTool';
+import { TranscribeTool } from './TranscribeTool';
 
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
@@ -35,12 +46,30 @@ const toolsList: BaseTool[] = [];
 /** The ordered list of every registered tool — used by MenuTool to build the help menu. */
 export const tools = toolsList;
 
+// ── Utility / Core ────────────────────────────────────────────────────────────
 toolsList.push(new WebSearchTool());
 toolsList.push(new MenuTool(() => toolsList));
+toolsList.push(new PingTool());
+toolsList.push(new IDTool());
+toolsList.push(new StatsTool());
+toolsList.push(new TranslateTool());
+toolsList.push(new ReminderTool());
+toolsList.push(new DeleteMessageTool());
+toolsList.push(new TranscribeTool());
+
+// ── Media ─────────────────────────────────────────────────────────────────────
 toolsList.push(new MakeStickerTool());
+toolsList.push(new DownloadTool());
+toolsList.push(new MediaConvertTool());
+toolsList.push(new PDFTool());
+
+// ── Admin / Group ─────────────────────────────────────────────────────────────
 toolsList.push(new GroupAdminTool());
 toolsList.push(new LanguageTool());
 toolsList.push(new ConfigTool());
+
+// ── Fun / Social ──────────────────────────────────────────────────────────────
+toolsList.push(new MenfessTool());
 
 // Build fast lookup maps for O(1) dispatch —
 // toolsMap   : exact function name (as exposed to the LLM)

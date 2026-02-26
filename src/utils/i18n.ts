@@ -76,6 +76,94 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.no_permission': '⛔ You do not have permission to use this command.',
     'agent.unknown_command': 'Unknown command: /{cmd}',
     'agent.internal_error': 'An internal error occurred while processing your message.',
+    'agent.rate_limited': '⏳ Slow down! You can send a message every {seconds} seconds. Please wait.',
+
+    // Ping
+    'ping.response': '🏓 Pong!\n⏱ Latency: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
+
+    // ID
+    'id.response': '🪪 *Your Info*\n👤 Name: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Is Group: *{isGroup}*',
+
+    // Stats
+    'stats.response': '📊 *Room Stats*\n💬 Total Messages: *{total}*\n🤖 Bot Replies: *{botReplies}*\n👤 Human Messages: *{humanMessages}*\n📅 Active Since: *{since}*\n🏆 Top User: *{topUser}* ({topCount} messages)',
+    'stats.no_data': '📊 No messages recorded for this room yet.',
+
+    // Delete
+    'delete.no_quoted': '❌ Please reply to one of my messages to delete it.',
+    'delete.not_bot_message': '❌ I can only delete my own messages.',
+    'delete.not_supported': '❌ Deleting messages is not supported on this platform.',
+    'delete.success': '✅ Message deleted.',
+    'delete.error': '❌ Failed to delete message: {msg}',
+
+    // Translate
+    'translate.no_text': '❌ Please provide text to translate or reply to a message.',
+    'translate.success': '🌐 *Translation ({from} → {to}):*\n\n{result}',
+    'translate.error': '❌ Translation failed: {msg}',
+
+    // Download
+    'download.no_url': '❌ Please provide a URL to download. Supported: YouTube, Instagram, TikTok, Twitter/X, and more.',
+    'download.starting': '⬇️ Starting download...',
+    'download.processing': '⚙️ Processing media...',
+    'download.too_large': '❌ File too large to send ({size}MB). Maximum is {max}MB.',
+    'download.success': '✅ Download complete!',
+    'download.error': '❌ Download failed: {msg}',
+    'download.not_supported': '❌ Sending media is not supported on this platform adapter.',
+    'download.ytdlp_missing': '❌ yt-dlp is not installed. Ask the bot owner to install it.',
+
+    // Media Convert
+    'convert.no_media': '❌ Please attach or reply to a media file to convert.',
+    'convert.unsupported': '❌ Unsupported conversion: {from} → {to}',
+    'convert.starting': '⚙️ Converting media...',
+    'convert.success': '✅ Conversion complete!',
+    'convert.error': '❌ Conversion failed: {msg}',
+    'convert.not_supported': '❌ Media sending is not supported on this platform.',
+
+    // PDF
+    'pdf.no_file': '❌ Please attach a PDF file or reply to one.',
+    'pdf.not_pdf': '❌ The attachment must be a PDF file.',
+    'pdf.download_failed': '❌ Failed to download the PDF.',
+    'pdf.not_supported': '❌ PDF tools are not supported on this platform.',
+    'pdf.success': '✅ PDF operation complete!',
+    'pdf.error': '❌ PDF processing failed: {msg}',
+    'pdf.info': '📄 *PDF Info*\nPages: *{pages}*\nSize: *{size}KB*',
+
+    // Group Management (expanded)
+    'group.promote_success': '✅ {jid} has been promoted to admin.',
+    'group.demote_success': '✅ {jid} has been demoted from admin.',
+    'group.mute_success': '✅ Group has been {status}.',
+    'group.link_success': '🔗 Group invite link:\n{link}',
+    'group.link_not_supported': '❌ Getting the group invite link is not supported.',
+    'group.invalid_admin_action': "❌ Invalid action. Must be 'promote' or 'demote'.",
+
+    // Reminders
+    'reminder.set': '⏰ Reminder set! I will remind you on *{time}* with:\n_{message}_',
+    'reminder.invalid_time': '❌ Could not understand the time. Try "in 30 minutes", "tomorrow at 3pm", or a specific time.',
+    'reminder.no_message': '❌ Please provide what I should remind you about.',
+    'reminder.fired': '⏰ *Reminder for {name}:*\n\n{message}',
+    'reminder.list_empty': '📭 You have no active reminders.',
+    'reminder.list': '⏰ *Your reminders:*\n{items}',
+    'reminder.list_item': '{n}. _{message}_ — *{time}*',
+    'reminder.cancel': '✅ Reminder #{n} cancelled.',
+    'reminder.cancel_invalid': '❌ Invalid reminder number.',
+    'reminder.error': '❌ Failed to set reminder: {msg}',
+
+    // Voice Transcription
+    'transcribe.starting': '🎤 Transcribing voice note...',
+    'transcribe.not_supported': '❌ Voice transcription endpoint is not configured.',
+    'transcribe.error': '❌ Transcription failed: {msg}',
+    'transcribe.result': '🎤 *Voice note transcript:*\n\n{text}',
+
+    // Webhook Server
+    'webhook.missing_secret': '❌ Webhook secret is missing or invalid.',
+
+    // Menfess
+    'menfess.no_target': '❌ Please specify the target group/chat ID.',
+    'menfess.no_message': '❌ Please provide a message to send anonymously.',
+    'menfess.preview': '📬 *Anonymous message preview:*\n\n_{message}_\n\nReply *yes* to send or *no* to cancel.',
+    'menfess.sent': '✅ Anonymous message sent!',
+    'menfess.cancelled': '❌ Menfess cancelled.',
+    'menfess.not_supported': '❌ Forwarding to another chat is not supported on this platform.',
+    'menfess.error': '❌ Failed to send menfess: {msg}',
   },
   id: {
     // Menu
@@ -125,6 +213,94 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.no_permission': '⛔ Anda tidak memiliki izin untuk menggunakan perintah ini.',
     'agent.unknown_command': 'Perintah tidak dikenal: /{cmd}',
     'agent.internal_error': 'Terjadi kesalahan internal saat memproses pesan Anda.',
+    'agent.rate_limited': '⏳ Pelan-pelan ya! Kamu bisa kirim pesan setiap {seconds} detik. Tunggu dulu.',
+
+    // Ping
+    'ping.response': '🏓 Pong!\n⏱ Latensi: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
+
+    // ID
+    'id.response': '🪪 *Info Kamu*\n👤 Nama: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Grup: *{isGroup}*',
+
+    // Stats
+    'stats.response': '📊 *Statistik Ruangan*\n💬 Total Pesan: *{total}*\n🤖 Balasan Bot: *{botReplies}*\n👤 Pesan Manusia: *{humanMessages}*\n📅 Aktif Sejak: *{since}*\n🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
+    'stats.no_data': '📊 Belum ada pesan yang tercatat untuk ruangan ini.',
+
+    // Delete
+    'delete.no_quoted': '❌ Balas salah satu pesan saya untuk menghapusnya.',
+    'delete.not_bot_message': '❌ Saya hanya bisa menghapus pesan saya sendiri.',
+    'delete.not_supported': '❌ Menghapus pesan tidak didukung di platform ini.',
+    'delete.success': '✅ Pesan berhasil dihapus.',
+    'delete.error': '❌ Gagal menghapus pesan: {msg}',
+
+    // Translate
+    'translate.no_text': '❌ Berikan teks untuk diterjemahkan atau balas pesan.',
+    'translate.success': '🌐 *Terjemahan ({from} → {to}):*\n\n{result}',
+    'translate.error': '❌ Terjemahan gagal: {msg}',
+
+    // Download
+    'download.no_url': '❌ Harap berikan URL untuk diunduh. Didukung: YouTube, Instagram, TikTok, Twitter/X, dan lainnya.',
+    'download.starting': '⬇️ Memulai unduhan...',
+    'download.processing': '⚙️ Memproses media...',
+    'download.too_large': '❌ File terlalu besar untuk dikirim ({size}MB). Maksimal {max}MB.',
+    'download.success': '✅ Unduhan selesai!',
+    'download.error': '❌ Unduhan gagal: {msg}',
+    'download.not_supported': '❌ Pengiriman media tidak didukung oleh adaptor platform ini.',
+    'download.ytdlp_missing': '❌ yt-dlp tidak terpasang. Minta pemilik bot untuk memasangnya.',
+
+    // Media Convert
+    'convert.no_media': '❌ Lampirkan atau balas file media untuk dikonversi.',
+    'convert.unsupported': '❌ Konversi tidak didukung: {from} → {to}',
+    'convert.starting': '⚙️ Mengonversi media...',
+    'convert.success': '✅ Konversi selesai!',
+    'convert.error': '❌ Konversi gagal: {msg}',
+    'convert.not_supported': '❌ Pengiriman media tidak didukung di platform ini.',
+
+    // PDF
+    'pdf.no_file': '❌ Lampirkan atau balas file PDF.',
+    'pdf.not_pdf': '❌ Lampiran harus berupa file PDF.',
+    'pdf.download_failed': '❌ Gagal mengunduh PDF.',
+    'pdf.not_supported': '❌ Alat PDF tidak didukung di platform ini.',
+    'pdf.success': '✅ Operasi PDF selesai!',
+    'pdf.error': '❌ Pemrosesan PDF gagal: {msg}',
+    'pdf.info': '📄 *Info PDF*\nHalaman: *{pages}*\nUkuran: *{size}KB*',
+
+    // Group Management (expanded)
+    'group.promote_success': '✅ {jid} telah dipromosikan menjadi admin.',
+    'group.demote_success': '✅ {jid} telah diturunkan dari admin.',
+    'group.mute_success': '✅ Grup telah {status}.',
+    'group.link_success': '🔗 Link undangan grup:\n{link}',
+    'group.link_not_supported': '❌ Mendapatkan link grup tidak didukung.',
+    'group.invalid_admin_action': "❌ Tindakan tidak valid. Harus 'promote' atau 'demote'.",
+
+    // Reminders
+    'reminder.set': '⏰ Pengingat diatur! Saya akan mengingatkanmu pada *{time}*:\n_{message}_',
+    'reminder.invalid_time': '❌ Tidak bisa memahami waktunya. Coba "dalam 30 menit", "besok jam 3 sore", atau waktu spesifik.',
+    'reminder.no_message': '❌ Tolong berikan isi pengingatnya.',
+    'reminder.fired': '⏰ *Pengingat untuk {name}:*\n\n{message}',
+    'reminder.list_empty': '📭 Kamu tidak punya pengingat aktif.',
+    'reminder.list': '⏰ *Pengingatmu:*\n{items}',
+    'reminder.list_item': '{n}. _{message}_ — *{time}*',
+    'reminder.cancel': '✅ Pengingat #{n} dibatalkan.',
+    'reminder.cancel_invalid': '❌ Nomor pengingat tidak valid.',
+    'reminder.error': '❌ Gagal mengatur pengingat: {msg}',
+
+    // Voice Transcription
+    'transcribe.starting': '🎤 Mentranskrip pesan suara...',
+    'transcribe.not_supported': '❌ Endpoint transkripsi suara belum dikonfigurasi.',
+    'transcribe.error': '❌ Transkripsi gagal: {msg}',
+    'transcribe.result': '🎤 *Transkripsi pesan suara:*\n\n{text}',
+
+    // Webhook Server
+    'webhook.missing_secret': '❌ Webhook secret tidak ada atau tidak valid.',
+
+    // Menfess
+    'menfess.no_target': '❌ Harap tentukan ID grup/chat tujuan.',
+    'menfess.no_message': '❌ Harap berikan pesan yang akan dikirim secara anonim.',
+    'menfess.preview': '📬 *Pratinjau pesan anonim:*\n\n_{message}_\n\nBalas *ya* untuk mengirim atau *tidak* untuk membatalkan.',
+    'menfess.sent': '✅ Pesan anonim terkirim!',
+    'menfess.cancelled': '❌ Menfess dibatalkan.',
+    'menfess.not_supported': '❌ Penerusan pesan ke chat lain tidak didukung di platform ini.',
+    'menfess.error': '❌ Gagal mengirim menfess: {msg}',
   },
 };
 

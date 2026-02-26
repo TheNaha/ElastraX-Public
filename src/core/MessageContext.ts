@@ -16,6 +16,13 @@ export interface MessageContext {
   mentionedIds?: string[];
 
   /**
+   * Unix timestamp (ms) of when the message was received by the bot.
+   * Used by PingTool to calculate round-trip latency.
+   * Populated by providers before emitting the message event.
+   */
+  receivedAt: number;
+
+  /**
    * The active language for this chat room ('en' | 'id'). Populated by the agent
    * before invoking tools so that responses can be localized.  Defaults to 'en'.
    */
@@ -109,13 +116,27 @@ export interface MessageContext {
 
   /**
    * Forward the current message to another chat JID / channel ID.
+   * If `text` is provided, send that text to the target instead of forwarding the current message.
    */
-  forwardMessage?(targetJid: string): Promise<void>;
+  forwardMessage?(targetJid: string, text?: string): Promise<void>;
 
   /**
    * Action methods for Group Administration
    */
-  updateGroupParticipants?(action: 'add' | 'remove', userIds: string[]): Promise<void>;
+  updateGroupParticipants?(action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]): Promise<void>;
+
+  /**
+   * Get the invite link for the current group.
+   * Only available in group chats where the bot is an admin.
+   */
+  getGroupInviteLink?(chatId: string): Promise<string>;
+
+  /**
+   * Change group settings (e.g., who can send messages).
+   * @param chatId  The group chat ID.
+   * @param setting 'announcement' (admins only) | 'not_announcement' (everyone)
+   */
+  setGroupSettings?(chatId: string, setting: 'announcement' | 'not_announcement'): Promise<void>;
 
   /**
    * Check if the sender has the required permissions

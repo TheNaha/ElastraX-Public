@@ -35,4 +35,10 @@ export interface BotProvider {
    * Register a callback for incoming messages
    */
   onMessage(handler: (ctx: MessageContext) => Promise<void>): void;
+
+  /**
+   * Send a plain text message to a specific chat/channel ID.
+   * Used by scheduler jobs and webhook inbound delivery.
+   */
+  sendMessage(chatId: string, text: string): Promise<void>;
 }

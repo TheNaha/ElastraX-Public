@@ -43,6 +43,13 @@
       "when": 1772099757929,
       "tag": "0005_colossal_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1772148000000,
+      "tag": "0006_breezy_reminders",
+      "breakpoints": true
     }
   ]
 }

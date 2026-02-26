@@ -66,3 +66,27 @@ export const waAuthState = sqliteTable('wa_auth_state', {
   // JSON serialized data directly stringified with Baileys' custom replacer
   data: text('data').notNull(),
 });
+
+// V7.8: Persistent Reminder/Scheduler entries
+export const reminders = sqliteTable('reminders', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  chatRoomId: text('chat_room_id')
+    .notNull()
+    .references(() => chatRooms.id),
+  // The user who set the reminder (JID or Discord userId)
+  senderId: text('sender_id').notNull(),
+  senderName: text('sender_name').notNull(),
+  // Human-readable reminder message
+  message: text('message').notNull(),
+  // Unix timestamp (ms) when the reminder fires
+  remindAt: integer('remind_at', { mode: 'timestamp' }).notNull(),
+  // Whether the reminder has already been delivered
+  isSent: integer('is_sent', { mode: 'boolean' }).default(false).notNull(),
+  // Which platform this reminder belongs to
+  platform: text('platform').notNull().default('whatsapp'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  remindAtIdx: index('reminders_remind_at_idx').on(table.remindAt, table.isSent),
+}));
+
+export type Reminder = typeof reminders.$inferSelect;

@@ -27,6 +27,9 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { validateEnv } from './config/env';
+import { Scheduler } from './utils/Scheduler';
+import { WebhookServer } from './webhookServer';
+import { RateLimiter } from './utils/RateLimiter';
 
 // Directory where one JSON fixture file per WAMessage type will be written.
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
@@ -136,6 +139,31 @@ async function main() {
   await waProvider.start();
   await discordProvider.start();
 
+  // ── Webhook Inbound Server ──────────────────────────────────────────────────
+  const webhookServer = new WebhookServer();
+  // Register provider senders so the webhook can route messages to chats
+  webhookServer.registerSender('whatsapp', async (chatId, text) => {
+    // Access WhatsApp sock via the provider's public send method (implemented below)
+    await waProvider.sendMessage(chatId, text);
+  });
+  webhookServer.registerSender('discord', async (chatId, text) => {
+    await discordProvider.sendMessage(chatId, text);
+  });
+  webhookServer.start();
+
+  // ── Scheduler (reminders) ───────────────────────────────────────────────────
+  Scheduler.registerSender('whatsapp', async (chatId, text) => {
+    await waProvider.sendMessage(chatId, text);
+  });
+  Scheduler.registerSender('discord', async (chatId, text) => {
+    await discordProvider.sendMessage(chatId, text);
+  });
+  Scheduler.start();
+
+  // ── Rate Limiter pruning ────────────────────────────────────────────────────
+  // Clean up stale rate-limit buckets every 10 minutes
+  setInterval(() => RateLimiter.prune(), 10 * 60 * 1000);
+
   logger.info('Bot is running. Press Ctrl+C to stop.');
 
   // Background startup scan — runs after providers are up, never blocks
@@ -154,6 +182,9 @@ async function main() {
     await dumpFixtures(null).catch(err => {
       logger.error(err, '[FixtureDumper] Failed during SIGINT — fixtures may be incomplete');
     });
+
+    Scheduler.stop();
+    webhookServer.stop();
 
     await waProvider.stop();
     await discordProvider.stop();

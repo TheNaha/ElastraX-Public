@@ -6,10 +6,17 @@ A multi-platform, general-purpose hybrid bot with conversational AI, built on Bu
 
 - **Agentic Framework**: The bot acts as an AI conversational agent first. It can dynamically use tools (like Web Search) to answer your questions.
 - **Explicit Commands**: Supports direct commands like `/search` that route directly to the underlying tools without LLM mediation.
-- **Multi-Platform Ready**: Designed with a unified `MessageContext` wrapper. Currently supports WhatsApp via Baileys v7.
+- **Multi-Platform Ready**: Designed with a unified `MessageContext` wrapper. Supports WhatsApp (Baileys v7) and Discord.
 - **OpenAI Compatible**: Connects to any OpenAI-compatible endpoint. Includes scripts to deploy a private Llama 3 instance on Modal GPUs. Google AI Studio (Gemini) is also natively supported out of the box!
 - **State Persistence**: Uses SQLite and Drizzle ORM to maintain chat room conversations for the LLM context.
-- **Hot-Reloading Docker**: The `docker-compose.yml` mounts the source code and uses `bun run --watch` allowing for instant development loops.
+- **Hybrid UX**: Every capability is available via slash-command and conversational tool-calling.
+- **Expanded Tools**: Download (yt-dlp), media converter (FFmpeg), PDF utilities, delete bot messages, translation, reminders, room stats, IDs, ping, and group admin actions.
+- **Scheduler/Reminder System**: Persistent reminders stored in DB and delivered by a background scheduler.
+- **Voice Note Transcription**: Audio can be transcribed through a configurable endpoint.
+- **LLM Failover Router**: Priority-based provider failover (Modal → Gemini → Ollama, etc.).
+- **Webhook Inbound Server**: Canonical `/webhook` API plus auto-adapters for GitHub and Grafana payloads.
+- **Conversation Summarizer**: Automatically compresses overflowing history into memory summaries.
+- **Container Healthcheck**: `/health` endpoint and Docker healthcheck are configured.
 
 ## Architecture
 
@@ -43,6 +50,69 @@ The project is structured into clear domains:
    ```
 5. **Scan QR Code**:
    Check the terminal logs for the WhatsApp QR code on first startup.
+
+## Environment Configuration
+
+### 1) LLM Provider Mode
+
+Use either **legacy single-provider** or **multi-provider failover**.
+
+Legacy:
+```env
+AI_API_BASE_URL=https://...
+AI_API_KEY=...
+AI_MODEL_NAME=...
+```
+
+Failover:
+```env
+AI_PROVIDERS=modal,gemini,ollama
+
+AI_MODAL_BASE_URL=https://...
+AI_MODAL_API_KEY=...
+AI_MODAL_MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+
+AI_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
+AI_GEMINI_API_KEY=...
+AI_GEMINI_MODEL=gemini-2.5-flash
+
+AI_OLLAMA_BASE_URL=http://localhost:11434/v1
+AI_OLLAMA_API_KEY=ollama
+AI_OLLAMA_MODEL=llama3
+```
+
+### 2) Webhook Inbound API
+
+```env
+WEBHOOK_ENABLED=true
+WEBHOOK_PORT=3500
+WEBHOOK_SECRET=your_shared_secret
+```
+
+Canonical request format:
+```http
+POST /webhook
+Content-Type: application/json
+
+{
+   "room_id": "120363xxxxxx@g.us",
+   "text": "Hello from webhook",
+   "secret": "your_shared_secret"
+}
+```
+
+Health endpoint:
+```http
+GET /health
+```
+
+### 3) Voice Transcription
+
+```env
+TRANSCRIBE_ENDPOINT=https://your-transcribe-endpoint
+TRANSCRIBE_API_KEY=optional
+TRANSCRIBE_TIMEOUT_MS=45000
+```
 
 ## Testing
 

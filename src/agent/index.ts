@@ -24,7 +24,7 @@ import { db } from '../db';
 import { chatRooms, messages, ChatRoom } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
-import { AIClient, AIChatMessage } from '../ai/client';
+import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
 import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tools';
 import { ParameterValidator } from '../utils/ParameterValidator';
@@ -33,9 +33,50 @@ import { t } from '../utils/i18n';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
+import { ModelRouter } from '../utils/ModelRouter';
+import { RateLimiter } from '../utils/RateLimiter';
+import { summarizeHistory } from '../utils/ConversationSummarizer';
 
-// Module-level AI client instance — created once and reused for all messages.
-const aiClient = new AIClient();
+const modelRouter = new ModelRouter();
+
+async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
+  const endpoint = process.env.TRANSCRIBE_ENDPOINT;
+  if (!endpoint) return null;
+
+  const isAudio = ctx.mimeType?.startsWith('audio/');
+  if (!isAudio) return null;
+
+  try {
+    await ctx.mediaReady;
+    if (!ctx.mediaPath || !existsSync(ctx.mediaPath)) return null;
+
+    const buffer = await readFile(ctx.mediaPath);
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': process.env.TRANSCRIBE_API_KEY ? `Bearer ${process.env.TRANSCRIBE_API_KEY}` : '',
+      },
+      body: JSON.stringify({
+        audio_base64: buffer.toString('base64'),
+        mime_type: ctx.mimeType || 'audio/ogg',
+        language: ctx.language || 'en',
+      }),
+      signal: AbortSignal.timeout(parseInt(process.env.TRANSCRIBE_TIMEOUT_MS || '45000', 10)),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Transcription HTTP ${response.status}`);
+    }
+
+    const data: any = await response.json();
+    const text = (data.text || data.transcript || '').trim();
+    return text || null;
+  } catch (err: any) {
+    logger.warn({ err }, '[Transcription] Failed to transcribe voice note');
+    return null;
+  }
+}
 
 
 /**
@@ -70,6 +111,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     };
   }
   ctx.language = room.language;
+
+  // Rate limit non-admin/non-owner users to protect inference and avoid spam floods.
+  const isOwner = await ctx.checkPermissions('owner');
+  const isAdmin = isOwner || await ctx.checkPermissions('admin');
+  if (!isAdmin) {
+    const rl = RateLimiter.check(ctx.senderId, platform);
+    if (!rl.allowed) {
+      await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
+      return;
+    }
+  }
 
   // Resolve dynamic configurations for this room
   const config = ConfigService.getResolvedConfig(room);
@@ -122,11 +174,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       await ctx.react?.('🔍');
       try {
         const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
+        parsedArgs.__command = command;
         const result = await tool.execute(parsedArgs, ctx);
         await ctx.reply(result);
         await ctx.react?.('✅');
       } catch (err: any) {
-        await ctx.reply(err.message);
+        logger.error({ err, command }, '[Command Router] Tool execution failed');
+        await ctx.reply(err?.message || t(ctx.language, 'agent.internal_error'));
         await ctx.react?.('❌');
       }
       return;
@@ -165,6 +219,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const langFull = room.language === 'id' ? 'Indonesian (Bahasa Indonesia)' : 'English';
 
     // 1. Save User Message (idempotent - Baileys can emit the same message event twice on reconnect/history sync)
+    const transcript = await transcribeVoiceIfAny(ctx);
+    if (transcript) {
+      userContent = `${userContent}\n\n[Voice Transcript]\n${transcript}`;
+    }
+
     const insertResult = await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: ctx.senderId,
@@ -307,6 +366,27 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       });
     }
 
+    // Summarize overflow history to preserve long-term context while staying token efficient.
+    const nonSystemHistory = messagesForAI.slice(1);
+    const summaryResult = await summarizeHistory(
+      nonSystemHistory,
+      config.contextLimit,
+      async (summaryMessages) => {
+        const msg = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2);
+        return String(msg?.content || '');
+      }
+    );
+
+    if (summaryResult && summaryResult.summary) {
+      messagesForAI.splice(1, messagesForAI.length - 1,
+        {
+          role: 'system',
+          content: `Conversation memory summary:\n${summaryResult.summary}`,
+        },
+        ...summaryResult.activeHistory,
+      );
+    }
+
     // 4. Generate AI Response (Recursive for tools)
     await ctx.react?.('⏳');
     
@@ -316,7 +396,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     while (!isDone) {
       try {
-        const aiMsgObj = await aiClient.chatCompletion(messagesForAI, availableTools, config.temperature);
+        const aiMsgObj = await modelRouter.chatCompletion(messagesForAI, availableTools, config.temperature);
 
         // Append the AI's step back to the context
         messagesForAI.push(aiMsgObj);
@@ -357,7 +437,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         } else {
           // Standard text response (terminal state)
           isDone = true;
-          finalAiResponseText = aiMsgObj.content || '';
+          finalAiResponseText = String(aiMsgObj.content || '').trim();
+          if (!finalAiResponseText) {
+            finalAiResponseText = t(ctx.language, 'agent.internal_error');
+          }
         }
 
       } catch (e) {

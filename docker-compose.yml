@@ -14,7 +14,15 @@ services:
       # We no longer mount the live source code or node_modules because it is baked into the image.
       - ./data:/usr/src/app/data
     restart: unless-stopped
+    ports:
+      - "3500:3500"
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:' + (process.env.WEBHOOK_PORT || 3500) + '/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     # We no longer need the command override since the Dockerfile CMD will run the compiled app
 

@@ -99,6 +99,17 @@ export class DiscordProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
+  async sendMessage(chatId: string, text: string): Promise<void> {
+    if (!this.client) {
+      throw new Error('Discord client is not initialized.');
+    }
+    const channel = await this.client.channels.fetch(chatId);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error(`Discord channel ${chatId} is not text-based or not accessible.`);
+    }
+    await (channel as any).send(text);
+  }
+
   /**
    * Converts a Discord.js `Message` into the normalised `MessageContext`.
    *
@@ -206,6 +217,7 @@ export class DiscordProvider implements BotProvider {
 
     return {
       platform: 'discord',
+      receivedAt: Date.now(),
       messageId: msg.id,
       chatId: msg.channelId,
       senderId: msg.author.id,
@@ -231,8 +243,18 @@ export class DiscordProvider implements BotProvider {
         try { await msg.delete(); } catch { /* already deleted or no permission */ }
       },
 
-      forwardMessage: async (_targetJid: string) => {
-        // Discord channels use different routing, no-op for now
+      forwardMessage: async (_targetJid: string, text?: string) => {
+        // For Discord, we route to a channel by ID if the text is provided
+        if (text && this.client) {
+          try {
+            const targetChannel = await this.client.channels.fetch(_targetJid);
+            if (targetChannel && targetChannel.isTextBased()) {
+              await (targetChannel as any).send(text);
+            }
+          } catch (e) {
+            logger.warn({ _targetJid, e }, '[Discord] forwardMessage to channel failed');
+          }
+        }
       },
 
       reply: async (replyText: string) => {
@@ -249,10 +271,13 @@ export class DiscordProvider implements BotProvider {
         const attachment = new AttachmentBuilder(buffer, { name: 'sticker.webp' });
         await msg.reply({ files: [attachment] });
       },
-      updateGroupParticipants: async (action: 'add' | 'remove', userIds: string[]) => {
+      updateGroupParticipants: async (action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]) => {
         if (!isGroup || !msg.guild) throw new Error("Not inside a guild.");
         if (action === 'add') {
           throw new Error("Discord bots cannot add users to a guild arbitrarily without OAuth2 flow.");
+        }
+        if (action === 'promote' || action === 'demote') {
+          throw new Error('Promote/demote is not supported on Discord via this adapter.');
         }
         for (const userId of userIds) {
           try {
