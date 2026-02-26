@@ -54,16 +54,25 @@ describe("AIClient", () => {
     try {
       await client.chatCompletion([], []);
     } catch (e: any) {
-      expect(e.message).toBe("AI_API_BASE_URL is not configured properly.");
+      expect(e.message).toBe("AI_API_BASE_URL is not configured properly or is invalid.");
     }
   });
 
-  test("chatCompletion should throw if baseUrl contains placeholder", async () => {
+  test("chatCompletion should throw if baseUrl is invalid (contains placeholder)", async () => {
     const client = new AIClient({ baseUrl: "https://<your-username>--app.modal.run/v1" });
     try {
       await client.chatCompletion([], []);
     } catch (e: any) {
-      expect(e.message).toBe("AI_API_BASE_URL is not configured properly.");
+      expect(e.message).toBe("AI_API_BASE_URL is not configured properly or is invalid.");
+    }
+  });
+
+  test("chatCompletion should throw if baseUrl is malformed", async () => {
+    const client = new AIClient({ baseUrl: "invalid-url-without-protocol" });
+    try {
+      await client.chatCompletion([], []);
+    } catch (e: any) {
+      expect(e.message).toBe("AI_API_BASE_URL is not configured properly or is invalid.");
     }
   });
 
