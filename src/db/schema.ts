@@ -35,6 +35,7 @@ export const messages = sqliteTable('messages', {
   mimeType: text('mime_type'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
+  chatRoomIdIdx: index('messages_chat_room_id_idx').on(table.chatRoomId),
   chatRoomIdCreatedAtIdx: index('messages_chat_room_id_created_at_idx').on(table.chatRoomId, table.created_at),
 }));
 
