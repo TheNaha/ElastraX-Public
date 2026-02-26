@@ -85,6 +85,12 @@ def _build_vllm_cmd():
         "--max-num-seqs", "8",
         "--trust-remote-code",
         "--enable-sleep-mode",  # Required for GPU snapshotting
+        # Tool/function calling support (Qwen uses Hermes format)
+        "--enable-auto-tool-choice",
+        "--tool-call-parser", "hermes",
+        # Reasoning/chain-of-thought support
+        "--enable-reasoning",
+        "--reasoning-parser", "deepseek_r1",
     ]
     if FAST_BOOT:
         cmd += ["--enforce-eager"]
