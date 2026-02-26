@@ -7,6 +7,8 @@ import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import { fileTypeFromBuffer } from 'file-type';
 
+const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
+
 export class DiscordProvider implements BotProvider {
   name = 'discord' as const;
   private client: Client | null = null;
@@ -92,6 +94,12 @@ export class DiscordProvider implements BotProvider {
     const downloadMediaFn = async (messageToUse: DiscordMessage): Promise<Buffer | null> => {
       const attachment = messageToUse.attachments.first();
       if (!attachment) return null;
+
+      if (attachment.size > MAX_MEDIA_SIZE) {
+        logger.warn({ size: attachment.size, max: MAX_MEDIA_SIZE }, '[Discord] Skipped large media download');
+        return null;
+      }
+
       try {
         const res = await fetch(attachment.url);
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
