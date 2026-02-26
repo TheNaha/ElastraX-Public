@@ -18,11 +18,20 @@ toolsList.push(new GroupAdminTool());
 toolsList.push(new LanguageTool());
 toolsList.push(new ConfigTool());
 
+const toolsMap = new Map<string, BaseTool>();
+const aliasMap = new Map<string, BaseTool>();
 
+for (const tool of toolsList) {
+  toolsMap.set(tool.name, tool);
+  aliasMap.set(tool.name, tool);
+  for (const alias of tool.aliases) {
+    aliasMap.set(alias, tool);
+  }
+}
 
 // Helper to easily grab an instance by name
 export function getToolByName(name: string): BaseTool | undefined {
-  return tools.find(t => t.name === name);
+  return toolsMap.get(name);
 }
 
 export function getToolDefinitions() {
@@ -31,5 +40,5 @@ export function getToolDefinitions() {
 
 // Find a tool by either its name or one of its aliases
 export function getToolByAliasOrName(command: string): BaseTool | undefined {
-  return tools.find(t => t.name === command || t.aliases.includes(command));
+  return aliasMap.get(command);
 }
