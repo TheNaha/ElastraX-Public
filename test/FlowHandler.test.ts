@@ -1,6 +1,7 @@
 import { expect, test, describe, beforeEach, afterEach, mock, type Mock } from 'bun:test';
 import { FlowHandler } from '../src/core/FlowHandler';
 import { MessageContext } from '../src/core/MessageContext';
+import { CANCEL_COMMANDS } from '../src/core/constants';
 import { SessionManager } from '../src/utils/SessionManager';
 import { logger } from '../src/utils/logger';
 import { t } from '../src/utils/i18n';
@@ -117,7 +118,7 @@ describe('FlowHandler', () => {
       expect(processor).toHaveBeenCalledWith(ctx, flowData, 'myFlow');
     });
 
-    test('should cancel flow on /cancel command and return true', async () => {
+    test(`should cancel flow on ${CANCEL_COMMANDS[0]} command and return true`, async () => {
       const processor = mock(async () => {});
       FlowHandler.register('myFlow', processor);
 
@@ -126,7 +127,7 @@ describe('FlowHandler', () => {
         flows: { 'myFlow': { flow: 'myFlow', step: '1', data: {} } },
       });
 
-      const ctx = createMockCtx({ text: '/cancel' });
+      const ctx = createMockCtx({ text: CANCEL_COMMANDS[0] });
       const result = await FlowHandler.handle(ctx);
 
       expect(result).toBe(true);
@@ -138,14 +139,14 @@ describe('FlowHandler', () => {
       expect(mockClearSession).toHaveBeenCalledWith('user-456', 'myFlow', 'whatsapp');
     });
 
-    test('should cancel flow on /batal command and return true', async () => {
+    test(`should cancel flow on ${CANCEL_COMMANDS[1]} command and return true`, async () => {
       FlowHandler.register('myFlow', mock(async () => {}));
       mockGetSession.mockReturnValue({
         activeFlow: 'myFlow',
         flows: { 'myFlow': { flow: 'myFlow', step: '1', data: {} } },
       });
 
-      const ctx = createMockCtx({ text: '/batal' });
+      const ctx = createMockCtx({ text: CANCEL_COMMANDS[1] });
       const result = await FlowHandler.handle(ctx);
 
       expect(result).toBe(true);
