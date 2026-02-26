@@ -91,17 +91,28 @@ function hasMediaContent(msgObj: proto.IMessage | null | undefined): boolean {
   const type = getContentType(msgObj) ?? '';
   if (MEDIA_TYPES.has(type)) return true;
   
-  // Unwrap nested containers to check for media
-  const innerMsg = 
-    msgObj.viewOnceMessage?.message ||
-    msgObj.viewOnceMessageV2?.message ||
-    msgObj.viewOnceMessageV2Extension?.message ||
-    msgObj.documentWithCaptionMessage?.message;
+  // Unwrap nested containers recursively to check for media
+  const WRAPPER_TYPES = new Set([
+    'viewOnceMessage',
+    'viewOnceMessageV2',
+    'viewOnceMessageV2Extension',
+    'documentWithCaptionMessage',
+    'ephemeralMessage'
+  ]);
+  
+  let currentObj = msgObj;
+  let currentType = type;
+
+  while (WRAPPER_TYPES.has(currentType)) {
+    const content = (currentObj as any)[currentType];
+    const innerMsg = content?.message;
+    if (!innerMsg) break;
     
-  if (innerMsg) {
-    const innerType = getContentType(innerMsg);
-    if (innerType && MEDIA_TYPES.has(innerType)) return true;
+    currentType = getContentType(innerMsg) ?? '';
+    if (MEDIA_TYPES.has(currentType)) return true;
+    currentObj = innerMsg;
   }
+  
   return false;
 }
 
@@ -132,24 +143,31 @@ export async function parseWhatsAppMessage(
   const rawMsg = msg.message;
 
   // ── 1. Detect canonical message type, unwrap nested containers ──────────────
-  const rawType = (rawMsg ? getContentType(rawMsg) : null) ?? 'unknown';
-  const isWrapper =
-    rawType === 'viewOnceMessage' ||
-    rawType === 'viewOnceMessageV2' ||
-    rawType === 'viewOnceMessageV2Extension' ||
-    rawType === 'documentWithCaptionMessage';
-
-  let messageType = rawType;
+  let rawType = (rawMsg ? getContentType(rawMsg) : null) ?? 'unknown';
   let messageContent: any = rawMsg?.[rawType as keyof proto.IMessage];
 
-  if (isWrapper) {
-    const inner = (messageContent as any)?.message;
-    const innerType = inner ? getContentType(inner) : null;
+  const WRAPPER_TYPES = new Set([
+    'viewOnceMessage',
+    'viewOnceMessageV2',
+    'viewOnceMessageV2Extension',
+    'documentWithCaptionMessage',
+    'ephemeralMessage'
+  ]);
+
+  let isWrapper = WRAPPER_TYPES.has(rawType);
+  while (isWrapper && messageContent?.message) {
+    const inner = messageContent.message;
+    const innerType = getContentType(inner);
     if (innerType) {
-      messageType = innerType;
-      messageContent = inner?.[innerType as keyof proto.IMessage];
+      rawType = innerType;
+      messageContent = inner[innerType as keyof proto.IMessage];
+      isWrapper = WRAPPER_TYPES.has(rawType);
+    } else {
+      break;
     }
   }
+
+  const messageType = rawType;
 
   // ── 2. Extract body text ─────────────────────────────────────────────────
   const text: string =
@@ -192,20 +210,28 @@ export async function parseWhatsAppMessage(
     let qType = getContentType(quotedMessage) ?? 'unknown';
     let qContent: any = quotedMessage[qType as keyof proto.IMessage];
 
-    const isQWrapper =
-      qType === 'viewOnceMessage' ||
-      qType === 'viewOnceMessageV2' ||
-      qType === 'viewOnceMessageV2Extension' ||
-      qType === 'documentWithCaptionMessage';
+    const WRAPPER_TYPES = new Set([
+      'viewOnceMessage',
+      'viewOnceMessageV2',
+      'viewOnceMessageV2Extension',
+      'documentWithCaptionMessage',
+      'ephemeralMessage'
+    ]);
 
-    if (isQWrapper) {
-      const inner = (qContent as any)?.message;
-      const innerType = inner ? getContentType(inner) : null;
+    let isQWrapper = WRAPPER_TYPES.has(qType);
+    while (isQWrapper && qContent?.message) {
+      const inner = qContent.message;
+      const innerType = getContentType(inner);
       if (innerType) {
         qType = innerType;
-        qContent = inner?.[innerType as keyof proto.IMessage];
+        qContent = inner[innerType as keyof proto.IMessage];
+        isQWrapper = WRAPPER_TYPES.has(qType);
+      } else {
+        break;
       }
-    } else if (qType === 'productMessage') {
+    }
+    
+    if (qType === 'productMessage') {
       const inner = getContentType(qContent);
       if (inner) { qType = inner; qContent = qContent[inner]; }
     }
