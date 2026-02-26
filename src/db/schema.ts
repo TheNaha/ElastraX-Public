@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
@@ -34,7 +34,9 @@ export const messages = sqliteTable('messages', {
   mediaPath: text('media_path'), // Local path like ./data/media/<uuid>.jpg
   mimeType: text('mime_type'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-});
+}, (table) => ({
+  chatRoomIdCreatedAtIdx: index('messages_chat_room_id_created_at_idx').on(table.chatRoomId, table.created_at),
+}));
 
 export type ChatRoom = typeof chatRooms.$inferSelect;
 export type Message = typeof messages.$inferSelect;
