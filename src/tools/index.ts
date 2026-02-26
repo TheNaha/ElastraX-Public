@@ -1,3 +1,26 @@
+/**
+ * @file src/tools/index.ts
+ * @description Central registry for all ElastraX tools (slash commands and LLM function calls).
+ *
+ * Tools are registered once at module load time.  The agent and command router look up
+ * tools via the exported helper functions rather than importing each tool directly,
+ * keeping them decoupled from individual implementations.
+ *
+ * To add a new tool:
+ *  1. Create a class that extends `BaseTool` in a new file under `src/tools/`.
+ *  2. Import it here and push an instance onto `toolsList`.
+ *  3. The tool will automatically appear in:
+ *     - `/menu` (help output)
+ *     - LLM function-calling payload (if `allowTools` is enabled for the room)
+ *     - The slash-command router (via the tool's `name` and `aliases`)
+ *
+ * Exported helpers:
+ *  - `getToolByName(name)`         — Look up a tool by its exact LLM function name.
+ *  - `getToolByAliasOrName(cmd)`   — Look up a tool by slash-command alias OR name.
+ *  - `getToolDefinitions()`        — Return OpenAI-compatible tool definitions for all tools.
+ *  - `tools`                       — The raw ordered list of all registered `BaseTool` instances.
+ */
+
 import { BaseTool } from './BaseTool';
 import { WebSearchTool } from './WebSearchTool';
 import { MenuTool } from './MenuTool';
@@ -9,6 +32,7 @@ import { ConfigTool } from './ConfigTool';
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
 
+/** The ordered list of every registered tool — used by MenuTool to build the help menu. */
 export const tools = toolsList;
 
 toolsList.push(new WebSearchTool());
@@ -18,6 +42,9 @@ toolsList.push(new GroupAdminTool());
 toolsList.push(new LanguageTool());
 toolsList.push(new ConfigTool());
 
+// Build fast lookup maps for O(1) dispatch —
+// toolsMap   : exact function name (as exposed to the LLM)
+// aliasMap   : function name + all slash-command aliases
 const toolsMap = new Map<string, BaseTool>();
 const aliasMap = new Map<string, BaseTool>();
 
@@ -29,16 +56,26 @@ for (const tool of toolsList) {
   }
 }
 
-// Helper to easily grab an instance by name
+/**
+ * Look up a tool by its exact LLM function name (e.g., `'web_search'`).
+ * Returns `undefined` if no matching tool is registered.
+ */
 export function getToolByName(name: string): BaseTool | undefined {
   return toolsMap.get(name);
 }
 
+/**
+ * Returns an array of OpenAI-compatible `ToolDefinition` objects for every registered tool.
+ * This array is passed directly to the LLM when function-calling is enabled for a room.
+ */
 export function getToolDefinitions() {
   return tools.map(t => t.definition);
 }
 
-// Find a tool by either its name or one of its aliases
+/**
+ * Find a tool by either its canonical name or one of its slash-command aliases.
+ * Used by the command router in `src/agent/index.ts`.
+ */
 export function getToolByAliasOrName(command: string): BaseTool | undefined {
   return aliasMap.get(command);
 }

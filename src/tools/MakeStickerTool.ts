@@ -1,3 +1,22 @@
+/**
+ * @file src/tools/MakeStickerTool.ts
+ * @description Converts images or short videos into WhatsApp-compatible animated/static WebP stickers.
+ *
+ * Processing pipeline:
+ *  1. Verify that the message (or its quoted message) contains a downloadable image or video.
+ *  2. Await the background media download (`ctx.mediaReady`) — falls back to a direct
+ *     `ctx.downloadMedia()` call if the cached file is missing (e.g., expired CDN link).
+ *  3. Convert the buffer to WebP via FFmpeg (`StickerUtils.imageToWebp` / `videoToWebp`).
+ *  4. Write WhatsApp-required EXIF metadata (pack name, author) using `StickerUtils.writeExif`.
+ *  5. Send the final WebP buffer as a native WhatsApp sticker via `ctx.sendSticker()`.
+ *
+ * Requirements:
+ *  - FFmpeg must be installed on the host system (used internally by `FFmpegConverter`).
+ *  - The provider must implement `ctx.sendSticker()` (currently only WhatsApp does).
+ *
+ * Slash command aliases: `/s`, `/makesticker`, `/createsticker`
+ */
+
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { StickerUtils } from '../utils/StickerUtils';

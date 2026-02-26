@@ -1,6 +1,24 @@
+/**
+ * @file src/utils/StickerUtils.ts
+ * @description High-level sticker conversion utilities used by `MakeStickerTool`.
+ *
+ * Wraps `FFmpegConverter` to produce WhatsApp-compatible WebP sticker buffers from
+ * still images and short videos/GIFs.  Also handles writing the EXIF metadata block
+ * that WhatsApp requires to recognise a WebP file as a sticker (pack name, author).
+ *
+ * FFmpeg filter used for both images and videos:
+ *  - Scales the input down to at most 320×320 pixels (preserving aspect ratio).
+ *  - Pads to exactly 320×320 with a transparent background.
+ *  - For videos: caps at 15 fps and truncates to the first 5 seconds (WA sticker limit).
+ *  - Converts to a palette-based WebP with transparency support.
+ *
+ * Prerequisites: `ffmpeg` binary must be available on the system PATH.
+ */
+
 import { FFmpegConverter } from './FFmpegConverter';
 import nodeWebpmux from 'node-webpmux';
 
+/** Utilities for converting images/videos to WhatsApp sticker WebP format. */
 export class StickerUtils {
   private static readonly WEBP_FILTER = "scale='min(320,iw)':min'(320,ih)':force_original_aspect_ratio=decrease,fps=15, pad=320:320:-1:-1:color=white@0.0, split [a][b]; [a] palettegen=reserve_transparent=on:transparency_color=ffffff [p]; [b][p] paletteuse";
 

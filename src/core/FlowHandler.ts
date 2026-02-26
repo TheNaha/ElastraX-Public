@@ -1,9 +1,39 @@
+/**
+ * @file src/core/FlowHandler.ts
+ * @description Multi-step interactive flow dispatcher for ElastraX.
+ *
+ * Some tools (e.g., multi-step wizards) need to hold state across several user
+ * messages.  `FlowHandler` bridges the gap between the stateless agent loop and
+ * those stateful interactions by:
+ *
+ *  1. Letting tools register a named `FlowProcessor` callback via `FlowHandler.register()`.
+ *  2. Intercepting every incoming message and checking `SessionManager` to see whether
+ *     the sender is currently inside an active flow.
+ *  3. Routing the message to the appropriate registered processor, or cancelling the
+ *     flow if the user types a recognised cancel command (e.g., `/cancel`, `/batal`).
+ *
+ * Usage example (inside a tool's `execute` method):
+ * ```ts
+ * FlowHandler.register('my_flow', async (ctx, data, flowId) => {
+ *   // Handle the next step of the wizard
+ * });
+ * SessionManager.set(ctx.senderId, 'my_flow', { flow: 'my_flow', step: 'step1', data: {} }, ctx.platform);
+ * ```
+ */
+
 import { MessageContext } from './MessageContext';
 import { SessionManager } from '../utils/SessionManager';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 import { CANCEL_COMMANDS } from './constants';
 
+/**
+ * Callback signature for a registered interactive flow.
+ *
+ * @param ctx            - The incoming message context for this step.
+ * @param activeFlowData - The current flow session data (step, collected inputs, etc.).
+ * @param flowId         - The unique name of the flow (same key used in `FlowHandler.register`).
+ */
 export type FlowProcessor = (ctx: MessageContext, activeFlowData: any, flowId: string) => Promise<void>;
 
 export class FlowHandler {

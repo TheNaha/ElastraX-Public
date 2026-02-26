@@ -1,3 +1,29 @@
+/**
+ * @file src/providers/whatsapp.ts
+ * @description WhatsApp messaging provider for ElastraX, built on top of the
+ *              Baileys library (@whiskeysockets/baileys).
+ *
+ * Responsibilities:
+ *  - Manage the WhatsApp WebSocket connection lifecycle (connect, auto-reconnect, disconnect).
+ *  - Display a QR code in the terminal on first run so the user can link their phone.
+ *  - Persist Baileys authentication credentials to the SQLite `wa_auth_state` table via
+ *    `useDBAuthState` — no file-system sessions folder required.
+ *  - Sync historical messages sent before the bot started into the database.
+ *  - For each incoming `notify` message, parse the raw Baileys WAMessage into a
+ *    normalised `MessageContext` and forward it to the registered message handler.
+ *  - Handle WhatsApp V7 LID (Linked ID) sessions where participant JIDs are in
+ *    "@lid" format rather than the classic phone-number "@s.whatsapp.net" format.
+ *  - Download and cache attached media to `./data/media/` asynchronously so
+ *    tools can access the file without hitting the CDN again.
+ *
+ * Key concepts:
+ *  - `botLid` — The bot's own LID JID, resolved once after connection.  Used to
+ *    correctly mark quoted messages as "from the bot" in LID sessions.
+ *  - `mediaReady` — A Promise exposed on every `MessageContext` that resolves once
+ *    background media download is complete; tools `await ctx.mediaReady` before reading
+ *    `ctx.mediaPath`.
+ */
+
 import makeWASocket, {
   DisconnectReason,
   WAMessage,
@@ -22,8 +48,13 @@ import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
+/** Maximum file size in bytes that the bot will attempt to download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
+/**
+ * WhatsApp platform provider.  Implements the `BotProvider` interface and manages
+ * the full Baileys WebSocket session from QR-code login to graceful shutdown.
+ */
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
@@ -41,6 +72,10 @@ export class WhatsAppProvider implements BotProvider {
     return userId.split(':')[0].split('@')[0] + '@s.whatsapp.net';
   }
 
+  /**
+   * Initialises the Baileys WebSocket socket, registers all event handlers,
+   * and begins the WhatsApp connection handshake (QR code or cached session).
+   */
   async start(): Promise<void> {
     const { state, saveCreds } = await useDBAuthState();
     const { version, isLatest } = await fetchLatestBaileysVersion();
@@ -146,14 +181,32 @@ export class WhatsAppProvider implements BotProvider {
     });
   }
 
+  /** Closes the Baileys WebSocket connection gracefully. */
   async stop(): Promise<void> {
     this.sock?.end(new Error('Stop called'));
   }
 
+  /** Register the application-level callback that will receive every parsed MessageContext. */
   onMessage(handler: (ctx: MessageContext) => Promise<void>): void {
     this.messageHandler = handler;
   }
 
+  /**
+   * Converts a raw Baileys `WAMessage` into the normalised `MessageContext` used by
+   * the agent and tools.
+   *
+   * Steps performed:
+   *  1. Lazy-resolve the bot's LID JID if not already cached.
+   *  2. Parse the raw message with the pure `parseWhatsAppMessage` function.
+   *  3. Determine the sender JID (LID-first, then phone-number fallback).
+   *  4. Reconstruct any quoted/replied-to message into a `quoted` sub-context.
+   *  5. Kick off background media downloads (main message and quoted message).
+   *  6. Assemble and return the full `MessageContext` with all action methods bound.
+   *
+   * @param msg               Raw WAMessage from Baileys.
+   * @param skipMediaDownload If true, skip background media download (used for history sync).
+   * @returns                 Populated `MessageContext`, or `null` if the message cannot be parsed.
+   */
   private async createContext(msg: WAMessage, skipMediaDownload: boolean = false): Promise<MessageContext | null> {
     const sock = this.sock;
     if (!sock) return null;

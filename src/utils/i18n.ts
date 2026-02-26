@@ -1,3 +1,30 @@
+/**
+ * @file src/utils/i18n.ts
+ * @description Lightweight internationalisation (i18n) helper for ElastraX.
+ *
+ * Provides a single `t()` function that resolves a dot-separated translation key
+ * to a localised string, with optional `{variable}` interpolation.
+ *
+ * Supported locales:
+ *  - `en` — English (default)
+ *  - `id` — Indonesian (Bahasa Indonesia)
+ *
+ * Adding a new locale:
+ *  1. Add an entry to the `Locale` type union.
+ *  2. Duplicate the `en` block in `translations` with the new locale key.
+ *  3. Translate each string value.
+ *
+ * Adding a new translation key:
+ *  1. Add the key/value to both `en` and `id` blocks.
+ *  2. Call `t(lang, 'your.new.key')` in the appropriate module.
+ *
+ * Fallback behaviour:
+ *  If the key does not exist in the requested locale, the `en` value is used.
+ *  If the key does not exist in `en` either, a warning is logged and the raw key
+ *  string is returned so UI output is still legible.
+ */
+
+/** Supported locale codes. */
 type Locale = 'en' | 'id';
 
 const translations: Record<Locale, Record<string, string>> = {

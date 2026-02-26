@@ -1,3 +1,26 @@
+/**
+ * @file src/providers/whatsappParser.ts
+ * @description Pure, side-effect-free parser for raw Baileys WAMessage objects.
+ *
+ * The parser is intentionally decoupled from the socket, database, and any I/O so
+ * that it can be unit-tested directly with fixture JSON files stored in
+ * `test/fixtures/wa_messages/`.
+ *
+ * Key exported symbols:
+ *  - `ParsedWAMessage`      — Normalised view of a WAMessage (type, text, media flag, etc.)
+ *  - `ParsedQuotedMessage`  — Normalised view of the quoted/replied-to message.
+ *  - `LidResolver`          — Async function type used to map PN JIDs → LID JIDs.
+ *  - `parseWhatsAppMessage` — Main parser entry point; handles all known WA message types.
+ *  - `getFileLength`        — Extracts the `fileLength` field from a message for size checks.
+ *  - `normalizeJid`         — Strips domain and device suffixes from a JID for comparison.
+ *
+ * Supported message types (unwrapped automatically):
+ *  conversation, extendedTextMessage, imageMessage, videoMessage, audioMessage,
+ *  documentMessage, stickerMessage, viewOnceMessage, viewOnceMessageV2,
+ *  viewOnceMessageV2Extension, documentWithCaptionMessage, listResponseMessage,
+ *  buttonsResponseMessage, productMessage, and unknown fallback.
+ */
+
 import { WAMessage, proto, getContentType } from '@whiskeysockets/baileys';
 
 /**

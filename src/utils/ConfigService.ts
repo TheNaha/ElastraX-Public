@@ -1,3 +1,17 @@
+/**
+ * @file src/utils/ConfigService.ts
+ * @description Merges global defaults with per-room database overrides to produce a
+ *              fully resolved runtime configuration for a chat room.
+ *
+ * Resolution priority (highest to lowest):
+ *  1. Per-room value stored in the `chat_rooms` table (set via `/config set …`).
+ *  2. Environment variable (AI_TEMPERATURE, CONTEXT_MESSAGE_LIMIT, etc.).
+ *  3. Hardcoded default constant (e.g., DEFAULT_SYSTEM_PROMPT, temperature = 0.7).
+ *
+ * Having all config resolution in one place ensures that the agent, tools, and any
+ * future modules consistently observe the same effective settings for a room.
+ */
+
 import { ChatRoom } from '../db/schema';
 import { DEFAULT_SYSTEM_PROMPT } from '../core/prompts';
 

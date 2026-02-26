@@ -1,3 +1,20 @@
+/**
+ * @file src/index.ts
+ * @description Application entry point for ElastraX v7.
+ *
+ * Responsibilities:
+ *  1. Validate required environment variables (fail fast on misconfiguration).
+ *  2. Run Drizzle ORM database migrations on startup.
+ *  3. Instantiate and start all messaging platform providers (WhatsApp, Discord).
+ *  4. Wire each provider's incoming-message event to the core AI agent handler.
+ *  5. On graceful shutdown (SIGINT / Ctrl-C):
+ *       - Dump representative WAMessage fixture files to test/fixtures/wa_messages/
+ *         so the parser test suite can grow automatically over time.
+ *       - Stop all providers cleanly.
+ *  6. Run a lightweight parser-coverage scan 5 seconds after startup so that
+ *     any message-type gaps are surfaced in the logs without blocking boot.
+ */
+
 import { WhatsAppProvider } from './providers/whatsapp';
 import { DiscordProvider } from './providers/discord';
 import { handleIncomingMessage } from './agent';
@@ -11,6 +28,7 @@ import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { validateEnv } from './config/env';
 
+// Directory where one JSON fixture file per WAMessage type will be written.
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 
 // ─── Blob fields that make fixture files large and unreadable in the repo ───
@@ -20,6 +38,11 @@ const BLOB_KEYS = new Set([
   'senderKeyHash', 'recipientKeyHash', 'deviceListMetadata',
 ]);
 
+/**
+ * Recursively strips binary-blob fields from a raw WAMessage object so that
+ * the resulting JSON fixture file is small and human-readable.
+ * Fields listed in BLOB_KEYS are removed entirely; all other values are kept.
+ */
 function stripBlobs(raw: any): any {
   if (typeof raw !== 'object' || raw === null) return raw;
   const out: any = Array.isArray(raw) ? [] : {};
