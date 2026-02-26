@@ -9,6 +9,10 @@ export class FFmpegConverter {
    * Spawns an FFmpeg process to seamlessly handle buffer-to-buffer conversion.
    */
   static async convert(inputBuffer: Buffer, args: string[], extIn: string, extOut: string): Promise<Buffer> {
+    if (!/^[a-zA-Z0-9]+$/.test(extIn) || !/^[a-zA-Z0-9]+$/.test(extOut)) {
+      throw new Error('Invalid extension provided');
+    }
+
     const tmpDir = path.join(os.tmpdir(), 'elastrax-tmp');
     await fs.mkdir(tmpDir, { recursive: true });
 
