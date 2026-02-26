@@ -88,4 +88,15 @@ describe('ConfigTool Security', () => {
       expect(result).toContain('Must be between 0.0 and 2.0');
       expect(mockUpdateWhere).not.toHaveBeenCalled();
   });
+
+  test('Security: should reject huge systemPrompt (DoS risk)', async () => {
+    const hugePrompt = 'a'.repeat(51000); // > 50000 chars
+    const result = await tool.execute(
+      { action: 'set', key: 'systemPrompt', value: hugePrompt },
+      createCtx(),
+    );
+    expect(result).toContain('Invalid value');
+    expect(result).toContain('System prompt too long');
+    expect(mockUpdateWhere).not.toHaveBeenCalled();
+  });
 });
