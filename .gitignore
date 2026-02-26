@@ -27,6 +27,7 @@ data/
 
 # Env variables
 .env
+.env_old
 .env.local
 .env.development.local
 .env.test.local

@@ -164,6 +164,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'menfess.cancelled': '❌ Menfess cancelled.',
     'menfess.not_supported': '❌ Forwarding to another chat is not supported on this platform.',
     'menfess.error': '❌ Failed to send menfess: {msg}',
+
+    // Role Management
+    'role.check': '🔐 *Role info for* `{userId}`\n\n*Effective role:* *{effectiveRole}*\n\n*Assigned roles:*\n{roles}',
+    'role.list': '📋 *Roles for {scope}:*\n\n{items}',
+    'role.list_empty': '📋 No roles assigned for *{scope}*.',
+    'role.granted': '✅ Granted *{role}* role to `{userId}` in *{scope}*.',
+    'role.revoked': '✅ Revoked role from `{userId}` in *{scope}*.',
+    'role.no_user': '❌ Please specify a user. Example: /role grant 628xxx admin',
+    'role.invalid_role': "❌ Invalid role. Must be 'user', 'admin', or 'owner'.",
+    'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
+    'role.usage': '❓ *Usage:*\n• `/role check [user]` — Check role\n• `/role grant <user> <role> [global]` — Assign role\n• `/role revoke <user> [global]` — Remove role\n• `/role list [global]` — List assigned roles',
   },
   id: {
     // Menu
@@ -301,6 +312,17 @@ const translations: Record<Locale, Record<string, string>> = {
     'menfess.cancelled': '❌ Menfess dibatalkan.',
     'menfess.not_supported': '❌ Penerusan pesan ke chat lain tidak didukung di platform ini.',
     'menfess.error': '❌ Gagal mengirim menfess: {msg}',
+
+    // Role Management
+    'role.check': '🔐 *Info role untuk* `{userId}`\n\n*Role efektif:* *{effectiveRole}*\n\n*Role yang ditetapkan:*\n{roles}',
+    'role.list': '📋 *Role untuk {scope}:*\n\n{items}',
+    'role.list_empty': '📋 Belum ada role yang ditetapkan untuk *{scope}*.',
+    'role.granted': '✅ Role *{role}* diberikan ke `{userId}` di *{scope}*.',
+    'role.revoked': '✅ Role dicabut dari `{userId}` di *{scope}*.',
+    'role.no_user': '❌ Harap tentukan pengguna. Contoh: /role grant 628xxx admin',
+    'role.invalid_role': "❌ Role tidak valid. Harus 'user', 'admin', atau 'owner'.",
+    'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',
+    'role.usage': '❓ *Cara pakai:*\n• `/role check [user]` — Cek role\n• `/role grant <user> <role> [global]` — Tetapkan role\n• `/role revoke <user> [global]` — Cabut role\n• `/role list [global]` — Daftar role',
   },
 };
 

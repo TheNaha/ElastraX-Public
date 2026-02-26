@@ -20,9 +20,15 @@
  */
 
 import { logger } from './logger';
+import { RoleService } from './RoleService';
 
 /**
  * Checks whether a sender has the required permission level.
+ *
+ * Lookup order:
+ *  1. `user` level → always true.
+ *  2. `owner` level → BOT_OWNER_JID env check, then DB role check.
+ *  3. `admin` level → DB role check, then platform-native (WhatsApp group admin / Discord perms).
  *
  * @param sock     - Active Baileys socket (needed to fetch group metadata for admin checks).
  * @param chatId   - JID of the chat (group or DM).
@@ -40,32 +46,41 @@ export async function checkPermissions(
 ): Promise<boolean> {
   if (required === 'user') return true;
 
+  // ── Owner check ─────────────────────────────────────────────────────────
   if (required === 'owner') {
     const ownerJid = process.env.BOT_OWNER_JID;
-    if (!ownerJid) return false;
-    // Simple strict check. Ensure env var includes the domain if senderId does.
-    return senderId === ownerJid;
+    if (ownerJid && senderId === ownerJid) return true;
+
+    // Check DB-assigned owner role
+    const dbRole = await RoleService.getEffectiveRole(senderId, chatId);
+    if (dbRole && RoleService.meetsRequirement(dbRole, 'owner')) return true;
+
+    return false;
   }
 
+  // ── Admin check ─────────────────────────────────────────────────────────
   if (required === 'admin') {
-    if (!isGroup) {
-      // In private chat, the user is always authorized as "admin" context doesn't apply
-      // or we can treat them as admin of the private chat.
-      return true;
-    }
+    // Env owner is always an admin too
+    const ownerJid = process.env.BOT_OWNER_JID;
+    if (ownerJid && senderId === ownerJid) return true;
 
+    // DB-assigned role (admin or owner covers admin requirement)
+    const dbRole = await RoleService.getEffectiveRole(senderId, chatId);
+    if (dbRole && RoleService.meetsRequirement(dbRole, 'admin')) return true;
+
+    // Private chat: treat as admin (backward compat)
+    if (!isGroup) return true;
+
+    // Platform-native check (WhatsApp group admin)
     if (!sock) {
       logger.warn('Socket not available for permission check');
       return false;
     }
 
     try {
-      // sock.groupMetadata is a Baileys function
       const metadata = await sock.groupMetadata(chatId);
       const participant = metadata.participants.find((p: any) => p.id === senderId);
-
       if (!participant) return false;
-
       return participant.admin === 'admin' || participant.admin === 'superadmin';
     } catch (error) {
       logger.error({ error, chatId }, 'Failed to fetch group metadata for permission check');

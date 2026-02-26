@@ -90,3 +90,20 @@ export const reminders = sqliteTable('reminders', {
 }));
 
 export type Reminder = typeof reminders.$inferSelect;
+
+// V7.9: User permission / role management
+export const userRoles = sqliteTable('user_roles', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull(),
+  platform: text('platform').notNull().default('whatsapp'),
+  /** 'global' or a specific chatId */
+  scope: text('scope').notNull().default('global'),
+  role: text('role').notNull().default('user'), // 'user' | 'admin' | 'owner'
+  grantedBy: text('granted_by').notNull(),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  userScopeIdx: index('user_roles_user_scope_idx').on(table.userId, table.scope),
+  scopeIdx: index('user_roles_scope_idx').on(table.scope, table.role),
+}));
+
+export type UserRole = typeof userRoles.$inferSelect;

@@ -12,6 +12,7 @@
 
 import asyncio
 import json
+import os
 import subprocess
 import time
 
@@ -63,6 +64,14 @@ N_GPU = 1
 VLLM_PORT = 8000
 MIN_CONTAINERS = 0
 
+# Optional API key for OpenAI-compatible Authorization: Bearer <key>
+# Works for both vLLM server and Whisper endpoint below.
+API_KEY_ENV_NAMES = ("VLLM_API_KEY", "OPENAI_API_KEY")
+
+# Whisper API defaults
+WHISPER_MODEL = "Systran/faster-whisper-large-v3"
+WHISPER_GPU = "L4"
+
 # ## Helper Functions
 
 with vllm_image.imports():
@@ -96,6 +105,11 @@ def _build_vllm_cmd():
     else:
         cmd += ["--no-enforce-eager"]
     cmd += ["--tensor-parallel-size", str(N_GPU)]
+
+    api_key = next((os.environ.get(k) for k in API_KEY_ENV_NAMES if os.environ.get(k)), None)
+    if api_key:
+        cmd += ["--api-key", api_key]
+
     return cmd
 
 
@@ -150,6 +164,21 @@ def wake_server():
 
 app = modal.App("elastra-gpbot-vllm")
 
+whisper_image = (
+    modal.Image.from_registry(
+        "nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12"
+    )
+    .entrypoint([])
+    .uv_pip_install(
+        "fastapi",
+        "python-multipart",
+        "faster-whisper",
+    )
+    .env({
+        "HF_XET_HIGH_PERFORMANCE": "1",
+    })
+)
+
 
 @app.cls(
     image=vllm_image,
@@ -199,6 +228,130 @@ class Model:
         pass
 
 
+@app.function(
+        image=whisper_image,
+        gpu=WHISPER_GPU,
+        scaledown_window=1 * MINUTES,
+        timeout=10 * MINUTES,
+        volumes={
+                "/root/.cache/huggingface": hf_cache_vol,
+        },
+        secrets=[modal.Secret.from_name("my-huggingface-secret")],
+        min_containers=0,
+)
+@modal.asgi_app()
+def whisper_api():
+        """
+        OpenAI-compatible Whisper-style endpoint:
+            POST /v1/audio/transcriptions
+
+        Auth:
+            - If VLLM_API_KEY or OPENAI_API_KEY is set, requires
+                Authorization: Bearer <key>
+        """
+        from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+        from fastapi.responses import JSONResponse, PlainTextResponse
+        from faster_whisper import WhisperModel
+        import tempfile
+
+        app_api = FastAPI(title="Elastra Whisper API")
+        _model_holder: dict[str, WhisperModel | None] = {"model": None}
+
+        def _expected_api_key() -> str | None:
+            for key in API_KEY_ENV_NAMES:
+                value = os.environ.get(key)
+                if value:
+                    return value
+            return None
+
+        def _check_bearer(authorization: str | None) -> None:
+            expected = _expected_api_key()
+            if not expected:
+                return
+            if not authorization or not authorization.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Missing bearer token")
+            received = authorization[len("Bearer "):].strip()
+            if received != expected:
+                raise HTTPException(status_code=401, detail="Invalid API key")
+
+        def _get_model() -> WhisperModel:
+            if _model_holder["model"] is None:
+                model_name = os.environ.get("WHISPER_MODEL", WHISPER_MODEL)
+                compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
+                _model_holder["model"] = WhisperModel(
+                    model_name,
+                    device="cuda",
+                    compute_type=compute_type,
+                )
+            return _model_holder["model"]
+
+        @app_api.get("/health")
+        async def health():
+            return {"ok": True, "service": "whisper"}
+
+        @app_api.post("/v1/audio/transcriptions")
+        async def transcriptions(
+            file: UploadFile = File(...),
+            model: str = Form("whisper-1"),
+            language: str | None = Form(None),
+            prompt: str | None = Form(None),
+            response_format: str = Form("json"),
+            temperature: float = Form(0.0),
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ):
+            _check_bearer(authorization)
+            del model, temperature
+
+            whisper_model = _get_model()
+            suffix = os.path.splitext(file.filename or "audio.bin")[1] or ".bin"
+
+            try:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(await file.read())
+                    tmp_path = tmp.name
+
+                segments, info = whisper_model.transcribe(
+                    tmp_path,
+                    language=language,
+                    initial_prompt=prompt,
+                    vad_filter=True,
+                )
+
+                segment_items = list(segments)
+                text = "".join(s.text for s in segment_items).strip()
+
+                if response_format == "text":
+                    return PlainTextResponse(text)
+
+                if response_format == "verbose_json":
+                    return JSONResponse({
+                        "task": "transcribe",
+                        "language": info.language,
+                        "duration": info.duration,
+                        "text": text,
+                        "segments": [
+                            {
+                                "id": idx,
+                                "start": seg.start,
+                                "end": seg.end,
+                                "text": seg.text,
+                            }
+                            for idx, seg in enumerate(segment_items)
+                        ],
+                    })
+
+                # OpenAI json default
+                return JSONResponse({"text": text})
+            finally:
+                try:
+                    if "tmp_path" in locals() and os.path.exists(tmp_path):
+                        os.remove(tmp_path)
+                except Exception:
+                    pass
+
+        return app_api
+
+
 # ## Test Entrypoint
 
 @app.local_entrypoint()
@@ -238,6 +391,9 @@ async def test(test_timeout=10 * MINUTES, content=None, twice=True):
 async def _send_request(session, model, messages):
     payload = {"messages": messages, "model": model, "stream": True}
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
+    api_key = next((os.environ.get(k) for k in API_KEY_ENV_NAMES if os.environ.get(k)), None)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
 
     async with session.post(
         "/v1/chat/completions", json=payload, headers=headers

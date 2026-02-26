@@ -38,6 +38,7 @@ import { MediaConvertTool } from './MediaConvertTool';
 import { PDFTool } from './PDFTool';
 import { ReminderTool } from './ReminderTool';
 import { MenfessTool } from './MenfessTool';
+import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
 
 // Instantiate all active tools here
@@ -67,6 +68,7 @@ toolsList.push(new PDFTool());
 toolsList.push(new GroupAdminTool());
 toolsList.push(new LanguageTool());
 toolsList.push(new ConfigTool());
+toolsList.push(new RoleTool());
 
 // ── Fun / Social ──────────────────────────────────────────────────────────────
 toolsList.push(new MenfessTool());
