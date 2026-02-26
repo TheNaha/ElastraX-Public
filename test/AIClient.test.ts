@@ -93,4 +93,24 @@ describe("AIClient", () => {
       global.fetch = originalFetch;
     }
   });
+
+  test("chatCompletion should throw error on non-OK response", async () => {
+    const originalFetch = global.fetch;
+    const client = new AIClient({ baseUrl: "https://api.example.com/v1" });
+
+    const mockFetch = mock(async () => {
+      return new Response("Internal Server Error", { status: 500 });
+    });
+    global.fetch = mockFetch as any;
+
+    try {
+      await client.chatCompletion([{ role: "user", content: "Hi" }]);
+      // Fail the test if no error is thrown
+      expect(true).toBe(false);
+    } catch (e: any) {
+      expect(e.message).toBe("LLM API returned 500: Internal Server Error");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });
