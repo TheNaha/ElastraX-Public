@@ -4,8 +4,9 @@
 
 # # ElastraGPBOT — OpenAI-compatible Qwen3-Omni server on Modal
 #
-# Serves `cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit` via vLLM
-# with an OpenAI-compatible API, GPU snapshotting, and multimodal support.
+# Serves `cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit` via vLLM-Omni
+# with full multimodal support (text, image, audio, video), tool calling,
+# and GPU snapshotting for fast cold starts.
 #
 # Deploy:  modal deploy modal/app.py
 # Test:    modal run modal/app.py
@@ -21,25 +22,22 @@ import modal
 MINUTES = 60  # seconds
 
 # ## Container Image
+#
+# Uses the official vLLM OpenAI-compatible base image (includes CUDA + vLLM),
+# then installs vllm-omni on top for full Qwen3-Omni support.
 
 vllm_image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.8.0-devel-ubuntu22.04", add_python="3.12"
-    )
+    modal.Image.from_registry("vllm/vllm-openai:v0.16.0")
     .entrypoint([])
-    .uv_pip_install(
-        "vllm",
-        "transformers<=4.57.3",
-        "huggingface-hub",
-        "qwen-omni-utils",
-        "requests",
-    )
-    # Monkey patch for vllm/transformers tokenizer compat issue
-    # See: https://github.com/vllm-project/vllm/issues/13127
+    # System deps for audio/video processing
+    .apt_install("git", "ffmpeg", "sox", "libsox-fmt-all")
+    # Install vllm-omni from source (rapidly evolving)
     .run_commands(
-        "SITE=$(python -c \"import site; print(site.getsitepackages()[0])\") && "
-        "printf 'import transformers\\nif not hasattr(transformers.tokenization_utils_base.PreTrainedTokenizerBase, \"all_special_tokens_extended\"):\\n    transformers.tokenization_utils_base.PreTrainedTokenizerBase.all_special_tokens_extended = property(lambda self: self.all_special_tokens)\\n' > $SITE/sitecustomize.py"
+        "git clone https://github.com/vllm-project/vllm-omni.git /tmp/vllm-omni && "
+        "cd /tmp/vllm-omni && "
+        "uv pip install --system --no-cache-dir '.[dev]'"
     )
+    .run_commands("ln -sf /usr/bin/python3 /usr/bin/python")
     .env({
         "HF_XET_HIGH_PERFORMANCE": "1",
         "VLLM_SERVER_DEV_MODE": "1",
@@ -70,26 +68,20 @@ with vllm_image.imports():
 
 
 def _build_vllm_cmd():
-    """Build the vLLM serve command."""
+    """Build the vLLM serve command with --omni flag."""
     cmd = [
         "vllm", "serve",
-        "--uvicorn-log-level", "info",
         MODEL_NAME,
+        "--omni",  # Enables full omni support (text, image, audio, video, tools)
         "--revision", MODEL_REVISION,
         "--served-model-name", MODEL_NAME,
         "--host", "0.0.0.0",
         "--port", str(VLLM_PORT),
         "--max-model-len", "32768",
         "--gpu-memory-utilization", "0.90",
-        "--limit-mm-per-prompt", '{"image":3,"video":1,"audio":3}',
         "--max-num-seqs", "8",
-        "--trust-remote-code",
+        "--uvicorn-log-level", "info",
         "--enable-sleep-mode",  # Required for GPU snapshotting
-        # Tool/function calling support (Qwen uses Hermes format)
-        "--enable-auto-tool-choice",
-        "--tool-call-parser", "hermes",
-        # Reasoning/chain-of-thought support
-        "--reasoning-parser", "qwen3",
     ]
     if FAST_BOOT:
         cmd += ["--enforce-eager"]
@@ -141,12 +133,7 @@ def wake_server():
     req_lib.post(f"http://127.0.0.1:{VLLM_PORT}/wake_up").raise_for_status()
 
 
-# ## vLLM Server with GPU Snapshotting
-#
-# Uses vLLM's --enable-sleep-mode for proper GPU snapshotting:
-# 1. snap=True:  Start vLLM → wait ready → warmup → sleep (GPU → CPU)
-# 2. Snapshot:   Modal captures CPU + GPU memory state
-# 3. snap=False: Wake up vLLM (CPU → GPU), ready to serve
+# ## vLLM-Omni Server with GPU Snapshotting
 
 app = modal.App("elastra-gpbot-vllm")
 
@@ -169,16 +156,16 @@ app = modal.App("elastra-gpbot-vllm")
 class Model:
     @modal.enter(snap=True)
     def startup(self):
-        """Start vLLM, wait for health, warm up, then put to sleep for snapshot."""
+        """Start vLLM-Omni, wait for health, warm up, then sleep for snapshot."""
         cmd = _build_vllm_cmd()
-        print(f"🚀 Starting vLLM: {' '.join(cmd)}")
+        print(f"🚀 Starting vLLM-Omni: {' '.join(cmd)}")
         self.process = subprocess.Popen(cmd)
 
         print("⏳ Waiting for model to load...")
         wait_ready(self.process)
         print("✅ Server healthy. Running warmup...")
         warmup()
-        print("� Putting vLLM to sleep for GPU snapshot...")
+        print("😴 Putting vLLM to sleep for GPU snapshot...")
         sleep_server(1)
         print("📸 Ready for snapshot.")
 

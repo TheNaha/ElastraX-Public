@@ -195,6 +195,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       mediaPath: messages.mediaPath,
       mimeType: messages.mimeType,
       created_at: messages.created_at,
+      providerMessageId: messages.providerMessageId,
     })
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
@@ -212,28 +213,62 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       { role: 'system', content: systemPromptText }
     ];
 
+    // Helper to generate AI message parts from local media
+    const buildMediaParts = async (mediaPath: string, mimeType: string, textContext: string): Promise<AIChatMessage['content']> => {
+      let finalContent: AIChatMessage['content'] = textContext;
+      
+      if (mediaPath && existsSync(mediaPath)) {
+        try {
+          const fileBuffer = await readFile(mediaPath);
+          const base64Data = fileBuffer.toString('base64');
+          const dataUri = `data:${mimeType};base64,${base64Data}`;
+          
+          if (mimeType.startsWith('image/')) {
+            finalContent = [
+              { type: 'text', text: textContext },
+              { type: 'image_url', image_url: { url: dataUri } }
+            ];
+          } else if (mimeType.startsWith('video/')) {
+            finalContent = [
+              { type: 'text', text: textContext },
+              { type: 'video_url', video_url: { url: dataUri } }
+            ];
+          } else if (mimeType.startsWith('audio/')) {
+            finalContent = [
+              { type: 'text', text: textContext },
+              { type: 'audio_url', audio_url: { url: dataUri } }
+            ];
+          } else {
+            // Docs/PDFs: just inform the AI a file is attached so it can use tools (e.g., pdf reader)
+            finalContent = [
+              { type: 'text', text: `${textContext}\n[Attachment included: ${mimeType}]` }
+            ];
+          }
+        } catch (err) {
+          logger.error({ err, path: mediaPath }, 'Failed to read media for AI context');
+        }
+      }
+      return finalContent;
+    };
+
     for (const m of history) {
+      const isLastMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
       const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
       const textContent = textPrefix + m.content;
       
-      let finalContent: AIChatMessage['content'] = textContent;
+      let finalContent = await buildMediaParts(m.mediaPath || '', m.mimeType || '', textContent);
 
-      // Handle multimodal vision if message has media
-      if (m.mediaPath && m.mimeType?.startsWith('image/')) {
-        if (existsSync(m.mediaPath)) {
-          try {
-            const fileBuffer = await readFile(m.mediaPath);
-            const base64Data = fileBuffer.toString('base64');
-            const dataUri = `data:${m.mimeType};base64,${base64Data}`;
-            
-            finalContent = [
-              { type: 'text', text: textContent },
-              { type: 'image_url', image_url: { url: dataUri } }
-            ];
-          } catch (err) {
-            logger.error({ err, path: m.mediaPath }, 'Failed to read media for AI context');
-          }
-        }
+      // Explicitly inject quoted media into the context of the CURRENT message being sent
+      if (isLastMessage && ctx.quoted?.mediaPath) {
+        // If the AI already has image parts, we merge the quoted ones. 
+        // For simplicity, we just transform this entire message payload into a merged array
+        const quotedParts = await buildMediaParts(ctx.quoted.mediaPath, ctx.quoted.mimeType || '', `[Quoted attachment context]`);
+        
+        // Merge the two arrays (or strings converted to arrays)
+        const currentArr = Array.isArray(finalContent) ? finalContent : [{ type: 'text', text: finalContent as string }];
+        const quotedArr = Array.isArray(quotedParts) ? quotedParts : [{ type: 'text', text: quotedParts as string }];
+        
+        finalContent = [...quotedArr, ...currentArr] as AIChatMessage['content'];
       }
 
       messagesForAI.push({
