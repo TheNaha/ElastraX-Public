@@ -1,3 +1,21 @@
+/**
+ * @file src/tools/LanguageTool.ts
+ * @description Per-room language configuration tool.
+ *
+ * Updates the `language` column of the active chat room in the database.
+ * The selected language affects:
+ *  - All system messages and error strings (via the `t()` i18n helper).
+ *  - The `{{LANGUAGE}}` placeholder in the LLM system prompt, which instructs
+ *    the model to reply in the chosen language.
+ *
+ * Supported language codes:
+ *  - `en` — English (default)
+ *  - `id` — Indonesian (Bahasa Indonesia)
+ *
+ * Permissions required: `user` (any participant can change the room language).
+ * Slash command aliases: `/lang`, `/setlanguage`, `/setlang`
+ */
+
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';

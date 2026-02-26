@@ -1,3 +1,25 @@
+/**
+ * @file src/utils/useDBAuthState.ts
+ * @description SQLite-backed Baileys authentication state adapter.
+ *
+ * Baileys (the WhatsApp library) requires a persistent key-value store for:
+ *  - `creds` — The device registration credentials (analogous to a login session).
+ *  - Signal Protocol session keys — Keyed as `"${category}-${id}"` (e.g.,
+ *    `"app-state-sync-key-XYZ"`, `"session-628xxx"`, etc.).
+ *
+ * The default Baileys adapter writes these to JSON files on disk.  This adapter
+ * stores them in the `wa_auth_state` SQLite table instead, so:
+ *  - No extra volume mount is needed in Docker for `/auth_info_baileys/`.
+ *  - Credentials and session keys survive container restarts automatically.
+ *  - Everything stays in the single `bot.db` file that is already being backed up.
+ *
+ * Serialisation note:
+ *  Baileys auth data contains `Buffer` objects that must be serialised with
+ *  `BufferJSON.replacer` and deserialised with `BufferJSON.reviver`.  Standard
+ *  `JSON.stringify/parse` silently corrupts Buffers into plain objects, causing
+ *  "No session to decrypt" errors.  This adapter handles that correctly.
+ */
+
 import { AuthenticationState, initAuthCreds, proto } from '@whiskeysockets/baileys';
 import { db } from '../db';
 import { logger } from './logger';
@@ -5,11 +27,24 @@ import { waAuthState } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { BufferJSON } from '@whiskeysockets/baileys/lib/Utils/generics';
 
+/**
+ * Creates and returns a Baileys-compatible `AuthenticationState` that reads/writes
+ * credentials to the `wa_auth_state` SQLite table.
+ *
+ * @returns An object containing:
+ *   - `state` — The `AuthenticationState` to pass to `makeWASocket({ auth: state })`.
+ *   - `saveCreds` — A callback to pass to the `creds.update` Baileys event so that
+ *     credential changes are persisted immediately.
+ */
 export const useDBAuthState = async (): Promise<{
   state: AuthenticationState;
   saveCreds: () => Promise<void>;
 }> => {
-  // Utility for reading data from SQLite
+  /**
+   * Reads a single Baileys key/value pair from the database.
+   * Returns the parsed value (with Buffers restored via BufferJSON.reviver),
+   * or `null` if the key does not exist or the stored data is malformed.
+   */
   const readData = async (id: string): Promise<any | null> => {
     try {
       const records = await db.select().from(waAuthState).where(eq(waAuthState.id, id)).limit(1);
@@ -24,7 +59,11 @@ export const useDBAuthState = async (): Promise<{
     }
   };
 
-  // Utility for writing data to SQLite
+  /**
+   * Persists a Baileys key/value pair to the database using an upsert.
+   * MUST use `BufferJSON.replacer` when stringifying to correctly serialise
+   * Baileys' Buffer-typed fields (Signal Protocol keys, etc.).
+   */
   const writeData = async (data: any, id: string): Promise<void> => {
     try {
       // Baileys has heavily complex Buffers inside its state. We MUST use BufferJSON.replacer
@@ -43,6 +82,7 @@ export const useDBAuthState = async (): Promise<{
     }
   };
 
+  /** Removes a key from the auth state table (called when Baileys invalidates a session key). */
   const removeData = async (id: string): Promise<void> => {
     try {
       await db.delete(waAuthState).where(eq(waAuthState.id, id));

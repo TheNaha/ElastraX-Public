@@ -1,3 +1,20 @@
+/**
+ * @file src/tools/GroupAdminTool.ts
+ * @description Group participant management tool (add / remove members).
+ *
+ * Allows group admins to add or remove participants from the active WhatsApp group.
+ * The tool normalises the provided phone number to a WhatsApp JID and delegates the
+ * actual participant update to `ctx.updateGroupParticipants()`.
+ *
+ * Phone number normalisation:
+ *  - Non-digit characters are stripped.
+ *  - Numbers starting with `0` are assumed to be Indonesian and prefixed with `62`.
+ *  - The result is appended with `@s.whatsapp.net` to form a valid JID.
+ *
+ * Permissions required: `admin` (caller must be a group admin or super-admin).
+ * Slash command aliases: `/kick`, `/add`
+ */
+
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';

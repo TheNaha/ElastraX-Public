@@ -1,11 +1,44 @@
+/**
+ * @file src/tools/BaseTool.ts
+ * @description Abstract base class and shared type definitions for all ElastraX tools.
+ *
+ * Every tool in `src/tools/` must extend `BaseTool` and implement its abstract members.
+ * This ensures a consistent shape that is consumed by:
+ *  - The **LLM function-calling** layer (`definition` → OpenAI tool schema)
+ *  - The **slash-command router** (`aliases`, `permissions`, `execute`)
+ *  - The **`/menu` help system** (`name`, `description`, `category`, `aliases`)
+ *
+ * Minimal example:
+ * ```ts
+ * export class EchoTool extends BaseTool {
+ *   readonly name = 'echo';
+ *   readonly description = 'Echoes back the user input.';
+ *   readonly aliases = ['e'];
+ *   readonly category = 'utility';
+ *   readonly permissions = 'user';
+ *
+ *   get definition(): ToolDefinition { ... }
+ *
+ *   async execute(args, ctx) {
+ *     return args.text;
+ *   }
+ * }
+ * ```
+ */
+
 import { MessageContext } from '../core/MessageContext';
 
+/** JSON Schema property descriptor for a single tool parameter. */
 export interface ToolParameter {
   type: string;
   description: string;
   enum?: string[];
 }
 
+/**
+ * OpenAI-compatible function-calling tool definition.
+ * Serialised and sent to the LLM as part of the `tools` array in the chat-completion payload.
+ */
 export interface ToolDefinition {
   type: 'function';
   function: {

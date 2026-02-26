@@ -1,3 +1,30 @@
+/**
+ * @file src/tools/ConfigTool.ts
+ * @description Dynamic per-room bot configuration tool.
+ *
+ * Allows group/chat admins to inspect and override the bot's behaviour for a
+ * specific chat room without restarting the service.  All overrides are stored
+ * in the `chat_rooms` table; a `null` value in the DB means "use the global
+ * default" (see `ConfigService.getResolvedConfig` for the fallback chain).
+ *
+ * Supported actions:
+ *  - `get`   — Show the current effective configuration (DB override or global default).
+ *  - `set`   — Update a specific key for this room with input validation.
+ *  - `reset` — Clear a key's override so it reverts to the global default.
+ *
+ * Configurable keys:
+ *  | Key            | Type    | Description                                               |
+ *  |----------------|---------|-----------------------------------------------------------|
+ *  | systemPrompt   | string  | Custom LLM system prompt (max 50,000 chars)               |
+ *  | contextLimit   | integer | Max messages in the context window (1–50)                 |
+ *  | temperature    | float   | LLM sampling temperature (0.0–2.0)                        |
+ *  | allowTools     | boolean | Enable/disable LLM function-calling for this room         |
+ *  | autoReplyAll   | boolean | Reply to every group message without requiring a mention  |
+ *
+ * Permissions required: `admin`
+ * Slash command aliases: `/conf`, `/settings`
+ */
+
 import { BaseTool } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
@@ -36,6 +63,10 @@ export class ConfigTool extends BaseTool {
     super();
   }
 
+  /**
+   * Builds a human-readable listing of the room's current configuration values,
+   * indicating whether each field is a custom DB override or the global default.
+   */
   private buildKeyListing(room: any, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
     return [
       `  *System Prompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,

@@ -1,3 +1,25 @@
+/**
+ * @file src/agent/index.ts
+ * @description Core conversational agent for ElastraX.
+ *
+ * This module exports `handleIncomingMessage`, which is the single entry point
+ * wired to every messaging platform provider (WhatsApp, Discord, etc.).
+ *
+ * High-level processing pipeline for each incoming message:
+ *  1. Fetch or create the ChatRoom record in the database; resolve per-room config.
+ *  2. Determine whether the AI should generate a reply (`shouldTriggerAI`).
+ *     - Private chats: always reply.
+ *     - Group chats: reply only when the bot is mentioned, replied-to, or
+ *       `autoReplyAll` is enabled, or the message starts with `/chat`.
+ *  3. Intercept active interactive flows (multi-step wizards) via FlowHandler.
+ *  4. Handle explicit slash commands (e.g., `/search <query>`) by routing them
+ *     directly to the matching BaseTool — no LLM involved.
+ *  5. For conversational messages, save the user message to the database,
+ *     await media downloads, build the full context window, and run the
+ *     LLM inference loop (which may invoke tools recursively).
+ *  6. Persist the final assistant reply and send it back to the user.
+ */
+
 import { db } from '../db';
 import { chatRooms, messages, ChatRoom } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
@@ -12,10 +34,18 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
 
+// Module-level AI client instance — created once and reused for all messages.
 const aiClient = new AIClient();
 
 
-
+/**
+ * Primary handler invoked for every incoming message on every connected platform.
+ *
+ * All routing decisions (group vs DM, command vs AI, flow vs normal) are made here.
+ * Platform-specific details are fully abstracted by the `MessageContext` interface.
+ *
+ * @param ctx - Normalised message context provided by the active BotProvider.
+ */
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
 
