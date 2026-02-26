@@ -3,6 +3,7 @@ import makeWASocket, {
   WAMessage,
   proto,
   downloadMediaMessage,
+  fetchLatestBaileysVersion,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
@@ -42,11 +43,15 @@ export class WhatsAppProvider implements BotProvider {
 
   async start(): Promise<void> {
     const { state, saveCreds } = await useDBAuthState();
+    const { version, isLatest } = await fetchLatestBaileysVersion();
 
     const baileysLogger = logger.child({ module: 'baileys' });
     baileysLogger.level = 'warn';
 
+    logger.info(`[WhatsApp] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+
     this.sock = makeWASocket({
+      version,
       auth: state,
       printQRInTerminal: false,
       logger: baileysLogger as any,
