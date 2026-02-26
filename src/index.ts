@@ -9,6 +9,7 @@ import { scanParserCoverage, logCoverageSummary } from './utils/parserCoverage';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
+import { validateEnv } from './config/env';
 
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 
@@ -88,6 +89,7 @@ async function runStartupCoverageScan(botUserId: string | null): Promise<void> {
 }
 
 async function main() {
+  validateEnv();
   logger.info('Starting ElastraX v7...');
 
   try {
