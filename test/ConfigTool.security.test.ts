@@ -90,7 +90,7 @@ describe('ConfigTool Security', () => {
   });
 
   test('Security: should reject huge systemPrompt (DoS risk)', async () => {
-    const hugePrompt = 'a'.repeat(6000); // > 5000 chars
+    const hugePrompt = 'a'.repeat(51000); // > 50000 chars
     const result = await tool.execute(
       { action: 'set', key: 'systemPrompt', value: hugePrompt },
       createCtx(),

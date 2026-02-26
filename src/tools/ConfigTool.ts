@@ -82,7 +82,7 @@ export class ConfigTool extends BaseTool {
       
       try {
         if (key === 'systemPrompt') {
-          if (value.length > 5000) throw new Error('System prompt too long (max 5000 chars).');
+          if (value.length > 50000) throw new Error('System prompt too long (max 50000 chars).');
           updateData[key] = value;
         } else if (key === 'contextLimit') {
           const parsed = parseInt(value, 10);
