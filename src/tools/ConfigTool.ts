@@ -86,10 +86,14 @@ export class ConfigTool extends BaseTool {
         } else if (key === 'contextLimit') {
           const parsed = parseInt(value, 10);
           if (isNaN(parsed)) throw new Error('Must be an integer.');
+          // Security: Limit context size to prevent DoS (memory exhaustion/token overflow)
+          if (parsed < 1 || parsed > 50) throw new Error('Must be between 1 and 50.');
           updateData[key] = parsed;
         } else if (key === 'temperature') {
           const parsed = parseFloat(value);
           if (isNaN(parsed)) throw new Error('Must be a number.');
+          // Security: Ensure valid temperature range for AI stability
+          if (parsed < 0 || parsed > 2.0) throw new Error('Must be between 0.0 and 2.0.');
           updateData[key] = parsed;
         } else if (key === 'allowTools' || key === 'autoReplyAll') {
           const lower = value.toLowerCase();

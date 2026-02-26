@@ -173,6 +173,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }
     }
 
+    // 3. Check if we should actually generate a response (Optimized: moved up to skip expensive history fetch)
+    if (!shouldTriggerAI) {
+       // Since it's casual chatter, we saved it to context, but we don't reply!
+       return;
+    }
+
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     const history = await db.select()
       .from(messages)
@@ -219,12 +225,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         role: m.role as 'user' | 'assistant',
         content: finalContent,
       });
-    }
-
-    // 3. Check if we should actually generate a response
-    if (!shouldTriggerAI) {
-       // Since it's casual chatter, we saved it to context, but we don't reply!
-       return; 
     }
 
     // 4. Generate AI Response (Recursive for tools)
