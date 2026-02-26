@@ -180,7 +180,15 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
-    const history = await db.select()
+    // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
+    const history = await db.select({
+      role: messages.role,
+      content: messages.content,
+      senderName: messages.senderName,
+      mediaPath: messages.mediaPath,
+      mimeType: messages.mimeType,
+      created_at: messages.created_at,
+    })
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
       .orderBy(desc(messages.created_at))
