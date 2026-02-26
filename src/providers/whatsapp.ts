@@ -21,7 +21,7 @@ import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
 
-const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;

@@ -7,7 +7,7 @@ import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import { fileTypeFromBuffer } from 'file-type';
 
-const MAX_MEDIA_SIZE = 50 * 1024 * 1024; // 50MB
+const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
 export class DiscordProvider implements BotProvider {
   name = 'discord' as const;
