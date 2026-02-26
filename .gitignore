@@ -39,6 +39,14 @@ data/
 *.swo
 .DS_Store
 
+#Python Caches
+__pycache__/
+*.pyc
+
+#Database Log
+*.log
+db_error.txt
+
 # Git
 .git/
 
