@@ -13,6 +13,15 @@ export interface AIChatMessage {
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
 
+function isValidUrl(url: string): boolean {
+  try {
+    new URL(url);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export interface AIClientConfig {
   baseUrl?: string;
   apiKey?: string;
@@ -33,8 +42,8 @@ export class AIClient {
     // If using Gemini, set this to e.g., "gemini-2.5-flash"
     this.modelName = config?.modelName || process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
 
-    if (!this.baseUrl || this.baseUrl.includes('<your-username>')) {
-      logger.warn('AI_API_BASE_URL is not configured or contains placeholders. AI features will not work.');
+    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
+      logger.warn('AI_API_BASE_URL is not configured or is invalid. AI features will not work.');
     }
   }
 
@@ -43,8 +52,8 @@ export class AIClient {
     tools?: ToolDefinition[],
     temperature: number = 0.7
   ): Promise<any> {
-    if (!this.baseUrl || this.baseUrl.includes('<your-username>')) {
-      throw new Error('AI_API_BASE_URL is not configured properly.');
+    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
+      throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
     }
 
     const payload: any = {
