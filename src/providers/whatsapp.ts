@@ -112,16 +112,18 @@ export class WhatsAppProvider implements BotProvider {
     });
 
     this.sock.ev.on('messages.upsert', async (m) => {
-      const msg = m.messages[0];
-      if (!msg.message || msg.key.fromMe) return;
       if (m.type !== 'notify') return;
 
-      if (this.messageHandler) {
-        const ctx = await this.createContext(msg);
-        if (ctx) {
-          await this.messageHandler(ctx);
+      await Promise.all(m.messages.map(async (msg) => {
+        if (!msg.message || msg.key.fromMe) return;
+
+        if (this.messageHandler) {
+          const ctx = await this.createContext(msg);
+          if (ctx) {
+            await this.messageHandler(ctx);
+          }
         }
-      }
+      }));
     });
 
     this.sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
