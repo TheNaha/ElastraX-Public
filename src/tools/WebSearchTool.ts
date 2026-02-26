@@ -1,3 +1,20 @@
+/**
+ * @file src/tools/WebSearchTool.ts
+ * @description Web search tool powered by a self-hosted SearXNG instance.
+ *
+ * When the LLM determines that a user question requires up-to-date or factual
+ * information it calls this tool with a search query.  The tool queries the
+ * configured SearXNG instance (default: `SEARXNG_URL` env var), retrieves the
+ * top-5 results, and returns a structured text snippet that the LLM can
+ * summarise for the user.
+ *
+ * Configuration:
+ *  - `SEARXNG_URL` — Base URL of the SearXNG instance (e.g., https://searx.example.com).
+ *    Falls back to the bundled private instance if not set.
+ *
+ * Slash command aliases: `/search`, `/google`, `/duckduckgo`
+ */
+
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';

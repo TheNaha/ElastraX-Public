@@ -1,3 +1,21 @@
+/**
+ * @file src/ai/client.ts
+ * @description OpenAI-compatible AI client used by the ElastraX agent.
+ *
+ * This module provides:
+ *  - `AIChatMessage` — the canonical multi-modal chat message shape sent to the LLM.
+ *  - `AIClientConfig` — optional constructor overrides for the base URL, API key, and model.
+ *  - `AIClient` — a thin HTTP wrapper around any OpenAI-compatible `/chat/completions`
+ *    endpoint (e.g., a self-hosted Llama instance via Modal, or Google Gemini via its
+ *    OpenAI-compatible gateway at https://generativelanguage.googleapis.com/v1beta/openai/).
+ *
+ * Configuration (resolved in priority order):
+ *   1. Constructor `config` argument
+ *   2. Environment variables: AI_API_BASE_URL, AI_API_KEY, AI_MODEL_NAME
+ *   3. Hardcoded defaults (Meta-Llama-3-8B-Instruct)
+ */
+
+/** A single chat participant message supporting text, image, video, and audio content types. */
 export interface AIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string | Array<{
@@ -15,6 +33,7 @@ export interface AIChatMessage {
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
 
+/** Checks whether a string is a syntactically valid URL. */
 function isValidUrl(url: string): boolean {
   try {
     new URL(url);
@@ -24,12 +43,23 @@ function isValidUrl(url: string): boolean {
   }
 }
 
+/** Optional constructor overrides — any omitted field falls back to environment variables. */
 export interface AIClientConfig {
   baseUrl?: string;
   apiKey?: string;
   modelName?: string;
 }
 
+/**
+ * Thin HTTP wrapper around any OpenAI-compatible `/chat/completions` endpoint.
+ *
+ * Instantiate once at module level and reuse across requests — the client is
+ * stateless between calls so there are no concurrency concerns.
+ *
+ * @example
+ * const ai = new AIClient();
+ * const msg = await ai.chatCompletion([{ role: 'user', content: 'Hello!' }]);
+ */
 export class AIClient {
   private baseUrl: string;
   private apiKey: string;
@@ -49,6 +79,16 @@ export class AIClient {
     }
   }
 
+  /**
+   * Send a chat-completion request to the configured LLM endpoint.
+   *
+   * @param messages    The full conversation history to send, including system prompt.
+   * @param tools       Optional array of OpenAI-compatible tool definitions for function calling.
+   * @param temperature Sampling temperature (0 = deterministic, 2 = very creative). Defaults to 0.7.
+   * @returns           The raw `message` object from `choices[0]`, which may include
+   *                    `content` (text) and/or `tool_calls` (function-call requests).
+   * @throws            If the endpoint URL is invalid or the HTTP response is not OK.
+   */
   async chatCompletion(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],

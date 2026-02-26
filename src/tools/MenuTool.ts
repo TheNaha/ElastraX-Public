@@ -1,10 +1,28 @@
+/**
+ * @file src/tools/MenuTool.ts
+ * @description Interactive help menu tool for ElastraX.
+ *
+ * Generates a formatted list of all available slash commands (grouped by category)
+ * when invoked with no arguments, or detailed usage information for a specific command
+ * when a `command_name` argument is provided.
+ *
+ * The tool receives a `ToolGetter` function at construction time (instead of importing
+ * the `tools` array directly) to avoid circular dependencies between `index.ts` and
+ * the individual tool files.
+ *
+ * Slash command aliases: `/help`, `/h`, `/?`
+ */
+
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 
+/** A function that returns the current list of all registered tools (injected to avoid circular imports). */
 type ToolGetter = () => BaseTool[];
 
+/** Interactive help and command-discovery tool. */
 export class MenuTool extends BaseTool {
+  /** Injected supplier for the live tool list — avoids a circular import with `tools/index.ts`. */
   private getTools: ToolGetter;
 
   constructor(getTools: ToolGetter) {

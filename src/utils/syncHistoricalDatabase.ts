@@ -1,3 +1,22 @@
+/**
+ * @file src/utils/syncHistoricalDatabase.ts
+ * @description Bulk ingestion of Baileys history-sync messages into the ElastraX database.
+ *
+ * When a new WhatsApp session is established (or when Baileys reconnects), WhatsApp
+ * may push a `messaging-history.set` event containing messages that were sent/received
+ * before the bot's current session started.  This module persists those historical
+ * messages so that the LLM context window contains real prior conversation history
+ * rather than starting blank.
+ *
+ * Design principles:
+ *  - **Idempotent**: uses `onConflictDoNothing()` keyed on `providerMessageId` so
+ *    running the sync multiple times on the same data is safe.
+ *  - **Non-blocking**: called via `.catch()` in the provider so failures here
+ *    never crash the main bot process.
+ *  - **Media-light**: historical messages are stored without downloading their
+ *    media attachments to avoid hammering the WhatsApp CDN at startup.
+ */
+
 import { db } from '../db';
 import { chatRooms, messages } from '../db/schema';
 import { logger } from './logger';

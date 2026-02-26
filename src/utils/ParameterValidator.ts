@@ -1,3 +1,22 @@
+/**
+ * @file src/utils/ParameterValidator.ts
+ * @description Parses and validates raw slash-command argument strings into typed
+ *              JSON payloads that match a tool's OpenAI JSON Schema definition.
+ *
+ * When a user types `/search cats and dogs`, the slash-command router extracts
+ * `"cats and dogs"` and calls `ParameterValidator.parseArgs(tool, "cats and dogs")`.
+ * The validator maps the raw string onto the tool's declared parameters using
+ * simple heuristics:
+ *
+ *  - **Single string parameter** — the entire argument string is used verbatim
+ *    (preserves natural language phrasing like search queries).
+ *  - **Multiple parameters** — the string is split respecting quoted sub-strings
+ *    (e.g., `add "John Doe" admin` → `['John Doe', 'admin']`).
+ *  - **Type coercion** — numeric and boolean fields are cast from the raw string.
+ *  - **Required field validation** — throws a user-friendly usage-help message
+ *    if a required parameter is missing.
+ */
+
 import { BaseTool } from '../tools/BaseTool';
 
 export class ParameterValidator {

@@ -1,3 +1,26 @@
+/**
+ * @file src/providers/discord.ts
+ * @description Discord messaging provider for ElastraX, built on top of discord.js.
+ *
+ * Responsibilities:
+ *  - Initialise the Discord.js `Client` with the required Gateway intents (guild messages,
+ *    DMs, message content) and log in using `DISCORD_BOT_TOKEN` from the environment.
+ *  - Skip startup gracefully when the token is absent or set to the placeholder value
+ *    `dummy_token_here` (so WhatsApp-only deployments work without a Discord token).
+ *  - For every `messageCreate` event (excluding bot messages), build a normalised
+ *    `MessageContext` and forward it to the registered message handler.
+ *  - Download and cache Discord attachment media synchronously during context creation
+ *    (Discord CDN links are stable, unlike WhatsApp's time-limited URLs).
+ *  - Implement platform-specific action methods: `reply`, `react`, `sendMedia`,
+ *    `sendSticker`, `deleteMessage`, `updateGroupParticipants`, `checkPermissions`.
+ *
+ * Notes:
+ *  - `mediaReady` resolves immediately for Discord because downloads are synchronous
+ *    inside `createContext` (no background-download pattern needed).
+ *  - Group admin operations map WhatsApp semantics ("remove") to Discord guild kicks.
+ *    Adding members requires OAuth2 and is intentionally unsupported.
+ */
+
 import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, AttachmentBuilder, PermissionsBitField } from 'discord.js';
 import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
@@ -7,13 +30,23 @@ import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import { fileTypeFromBuffer } from 'file-type';
 
+/** Maximum file size in bytes for Discord attachments that the bot will download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
+/**
+ * Discord platform provider.  Implements the `BotProvider` interface and manages
+ * the discord.js `Client` lifecycle from login to graceful shutdown.
+ */
 export class DiscordProvider implements BotProvider {
   name = 'discord' as const;
   private client: Client | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
 
+  /**
+   * Logs in to Discord using `DISCORD_BOT_TOKEN`.
+   * Skips startup without error when the token is missing or is the placeholder value,
+   * so a WhatsApp-only deployment does not require a Discord token.
+   */
   async start(): Promise<void> {
     const token = process.env.DISCORD_BOT_TOKEN;
     if (!token || token === 'dummy_token_here') {
@@ -53,6 +86,7 @@ export class DiscordProvider implements BotProvider {
     }
   }
 
+  /** Destroys the Discord.js client and closes the WebSocket connection. */
   async stop(): Promise<void> {
     if (this.client) {
       this.client.destroy();
@@ -60,10 +94,20 @@ export class DiscordProvider implements BotProvider {
     }
   }
 
+  /** Register the application-level callback that will receive every parsed MessageContext. */
   onMessage(handler: (ctx: MessageContext) => Promise<void>): void {
     this.messageHandler = handler;
   }
 
+  /**
+   * Converts a Discord.js `Message` into the normalised `MessageContext`.
+   *
+   * Downloads any attachments synchronously before returning, so `ctx.mediaPath`
+   * is immediately available (unlike the WhatsApp provider which uses a background promise).
+   *
+   * @param msg - Raw Discord.js Message object.
+   * @returns   Populated `MessageContext`, or `null` if the message cannot be processed.
+   */
   private async createContext(msg: DiscordMessage): Promise<MessageContext | null> {
     const isGroup = !msg.channel.isDMBased();
     const mentionedIds = Array.from(msg.mentions.users.keys());

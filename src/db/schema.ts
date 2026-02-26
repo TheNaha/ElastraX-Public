@@ -1,3 +1,20 @@
+/**
+ * @file src/db/schema.ts
+ * @description Drizzle ORM table definitions for the ElastraX SQLite database.
+ *
+ * Tables:
+ *  - `chat_rooms`   — One row per unique chat/group across all platforms.
+ *                     Stores per-room configuration overrides (V7.5+).
+ *  - `messages`     — Append-only log of every user and assistant message.
+ *                     Serves as the conversation history window sent to the LLM.
+ *  - `wa_auth_state`— Key-value store for Baileys WhatsApp authentication credentials.
+ *                     Replaces the file-system auth_info_baileys/ folder so credentials
+ *                     survive container restarts without a mounted volume.
+ *
+ * Migration files live in `drizzle/migrations/` and are applied automatically on startup
+ * via `drizzle-kit` in `src/index.ts`.
+ */
+
 import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
