@@ -34,9 +34,9 @@ function normaliseJid(input: string): string | null {
 }
 
 export class GroupAdminTool extends BaseTool {
-  readonly name = 'group_admin';
+  readonly name = 'groupadmin';
   readonly description = 'Manage a WhatsApp group: add or remove participants, promote/demote admins, mute/unmute the group, or get the invite link. Only works in groups and requires the bot to be a group admin.';
-  readonly aliases = ['kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
+  readonly aliases = ['group_admin', 'group-admin', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   readonly category = 'admin';
   readonly permissions = 'admin';
 
@@ -59,7 +59,7 @@ export class GroupAdminTool extends BaseTool {
               description: 'Phone number or JID of the target user. Required for add/remove/promote/demote.',
             },
           },
-          required: ['action'],
+          required: ['action', 'user'],
         },
       },
     };

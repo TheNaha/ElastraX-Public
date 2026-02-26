@@ -1,20 +1,38 @@
 # use the official Bun image
 # see all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 as base
-RUN apt-get update && apt-get install -y --no-install-recommends \
+FROM oven/bun:1 AS base
+ARG TARGETARCH
+RUN set -eux; \
+	export DEBIAN_FRONTEND=noninteractive; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends \
 		ca-certificates \
 		curl \
-		xz-utils \
-	&& rm -rf /var/lib/apt/lists/* \
-	&& update-ca-certificates \
-	&& curl -L "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" -o /usr/local/bin/yt-dlp \
-	&& chmod a+rx /usr/local/bin/yt-dlp \
-	&& curl -L "https://johnvansickle.com/ffmpeg/releases/ffmpeg-git-amd64-static.tar.xz" -o /tmp/ffmpeg.tar.xz \
-	&& tar -xJf /tmp/ffmpeg.tar.xz -C /tmp \
-	&& cp /tmp/ffmpeg-*-amd64-static/ffmpeg /usr/local/bin/ffmpeg \
-	&& cp /tmp/ffmpeg-*-amd64-static/ffprobe /usr/local/bin/ffprobe \
-	&& chmod a+rx /usr/local/bin/ffmpeg /usr/local/bin/ffprobe \
-	&& rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg-*-amd64-static
+		xz-utils; \
+	rm -rf /var/lib/apt/lists/*; \
+	update-ca-certificates; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
+		"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" \
+		-o /usr/local/bin/yt-dlp; \
+	chmod a+rx /usr/local/bin/yt-dlp; \
+	ARCH="${TARGETARCH:-}"; \
+	if [ -z "$ARCH" ]; then \
+		ARCH="$(dpkg --print-architecture)"; \
+	fi; \
+	case "$ARCH" in \
+		amd64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" ;; \
+		arm64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz" ;; \
+		*) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+	esac; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz; \
+	tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; \
+	FFMPEG_DIR="$(find /tmp -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"; \
+	test -n "$FFMPEG_DIR"; \
+	test -f "$FFMPEG_DIR/bin/ffmpeg"; \
+	test -f "$FFMPEG_DIR/bin/ffprobe"; \
+	install -m 0755 "$FFMPEG_DIR/bin/ffmpeg" /usr/local/bin/ffmpeg; \
+	install -m 0755 "$FFMPEG_DIR/bin/ffprobe" /usr/local/bin/ffprobe; \
+	rm -rf /tmp/ffmpeg.tar.xz "$FFMPEG_DIR"
 WORKDIR /usr/src/app
 
 # install dependencies into temp directory
