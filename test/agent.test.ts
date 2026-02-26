@@ -19,7 +19,7 @@ let mockHistoryRows: any[] = [];
 const insertedValues: any[] = [];
 let mockUpdateSets: any[] = [];
 let shouldThrowOnHistoryFetch = false;
-let mockFileExists = false;
+let shouldFileExist = false;
 
 // Flow state
 let mockFlowResult = false;
@@ -122,7 +122,7 @@ mock.module('fs/promises', () => ({
 }));
 
 mock.module('fs', () => ({
-  existsSync: (_path: string) => mockFileExists,
+  existsSync: (_path: string) => shouldFileExist,
 }));
 
 // Import AFTER all mocks are registered
@@ -176,7 +176,7 @@ const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
 
 describe('handleIncomingMessage', () => {
   const originalFetch = global.fetch;
-  const AI_URL = 'https://fake-ai.example.com/v1';
+  const AI_URL = 'https://test-ai.example.com/v1';
 
   beforeEach(() => {
     // Set AI env vars so the real AIClient passes its URL check
@@ -194,7 +194,7 @@ describe('handleIncomingMessage', () => {
     shouldThrowOnHistoryFetch = false;
     mockFlowResult = false;
     mockToolMap = {};
-    mockFileExists = false;
+    shouldFileExist = false;
   });
 
   afterEach(() => {
@@ -656,7 +656,7 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should include image media parts in AI context when existsSync=true', async () => {
-      mockFileExists = true;
+      shouldFileExist = true;
       mockHistoryRows = [
         {
           role: 'user', content: 'check this image', senderName: 'Alice',
@@ -671,7 +671,7 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should include video media parts in AI context when existsSync=true', async () => {
-      mockFileExists = true;
+      shouldFileExist = true;
       mockHistoryRows = [
         {
           role: 'user', content: 'watch this', senderName: 'Alice',
@@ -685,7 +685,7 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should include audio media parts in AI context when existsSync=true', async () => {
-      mockFileExists = true;
+      shouldFileExist = true;
       mockHistoryRows = [
         {
           role: 'user', content: 'listen', senderName: 'Alice',
@@ -699,7 +699,7 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should include document attachment note in AI context when existsSync=true', async () => {
-      mockFileExists = true;
+      shouldFileExist = true;
       mockHistoryRows = [
         {
           role: 'user', content: 'here is the doc', senderName: 'Alice',
@@ -713,7 +713,7 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should include quoted media parts in AI context when quoted.mediaPath is set', async () => {
-      mockFileExists = true;
+      shouldFileExist = true;
       mockHistoryRows = [
         {
           role: 'user', content: 'what is this?', senderName: 'Alice',
