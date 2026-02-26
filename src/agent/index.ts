@@ -257,8 +257,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         messagesForAI.push(aiMsgObj);
 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
-          // Tool Call Requested
-          for (const tc of aiMsgObj.tool_calls) {
+          // Tool Call Requested - Parallel Execution
+          const toolPromises = aiMsgObj.tool_calls.map(async (tc: any) => {
             const toolName = tc.function.name;
             let args = {};
             try {
@@ -279,14 +279,16 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               toolResultStr = `Error: Tool ${toolName} not found.`;
             }
 
-            // Append tool response
-            messagesForAI.push({
+            return {
               role: 'tool',
               tool_call_id: tc.id,
               name: toolName,
               content: toolResultStr,
-            });
-          }
+            };
+          });
+
+          const toolResults = await Promise.all(toolPromises);
+          messagesForAI.push(...toolResults);
         } else {
           // Standard text response (terminal state)
           isDone = true;
