@@ -6,10 +6,11 @@
  * Strategy: Rather than mocking the AIClient class (which is instantiated at
  * module-evaluation time and can't be easily replaced after the fact), we mock
  * global.fetch so the real AIClient succeeds with predictable responses.
- * All other heavy deps (DB, FlowHandler, ConfigService, tools) are replaced
- * via mock.module() before the agent module is imported.
+ * Heavy deps (DB, logger, fs) are replaced via mock.module() before the agent
+ * module is imported. Tools and FlowHandler use spyOn to avoid mock.module
+ * bleed into registry.test.ts and FlowHandler.test.ts.
  */
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
 // ─── Mutable state shared between mock closures and tests ────────────────────
@@ -38,19 +39,17 @@ mock.module('../src/utils/logger', () => ({
   },
 }));
 
-// Drizzle-orm helpers: agent uses eq() and desc() as opaque query builders.
-mock.module('drizzle-orm', () => ({
-  eq: () => null,
-  desc: () => null,
-}));
-
 // DB mock: select().from(table).where() must be both awaitable (room lookup)
 // and chainable via .orderBy().limit() (history lookup).
+// We identify tables by their Drizzle name symbol rather than the mock string
+// so that the real schema can be used (no schema mock bleed).
+const DRIZZLE_NAME = Symbol.for('drizzle:Name');
+
 mock.module('../src/db', () => ({
   db: {
     select: () => ({
-      from: (tableRef: string) => {
-        const isMessages = tableRef === 'messages';
+      from: (tableRef: any) => {
+        const isMessages = tableRef?.[DRIZZLE_NAME] === 'messages';
         return {
           where: (_cond: any) => {
             const rows = isMessages ? mockHistoryRows : mockRoomRows;
@@ -89,34 +88,6 @@ mock.module('../src/db', () => ({
   },
 }));
 
-mock.module('../src/db/schema', () => ({
-  chatRooms: 'chatRooms',
-  messages: 'messages',
-}));
-
-mock.module('../src/core/FlowHandler', () => ({
-  FlowHandler: {
-    handle: async () => mockFlowResult,
-  },
-}));
-
-// ConfigService: NOT mocked — use the real implementation.
-// Room settings are controlled via mockRoomRows so ConfigService reads them naturally.
-
-mock.module('../src/tools', () => ({
-  getToolDefinitions: () =>
-    Object.values(mockToolMap).map((t: any) => t.definition ?? {
-      type: 'function',
-      function: { name: t.name, description: '', parameters: { type: 'object', properties: {}, required: [] } },
-    }),
-  getToolByName: (name: string) => mockToolMap[name],
-  getToolByAliasOrName: (alias: string) =>
-    Object.values(mockToolMap).find((t: any) =>
-      t.name === alias || (t.aliases ?? []).includes(alias),
-    ),
-}));
-
-
 mock.module('fs/promises', () => ({
   readFile: async () => Buffer.from('media-content'),
 }));
@@ -125,8 +96,22 @@ mock.module('fs', () => ({
   existsSync: (_path: string) => shouldFileExist,
 }));
 
+// ConfigService: NOT mocked — use the real implementation.
+// Room settings are controlled via mockRoomRows so ConfigService reads them naturally.
+
 // Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
+
+// Use spyOn for tools and FlowHandler AFTER importing agent.
+// spyOn replaces the live binding in the module namespace so the agent sees it,
+// but unlike mock.module() it does NOT bleed into other test files.
+import * as toolsModule from '../src/tools';
+import * as flowModule from '../src/core/FlowHandler';
+
+const getToolDefinitionsSpy = spyOn(toolsModule, 'getToolDefinitions');
+const getToolByNameSpy = spyOn(toolsModule, 'getToolByName');
+const getToolByAliasOrNameSpy = spyOn(toolsModule, 'getToolByAliasOrName');
+const flowHandleSpy = spyOn(flowModule.FlowHandler, 'handle');
 
 // ─── Fetch helper: build a realistic OpenAI chat/completions response ─────────
 
@@ -174,6 +159,15 @@ const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
+// Restore all spies after the entire agent test suite so they don't bleed into
+// registry.test.ts, registry.edge.test.ts, or FlowHandler.test.ts.
+afterAll(() => {
+  getToolDefinitionsSpy.mockRestore();
+  getToolByNameSpy.mockRestore();
+  getToolByAliasOrNameSpy.mockRestore();
+  flowHandleSpy.mockRestore();
+});
+
 describe('handleIncomingMessage', () => {
   const originalFetch = global.fetch;
   const AI_URL = 'https://test-ai.example.com/v1';
@@ -195,6 +189,22 @@ describe('handleIncomingMessage', () => {
     mockFlowResult = false;
     mockToolMap = {};
     shouldFileExist = false;
+
+    // Configure spies using current mockToolMap / mockFlowResult state.
+    // These are re-applied every test so the closures see the latest values.
+    flowHandleSpy.mockImplementation(async () => mockFlowResult);
+    getToolByNameSpy.mockImplementation((name: string) => mockToolMap[name]);
+    getToolByAliasOrNameSpy.mockImplementation((alias: string) =>
+      Object.values(mockToolMap).find((t: any) =>
+        t.name === alias || (t.aliases ?? []).includes(alias),
+      ),
+    );
+    getToolDefinitionsSpy.mockImplementation(() =>
+      Object.values(mockToolMap).map((t: any) => t.definition ?? {
+        type: 'function',
+        function: { name: t.name, description: '', parameters: { type: 'object', properties: {}, required: [] } },
+      }),
+    );
   });
 
   afterEach(() => {

@@ -18,6 +18,7 @@
  */
 
 import { describe, test, expect } from 'bun:test';
+
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
 import { parseWhatsAppMessage, LidResolver, getFileLength, normalizeJid } from '../src/providers/whatsappParser';
