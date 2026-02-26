@@ -94,4 +94,20 @@ describe('checkPermissions', () => {
     const result = await checkPermissions(mockSock, chatId, senderId, true, 'admin');
     expect(result).toBe(false);
   });
+
+  test('should return false for admin permission in group when sock is null', async () => {
+    const result = await checkPermissions(null, chatId, senderId, true, 'admin');
+    expect(result).toBe(false);
+  });
+
+  test('should return false when participant is not found in group metadata', async () => {
+    const result = await checkPermissions(mockSock, chatId, 'unknown@s.whatsapp.net', true, 'admin');
+    expect(result).toBe(false);
+  });
+
+  test('should return false for an unrecognised required level', async () => {
+    // TypeScript prevents this but we test the runtime fallback for full line coverage
+    const result = await checkPermissions(mockSock, chatId, senderId, false, 'superuser' as any);
+    expect(result).toBe(false);
+  });
 });

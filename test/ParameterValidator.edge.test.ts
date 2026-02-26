@@ -75,6 +75,33 @@ class AliasedTool extends BaseTool {
   async execute(): Promise<string> { return 'hi'; }
 }
 
+// Tool with enum parameters for getUsageHelp coverage
+class EnumTool extends BaseTool {
+  readonly name = 'action';
+  readonly description = 'Performs an action';
+  readonly aliases = [];
+  readonly category = 'utility';
+  readonly permissions = 'user' as const;
+  get definition(): ToolDefinition {
+    return {
+      type: 'function',
+      function: {
+        name: this.name,
+        description: this.description,
+        parameters: {
+          type: 'object',
+          properties: {
+            mode: { type: 'string', description: 'Mode', enum: ['fast', 'slow', 'auto'] },
+            level: { type: 'integer', description: 'Level' },
+          },
+          required: ['mode'],
+        },
+      },
+    };
+  }
+  async execute(): Promise<string> { return 'done'; }
+}
+
 describe('ParameterValidator – edge cases', () => {
   describe('parseCommandString', () => {
     test('should return empty array for empty string', () => {
@@ -142,6 +169,13 @@ describe('ParameterValidator – edge cases', () => {
       const tool = new AliasedTool();
       const help = ParameterValidator.getUsageHelp(tool);
       expect(help).toContain('Greets a user');
+    });
+
+    test('should list enum options for parameters that have enums', () => {
+      const tool = new EnumTool();
+      const help = ParameterValidator.getUsageHelp(tool);
+      expect(help).toContain('Available Options');
+      expect(help).toContain('fast | slow | auto');
     });
   });
 });

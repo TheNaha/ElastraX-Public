@@ -1,3 +1,4 @@
 [test]
 # Ignore the old ElastraBOT-v6 directory when running tests
 ignore = ["ElastraBOT-v6/**", "node_modules/**"]
+preload = ["./test/setup.ts"]

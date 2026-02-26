@@ -103,4 +103,16 @@ describe('FFmpegConverter', () => {
           expect(e.message).toBe('Spawn failed');
       }
   });
+
+  test('should throw for invalid input extension containing special characters', async () => {
+    await expect(
+      FFmpegConverter.convert(Buffer.from('data'), [], 'invalid/ext', 'webp')
+    ).rejects.toThrow('Invalid extension provided');
+  });
+
+  test('should throw for invalid output extension containing special characters', async () => {
+    await expect(
+      FFmpegConverter.convert(Buffer.from('data'), [], 'mp4', 'out.put')
+    ).rejects.toThrow('Invalid extension provided');
+  });
 });
