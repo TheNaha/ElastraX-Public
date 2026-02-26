@@ -2,6 +2,7 @@ import { MessageContext } from './MessageContext';
 import { SessionManager } from '../utils/SessionManager';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
+import { CANCEL_COMMANDS } from './constants';
 
 export type FlowProcessor = (ctx: MessageContext, activeFlowData: any, flowId: string) => Promise<void>;
 
@@ -35,7 +36,7 @@ export class FlowHandler {
       // If user types a new slash command while in a flow, let the router handle it
       // unless they explicitly type /cancel
       if (ctx.text.startsWith('/')) {
-         if (ctx.text.trim() === '/cancel' || ctx.text.trim() === '/batal') {
+         if (CANCEL_COMMANDS.includes(ctx.text.trim())) {
             SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
             await ctx.react?.('✅');
             await ctx.reply(t(ctx.language, 'flow.cancelled'));
