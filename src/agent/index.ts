@@ -1,5 +1,5 @@
 import { db } from '../db';
-import { chatRooms, messages } from '../db/schema';
+import { chatRooms, messages, ChatRoom } from '../db/schema';
 import { eq, desc } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIClient, AIChatMessage } from '../ai/client';
@@ -30,7 +30,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     };
     await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
-    room = newRoom as any;
+    room = {
+      ...newRoom,
+      systemPrompt: null,
+      contextLimit: null,
+      temperature: null,
+      allowTools: null,
+      autoReplyAll: null,
+    };
   }
   ctx.language = room.language;
 
