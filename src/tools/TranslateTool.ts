@@ -21,12 +21,56 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getModelRouter } from '../utils/ModelRouter';
+import { ParameterValidator } from '../utils/ParameterValidator';
 
 const log = logger.child({ module: 'TranslateTool' });
 
+const LANGUAGE_MAP: Record<string, string> = {
+  'en': 'English',
+  'english': 'English',
+  'id': 'Indonesian',
+  'indonesian': 'Indonesian',
+  'indonesia': 'Indonesian',
+  'es': 'Spanish',
+  'spanish': 'Spanish',
+  'fr': 'French',
+  'french': 'French',
+  'de': 'German',
+  'german': 'German',
+  'ja': 'Japanese',
+  'japanese': 'Japanese',
+  'jp': 'Japanese',
+  'ko': 'Korean',
+  'korean': 'Korean',
+  'kr': 'Korean',
+  'zh': 'Chinese',
+  'chinese': 'Chinese',
+  'cn': 'Chinese',
+  'ru': 'Russian',
+  'russian': 'Russian',
+  'pt': 'Portuguese',
+  'portuguese': 'Portuguese',
+  'br': 'Portuguese',
+  'ar': 'Arabic',
+  'arabic': 'Arabic',
+  'it': 'Italian',
+  'italian': 'Italian',
+  'nl': 'Dutch',
+  'dutch': 'Dutch',
+  'tr': 'Turkish',
+  'turkish': 'Turkish',
+  'th': 'Thai',
+  'thai': 'Thai',
+  'vi': 'Vietnamese',
+  'vietnamese': 'Vietnamese',
+  'ms': 'Malay',
+  'malay': 'Malay',
+  'my': 'Malay',
+};
+
 export class TranslateTool extends BaseTool {
   readonly name = 'translate';
-  readonly description = 'Translate text from one language to another. If the user replies to a message, translate that quoted message. Otherwise translate the provided text. Auto-detect the source language.';
+  readonly description = 'Translate text. If the first word is a language (e.g., "id", "Spanish"), translates to that language. Otherwise, translates to the room\'s default language (English or Indonesian). If no text is provided, translates the quoted message.';
   readonly aliases = ['translate', 'tr'];
   readonly category = 'utility';
   readonly permissions = 'user';
@@ -40,16 +84,11 @@ export class TranslateTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            target_language: {
+            query: {
               type: 'string',
-              description: 'The language to translate into (e.g., "English", "Indonesian", "Spanish", "French", "Japanese"). Use the full language name.',
-            },
-            text: {
-              type: 'string',
-              description: 'The text to translate. Leave empty to use the quoted/replied-to message.',
+              description: 'The target language (optional) followed by text, OR just the text to translate.',
             },
           },
-          required: ['target_language'],
         },
       },
     };
@@ -57,10 +96,29 @@ export class TranslateTool extends BaseTool {
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
-    const targetLang = String(args.target_language || 'English');
+    const query = args.query ? String(args.query).trim() : '';
 
-    // Resolve source text: explicit arg > quoted message > error
-    let sourceText = args.text ? String(args.text) : '';
+    // Determine default target language based on room language
+    let targetLang = lang === 'id' ? 'Indonesian' : 'English';
+    let sourceText = '';
+
+    const tokens = ParameterValidator.parseCommandString(query);
+
+    if (tokens.length > 0) {
+      const firstTokenLower = tokens[0].toLowerCase();
+
+      if (LANGUAGE_MAP[firstTokenLower]) {
+        // First token is a language -> Use it
+        targetLang = LANGUAGE_MAP[firstTokenLower];
+        // The rest is the source text
+        sourceText = tokens.slice(1).join(' ');
+      } else {
+        // First token is NOT a language -> Treat whole query as text
+        sourceText = query;
+      }
+    }
+
+    // If no text provided (or it was just the language code), check for quoted message
     if (!sourceText && ctx.quoted) {
       sourceText = ctx.quoted.text || ctx.quoted.body;
     }
