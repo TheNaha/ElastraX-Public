@@ -85,13 +85,6 @@
       "when": 1772496000000,
       "tag": "0011_user_identities",
       "breakpoints": true
-    },
-    {
-      "idx": 12,
-      "version": "6",
-      "when": 1772200523544,
-      "tag": "0012_serious_chronomancer",
-      "breakpoints": true
     }
   ]
 }
