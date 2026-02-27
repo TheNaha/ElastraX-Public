@@ -83,15 +83,16 @@ describe('StatsTool', () => {
   });
 
   test('execute when DB throws returns error message', async () => {
-    // Override the mock to throw
-    mockSummaryRows = [];
+    // Make the summary query throw by returning a proxy that throws on property access
+    mockSummaryRows = [new Proxy({}, {
+      get(_target, prop) {
+        if (prop === 'total') throw new Error('DB read failed');
+        return undefined;
+      },
+    })];
     const ctx = createMockCtx();
-    // We use a tool with a modified DB that throws — simulate by testing the catch path
-    // Since we can't easily make the mock throw, we test the error message format
-    const errorTool = new StatsTool();
-    // We'll verify the tool handles the zero-data case gracefully
-    mockSummaryRows = [{ total: 0, botReplies: 0, oldest: null }];
-    const result = await errorTool.execute({}, ctx);
-    expect(typeof result).toBe('string');
+    const result = await tool.execute({}, ctx);
+    expect(result).toContain('Failed to retrieve stats');
+    expect(result).toContain('DB read failed');
   });
 });
