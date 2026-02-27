@@ -34,6 +34,8 @@ import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'RoleTool' });
+
 const PRIV_FIELDS: (keyof RolePrivileges)[] = [
   'maxMessagesPerWindow', 'rateLimitWindowSec', 'contextLimit', 'maxDownloadMb',
 ];
@@ -93,6 +95,8 @@ export class RoleTool extends BaseTool {
     let { action, user, role, scope, field, value } = args;
     const cmd = String(args.__command || '').toLowerCase();
 
+    log.debug({ action, role, scope, senderId: ctx.senderId, chatId: ctx.chatId }, 'Role action requested');
+
     if (!action && cmd) action = 'check';
 
     // Normalise scope
@@ -103,6 +107,8 @@ export class RoleTool extends BaseTool {
     if (action === 'check') {
       const resolved = resolveTargetUser(args, ctx, 'user');
       const targetId = resolved?.jid ?? ctx.senderId;
+
+      log.debug({ targetId, chatId: ctx.chatId }, 'Checking roles for user');
 
       const allDbRoles = await RoleService.getUserRoles(targetId);
       const isEnvOwner = targetId === process.env.BOT_OWNER_JID;
@@ -176,6 +182,7 @@ export class RoleTool extends BaseTool {
       }
       await PrivilegeService.setOverride(role, field as keyof RolePrivileges, numValue);
       const label = numValue === null ? 'default' : numValue === -1 ? 'unlimited' : String(numValue);
+      log.info({ role, field, value: numValue, setBy: ctx.senderId }, 'Privilege override set');
       return `✅ Set *${field}* for role *${role}* to *${label}*.`;
     }
 
@@ -187,6 +194,7 @@ export class RoleTool extends BaseTool {
       }
       if (!role) return '❌ Please specify a role. Example: /role resetpriv premium';
       await PrivilegeService.resetToDefaults(role);
+      log.info({ role, resetBy: ctx.senderId }, 'Privilege overrides reset to defaults');
       return `✅ All privilege overrides for *${role}* have been reset to defaults.`;
     }
 
@@ -207,7 +215,7 @@ export class RoleTool extends BaseTool {
       }
 
       await RoleService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
-      logger.info({ targetId, role, scope, grantedBy: ctx.senderId }, '[RoleTool] Role granted');
+      log.info({ targetId, role, scope, grantedBy: ctx.senderId }, 'Role granted');
       return t(lang, 'role.granted', { userId: targetId, role, scope: scopeLabel });
     }
 
@@ -230,7 +238,7 @@ export class RoleTool extends BaseTool {
       if (!removed) {
         return `❌ No matching role found for \`${targetId}\` in *${scopeLabel}*.`;
       }
-      logger.info({ targetId, role: revokeRole, scope, revokedBy: ctx.senderId }, '[RoleTool] Role revoked');
+      log.info({ targetId, role: revokeRole, scope, revokedBy: ctx.senderId }, 'Role revoked');
       return t(lang, 'role.revoked', { userId: targetId, scope: scopeLabel });
     }
 

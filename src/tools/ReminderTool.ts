@@ -24,6 +24,8 @@ import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'ReminderTool' });
+
 /**
  * Parses a natural-language time string relative to now.
  * Returns a Date or null if unparseable.
@@ -147,6 +149,8 @@ export class ReminderTool extends BaseTool {
     let { action, time, message, number, recurrence } = args;
     const lang = ctx.language ?? 'en';
 
+    log.debug({ action, chatId: ctx.chatId, senderId: ctx.senderId }, 'Reminder action requested');
+
     // Slash shorthand support:
     // /remind in 30 minutes take a break
     // With positional parsing, this often arrives as action='in', time='30', message='minutes'
@@ -179,6 +183,8 @@ export class ReminderTool extends BaseTool {
         .where(and(eq(reminders.senderId, ctx.senderId), eq(reminders.isSent, false)))
         .orderBy(reminders.remindAt)
         .all();
+
+      log.debug({ senderId: ctx.senderId, activeCount: active.length }, 'Listing reminders');
 
       if (active.length === 0) {
         return t(lang, 'reminder.list_empty');
@@ -214,6 +220,7 @@ export class ReminderTool extends BaseTool {
       if (!target) return t(lang, 'reminder.cancel_invalid');
 
       db.delete(reminders).where(eq(reminders.id, target.id)).run();
+      log.info({ senderId: ctx.senderId, reminderNumber: n }, 'Reminder cancelled');
       return t(lang, 'reminder.cancel', { n: String(n) });
     }
 
@@ -239,6 +246,8 @@ export class ReminderTool extends BaseTool {
         created_at: new Date(),
       }).run();
 
+      log.info({ senderId: ctx.senderId, chatId: ctx.chatId, remindAt: fireAt.toISOString(), recurrence: recurrence || null }, 'Reminder set');
+
       if (recurrence) {
         return t(lang, 'reminder.recurrence_set', {
           time: formatTime(fireAt),
@@ -252,7 +261,7 @@ export class ReminderTool extends BaseTool {
         message: String(message),
       });
     } catch (err: any) {
-      logger.error({ err }, '[ReminderTool] Failed to insert reminder');
+      log.error({ err, senderId: ctx.senderId }, 'Failed to insert reminder');
       return t(lang, 'reminder.error', { msg: err.message });
     }
   }

@@ -28,6 +28,8 @@ import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 
+const log = logger.child({ module: 'GroupAdminTool' });
+
 export class GroupAdminTool extends BaseTool {
   readonly name = 'groupadmin';
   readonly description = 'Manage a WhatsApp group: add or remove participants, promote/demote admins, mute/unmute the group, or get the invite link. Only works in groups and requires the bot to be a group admin.';
@@ -65,6 +67,8 @@ export class GroupAdminTool extends BaseTool {
     let { action, user } = args;
     const cmd = String(args.__command || '').toLowerCase();
 
+    log.debug({ action, user, cmd, chatId: ctx.chatId, senderId: ctx.senderId }, 'Group admin action requested');
+
     // Slash-command shorthand support:
     // /kick 628...  -> action inferred from alias, first arg treated as user
     const actionAliases: Record<string, string> = {
@@ -91,6 +95,7 @@ export class GroupAdminTool extends BaseTool {
       if (!ctx.getGroupInviteLink) return t(lang, 'group.link_not_supported');
       try {
         const link = await ctx.getGroupInviteLink(ctx.chatId);
+        log.info({ chatId: ctx.chatId, requestedBy: ctx.senderId }, 'Group invite link retrieved');
         return t(lang, 'group.link_success', { link });
       } catch (e: any) {
         return t(lang, 'group.error', { msg: e.message });
@@ -103,6 +108,7 @@ export class GroupAdminTool extends BaseTool {
       try {
         await ctx.setGroupSettings(ctx.chatId, action === 'mute' ? 'announcement' : 'not_announcement');
         const status = action === 'mute' ? 'muted (admins only)' : 'unmuted (everyone)';
+        log.info({ chatId: ctx.chatId, action, requestedBy: ctx.senderId }, 'Group mute setting changed');
         return t(lang, 'group.mute_success', { status });
       } catch (e: any) {
         return t(lang, 'group.error', { msg: e.message });
@@ -119,10 +125,11 @@ export class GroupAdminTool extends BaseTool {
       try {
         await ctx.react?.('⏳');
         await ctx.updateGroupParticipants(action, [userJid]);
+        log.info({ chatId: ctx.chatId, action, targetJid: userJid, requestedBy: ctx.senderId }, 'Group participant updated');
         const key = action === 'add' ? 'group.success_add' : 'group.success_remove';
         return t(lang, key, { jid: userJid });
       } catch (e: any) {
-        logger.error(e, '[GroupAdminTool] add/remove failed');
+        log.error({ err: e, action, targetJid: userJid, chatId: ctx.chatId }, 'Group add/remove failed');
         return t(lang, 'group.error', { msg: e.message });
       }
     }
@@ -133,10 +140,11 @@ export class GroupAdminTool extends BaseTool {
         await ctx.react?.('⏳');
         // Baileys uses 'promote'/'demote' directly in updateGroupParticipants
         await ctx.updateGroupParticipants(action as any, [userJid]);
+        log.info({ chatId: ctx.chatId, action, targetJid: userJid, requestedBy: ctx.senderId }, 'Group participant role changed');
         const key = action === 'promote' ? 'group.promote_success' : 'group.demote_success';
         return t(lang, key, { jid: userJid });
       } catch (e: any) {
-        logger.error(e, '[GroupAdminTool] promote/demote failed');
+        log.error({ err: e, action, targetJid: userJid, chatId: ctx.chatId }, 'Group promote/demote failed');
         return t(lang, 'group.error', { msg: e.message });
       }
     }

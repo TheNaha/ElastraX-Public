@@ -24,6 +24,8 @@ import { eq } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 
+const log = logger.child({ module: 'LanguageTool' });
+
 export class LanguageTool extends BaseTool {
   readonly name = 'language';
   readonly description = 'Change the bot language for the current chat room (supports "en" for English, "id" for Indonesian).';
@@ -66,10 +68,12 @@ export class LanguageTool extends BaseTool {
         .set({ language: lang_code })
         .where(eq(chatRooms.id, ctx.chatId));
 
+      log.info({ chatId: ctx.chatId, lang_code, changedBy: ctx.senderId }, 'Room language updated');
+
       const key = lang_code === 'id' ? 'language.success_id' : 'language.success_en';
       return t(lang_code, key);
     } catch (e: any) {
-      logger.error(e, 'Failed to update language');
+      log.error({ err: e, chatId: ctx.chatId, lang_code }, 'Failed to update language');
       return t(ctx.language, 'language.error', { msg: e.message });
     }
   }

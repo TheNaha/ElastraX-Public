@@ -34,6 +34,8 @@ import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ChatCompletionResponse, ChatCompletionChunk } from '../types/ai';
 
+const log = logger.child({ module: 'AIClient' });
+
 /** Checks whether a string is a syntactically valid URL. */
 function isValidUrl(url: string): boolean {
   try {
@@ -76,7 +78,7 @@ export class AIClient {
     this.modelName = config?.modelName || process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
 
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
-      logger.warn('AI_API_BASE_URL is not configured or is invalid. AI features will not work.');
+      log.warn('AI_API_BASE_URL is not configured or is invalid. AI features will not work.');
     }
   }
 
@@ -144,7 +146,7 @@ export class AIClient {
     const endpoint = this.resolveEndpoint();
     const payload = this.buildPayload(messages, tools, temperature, maxTokens);
 
-    logger.debug({ endpoint, model: this.modelName }, 'Sending request to AI provider...');
+    log.debug({ endpoint, model: this.modelName, messageCount: messages.length, hasTools: !!(tools && tools.length) }, 'Sending chat completion request');
     const startTime = Date.now();
 
     const response = await fetch(endpoint, {
@@ -161,12 +163,15 @@ export class AIClient {
 
     if (!response.ok) {
       const errText = await response.text();
-      logger.error({ status: response.status, errText, elapsed }, 'Error response from LLM');
+      log.error({ status: response.status, errText, elapsed }, 'Error response from LLM');
       throw new Error(`LLM API returned ${response.status}: ${errText}`);
     }
 
     const data = (await response.json()) as ChatCompletionResponse;
-    logger.debug({ elapsed, tokenUsage: data.usage }, 'Received response from AI provider');
+    log.debug({ elapsed, tokenUsage: data.usage }, 'Chat completion response received');
+
+    const msg = data.choices?.[0]?.message;
+    log.trace({ hasContent: !!msg?.content, hasToolCalls: !!(msg?.tool_calls?.length) }, 'Response message details');
 
     const msg = data.choices?.[0]?.message;
     return msg ?? { role: 'assistant', content: 'No response generated.' };
@@ -207,6 +212,7 @@ export class AIClient {
 
     if (!response.ok) {
       const errText = await response.text();
+      log.error({ status: response.status, errText }, 'Streaming LLM request failed');
       throw new Error(`LLM API returned ${response.status}: ${errText}`);
     }
 
@@ -238,7 +244,7 @@ export class AIClient {
           try {
             yield JSON.parse(data) as ChatCompletionChunk;
           } catch {
-            logger.debug({ raw: data }, 'Failed to parse SSE chunk');
+            log.debug({ raw: data }, 'Failed to parse SSE chunk');
           }
         }
       }

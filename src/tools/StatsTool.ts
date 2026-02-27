@@ -19,6 +19,8 @@ import { eq, count, min, sql, desc, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'StatsTool' });
+
 export class StatsTool extends BaseTool {
   readonly name = 'room_stats';
   readonly description = 'Show usage statistics for the current chat room: total messages, bot replies, most active user, and room age. Use when the user asks about room stats, message counts, or activity.';
@@ -43,6 +45,8 @@ export class StatsTool extends BaseTool {
 
   async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
+
+    log.debug({ chatId: ctx.chatId }, 'Fetching room stats');
 
     try {
       const summaryRows = db
@@ -98,7 +102,7 @@ export class StatsTool extends BaseTool {
         topCount: String(topCount),
       });
     } catch (err: any) {
-      logger.error({ err }, '[StatsTool] Failed to fetch stats');
+      log.error({ err, chatId: ctx.chatId }, 'Failed to fetch stats');
       return `❌ Failed to retrieve stats: ${err.message}`;
     }
   }
