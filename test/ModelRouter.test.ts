@@ -1,28 +1,20 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-mock.module('../src/utils/HealthMetrics', () => ({
-  healthMetrics: { recordLLMRequest: mock(() => {}) },
-}));
-
-const mockChatCompletion = mock(async () => ({ role: 'assistant', content: 'Hello' }));
-const mockChatCompletionStream = mock(async function*() { yield { choices: [{ delta: { content: 'Hi' } }] }; });
-
-mock.module('../src/ai/client', () => ({
-  AIClient: class {
-    chatCompletion = mockChatCompletion;
-    chatCompletionStream = mockChatCompletionStream;
-  },
-}));
-
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { ModelRouter, getModelRouter } from '../src/utils/ModelRouter';
 
 describe('ModelRouter', () => {
+  const savedBaseUrl = process.env.AI_API_BASE_URL;
+
   beforeEach(() => {
-    mockChatCompletion.mockReset();
-    mockChatCompletion.mockImplementation(async () => ({ role: 'assistant', content: 'Hello' }));
+    // Ensure env var is set for router construction
+    if (!process.env.AI_API_BASE_URL) {
+      process.env.AI_API_BASE_URL = 'https://test-api.example.com/v1';
+    }
+  });
+
+  afterEach(() => {
+    if (savedBaseUrl) {
+      process.env.AI_API_BASE_URL = savedBaseUrl;
+    }
   });
 
   test('constructor does not throw when AI_API_BASE_URL is set', () => {
@@ -31,14 +23,23 @@ describe('ModelRouter', () => {
 
   test('chatCompletion returns a response', async () => {
     const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const clientSpy = spyOn(internalProviders[0].client, 'chatCompletion')
+      .mockResolvedValue({ role: 'assistant', content: 'Hello' });
+
     const result = await router.chatCompletion([{ role: 'user', content: 'hi' }]);
     expect(result.content).toBe('Hello');
+    clientSpy.mockRestore();
   });
 
   test('chatCompletion with empty content triggers failover and throws with single provider', async () => {
-    mockChatCompletion.mockImplementation(async () => ({ role: 'assistant', content: '' }));
     const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const clientSpy = spyOn(internalProviders[0].client, 'chatCompletion')
+      .mockResolvedValue({ role: 'assistant', content: '' });
+
     await expect(router.chatCompletion([{ role: 'user', content: 'hi' }])).rejects.toThrow();
+    clientSpy.mockRestore();
   });
 
   test('getModelRouter returns a ModelRouter instance', () => {

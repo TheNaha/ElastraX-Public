@@ -1,35 +1,7 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-const mockSet = mock((_userId: string, _flow: string, _data: any, _platform: string, _ttl: number) => {});
-const mockClear = mock(() => {});
-const mockGet = mock(() => null);
-const mockHas = mock(() => false);
-
-mock.module('../src/utils/SessionManager', () => ({
-  SessionManager: { set: mockSet, clear: mockClear, get: mockGet, has: mockHas },
-}));
-
-mock.module('../src/core/FlowHandler', () => ({
-  FlowHandler: { register: mock(() => {}), handle: mock(async () => false) },
-}));
-
-// Mock DB for any transitive imports
-mock.module('../src/db', () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({ all: () => [] }),
-        all: () => [],
-      }),
-    }),
-  },
-}));
-
 import { MenfessTool } from '../src/tools/MenfessTool';
+import { SessionManager } from '../src/utils/SessionManager';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
@@ -51,15 +23,17 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-beforeEach(() => {
-  mockSet.mockClear();
-  mockClear.mockClear();
-  mockGet.mockClear();
-  mockHas.mockClear();
-});
-
 describe('MenfessTool', () => {
   const tool = new MenfessTool();
+  let setSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    setSpy = spyOn(SessionManager, 'set');
+  });
+
+  afterEach(() => {
+    setSpy.mockRestore();
+  });
 
   test('basic properties', () => {
     expect(tool.name).toBe('menfess');
@@ -91,16 +65,13 @@ describe('MenfessTool', () => {
     const result = await tool.execute({ target: '120363xxx@g.us', message: 'secret message' }, ctx);
     expect(result).toContain('preview');
     expect(result).toContain('secret message');
-    expect(mockSet).toHaveBeenCalled();
+    expect(setSpy).toHaveBeenCalled();
   });
 
   test('alias resolution works if MENFESS_TARGETS env is set', async () => {
-    // The aliases are loaded at module init from process.env.MENFESS_TARGETS.
-    // Since we can't re-evaluate module init, we test with a raw JID instead.
-    // This validates the tool accepts JIDs with @s.whatsapp.net
     const ctx = createMockCtx();
     const result = await tool.execute({ target: '628123@s.whatsapp.net', message: 'hello' }, ctx);
     expect(result).toContain('preview');
-    expect(mockSet).toHaveBeenCalled();
+    expect(setSpy).toHaveBeenCalled();
   });
 });

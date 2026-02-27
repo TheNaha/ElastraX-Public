@@ -1,14 +1,12 @@
-import { expect, test, describe, mock, beforeEach } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-
-const mockChatCompletion = mock(async () => ({ content: 'Hola mundo', role: 'assistant' }));
-mock.module('../src/utils/ModelRouter', () => ({
-  getModelRouter: () => ({ chatCompletion: mockChatCompletion }),
-}));
-
-const { TranslateTool } = await import('../src/tools/TranslateTool');
+import { TranslateTool } from '../src/tools/TranslateTool';
+import * as ModelRouterModule from '../src/utils/ModelRouter';
 
 describe('TranslateTool', () => {
+  const mockChatCompletion = mock(async () => ({ content: 'Hola mundo', role: 'assistant' }));
+  let routerSpy: ReturnType<typeof spyOn>;
+
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
     platform: 'whatsapp',
     chatId: 'chat-1',
@@ -27,6 +25,13 @@ describe('TranslateTool', () => {
   beforeEach(() => {
     mockChatCompletion.mockClear();
     mockChatCompletion.mockImplementation(async () => ({ content: 'Hola mundo', role: 'assistant' }));
+    routerSpy = spyOn(ModelRouterModule, 'getModelRouter').mockReturnValue({
+      chatCompletion: mockChatCompletion,
+    } as any);
+  });
+
+  afterEach(() => {
+    routerSpy.mockRestore();
   });
 
   test('should have basic properties', () => {

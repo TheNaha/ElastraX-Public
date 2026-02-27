@@ -1,14 +1,9 @@
-import { expect, test, describe, mock } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-
-const mockConvert = mock(async () => Buffer.from('converted'));
-mock.module('../src/utils/FFmpegConverter', () => ({
-  FFmpegConverter: { convert: mockConvert },
-}));
-mock.module('fs', () => ({ existsSync: () => true }));
-mock.module('fs/promises', () => ({ readFile: async () => Buffer.from('input-data') }));
-
-const { MediaConvertTool } = await import('../src/tools/MediaConvertTool');
+import { MediaConvertTool } from '../src/tools/MediaConvertTool';
+import { FFmpegConverter } from '../src/utils/FFmpegConverter';
+import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 
 describe('MediaConvertTool', () => {
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -76,7 +71,9 @@ describe('MediaConvertTool', () => {
 
     test('should call FFmpegConverter.convert and sendMedia with valid media', async () => {
       const tool = new MediaConvertTool();
-      mockConvert.mockClear();
+      const convertSpy = spyOn(FFmpegConverter, 'convert').mockResolvedValue(Buffer.from('converted'));
+      const existsSpy = spyOn(fs, 'existsSync').mockReturnValue(true);
+      const readFileSpy = spyOn(fsPromises, 'readFile').mockResolvedValue(Buffer.from('input-data') as any);
       const mockSendMedia = mock(async () => {});
       const ctx = createMockCtx({
         sendMedia: mockSendMedia,
@@ -85,9 +82,12 @@ describe('MediaConvertTool', () => {
       });
       const result = await tool.execute({ format: 'mp3' }, ctx);
 
-      expect(mockConvert).toHaveBeenCalled();
+      expect(convertSpy).toHaveBeenCalled();
       expect(mockSendMedia).toHaveBeenCalled();
       expect(result).toContain('complete');
+      convertSpy.mockRestore();
+      existsSpy.mockRestore();
+      readFileSpy.mockRestore();
     });
   });
 });

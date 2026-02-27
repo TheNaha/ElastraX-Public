@@ -1,16 +1,7 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-let mockFileExists = true;
-let mockFileBuffer = Buffer.alloc(0);
-
-mock.module('fs', () => ({ existsSync: () => mockFileExists }));
-mock.module('fs/promises', () => ({ readFile: async () => mockFileBuffer }));
-
 import { PDFTool } from '../src/tools/PDFTool';
+import * as fs from 'fs';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
@@ -32,13 +23,17 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-beforeEach(() => {
-  mockFileExists = true;
-  mockFileBuffer = Buffer.alloc(0);
-});
-
 describe('PDFTool', () => {
   const tool = new PDFTool();
+  let existsSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    existsSpy = spyOn(fs, 'existsSync').mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    existsSpy.mockRestore();
+  });
 
   test('basic properties', () => {
     expect(tool.name).toBe('pdf_tool');
@@ -47,21 +42,21 @@ describe('PDFTool', () => {
   });
 
   test('execute without mediaPath and no quoted mediaPath returns pdf.no_file', async () => {
-    mockFileExists = false;
+    existsSpy.mockReturnValue(false);
     const ctx = createMockCtx({ mediaPath: undefined, mimeType: undefined });
     const result = await tool.execute({ action: 'info' }, ctx);
     expect(result).toContain('attach a PDF');
   });
 
   test('execute with mediaPath but non-PDF mime returns pdf.not_pdf', async () => {
-    mockFileExists = true;
+    existsSpy.mockReturnValue(true);
     const ctx = createMockCtx({ mediaPath: '/tmp/file.jpg', mimeType: 'image/jpeg' });
     const result = await tool.execute({ action: 'info' }, ctx);
     expect(result).toContain('must be a PDF');
   });
 
   test('execute with mediaPath that does not exist on disk returns pdf.no_file', async () => {
-    mockFileExists = false;
+    existsSpy.mockReturnValue(false);
     const ctx = createMockCtx({ mediaPath: '/tmp/missing.pdf', mimeType: 'application/pdf' });
     const result = await tool.execute({ action: 'info' }, ctx);
     expect(result).toContain('attach a PDF');

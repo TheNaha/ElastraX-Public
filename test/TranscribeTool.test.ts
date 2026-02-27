@@ -1,26 +1,30 @@
-import { expect, test, describe, mock, beforeEach, afterEach } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-
-mock.module('fs', () => ({ existsSync: () => true }));
-mock.module('fs/promises', () => ({ readFile: async () => Buffer.from('audio-data') }));
-
-const { TranscribeTool } = await import('../src/tools/TranscribeTool');
+import { TranscribeTool } from '../src/tools/TranscribeTool';
+import * as fs from 'fs';
+import * as fsPromises from 'fs/promises';
 
 describe('TranscribeTool', () => {
   const originalFetch = global.fetch;
   const savedEndpoint = process.env.TRANSCRIBE_ENDPOINT;
   const savedApiKey = process.env.TRANSCRIBE_API_KEY;
+  let existsSpy: ReturnType<typeof spyOn>;
+  let readFileSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     global.fetch = originalFetch;
     process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
     process.env.TRANSCRIBE_API_KEY = savedApiKey;
+    existsSpy = spyOn(fs, 'existsSync').mockReturnValue(true);
+    readFileSpy = spyOn(fsPromises, 'readFile').mockResolvedValue(Buffer.from('audio-data') as any);
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
     process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
     process.env.TRANSCRIBE_API_KEY = savedApiKey;
+    existsSpy.mockRestore();
+    readFileSpy.mockRestore();
   });
 
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -99,6 +103,7 @@ describe('TranscribeTool', () => {
 
   test('should return no_media when no media path is available', async () => {
     process.env.TRANSCRIBE_ENDPOINT = 'https://api.example.com/transcribe';
+    existsSpy.mockReturnValue(false);
 
     const tool = new TranscribeTool();
     const ctx = createMockCtx({
