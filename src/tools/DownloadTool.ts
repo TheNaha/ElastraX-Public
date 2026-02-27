@@ -56,8 +56,8 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
   const id = crypto.randomBytes(8).toString('hex');
   const outTemplate = path.join(tmpDir, `${id}.%(ext)s`);
 
+  // Security: Place URL last after '--' to prevent argument injection
   const args: string[] = [
-    url,
     '-o', outTemplate,
     '--no-playlist',
     '--max-filesize', `${(parseInt(process.env.DOWNLOAD_MAX_MB || '50', 10)) + 5}m`,
@@ -71,6 +71,9 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
       '--recode-video', format,
     );
   }
+
+  // Append URL last, protected by --
+  args.push('--', url);
 
   await new Promise<void>((resolve, reject) => {
     const child = spawn(ytdlpBin, args);
@@ -137,6 +140,21 @@ export class DownloadTool extends BaseTool {
 
     if (!url) return t(lang, 'download.no_url');
     if (!ctx.sendMedia) return t(lang, 'download.not_supported');
+
+    // Security: Input validation
+    try {
+      const u = new URL(url);
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+        return t(lang, 'download.error', { msg: 'Only HTTP/HTTPS URLs are allowed.' });
+      }
+    } catch {
+      return t(lang, 'download.error', { msg: 'Invalid URL format.' });
+    }
+
+    // Security: Strict format validation
+    if (!MIME_MAP[format]) {
+      return t(lang, 'download.error', { msg: 'Invalid format requested.' });
+    }
 
     try {
       await ctx.react?.('⬇️');
