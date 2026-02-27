@@ -14,6 +14,7 @@ describe('IDTool', () => {
     language: 'en',
     reply: mock(async () => {}),
     react: mock(async () => {}),
+    resolveRoles: mock(async () => ['user']),
     rawMessage: {},
     ...overrides,
   } as MessageContext);
@@ -47,6 +48,7 @@ describe('IDTool', () => {
     expect(result).toContain('chat-1');
     expect(result).toContain('whatsapp');
     expect(result).toContain('User');
+    // Note: We expect the result to contain 'user' eventually when we implement the change
   });
 
   test('execute with isGroup=true shows Yes', async () => {
@@ -63,5 +65,16 @@ describe('IDTool', () => {
     const result = await tool.execute({}, ctx);
 
     expect(result).toContain('No');
+  });
+
+  test('execute shows multiple roles', async () => {
+    const tool = new IDTool();
+    const ctx = createMockCtx({
+        resolveRoles: mock(async () => ['user', 'admin'])
+    });
+
+    const result = await tool.execute({}, ctx);
+    expect(result).toBeString();
+    expect(result).toContain('user, admin');
   });
 });

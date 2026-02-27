@@ -82,7 +82,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'ping.response': '🏓 Pong!\n⏱ Latency: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Your Info*\n👤 Name: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Is Group: *{isGroup}*',
+    'id.response': '🪪 *Your Info*\n👤 Name: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Is Group: *{isGroup}*\n🔐 Permissions: *{permissions}*',
 
     // Stats
     'stats.response': '📊 *Room Stats*\n💬 Total Messages: *{total}*\n🤖 Bot Replies: *{botReplies}*\n👤 Human Messages: *{humanMessages}*\n📅 Active Since: *{since}*\n🏆 Top User: *{topUser}* ({topCount} messages)',
@@ -244,7 +244,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'ping.response': '🏓 Pong!\n⏱ Latensi: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Info Kamu*\n👤 Nama: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Grup: *{isGroup}*',
+    'id.response': '🪪 *Info Kamu*\n👤 Nama: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Grup: *{isGroup}*\n🔐 Izin: *{permissions}*',
 
     // Stats
     'stats.response': '📊 *Statistik Ruangan*\n💬 Total Pesan: *{total}*\n🤖 Balasan Bot: *{botReplies}*\n👤 Pesan Manusia: *{humanMessages}*\n📅 Aktif Sejak: *{since}*\n🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
