@@ -89,6 +89,9 @@ for (const tool of toolsList) {
   }
 }
 
+// Pre-compute tool definitions once at module load time to avoid mapping on every request
+const cachedToolDefinitions = toolsList.map(t => t.definition);
+
 /**
  * Look up a tool by its exact LLM function name (e.g., `'web_search'`).
  * Returns `undefined` if no matching tool is registered.
@@ -102,7 +105,7 @@ export function getToolByName(name: string): BaseTool | undefined {
  * This array is passed directly to the LLM when function-calling is enabled for a room.
  */
 export function getToolDefinitions() {
-  return tools.map(t => t.definition);
+  return cachedToolDefinitions;
 }
 
 /**
