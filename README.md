@@ -79,6 +79,11 @@ AI_GEMINI_MODEL=gemini-2.5-flash
 AI_OLLAMA_BASE_URL=http://localhost:11434/v1
 AI_OLLAMA_API_KEY=ollama
 AI_OLLAMA_MODEL=llama3
+
+# Runtime behavior
+AI_MAX_TOKENS=2048
+AI_TIMEOUT_MS=60000
+AI_MAX_TOOL_ITERATIONS=8
 ```
 
 ### 2) Webhook Inbound API
@@ -88,6 +93,10 @@ WEBHOOK_ENABLED=true
 WEBHOOK_PORT=3500
 WEBHOOK_SECRET=your_shared_secret
 ```
+
+Auth behavior:
+- Generic sources: send secret via `x-webhook-secret` header, JSON `secret`, or `?secret=` query.
+- GitHub webhooks: use `X-Hub-Signature-256` HMAC with `WEBHOOK_SECRET`.
 
 Canonical request format:
 ```http
@@ -112,6 +121,16 @@ GET /health
 TRANSCRIBE_ENDPOINT=https://your-transcribe-endpoint
 TRANSCRIBE_API_KEY=optional
 TRANSCRIBE_TIMEOUT_MS=45000
+```
+
+### 4) Media Cache Cleanup
+
+```env
+# Every 6 hours
+MEDIA_CLEANUP_INTERVAL_MS=21600000
+
+# Delete cached media older than 72 hours
+MEDIA_RETENTION_HOURS=72
 ```
 
 ## Testing
