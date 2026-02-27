@@ -75,6 +75,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Agent
     'agent.no_permission': '⛔ You do not have permission to use this command.',
     'agent.unknown_command': 'Unknown command: /{cmd}',
+    'agent.did_you_mean': 'Unknown command: /{cmd}. Did you mean */{suggestion}*?',
     'agent.internal_error': 'An internal error occurred while processing your message.',
     'agent.rate_limited': '⏳ Slow down! You can send a message every {seconds} seconds. Please wait.',
 
@@ -237,6 +238,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Agent
     'agent.no_permission': '⛔ Anda tidak memiliki izin untuk menggunakan perintah ini.',
     'agent.unknown_command': 'Perintah tidak dikenal: /{cmd}',
+    'agent.did_you_mean': 'Perintah tidak dikenal: /{cmd}. Maksud Anda */{suggestion}*?',
     'agent.internal_error': 'Terjadi kesalahan internal saat memproses pesan Anda.',
     'agent.rate_limited': '⏳ Pelan-pelan ya! Kamu bisa kirim pesan setiap {seconds} detik. Tunggu dulu.',
 

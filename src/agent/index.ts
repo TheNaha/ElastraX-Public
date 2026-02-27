@@ -34,12 +34,13 @@ import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
-import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tools';
+import { getToolDefinitions, getToolByName, getToolByAliasOrName, tools } from '../tools';
 
 const log = logger.child({ module: 'Agent' });
 import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
+import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
@@ -274,7 +275,33 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // If an unknown command is issued, warn the user in their language
     log.debug({ command, chatId }, 'Unknown command attempted');
-    await ctx.reply(t(ctx.language, 'agent.unknown_command', { cmd: command }));
+
+    // Attempt to find a similar command (Did you mean...?)
+    let suggestion: string | null = null;
+    let bestDistance = Infinity;
+
+    for (const tool of tools) {
+      // Check tool name
+      const nameDist = levenshtein(command, tool.name);
+      if (nameDist <= 3 && nameDist < bestDistance) {
+        bestDistance = nameDist;
+        suggestion = tool.name;
+      }
+      // Check aliases
+      for (const alias of tool.aliases) {
+        const aliasDist = levenshtein(command, alias);
+        if (aliasDist <= 3 && aliasDist < bestDistance) {
+          bestDistance = aliasDist;
+          suggestion = alias;
+        }
+      }
+    }
+
+    if (suggestion) {
+      await ctx.reply(t(ctx.language, 'agent.did_you_mean', { cmd: command, suggestion }));
+    } else {
+      await ctx.reply(t(ctx.language, 'agent.unknown_command', { cmd: command }));
+    }
     return;
   }
 

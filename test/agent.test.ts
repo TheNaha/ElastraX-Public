@@ -1,16 +1,4 @@
-/**
- * agent.test.ts
- *
- * Unit tests for handleIncomingMessage() in src/agent/index.ts.
- *
- * Strategy: Rather than mocking the AIClient class (which is instantiated at
- * module-evaluation time and can't be easily replaced after the fact), we mock
- * global.fetch so the real AIClient succeeds with predictable responses.
- * Heavy deps (DB, logger, fs) are replaced via mock.module() before the agent
- * module is imported. Tools and FlowHandler use spyOn to avoid mock.module
- * bleed into registry.test.ts and FlowHandler.test.ts.
- */
-import { describe, test, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
 // ─── Mutable state shared between mock closures and tests ────────────────────
@@ -97,9 +85,6 @@ mock.module('fs/promises', () => ({
 mock.module('fs', () => ({
   existsSync: (_path: string) => shouldFileExist,
 }));
-
-// ConfigService: NOT mocked — use the real implementation.
-// Room settings are controlled via mockRoomRows so ConfigService reads them naturally.
 
 // Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
@@ -208,6 +193,7 @@ describe('handleIncomingMessage', () => {
         function: { name: t.name, description: '', parameters: { type: 'object', properties: {}, required: [] } },
       }),
     );
+
   });
 
   afterEach(() => {
@@ -411,11 +397,29 @@ describe('handleIncomingMessage', () => {
       expect(calls).toContain('❌');
     });
 
-    test('should reply "Unknown command" for unrecognised slash commands', async () => {
-      mockToolMap = {}; // no tools registered
-      const ctx = makeCtx({ text: '/unknowncmd', isGroup: false });
+    test('should reply "Unknown command" for unrecognised slash commands when no close match is found', async () => {
+      // Use a completely random string that won't match any real tools (like menu, sticker, etc.)
+      const ctx = makeCtx({ text: '/xyzzy_super_random_command_123', isGroup: false });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'));
+    });
+
+    test('should suggest a similar command when a typo is made (e.g., /men -> /menu)', async () => {
+      // Since we are NOT mocking the tools array anymore, we rely on the fact that
+      // 'menu' tool exists in the real registry (which agent.ts imports).
+      // mockToolMap is still used for execution spies, but the suggestion logic uses the real array.
+
+      const ctx = makeCtx({ text: '/men', isGroup: false });
+      await handleIncomingMessage(ctx);
+      // Should trigger "Did you mean /menu?"
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */menu*'));
+    });
+
+    test('should suggest a similar command based on alias (e.g., /hlp -> /help alias for menu)', async () => {
+      const ctx = makeCtx({ text: '/hlp', isGroup: false });
+      await handleIncomingMessage(ctx);
+      // 'help' is an alias for 'menu' in the real tool registry
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */help*'));
     });
 
     test('should pass query string arguments to the tool for multi-word commands', async () => {
