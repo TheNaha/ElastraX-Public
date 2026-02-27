@@ -64,6 +64,13 @@
       "when": 1772238000000,
       "tag": "0008_calm_token_room",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1772323200000,
+      "tag": "0009_sturdy_features",
+      "breakpoints": true
     }
   ]
 }

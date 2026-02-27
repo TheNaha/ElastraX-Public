@@ -101,7 +101,7 @@ function formatTime(date: Date): string {
 
 export class ReminderTool extends BaseTool {
   readonly name = 'reminder';
-  readonly description = 'Set, list, or cancel personal reminders. When setting a reminder, parse the time naturally (e.g., "in 30 minutes", "tomorrow at 3pm", "at 18:00"). The message is what to remind the user about.';
+  readonly description = 'Set, list, or cancel personal reminders. When setting a reminder, parse the time naturally (e.g., "in 30 minutes", "tomorrow at 3pm", "at 18:00"). The message is what to remind the user about. Supports recurring schedules with the recurrence parameter (e.g., "daily", "weekly", "every 2h").';
   readonly aliases = ['remind', 'reminder'];
   readonly category = 'utility';
   readonly permissions = 'user';
@@ -132,6 +132,10 @@ export class ReminderTool extends BaseTool {
               type: 'string',
               description: 'The reminder number to cancel (from the "list" output). Required for action=cancel.',
             },
+            recurrence: {
+              type: 'string',
+              description: 'Optional recurrence pattern for repeating reminders. Examples: "daily", "weekly", "monthly", "hourly", "every 30m", "every 2h", "every 7d". Omit for one-shot reminders.',
+            },
           },
           required: ['action'],
         },
@@ -140,7 +144,7 @@ export class ReminderTool extends BaseTool {
   }
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
-    let { action, time, message, number } = args;
+    let { action, time, message, number, recurrence } = args;
     const lang = ctx.language ?? 'en';
 
     // Slash shorthand support:
@@ -180,11 +184,17 @@ export class ReminderTool extends BaseTool {
         return t(lang, 'reminder.list_empty');
       }
 
-      const items = active.map((r, i) => t(lang, 'reminder.list_item', {
-        n: String(i + 1),
-        message: r.message,
-        time: formatTime(r.remindAt),
-      })).join('\n');
+      const items = active.map((r, i) => {
+        const baseItem = t(lang, 'reminder.list_item', {
+          n: String(i + 1),
+          message: r.message,
+          time: formatTime(r.remindAt),
+        });
+        // Append recurrence info if present
+        return r.recurrence
+          ? baseItem + t(lang, 'reminder.recurrence_info', { recurrence: r.recurrence })
+          : baseItem;
+      }).join('\n');
 
       return t(lang, 'reminder.list', { items });
     }
@@ -225,8 +235,17 @@ export class ReminderTool extends BaseTool {
         remindAt: fireAt,
         isSent: false,
         platform: ctx.platform,
+        recurrence: recurrence ? String(recurrence).trim() : null,
         created_at: new Date(),
       }).run();
+
+      if (recurrence) {
+        return t(lang, 'reminder.recurrence_set', {
+          time: formatTime(fireAt),
+          message: String(message),
+          recurrence: String(recurrence),
+        });
+      }
 
       return t(lang, 'reminder.set', {
         time: formatTime(fireAt),

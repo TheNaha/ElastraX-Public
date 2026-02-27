@@ -44,6 +44,7 @@
 
 import { logger } from './utils/logger';
 import { createHmac, timingSafeEqual } from 'crypto';
+import { healthMetrics } from './utils/HealthMetrics';
 
 type SendFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
@@ -119,6 +120,21 @@ function verifyGitHubSignature(payload: string, secret: string, signatureHeader:
   return timingSafeEqual(expectedBuf, providedBuf);
 }
 
+/**
+ * Constant-time string comparison using crypto.timingSafeEqual to prevent
+ * timing side-channel attacks on shared secret verification.
+ */
+function safeSecretCompare(provided: string, expected: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) {
+    // Compare with itself to consume constant time, then return false
+    timingSafeEqual(b, b);
+    return false;
+  }
+  return timingSafeEqual(a, b);
+}
+
 // ─── Server ────────────────────────────────────────────────────────────────────
 
 export class WebhookServer {
@@ -181,8 +197,15 @@ export class WebhookServer {
         if (req.method !== 'POST' || !url.pathname.startsWith('/webhook')) {
           // Health check endpoint
           if (req.method === 'GET' && url.pathname === '/health') {
-            return new Response(JSON.stringify({ status: 'ok', uptime: process.uptime() }), {
+            const metrics = healthMetrics.getMetrics();
+            return new Response(JSON.stringify({ status: 'ok', ...metrics }), {
               headers: { 'Content-Type': 'application/json' },
+            });
+          }
+          // Prometheus-compatible metrics endpoint
+          if (req.method === 'GET' && url.pathname === '/metrics') {
+            return new Response(healthMetrics.getPrometheusMetrics(), {
+              headers: { 'Content-Type': 'text/plain; version=0.0.4' },
             });
           }
           return new Response('Not Found', { status: 404 });
@@ -216,10 +239,10 @@ export class WebhookServer {
           }
         }
 
-        // Non-GitHub sources use shared secret: body > query param > header
+        // Non-GitHub sources use shared secret with constant-time comparison
         if (!githubEvent) {
           const bodySecret = body.secret || url.searchParams.get('secret') || req.headers.get('x-webhook-secret') || '';
-          if (bodySecret !== secret) {
+          if (!safeSecretCompare(bodySecret, secret)) {
             return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
               status: 401, headers: { 'Content-Type': 'application/json' },
             });

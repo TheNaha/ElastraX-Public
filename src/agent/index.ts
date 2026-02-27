@@ -16,13 +16,21 @@
  *     directly to the matching BaseTool — no LLM involved.
  *  5. For conversational messages, save the user message to the database,
  *     await media downloads, build the full context window, and run the
- *     LLM inference loop (which may invoke tools recursively).
+ *     LLM inference loop (which may invoke tools recursively, with streaming
+ *     support when enabled).
  *  6. Persist the final assistant reply and send it back to the user.
+ *
+ * V7.10 additions:
+ *  - Typed LLM interfaces (ChatCompletionMessage, ToolCall)
+ *  - Streaming responses with rate-limited message editing
+ *  - Conversation branching (smart quoted-message context loading)
+ *  - Health metrics integration
+ *  - Typing indicators
  */
 
 import { db } from '../db';
 import { chatRooms, messages, ChatRoom } from '../db/schema';
-import { eq, desc } from 'drizzle-orm';
+import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
@@ -36,11 +44,19 @@ import { ConfigService } from '../utils/ConfigService';
 import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
+import type { ChatCompletionMessage, ToolCall } from '../types/ai';
+import { healthMetrics } from '../utils/HealthMetrics';
 
 const modelRouter = getModelRouter();
+const streamingEnabled = process.env.AI_STREAMING === 'true';
+/** Minimum interval between message edits during streaming (ms). */
+const WA_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_WA || '1500', 10);
+const DC_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_DC || '500', 10);
 
-function extractAssistantText(aiMsgObj: any): string {
-  const content = aiMsgObj?.content;
+function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
+  // Use `any` for content because some providers may return non-spec formats
+  // (e.g., array-of-parts) even though the typed interface expects string|null.
+  const content: any = aiMsgObj?.content;
 
   if (typeof content === 'string') {
     return content.trim();
@@ -61,15 +77,6 @@ function extractAssistantText(aiMsgObj: any): string {
 
   if (typeof aiMsgObj?.refusal === 'string' && aiMsgObj.refusal.trim()) {
     return aiMsgObj.refusal.trim();
-  }
-
-  if (Array.isArray(aiMsgObj?.refusal)) {
-    const refusalText = aiMsgObj.refusal
-      .map((part: any) => (typeof part === 'string' ? part : part?.text || ''))
-      .filter(Boolean)
-      .join('\n')
-      .trim();
-    if (refusalText) return refusalText;
   }
 
   if (typeof aiMsgObj?.output_text === 'string' && aiMsgObj.output_text.trim()) {
@@ -428,7 +435,60 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       );
     }
 
+    // ── Conversation Branching ─────────────────────────────────────────────────
+    // When the user replies to a message that is outside the current context
+    // window, load that message (and its neighbours) from the DB so the AI has
+    // the full conversational thread available.
+    if (ctx.quoted?.stanzaId) {
+      const quotedInWindow = history.some(
+        (m) => m.providerMessageId === ctx.quoted!.stanzaId,
+      );
+      if (!quotedInWindow) {
+        try {
+          const quotedRow = (
+            await db
+              .select({
+                role: messages.role,
+                content: messages.content,
+                senderName: messages.senderName,
+                created_at: messages.created_at,
+              })
+              .from(messages)
+              .where(
+                and(
+                  eq(messages.chatRoomId, chatId),
+                  eq(messages.providerMessageId, ctx.quoted.stanzaId),
+                ),
+              )
+              .limit(1)
+          )[0];
+
+          if (quotedRow) {
+            // Inject a synthetic context block right before the active history
+            // so the AI sees what the user is referring to.
+            const insertIdx = messagesForAI.findIndex((m) => m.role !== 'system');
+            const branchMsg: AIChatMessage = {
+              role: quotedRow.role as 'user' | 'assistant',
+              content: `[Referenced earlier message from ${quotedRow.senderName}]: ${quotedRow.content}`,
+            };
+            if (insertIdx >= 0) {
+              messagesForAI.splice(insertIdx, 0, branchMsg);
+            } else {
+              messagesForAI.push(branchMsg);
+            }
+            logger.info(
+              { chatId, quotedId: ctx.quoted.stanzaId },
+              '[Agent] Injected branched context for out-of-window quoted message',
+            );
+          }
+        } catch (err) {
+          logger.warn({ err }, '[Agent] Failed to load branched quoted context');
+        }
+      }
+    }
+
     // 4. Generate AI Response (Recursive for tools)
+    healthMetrics.recordMessageReceived();
     await ctx.react?.('⏳');
     
     let isDone = false;
@@ -436,10 +496,130 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     const availableTools = config.allowTools ? getToolDefinitions() : undefined;
     const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
+    const editInterval = platform === 'whatsapp' ? WA_EDIT_INTERVAL : DC_EDIT_INTERVAL;
 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
-        const aiMsgObj = await modelRouter.chatCompletion(messagesForAI, availableTools, config.temperature, config.maxTokens);
+        // Show typing indicator before each LLM call
+        await ctx.sendTyping?.();
+
+        // ── Streaming path ──────────────────────────────────────────────────
+        // We only use streaming for the *final* response (no tool definitions)
+        // or when the model has exhausted tool iterations and we expect text.
+        const isLastChance = iteration === maxToolIterations - 1;
+        const useStreaming =
+          streamingEnabled &&
+          (typeof ctx.sendMessage === 'function') &&
+          (typeof ctx.editMessage === 'function') &&
+          (!availableTools || isLastChance);
+
+        if (useStreaming) {
+          // Accumulate chunks and do rate-limited edits of the live message
+          let accumulated = '';
+          let sentKey: any = null;
+          let lastEditTime = 0;
+          const toolCallDeltas: Map<number, { id: string; name: string; args: string }> = new Map();
+
+          const streamTools = isLastChance ? undefined : availableTools;
+          for await (const chunk of modelRouter.chatCompletionStream(
+            messagesForAI,
+            streamTools,
+            config.temperature,
+            config.maxTokens,
+          )) {
+            const delta = chunk.choices?.[0]?.delta;
+            if (!delta) continue;
+
+            // Accumulate tool call deltas if the model decides to invoke tools
+            if (delta.tool_calls) {
+              for (const tcDelta of delta.tool_calls) {
+                const existing = toolCallDeltas.get(tcDelta.index);
+                if (!existing) {
+                  toolCallDeltas.set(tcDelta.index, {
+                    id: tcDelta.id || '',
+                    name: tcDelta.function?.name || '',
+                    args: tcDelta.function?.arguments || '',
+                  });
+                } else {
+                  if (tcDelta.id) existing.id = tcDelta.id;
+                  if (tcDelta.function?.name) existing.name += tcDelta.function.name;
+                  if (tcDelta.function?.arguments) existing.args += tcDelta.function.arguments;
+                }
+              }
+              continue;
+            }
+
+            // Accumulate text content
+            if (delta.content) {
+              accumulated += delta.content;
+
+              const now = Date.now();
+              if (now - lastEditTime >= editInterval) {
+                const displayText = accumulated + ' ▌';
+                if (!sentKey) {
+                  sentKey = await ctx.sendMessage!(displayText);
+                } else {
+                  await ctx.editMessage!(sentKey, displayText).catch(() => {});
+                }
+                lastEditTime = now;
+              }
+            }
+          }
+
+          // If the stream produced tool calls, we need to process them
+          if (toolCallDeltas.size > 0) {
+            const toolCalls: ToolCall[] = Array.from(toolCallDeltas.values()).map((tc) => ({
+              id: tc.id,
+              type: 'function' as const,
+              function: { name: tc.name, arguments: tc.args },
+            }));
+
+            messagesForAI.push({
+              role: 'assistant' as const,
+              content: accumulated || '',
+              tool_calls: toolCalls,
+            });
+
+            // Execute tools
+            const toolPromises = toolCalls.map(async (tc: ToolCall) => {
+              const toolName = tc.function.name;
+              let args: Record<string, unknown> = {};
+              try { args = JSON.parse(tc.function.arguments); } catch { }
+
+              const tool = getToolByName(toolName);
+              let toolResultStr = '';
+              if (tool) {
+                logger.info(`[Agent] Invoked tool (stream): ${toolName}`);
+                healthMetrics.recordToolInvocation(toolName);
+                await ctx.react?.('🔍');
+                toolResultStr = await tool.execute(args, ctx);
+              } else {
+                logger.error({ toolName }, 'LLM requested unknown tool');
+                toolResultStr = `Error: Tool ${toolName} not found.`;
+              }
+              return { role: 'tool' as const, tool_call_id: tc.id, name: toolName, content: toolResultStr };
+            });
+
+            const toolResults = await Promise.all(toolPromises);
+            messagesForAI.push(...toolResults);
+            continue; // Loop again for the next LLM call
+          }
+
+          // Stream produced only text — we are done
+          isDone = true;
+          finalAiResponseText = accumulated.trim() || internalErrorText;
+
+          // Final edit to remove cursor indicator
+          if (sentKey && finalAiResponseText !== internalErrorText) {
+            await ctx.editMessage!(sentKey, finalAiResponseText).catch(() => {});
+          }
+          continue;
+        }
+
+        // ── Non-streaming (original) path ───────────────────────────────────
+        const aiMsgObj: ChatCompletionMessage = await modelRouter.chatCompletion(
+          messagesForAI, availableTools, config.temperature, config.maxTokens,
+        );
 
         if (verboseAiLogs) {
           logger.info({
@@ -452,13 +632,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         }
 
         // Append the AI's step back to the context
-        messagesForAI.push(aiMsgObj);
+        messagesForAI.push({
+          role: 'assistant' as const,
+          content: aiMsgObj.content ?? '',
+          ...(aiMsgObj.tool_calls ? { tool_calls: aiMsgObj.tool_calls } : {}),
+        });
 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
           // Tool Call Requested - Parallel Execution
-          const toolPromises = aiMsgObj.tool_calls.map(async (tc: any) => {
+          const toolPromises = aiMsgObj.tool_calls.map(async (tc: ToolCall) => {
             const toolName = tc.function.name;
-            let args = {};
+            let args: Record<string, unknown> = {};
             try {
               args = JSON.parse(tc.function.arguments);
             } catch (e) {
@@ -470,6 +654,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             
             if (tool) {
               logger.info(`[Agent] Invoked tool: ${toolName} with args: ${JSON.stringify(args)}`);
+              healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
               toolResultStr = await tool.execute(args, ctx);
             } else {
@@ -478,7 +663,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             }
 
             return {
-              role: 'tool',
+              role: 'tool' as const,
               tool_call_id: tc.id,
               name: toolName,
               content: toolResultStr,
@@ -506,6 +691,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
       } catch (e) {
         logger.error(e, 'Failed to get AI completion / execute tool');
+        healthMetrics.recordMessageError();
         finalAiResponseText = "I'm sorry, I encountered an error during inference.";
         isDone = true;
       }
@@ -533,8 +719,16 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     });
 
     // 5. Send Response
-    await ctx.reply(finalAiResponseText);
+    // When streaming was used, the final text was already sent via edits.
+    // We only need ctx.reply for the non-streaming path or error fallback.
+    const streamAlreadySent = streamingEnabled && finalAiResponseText !== internalErrorText
+      && typeof ctx.sendMessage === 'function';
+    if (!streamAlreadySent) {
+      await ctx.reply(finalAiResponseText);
+    }
     await ctx.react?.('✅'); // show success
+    healthMetrics.recordMessageProcessed();
+
     const usedFallbackError = finalAiResponseText === internalErrorText;
     const logPayload = {
       chatId,
@@ -553,6 +747,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
   } catch (error) {
     logger.error(error, 'Error handling message');
+    healthMetrics.recordMessageError();
     await ctx.react?.('❌'); // show error
     await ctx.reply(t(ctx.language, 'agent.internal_error'));
   }

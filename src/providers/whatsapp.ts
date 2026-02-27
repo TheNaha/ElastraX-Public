@@ -42,6 +42,7 @@ import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { writeFile } from 'fs/promises';
 import { fileTypeFromBuffer } from 'file-type';
+import { saveMediaBuffer } from '../utils/MediaStorage';
 import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
 import { db } from '../db';
@@ -334,18 +335,7 @@ export class WhatsAppProvider implements BotProvider {
 
     // ── Media saving helper ──────────────────────────────────────────────────
     const saveBuffer = async (buffer: Buffer): Promise<{ path: string; mime: string } | null> => {
-      try {
-        const typeInfo = await fileTypeFromBuffer(buffer);
-        const mime = typeInfo?.mime ?? 'application/octet-stream';
-        const ext = typeInfo?.ext ?? 'bin';
-        const filename = `${randomUUID()}.${ext}`;
-        const filepath = join('./data/media', filename);
-        await writeFile(filepath, buffer);
-        return { path: filepath, mime };
-      } catch (err) {
-        logger.error(err, 'Failed to save buffer to disk');
-        return null;
-      }
+      return saveMediaBuffer(buffer);
     };
 
     // ── Background media download ────────────────────────────────────────────
@@ -462,6 +452,25 @@ export class WhatsAppProvider implements BotProvider {
         await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
       },
 
+      sendTyping: async () => {
+        try {
+          await sock.sendPresenceUpdate('composing', jid);
+        } catch { /* best-effort */ }
+      },
+
+      sendMessage: async (text: string) => {
+        const sent = await sock.sendMessage(jid, { text }, { quoted: msg });
+        return sent?.key;
+      },
+
+      editMessage: async (key: any, text: string) => {
+        try {
+          await sock.sendMessage(jid, { text, edit: key });
+        } catch (err) {
+          logger.warn({ err }, '[WhatsApp] Failed to edit message');
+        }
+      },
+
       react: async (emoji: string) => {
         await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
       },
@@ -497,6 +506,11 @@ export class WhatsAppProvider implements BotProvider {
 
       setGroupSettings: async (chatId: string, setting: 'announcement' | 'not_announcement') => {
         await sock.groupSettingUpdate(chatId, setting);
+      },
+
+      leaveGroup: async () => {
+        if (!isGroup) throw new Error('Not inside a group.');
+        await sock.groupLeave(jid);
       },
 
       checkPermissions: async (required: 'user' | 'admin' | 'owner') => {

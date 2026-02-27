@@ -1,6 +1,6 @@
 /**
  * @file src/utils/SessionManager.ts
- * @description In-memory session store for multi-step interactive flows.
+ * @description Persistent session store for multi-step interactive flows.
  *
  * When a tool needs to collect information across several user messages (a "wizard"),
  * it uses `SessionManager` to persist step data between message events.  The agent's
@@ -10,14 +10,14 @@
  *  Sessions are keyed by `"${platform}:${userId}"` to prevent cross-platform
  *  collisions when the same user interacts via both WhatsApp and Discord.
  *
+ * Persistence:
+ *  Sessions are stored in both an in-memory `Map` (for fast reads) and the
+ *  `flow_sessions` SQLite table (for crash recovery). Every `set()` and `clear()`
+ *  operation writes through to both stores.
+ *
  * Expiry:
  *  Each flow has a configurable TTL (default 300 seconds / 5 minutes).  Expired
- *  flows are pruned lazily when `get()` is called — no background timer is needed.
- *
- * Limitations:
- *  - In-memory only; sessions do not survive a process restart.
- *  - Not shared across multiple bot instances.  A Redis-backed implementation
- *    would be needed for horizontal scaling.
+ *  flows are pruned lazily when `get()` is called.
  */
 
 import { logger } from './logger';
@@ -36,19 +36,75 @@ export interface UserSession {
   flows: Record<string, FlowSession>;
 }
 
-/** Static in-memory session store. One entry per platform+userId combination. */
+/** Persistent session store backed by SQLite. Uses in-memory Map as write-through cache. */
 export class SessionManager {
-  // In-memory session store: composite key "platform:userId" → UserSession
   private static sessions = new Map<string, UserSession>();
+  private static dbLoaded = false;
+
+  /**
+   * Lazily load all persisted sessions from the database on first access.
+   * This ensures sessions survive container restarts.
+   */
+  private static async loadFromDB(): Promise<void> {
+    if (this.dbLoaded) return;
+    this.dbLoaded = true;
+    try {
+      // Dynamic import to avoid circular dependency with db module
+      const { db } = await import('../db');
+      const { flowSessions } = await import('../db/schema');
+      const rows = db.select().from(flowSessions).all();
+      const now = Date.now();
+      for (const row of rows) {
+        try {
+          const session = JSON.parse(row.data) as UserSession;
+          // Prune expired flows during load
+          let hasExpired = false;
+          for (const [flowId, flow] of Object.entries(session.flows)) {
+            if (now > flow.expiresAt) {
+              delete session.flows[flowId];
+              if (session.activeFlow === flowId) session.activeFlow = null;
+              hasExpired = true;
+            }
+          }
+          if (Object.keys(session.flows).length > 0) {
+            this.sessions.set(row.id, session);
+          } else if (hasExpired) {
+            // Clean up fully expired session from DB
+            db.delete(flowSessions).where((await import('drizzle-orm')).eq(flowSessions.id, row.id)).run();
+          }
+        } catch { /* skip corrupt rows */ }
+      }
+      logger.debug({ count: this.sessions.size }, '[SessionManager] Loaded sessions from DB');
+    } catch (err) {
+      logger.warn({ err }, '[SessionManager] Failed to load sessions from DB (non-fatal)');
+    }
+  }
+
+  /** Write-through: persist session state to SQLite. */
+  private static persistToDB(key: string, session: UserSession | null): void {
+    try {
+      // Dynamic import to avoid circular dependency
+      const { db } = require('../db');
+      const { flowSessions } = require('../db/schema');
+      if (!session || Object.keys(session.flows).length === 0) {
+        db.delete(flowSessions).where(require('drizzle-orm').eq(flowSessions.id, key)).run();
+      } else {
+        const data = JSON.stringify(session);
+        db.insert(flowSessions)
+          .values({ id: key, data, updated_at: new Date() })
+          .onConflictDoUpdate({
+            target: flowSessions.id,
+            set: { data, updated_at: new Date() },
+          })
+          .run();
+      }
+    } catch (err) {
+      logger.warn({ err, key }, '[SessionManager] Failed to persist session to DB');
+    }
+  }
 
   /**
    * Create or update a flow session for the given user.
-   *
-   * @param userId     - Unique user JID / Discord user ID.
-   * @param flowId     - Logical name of the flow (e.g., `'my_wizard'`).
-   * @param flowData   - Flow step, data payload (without `expiresAt` — added automatically).
-   * @param platform   - Platform identifier (`'whatsapp'` | `'discord'`). Defaults to `'whatsapp'`.
-   * @param ttlSeconds - How long the session remains valid. Defaults to 300 seconds.
    */
   static set(userId: string, flowId: string, flowData: Omit<FlowSession, 'expiresAt'>, platform: string = 'whatsapp', ttlSeconds: number = 300) {
     const key = `${platform}:${userId}`;
@@ -65,15 +121,12 @@ export class SessionManager {
     };
     session.activeFlow = flowId;
     
+    this.persistToDB(key, session);
     logger.debug({ userId, flowId }, '[SessionManager] Flow updated');
   }
 
   /**
    * Retrieve the session for a user, pruning any expired flows in the process.
-   *
-   * @param userId   - Unique user JID / Discord user ID.
-   * @param platform - Platform identifier. Defaults to `'whatsapp'`.
-   * @returns        The `UserSession` if it exists and has non-expired flows, otherwise `null`.
    */
   static get(userId: string, platform: string = 'whatsapp'): UserSession | null {
     const key = `${platform}:${userId}`;
@@ -95,7 +148,12 @@ export class SessionManager {
 
     if (hasExpired && Object.keys(session.flows).length === 0) {
       this.sessions.delete(key);
+      this.persistToDB(key, null);
       return null;
+    }
+
+    if (hasExpired) {
+      this.persistToDB(key, session);
     }
 
     return session;
@@ -103,13 +161,6 @@ export class SessionManager {
 
   /**
    * Remove a specific flow from the user's session.
-   * If no flows remain the entire session entry is deleted.
-   * The `activeFlow` pointer is updated to the most recently added remaining flow,
-   * or set to `null` if no flows are left.
-   *
-   * @param userId   - Unique user JID / Discord user ID.
-   * @param flowId   - The flow to remove.
-   * @param platform - Platform identifier. Defaults to `'whatsapp'`.
    */
   static clear(userId: string, flowId: string, platform: string = 'whatsapp') {
     const key = `${platform}:${userId}`;
@@ -124,8 +175,19 @@ export class SessionManager {
       
       if (Object.keys(session.flows).length === 0) {
         this.sessions.delete(key);
+        this.persistToDB(key, null);
+      } else {
+        this.persistToDB(key, session);
       }
       logger.debug({ userId, flowId }, '[SessionManager] Flow cleared');
     }
+  }
+
+  /**
+   * Initialize the session manager by loading persisted sessions from DB.
+   * Call once during startup.
+   */
+  static async initialize(): Promise<void> {
+    await this.loadFromDB();
   }
 }

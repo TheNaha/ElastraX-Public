@@ -32,6 +32,7 @@ export interface AIChatMessage {
 
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
+import type { ChatCompletionMessage, ChatCompletionResponse, ChatCompletionChunk } from '../types/ai';
 
 /** Checks whether a string is a syntactically valid URL. */
 function isValidUrl(url: string): boolean {
@@ -89,31 +90,59 @@ export class AIClient {
    *                    `content` (text) and/or `tool_calls` (function-call requests).
    * @throws            If the endpoint URL is invalid or the HTTP response is not OK.
    */
+  /** Resolves the full endpoint URL for chat completions. */
+  private resolveEndpoint(): string {
+    return this.baseUrl.endsWith('/chat/completions')
+      ? this.baseUrl
+      : `${this.baseUrl.replace(/\/$/, '')}/chat/completions`;
+  }
+
+  /** Builds the request payload for a chat completion. */
+  private buildPayload(
+    messages: AIChatMessage[],
+    tools?: ToolDefinition[],
+    temperature: number = 0.7,
+    maxTokens?: number,
+    stream: boolean = false,
+  ): Record<string, unknown> {
+    const payload: Record<string, unknown> = {
+      model: this.modelName,
+      messages,
+      temperature,
+      max_tokens: maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10),
+    };
+    if (tools && tools.length > 0) {
+      payload.tools = tools;
+      payload.tool_choice = 'auto';
+    }
+    if (stream) {
+      payload.stream = true;
+    }
+    return payload;
+  }
+
+  /**
+   * Send a chat-completion request to the configured LLM endpoint.
+   *
+   * @param messages    The full conversation history to send, including system prompt.
+   * @param tools       Optional array of OpenAI-compatible tool definitions for function calling.
+   * @param temperature Sampling temperature (0 = deterministic, 2 = very creative). Defaults to 0.7.
+   * @param maxTokens   Maximum tokens to generate.
+   * @returns           The typed `ChatCompletionMessage` from `choices[0]`.
+   * @throws            If the endpoint URL is invalid or the HTTP response is not OK.
+   */
   async chatCompletion(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
     maxTokens: number = parseInt(process.env.AI_MAX_TOKENS || '2048', 10)
-  ): Promise<any> {
+  ): Promise<ChatCompletionMessage> {
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
     }
 
-    const payload: any = {
-      model: this.modelName,
-      messages,
-      temperature,
-      max_tokens: maxTokens,
-    };
-
-    if (tools && tools.length > 0) {
-      payload.tools = tools;
-      payload.tool_choice = 'auto';
-    }
-
-    const endpoint = this.baseUrl.endsWith('/chat/completions') 
-      ? this.baseUrl 
-      : `${this.baseUrl.replace(/\/$/, '')}/chat/completions`;
+    const endpoint = this.resolveEndpoint();
+    const payload = this.buildPayload(messages, tools, temperature, maxTokens);
 
     logger.debug({ endpoint, model: this.modelName }, 'Sending request to AI provider...');
     const startTime = Date.now();
@@ -136,10 +165,85 @@ export class AIClient {
       throw new Error(`LLM API returned ${response.status}: ${errText}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as ChatCompletionResponse;
     logger.debug({ elapsed, tokenUsage: data.usage }, 'Received response from AI provider');
-    
-    // Return the entire message object so we can inspect 'tool_calls'
-    return data.choices?.[0]?.message || { content: 'No response generated.' };
+
+    const msg = data.choices?.[0]?.message;
+    return msg ?? { role: 'assistant', content: 'No response generated.' };
+  }
+
+  /**
+   * Send a streaming chat-completion request.
+   * Returns an async generator yielding `ChatCompletionChunk` objects as they arrive.
+   *
+   * @param messages    The full conversation history to send.
+   * @param tools       Optional tool definitions.
+   * @param temperature Sampling temperature.
+   * @param maxTokens   Maximum tokens to generate.
+   * @yields            Individual SSE chunks parsed as `ChatCompletionChunk`.
+   */
+  async *chatCompletionStream(
+    messages: AIChatMessage[],
+    tools?: ToolDefinition[],
+    temperature: number = 0.7,
+    maxTokens: number = parseInt(process.env.AI_MAX_TOKENS || '2048', 10)
+  ): AsyncGenerator<ChatCompletionChunk> {
+    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
+      throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
+    }
+
+    const endpoint = this.resolveEndpoint();
+    const payload = this.buildPayload(messages, tools, temperature, maxTokens, true);
+
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.apiKey}`,
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(parseInt(process.env.AI_TIMEOUT_MS || '120000', 10)),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`LLM API returned ${response.status}: ${errText}`);
+    }
+
+    if (!response.body) {
+      throw new Error('Response body is null — streaming not supported by this endpoint.');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() ?? '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(':')) continue; // skip empty lines and comments
+          if (!trimmed.startsWith('data: ')) continue;
+
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') return;
+
+          try {
+            yield JSON.parse(data) as ChatCompletionChunk;
+          } catch {
+            logger.debug({ raw: data }, 'Failed to parse SSE chunk');
+          }
+        }
+      }
+    } finally {
+      reader.releaseLock();
+    }
   }
 }

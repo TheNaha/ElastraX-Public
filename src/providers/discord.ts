@@ -26,10 +26,7 @@ import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { RoleService } from '../utils/RoleService';
-import { randomUUID } from 'crypto';
-import { join } from 'path';
-import { writeFile } from 'fs/promises';
-import { fileTypeFromBuffer } from 'file-type';
+import { saveMediaBuffer } from '../utils/MediaStorage';
 
 /** Maximum file size in bytes for Discord attachments that the bot will download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
@@ -171,18 +168,7 @@ export class DiscordProvider implements BotProvider {
     let mimeType: string | undefined;
 
     const saveBuffer = async (buffer: Buffer): Promise<{ path: string, mime: string } | null> => {
-      try {
-        const typeInfo = await fileTypeFromBuffer(buffer);
-        const mime = typeInfo?.mime || 'application/octet-stream';
-        const ext = typeInfo?.ext || 'bin';
-        const filename = `${randomUUID()}.${ext}`;
-        const filepath = join('./data/media', filename);
-        await writeFile(filepath, buffer);
-        return { path: filepath, mime };
-      } catch (err) {
-        logger.error(err, 'Failed to save buffer to disk');
-        return null;
-      }
+      return saveMediaBuffer(buffer);
     };
 
     if (hasMedia) {
@@ -261,6 +247,30 @@ export class DiscordProvider implements BotProvider {
       reply: async (replyText: string) => {
         await msg.reply({ content: replyText });
       },
+
+      sendTyping: async () => {
+        try {
+          if (msg.channel && 'sendTyping' in msg.channel) {
+            await (msg.channel as any).sendTyping();
+          }
+        } catch { /* best-effort */ }
+      },
+
+      sendMessage: async (text: string) => {
+        const sent = await msg.reply({ content: text });
+        return sent;
+      },
+
+      editMessage: async (key: any, text: string) => {
+        try {
+          if (key && typeof key.edit === 'function') {
+            await key.edit({ content: text });
+          }
+        } catch (err) {
+          logger.warn({ err }, '[Discord] Failed to edit message');
+        }
+      },
+
       react: async (emoji: string) => {
         try {
           await msg.react(emoji);

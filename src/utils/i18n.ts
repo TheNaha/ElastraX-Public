@@ -175,6 +175,20 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.invalid_role': "❌ Invalid role. Must be 'user', 'admin', or 'owner'.",
     'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
     'role.usage': '❓ *Usage:*\n• `/role check [user]` — Check role\n• `/role grant <user> <role> [global]` — Assign role\n• `/role revoke <user> [global]` — Remove role\n• `/role list [global]` — List assigned roles',
+
+    // Owner Admin
+    'owner.broadcast_no_message': '❌ Please provide a broadcast message.',
+    'owner.broadcast_no_rooms': '❌ No rooms found on this platform.',
+    'owner.broadcast_done': '📢 Broadcast complete! Sent to *{sent}* rooms ({failed} failed out of {total}).',
+    'owner.leave_not_group': '❌ This command can only be used in a group.',
+    'owner.leave_goodbye': '👋 Goodbye! ElastraX is leaving this group.',
+    'owner.leave_not_supported': '❌ Leaving groups is not supported on this platform.',
+    'owner.leave_error': '❌ Failed to leave group: {msg}',
+    'owner.usage': '❓ *Owner Commands:*\n• `/broadcast <message>` — Send to all rooms\n• `/leave` — Leave current group\n• `/owner system_info` — Bot stats',
+
+    // Recurring Reminders
+    'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
+    'reminder.recurrence_info': ' 🔁 _{recurrence}_',
   },
   id: {
     // Menu
@@ -323,6 +337,20 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.invalid_role': "❌ Role tidak valid. Harus 'user', 'admin', atau 'owner'.",
     'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',
     'role.usage': '❓ *Cara pakai:*\n• `/role check [user]` — Cek role\n• `/role grant <user> <role> [global]` — Tetapkan role\n• `/role revoke <user> [global]` — Cabut role\n• `/role list [global]` — Daftar role',
+
+    // Owner Admin
+    'owner.broadcast_no_message': '❌ Harap berikan pesan untuk disiarkan.',
+    'owner.broadcast_no_rooms': '❌ Tidak ada ruangan ditemukan di platform ini.',
+    'owner.broadcast_done': '📢 Siaran selesai! Terkirim ke *{sent}* ruangan ({failed} gagal dari {total}).',
+    'owner.leave_not_group': '❌ Perintah ini hanya bisa digunakan di dalam grup.',
+    'owner.leave_goodbye': '👋 Selamat tinggal! ElastraX meninggalkan grup ini.',
+    'owner.leave_not_supported': '❌ Keluar dari grup tidak didukung di platform ini.',
+    'owner.leave_error': '❌ Gagal meninggalkan grup: {msg}',
+    'owner.usage': '❓ *Perintah Owner:*\n• `/broadcast <pesan>` — Kirim ke semua ruangan\n• `/leave` — Keluar dari grup\n• `/owner system_info` — Info bot',
+
+    // Recurring Reminders
+    'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',
+    'reminder.recurrence_info': ' 🔁 _{recurrence}_',
   },
 };
 

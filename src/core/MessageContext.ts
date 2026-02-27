@@ -87,6 +87,25 @@ export interface MessageContext {
   reply(text: string): Promise<void>;
 
   /**
+   * Show a "typing..." indicator in the chat (composing presence).
+   * On WhatsApp this shows "typing..." under the bot's name.
+   * On Discord this shows "Bot is typing..." in the channel.
+   */
+  sendTyping?(): Promise<void>;
+
+  /**
+   * Send a text message and return a key/handle that can be used with `editMessage`.
+   * Used for streaming responses — send an initial message, then edit it as chunks arrive.
+   */
+  sendMessage?(text: string): Promise<any>;
+
+  /**
+   * Edit a previously sent message by its key/handle.
+   * The key is obtained from `sendMessage()`. Used for streaming response updates.
+   */
+  editMessage?(key: any, text: string): Promise<void>;
+
+  /**
    * React to the message with an emoji (if supported by platform)
    */
   react?(emoji: string): Promise<void>;
@@ -137,6 +156,12 @@ export interface MessageContext {
    * @param setting 'announcement' (admins only) | 'not_announcement' (everyone)
    */
   setGroupSettings?(chatId: string, setting: 'announcement' | 'not_announcement'): Promise<void>;
+
+  /**
+   * Make the bot leave the current group chat.
+   * Only available in group chats.
+   */
+  leaveGroup?(): Promise<void>;
 
   /**
    * Check if the sender has the required permissions

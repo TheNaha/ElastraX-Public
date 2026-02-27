@@ -34,12 +34,21 @@ import { logger } from './logger';
 import { AIClient } from '../ai/client';
 import type { AIChatMessage } from '../ai/client';
 import type { ToolDefinition } from '../tools/BaseTool';
+import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier } from '../types/ai';
+import { healthMetrics } from './HealthMetrics';
 
 export interface ProviderConfig {
   name: string;
   baseUrl: string;
   apiKey: string;
   modelName: string;
+  /** Model tier for multi-model routing. Defaults to 'standard'. */
+  tier: ModelTier;
+}
+
+/** Internal provider with a pre-built, cached AIClient instance. */
+interface ResolvedProvider extends ProviderConfig {
+  client: AIClient;
 }
 
 function buildCloudflareBaseUrl(accountId?: string): string {
@@ -55,91 +64,82 @@ function resolveChatCompletionsUrl(baseUrl: string): string {
     : `${normalized}/chat/completions`;
 }
 
+function parseTier(raw?: string): ModelTier {
+  if (raw === 'fast' || raw === 'powerful') return raw;
+  return 'standard';
+}
+
 /** Loads all provider configs from process.env according to the documented pattern. */
-function loadProviders(): ProviderConfig[] {
+function loadProviders(): ResolvedProvider[] {
   const providerList = process.env.AI_PROVIDERS;
 
   // Legacy single-provider fallback
   if (!providerList || providerList.trim() === '') {
     const legacyCfBase = buildCloudflareBaseUrl(process.env.AI_CF_ACCOUNT_ID);
-    return [{
+    const cfg: ProviderConfig = {
       name: 'default',
       baseUrl: process.env.AI_API_BASE_URL || legacyCfBase,
       apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || 'dummy',
       modelName: process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct',
+      tier: parseTier(process.env.AI_TIER),
+    };
+    return [{
+      ...cfg,
+      client: new AIClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, modelName: cfg.modelName }),
     }];
   }
 
   return providerList.split(',').map(p => p.trim().toLowerCase()).filter(Boolean).map(name => {
     const upper = name.toUpperCase();
     const cfBase = buildCloudflareBaseUrl(process.env[`AI_${upper}_CF_ACCOUNT_ID`]);
-    return {
+    const cfg: ProviderConfig = {
       name,
       baseUrl: process.env[`AI_${upper}_BASE_URL`] || cfBase,
       apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || 'dummy',
       modelName: process.env[`AI_${upper}_MODEL`] || 'gpt-4o-mini',
+      tier: parseTier(process.env[`AI_${upper}_TIER`]),
+    };
+    return {
+      ...cfg,
+      client: new AIClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, modelName: cfg.modelName }),
     };
   });
 }
 
 /**
- * Sends a single chat completion request to one specific provider.
- * Returns the raw message object from choices[0] or throws on failure.
- */
-async function callProvider(
-  provider: ProviderConfig,
-  messages: AIChatMessage[],
-  tools?: ToolDefinition[],
-  temperature: number = 0.7,
-  maxTokens?: number,
-): Promise<any> {
-  if (!provider.baseUrl) {
-    throw new Error(`Provider "${provider.name}" has no base URL configured.`);
-  }
-
-  const verbose = process.env.AI_VERBOSE_LOGS === 'true';
-  const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
-  const aiClient = new AIClient({
-    baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
-    modelName: provider.modelName,
-  });
-
-  if (verbose) {
-    logger.info({
-      provider: provider.name,
-      url: resolveChatCompletionsUrl(provider.baseUrl),
-      model: provider.modelName,
-      messageCount: messages.length,
-      toolsEnabled: !!(tools && tools.length > 0),
-      temperature,
-      maxTokens: resolvedMaxTokens,
-    }, '[ModelRouter] Sending chat completion request');
-  }
-  const data: any = await aiClient.chatCompletion(messages, tools, temperature, resolvedMaxTokens);
-
-  if (verbose) {
-    logger.info({
-      provider: provider.name,
-      hasToolCalls: Array.isArray(data?.tool_calls) && data.tool_calls.length > 0,
-      contentType: Array.isArray(data?.content) ? 'array' : typeof data?.content,
-    }, '[ModelRouter] Provider response received');
-  }
-  return data;
-}
-
-/**
  * Singleton router that tries providers in priority order with automatic failover.
+ * Pre-builds and caches AIClient instances at init time for efficiency.
+ * Supports tier-based routing for multi-model strategies.
  */
 export class ModelRouter {
-  private providers: ProviderConfig[];
+  private providers: ResolvedProvider[];
 
   constructor() {
     this.providers = loadProviders();
     if (this.providers.length === 0) {
       throw new Error('No AI providers configured. Set AI_PROVIDERS or AI_API_BASE_URL.');
     }
-    logger.info({ providers: this.providers.map(p => p.name) }, '[ModelRouter] Loaded providers');
+    logger.info({
+      providers: this.providers.map(p => ({ name: p.name, tier: p.tier })),
+    }, '[ModelRouter] Loaded providers with cached clients');
+  }
+
+  /**
+   * Returns providers filtered by tier preference.
+   * If a tier is specified, providers matching that tier are tried first,
+   * then all others as fallback.
+   */
+  private getProvidersByTier(tier?: ModelTier): ResolvedProvider[] {
+    if (!tier) return this.providers;
+
+    const preferred = this.providers.filter(p => p.tier === tier);
+    const fallback = this.providers.filter(p => p.tier !== tier);
+
+    if (preferred.length === 0) {
+      logger.debug({ tier }, '[ModelRouter] No providers match requested tier, using all');
+      return this.providers;
+    }
+    return [...preferred, ...fallback];
   }
 
   /**
@@ -148,7 +148,9 @@ export class ModelRouter {
    * @param messages    Full conversation history including system prompt.
    * @param tools       Optional LLM function-calling tool definitions.
    * @param temperature Sampling temperature.
-   * @returns           The raw message object from choices[0].
+   * @param maxTokens   Max tokens to generate.
+   * @param tier        Optional model tier preference for multi-model routing.
+   * @returns           Typed `ChatCompletionMessage` from choices[0].
    * @throws            If ALL providers fail, re-throws the last error.
    */
   async chatCompletion(
@@ -156,23 +158,98 @@ export class ModelRouter {
     tools?: ToolDefinition[],
     temperature: number = 0.7,
     maxTokens?: number,
-  ): Promise<any> {
+    tier?: ModelTier,
+  ): Promise<ChatCompletionMessage> {
     let lastError: Error | null = null;
+    const verbose = process.env.AI_VERBOSE_LOGS === 'true';
+    const orderedProviders = this.getProvidersByTier(tier);
 
-    for (const provider of this.providers) {
+    for (const provider of orderedProviders) {
       try {
+        if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
+
+        const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+
+        if (verbose) {
+          logger.info({
+            provider: provider.name,
+            tier: provider.tier,
+            url: resolveChatCompletionsUrl(provider.baseUrl),
+            model: provider.modelName,
+            messageCount: messages.length,
+            toolsEnabled: !!(tools && tools.length > 0),
+            temperature,
+            maxTokens: resolvedMaxTokens,
+          }, '[ModelRouter] Sending chat completion request');
+        }
+
         const start = Date.now();
-        const result = await callProvider(provider, messages, tools, temperature, maxTokens);
+        const result = await provider.client.chatCompletion(messages, tools, temperature, resolvedMaxTokens);
         const latency = Date.now() - start;
+
+        healthMetrics.recordLLMRequest(provider.name, latency, true);
+
+        if (verbose) {
+          logger.info({
+            provider: provider.name,
+            hasToolCalls: Array.isArray(result?.tool_calls) && result.tool_calls.length > 0,
+            contentType: Array.isArray(result?.content) ? 'array' : typeof result?.content,
+          }, '[ModelRouter] Provider response received');
+        }
+
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
         return result;
       } catch (err: any) {
         lastError = err;
+        healthMetrics.recordLLMRequest(provider.name, 0, false);
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Provider failed, trying next');
       }
     }
 
     throw lastError ?? new Error('All AI providers failed.');
+  }
+
+  /**
+   * Sends a streaming chat completion request with automatic failover.
+   * Returns an async generator yielding SSE chunks.
+   *
+   * @param messages    Full conversation history.
+   * @param tools       Optional tool definitions.
+   * @param temperature Sampling temperature.
+   * @param maxTokens   Max tokens.
+   * @param tier        Optional model tier preference.
+   * @yields            `ChatCompletionChunk` objects as they arrive from the stream.
+   */
+  async *chatCompletionStream(
+    messages: AIChatMessage[],
+    tools?: ToolDefinition[],
+    temperature: number = 0.7,
+    maxTokens?: number,
+    tier?: ModelTier,
+  ): AsyncGenerator<ChatCompletionChunk> {
+    let lastError: Error | null = null;
+    const orderedProviders = this.getProvidersByTier(tier);
+
+    for (const provider of orderedProviders) {
+      try {
+        if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
+
+        const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+        const start = Date.now();
+
+        yield* provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+
+        const latency = Date.now() - start;
+        healthMetrics.recordLLMRequest(provider.name, latency, true);
+        return; // Successfully streamed from this provider
+      } catch (err: any) {
+        lastError = err;
+        healthMetrics.recordLLMRequest(provider.name, 0, false);
+        logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Streaming provider failed, trying next');
+      }
+    }
+
+    throw lastError ?? new Error('All AI providers failed (streaming).');
   }
 
   /** Returns the list of loaded provider configs (useful for /stats display). */

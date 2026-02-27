@@ -40,6 +40,7 @@ import { ReminderTool } from './ReminderTool';
 import { MenfessTool } from './MenfessTool';
 import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
+import { OwnerTool } from './OwnerTool';
 
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
@@ -72,7 +73,8 @@ toolsList.push(new RoleTool());
 
 // ── Fun / Social ──────────────────────────────────────────────────────────────
 toolsList.push(new MenfessTool());
-
+// ── Owner ───────────────────────────────────────────────────────────────────────
+toolsList.push(new OwnerTool());
 // Build fast lookup maps for O(1) dispatch —
 // toolsMap   : exact function name (as exposed to the LLM)
 // aliasMap   : function name + all slash-command aliases

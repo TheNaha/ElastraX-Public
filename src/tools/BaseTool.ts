@@ -27,6 +27,7 @@
  */
 
 import { MessageContext } from '../core/MessageContext';
+import type { ModelTier } from '../types/ai';
 
 /** JSON Schema property descriptor for a single tool parameter. */
 export interface ToolParameter {
@@ -82,6 +83,13 @@ export abstract class BaseTool {
    * If true, this tool can only be executed in a group chat directly
    */
   readonly groupOnly?: boolean = false;
+
+  /**
+   * Preferred LLM model tier for responses when this tool is involved.
+   * 'fast' = cheap/small model, 'standard' = default, 'powerful' = large model.
+   * The ModelRouter will prefer providers matching this tier.
+   */
+  readonly modelTier?: ModelTier = 'standard';
 
   /**
    * Return the OpenAI-compatible representation of this tool

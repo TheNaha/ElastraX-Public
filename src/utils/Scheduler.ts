@@ -82,16 +82,86 @@ export class Scheduler {
 
         await sender(reminder.chatRoomId, message);
 
-        // Mark as sent
-        db.update(reminders)
-          .set({ isSent: true })
-          .where(eq(reminders.id, reminder.id))
-          .run();
+        // Handle recurring reminders: reschedule instead of marking as sent
+        if (reminder.recurrence) {
+          const nextFire = this.computeNextOccurrence(reminder.remindAt, reminder.recurrence);
+          if (nextFire) {
+            db.update(reminders)
+              .set({ remindAt: nextFire })
+              .where(eq(reminders.id, reminder.id))
+              .run();
+            logger.info({ id: reminder.id, nextFire }, '[Scheduler] Recurring reminder rescheduled');
+          } else {
+            // Invalid recurrence, mark as sent
+            db.update(reminders)
+              .set({ isSent: true })
+              .where(eq(reminders.id, reminder.id))
+              .run();
+          }
+        } else {
+          // One-shot reminder: mark as sent
+          db.update(reminders)
+            .set({ isSent: true })
+            .where(eq(reminders.id, reminder.id))
+            .run();
+        }
 
         logger.info({ id: reminder.id, chatRoomId: reminder.chatRoomId }, '[Scheduler] Reminder delivered');
       } catch (err) {
         logger.error({ err, id: reminder.id }, '[Scheduler] Failed to deliver reminder');
       }
     }
+  }
+
+  /**
+   * Compute the next occurrence based on a simple recurrence pattern.
+   * Supported patterns: 'daily', 'weekly', 'monthly', 'hourly',
+   * or 'every Xm/Xh/Xd' (e.g., 'every 30m', 'every 2h', 'every 7d').
+   */
+  private static computeNextOccurrence(lastFire: Date, recurrence: string): Date | null {
+    const lower = recurrence.toLowerCase().trim();
+    const base = lastFire.getTime();
+    const now = Date.now();
+
+    let intervalMs = 0;
+
+    switch (lower) {
+      case 'hourly':
+        intervalMs = 3_600_000;
+        break;
+      case 'daily':
+        intervalMs = 86_400_000;
+        break;
+      case 'weekly':
+        intervalMs = 7 * 86_400_000;
+        break;
+      case 'monthly': {
+        const next = new Date(lastFire);
+        next.setMonth(next.getMonth() + 1);
+        return next;
+      }
+      default: {
+        // Parse 'every Xm', 'every Xh', 'every Xd'
+        const match = lower.match(/^every\s+(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)$/i);
+        if (match) {
+          const amount = parseFloat(match[1]);
+          const unit = match[2][0]; // 'm', 'h', or 'd'
+          if (unit === 'm') intervalMs = amount * 60_000;
+          else if (unit === 'h') intervalMs = amount * 3_600_000;
+          else if (unit === 'd') intervalMs = amount * 86_400_000;
+        } else {
+          return null; // Unrecognized pattern
+        }
+      }
+    }
+
+    if (intervalMs <= 0) return null;
+
+    // Skip forward until the next occurrence is in the future
+    let nextFire = base + intervalMs;
+    while (nextFire <= now) {
+      nextFire += intervalMs;
+    }
+    return new Date(nextFire);
   }
 }

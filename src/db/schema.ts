@@ -84,6 +84,8 @@ export const reminders = sqliteTable('reminders', {
   isSent: integer('is_sent', { mode: 'boolean' }).default(false).notNull(),
   // Which platform this reminder belongs to
   platform: text('platform').notNull().default('whatsapp'),
+  /** Cron-style recurrence pattern (e.g. 'daily', 'weekly', 'monthly', or cron expression). Null = one-shot. */
+  recurrence: text('recurrence'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
   remindAtIdx: index('reminders_remind_at_idx').on(table.remindAt, table.isSent),
@@ -107,3 +109,16 @@ export const userRoles = sqliteTable('user_roles', {
 }));
 
 export type UserRole = typeof userRoles.$inferSelect;
+
+// V7.10: Persistent flow session state (survives container restarts)
+export const flowSessions = sqliteTable('flow_sessions', {
+  /** Composite key "platform:userId" */
+  id: text('id').primaryKey(),
+  /** JSON serialized UserSession data */
+  data: text('data').notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  updatedIdx: index('flow_sessions_updated_idx').on(table.updated_at),
+}));
+
+export type FlowSessionRow = typeof flowSessions.$inferSelect;

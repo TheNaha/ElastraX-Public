@@ -18,6 +18,7 @@
 import { WhatsAppProvider } from './providers/whatsapp';
 import { DiscordProvider } from './providers/discord';
 import { handleIncomingMessage } from './agent';
+import { MessageContext } from './core/MessageContext';
 import { logger } from './utils/logger';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { db } from './db';
@@ -31,6 +32,12 @@ import { Scheduler } from './utils/Scheduler';
 import { WebhookServer } from './webhookServer';
 import { RateLimiter } from './utils/RateLimiter';
 import { MediaCleanup } from './utils/MediaCleanup';
+import { MessageQueue } from './utils/MessageQueue';
+import { SessionManager } from './utils/SessionManager';
+import { healthMetrics } from './utils/HealthMetrics';
+
+// Per-room message queue — ensures sequential processing within each chat room.
+const messageQueue = new MessageQueue();
 
 // Directory where one JSON fixture file per WAMessage type will be written.
 const FIXTURE_DIR = process.env.FIXTURE_DUMP_DIR?.trim()
@@ -147,13 +154,21 @@ async function main() {
     process.exit(1);
   }
 
+  // Restore persisted flow sessions from SQLite so multi-step wizards survive restarts.
+  await SessionManager.initialize();
+
   // Initialize providers
   const waProvider = new WhatsAppProvider();
   const discordProvider = new DiscordProvider();
 
-  // Register the core conversational agent handler
-  waProvider.onMessage(handleIncomingMessage);
-  discordProvider.onMessage(handleIncomingMessage);
+  // Register the core conversational agent handler, wrapped in a per-room queue
+  // so messages in the same chat are processed sequentially (avoids race conditions).
+  const queuedHandler = async (ctx: MessageContext): Promise<void> => {
+    messageQueue.enqueue(ctx.chatId, () => handleIncomingMessage(ctx));
+  };
+
+  waProvider.onMessage(queuedHandler);
+  discordProvider.onMessage(queuedHandler);
 
   // Start providers
   await waProvider.start();
@@ -215,6 +230,7 @@ async function main() {
 
     Scheduler.stop();
     webhookServer.stop();
+    messageQueue.stop();
 
     await waProvider.stop();
     await discordProvider.stop();
