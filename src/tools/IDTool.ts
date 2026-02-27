@@ -43,12 +43,14 @@ export class IDTool extends BaseTool {
 
   async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
     log.debug({ senderId: ctx.senderId, chatId: ctx.chatId, platform: ctx.platform }, 'ID lookup requested');
+    const roles = await ctx.resolveRoles();
     return t(ctx.language, 'id.response', {
       name: ctx.senderName,
       userId: ctx.senderId,
       chatId: ctx.chatId,
       platform: ctx.platform,
       isGroup: ctx.isGroup ? 'Yes' : 'No',
+      permissions: roles.join(', '),
     });
   }
 }
