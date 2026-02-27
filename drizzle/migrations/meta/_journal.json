@@ -78,6 +78,13 @@
       "when": 1772409600000,
       "tag": "0010_role_privileges",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1772496000000,
+      "tag": "0011_user_identities",
+      "breakpoints": true
     }
   ]
 }

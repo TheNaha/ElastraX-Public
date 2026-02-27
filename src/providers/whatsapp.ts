@@ -34,7 +34,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { BotProvider } from './BotProvider';
-import { MessageContext, SendMediaOptions } from '../core/MessageContext';
+import { MessageContext, SendMediaOptions, ReplyOptions } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { checkPermissions, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
@@ -48,6 +48,8 @@ import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { IdentityService } from '../utils/IdentityService';
+import { RoleService } from '../utils/RoleService';
 
 /** Maximum file size in bytes that the bot will attempt to download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
@@ -172,6 +174,39 @@ export class WhatsAppProvider implements BotProvider {
             }
           } catch (err) {
             logger.debug({ err }, '[WhatsApp] Could not resolve bot LID (will retry per-message)');
+          }
+        }
+
+        // ── Seed bot owner in DB at startup ─────────────────────────────────
+        // BOT_OWNER_JID is a phone-number JID.  We persist it as an `owner`
+        // role in user_roles so it's visible via /role check and DB queries.
+        // Also seed the identity mapping so RoleService can resolve LID↔PN.
+        const ownerJid = process.env.BOT_OWNER_JID;
+        if (ownerJid) {
+          try {
+            // Try to resolve the owner's LID via Baileys signal store
+            let ownerLid: string | undefined;
+            try {
+              ownerLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(ownerJid);
+            } catch { /* LID mapping may not exist yet — that's OK */ }
+
+            // Seed identity mapping
+            await IdentityService.upsert(ownerLid, ownerJid, undefined, 'whatsapp');
+
+            // Seed owner role in DB (global scope) — uses the PN JID as the
+            // canonical userId since that's what BOT_OWNER_JID is.
+            // Also seed with LID if we have it, so both JIDs are covered.
+            await RoleService.setRole(ownerJid, 'owner', 'global', 'whatsapp', 'system:startup');
+            if (ownerLid && ownerLid !== ownerJid) {
+              await RoleService.setRole(ownerLid, 'owner', 'global', 'whatsapp', 'system:startup');
+            }
+
+            logger.info(
+              { ownerJid, ownerLid },
+              '[WhatsApp] Owner role seeded in DB at startup',
+            );
+          } catch (err) {
+            logger.error({ err, ownerJid }, '[WhatsApp] Failed to seed owner role at startup');
           }
         }
       }
@@ -309,6 +344,11 @@ export class WhatsAppProvider implements BotProvider {
       ? (keyAny.participantPn ?? undefined)
       : (!senderId.includes('@lid') ? senderId : (keyAny.remoteJidAlt ?? undefined));
 
+    logger.debug(
+      { jid, isGroup, rawSender, senderId, _senderPn, keyParticipant: msg.key.participant, keyParticipantPn: keyAny.participantPn, senderLid: keyAny.senderLid },
+      '[WhatsApp] Sender resolution — LID/PN mapping',
+    );
+
     // ── Build quoted context object (adds socket-dependent WAMessage key) ───
     let quoted: MessageContext['quoted'] = undefined;
     if (parsed.quoted) {
@@ -428,12 +468,32 @@ export class WhatsAppProvider implements BotProvider {
     // ── Assemble the full MessageContext ────────────────────────────────────
     let _rolesCache: string[] | null = null;
 
+    // Sender phone-number JID for owner/role matching (LID ≠ PN).
+    // In DMs, jid IS the phone-number JID.  In groups, use _senderPn.
+    const senderPn: string | undefined = isGroup ? _senderPn : jid;
+
+    logger.debug(
+      { senderId, senderPn, isGroup, jid },
+      '[WhatsApp] Context senderPn resolved — will use for role/owner matching',
+    );
+
+    // ── Persist identity mapping (fire-and-forget) ──────────────────────────
+    // Upsert LID ↔ PN mapping so RoleService can resolve all JIDs for this user.
+    const identityLid = senderId.includes('@lid') ? senderId : undefined;
+    const identityPn = senderPn && !senderPn.includes('@lid') ? senderPn : undefined;
+    if (identityLid || identityPn) {
+      IdentityService.upsert(identityLid, identityPn, msg.pushName ?? undefined, 'whatsapp').catch((err) => {
+        logger.warn({ err }, '[WhatsApp] Identity upsert failed (non-fatal)');
+      });
+    }
+
     return {
       platform: 'whatsapp',      
       receivedAt: Date.now(),      
       messageId: msg.key.id ?? 'unknown',
       chatId: jid,
       senderId,
+      senderPn,
       senderName: msg.pushName ?? 'Unknown',
       text: parsed.text,
       messageType: parsed.messageType,
@@ -450,8 +510,8 @@ export class WhatsAppProvider implements BotProvider {
       downloadMedia,
       sendMedia,
 
-      reply: async (replyText: string) => {
-        await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+      reply: async (replyText: string, options?: ReplyOptions) => {
+        await sock.sendMessage(jid, { text: replyText, mentions: options?.mentions }, { quoted: msg });
       },
 
       sendTyping: async () => {
@@ -460,8 +520,8 @@ export class WhatsAppProvider implements BotProvider {
         } catch { /* best-effort */ }
       },
 
-      sendMessage: async (text: string) => {
-        const sent = await sock.sendMessage(jid, { text }, { quoted: msg });
+      sendMessage: async (text: string, options?: ReplyOptions) => {
+        const sent = await sock.sendMessage(jid, { text, mentions: options?.mentions }, { quoted: msg });
         return sent?.key;
       },
 
@@ -516,11 +576,15 @@ export class WhatsAppProvider implements BotProvider {
       },
 
       checkPermissions: async (required: string) => {
-        return checkPermissions(sock, jid, senderId, isGroup, required);
+        return checkPermissions(sock, jid, senderId, isGroup, required, senderPn);
       },
 
       resolveRoles: async () => {
-        if (!_rolesCache) _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup);
+        if (!_rolesCache) {
+          logger.debug({ senderId, senderPn, chatId: jid, isGroup }, '[WhatsApp] resolveRoles invoked — cache miss');
+          _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup, senderPn);
+          logger.info({ senderId, senderPn, roles: _rolesCache }, '[WhatsApp] resolveRoles — cached result');
+        }
         return _rolesCache;
       },
     };

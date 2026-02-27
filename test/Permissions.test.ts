@@ -2,14 +2,22 @@ import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 
 // Mock DB to return no stored roles (prevents hanging on real SQLite queries).
 // Tests control behaviour entirely through env vars & platform admin detection.
-let mockDbRows: any[] = [];
+const mockDbRows: any[] = [];
+
+/** Creates a chainable mock query object that returns mockDbRows. */
+function mockQuery() {
+  const obj: any = {
+    from: () => obj,
+    where: () => obj,
+    limit: () => obj,
+    then: (resolve: any) => resolve(mockDbRows),
+  };
+  return obj;
+}
+
 mock.module('../src/db', () => ({
   db: {
-    select: () => ({
-      from: () => ({
-        where: async () => mockDbRows,
-      }),
-    }),
+    select: () => mockQuery(),
   },
 }));
 

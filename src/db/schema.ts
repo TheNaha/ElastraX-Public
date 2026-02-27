@@ -138,3 +138,26 @@ export const flowSessions = sqliteTable('flow_sessions', {
 }));
 
 export type FlowSessionRow = typeof flowSessions.$inferSelect;
+
+// V7.12: User identity mapping (LID ↔ PN ↔ display name)
+// Persists the Baileys V7 LID-to-phone-number mapping in our own DB so that
+// role lookups, owner checks, and /role check can resolve all JIDs for a user
+// even when the Baileys signal store doesn't have the mapping yet.
+export const userIdentities = sqliteTable('user_identities', {
+  /** LID JID (e.g. "265841933336713@lid") — the canonical Baileys V7 identifier. */
+  lid: text('lid'),
+  /** Phone-number JID (e.g. "6281234567890@s.whatsapp.net"). */
+  pn: text('pn'),
+  /** Platform — always 'whatsapp' for now but could extend to 'discord'. */
+  platform: text('platform').notNull().default('whatsapp'),
+  /** Last known display name (pushName). */
+  displayName: text('display_name'),
+  /** When this record was last seen / updated. */
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  /** Both lid and pn should be unique (one identity per JID). */
+  lidIdx: index('user_identities_lid_idx').on(table.lid),
+  pnIdx: index('user_identities_pn_idx').on(table.pn),
+}));
+
+export type UserIdentity = typeof userIdentities.$inferSelect;

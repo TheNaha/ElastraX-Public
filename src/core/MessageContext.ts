@@ -6,6 +6,19 @@ export interface SendMediaOptions {
   ptt?: boolean;
 }
 
+/**
+ * Options for outgoing text messages (reply / sendMessage).
+ * Currently supports WhatsApp @mentions.
+ */
+export interface ReplyOptions {
+  /**
+   * JIDs to mention.  On WhatsApp the text should contain `@<number>`
+   * and this array should list the corresponding full JIDs
+   * (e.g. `['628xxx@s.whatsapp.net']`).
+   */
+  mentions?: string[];
+}
+
 export interface MessageContext {
   platform: 'whatsapp' | 'discord';
   chatId: string;
@@ -14,6 +27,13 @@ export interface MessageContext {
   text: string;
   isGroup: boolean;
   mentionedIds?: string[];
+
+  /**
+   * Phone-number JID of the sender (e.g. `6281234567890@s.whatsapp.net`).
+   * Present on WhatsApp when the senderId is a LID.
+   * Used by RoleService to match `BOT_OWNER_JID` and DB role entries.
+   */
+  senderPn?: string;
 
   /**
    * Unix timestamp (ms) of when the message was received by the bot.
@@ -82,9 +102,10 @@ export interface MessageContext {
   messageId: string;
 
   /**
-   * Send a text message back to the same chat
+   * Send a text message back to the same chat.
+   * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
-  reply(text: string): Promise<void>;
+  reply(text: string, options?: ReplyOptions): Promise<void>;
 
   /**
    * Show a "typing..." indicator in the chat (composing presence).
@@ -96,8 +117,9 @@ export interface MessageContext {
   /**
    * Send a text message and return a key/handle that can be used with `editMessage`.
    * Used for streaming responses — send an initial message, then edit it as chunks arrive.
+   * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
-  sendMessage?(text: string): Promise<any>;
+  sendMessage?(text: string, options?: ReplyOptions): Promise<any>;
 
   /**
    * Edit a previously sent message by its key/handle.

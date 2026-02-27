@@ -178,7 +178,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   const userRoles = await ctx.resolveRoles();
   const privileges = await PrivilegeService.getEffective(userRoles);
 
-  log.trace({ senderId: ctx.senderId, userRoles, privileges }, 'User roles and privileges resolved');
+  logger.info(
+    { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },
+    '[Agent] Role & privilege resolution complete',
+  );
 
   // Rate limit based on the user's merged privileges (-1 = unlimited → skip).
   if (privileges.maxMessagesPerWindow !== -1) {
@@ -189,7 +192,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       privileges.rateLimitWindowSec,
     );
     if (!rl.allowed) {
-      log.debug({ senderId: ctx.senderId, waitSeconds: rl.waitSeconds }, 'User rate limited');
+      logger.info(
+        { senderId: ctx.senderId, waitSeconds: rl.waitSeconds, limit: privileges.maxMessagesPerWindow },
+        '[Agent] Rate limited — rejecting message',
+      );
       await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
       return;
     }
@@ -250,7 +256,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         parsedArgs.__command = command;
         log.debug({ command, toolName: tool.name, args: parsedArgs }, 'Executing slash command');
         const result = await tool.execute(parsedArgs, ctx);
-        await ctx.reply(result);
+        // Support structured ToolResponse with mentions
+        if (typeof result === 'object' && result !== null && 'text' in result) {
+          await ctx.reply(result.text, { mentions: result.mentions });
+        } else {
+          await ctx.reply(result);
+        }
         await ctx.react?.('✅');
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: any) {
@@ -626,8 +637,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
                 await ctx.react?.('🔍');
-                toolResultStr = await tool.execute(args, ctx);
-                log.debug({ toolName, resultLength: toolResultStr.length, mode: 'stream' }, 'Tool call completed');
+                const rawResult = await tool.execute(args, ctx);
+                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                  ? rawResult.text : rawResult;
               } else {
                 log.error({ toolName, chatId }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
@@ -692,8 +704,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
-              toolResultStr = await tool.execute(args, ctx);
-              log.debug({ toolName, resultLength: toolResultStr.length }, 'Tool call completed');
+              const rawResult = await tool.execute(args, ctx);
+              toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                ? rawResult.text : rawResult;
             } else {
               log.error({ toolName, chatId }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;

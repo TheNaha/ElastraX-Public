@@ -263,7 +263,7 @@ export class DiscordProvider implements BotProvider {
         }
       },
 
-      reply: async (replyText: string) => {
+      reply: async (replyText: string, _options?: any) => {
         await msg.reply({ content: replyText });
       },
 
@@ -275,7 +275,7 @@ export class DiscordProvider implements BotProvider {
         } catch { /* best-effort */ }
       },
 
-      sendMessage: async (text: string) => {
+      sendMessage: async (text: string, _options?: any) => {
         const sent = await msg.reply({ content: text });
         return sent;
       },

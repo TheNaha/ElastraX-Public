@@ -29,6 +29,18 @@
 import { MessageContext } from '../core/MessageContext';
 import type { ModelTier } from '../types/ai';
 
+/**
+ * Structured tool response that includes WhatsApp mentions metadata.
+ * Tools that need to @-mention users should return this instead of a plain string.
+ */
+export interface ToolResponse {
+  text: string;
+  mentions?: string[];
+}
+
+/** Result type for tool execution — plain string or structured response with mentions. */
+export type ToolResult = string | ToolResponse;
+
 /** JSON Schema property descriptor for a single tool parameter. */
 export interface ToolParameter {
   type: string;
@@ -102,8 +114,8 @@ export abstract class BaseTool {
    * Execute the tool with the provided arguments and context
    * @param args Parsed JSON arguments output by the LLM
    * @param ctx The MessageContext (useful if the tool needs to interact via WhatsApp directly, like sending files)
-   * @returns A string mapping to the Tool Response for the LLM context, or an object to be stringified.
+   * @returns A string or {@link ToolResponse} for the LLM context / slash-command reply.
    */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  abstract execute(args: Record<string, any>, ctx: MessageContext): Promise<string>;
+  abstract execute(args: Record<string, any>, ctx: MessageContext): Promise<ToolResult>;
 }
