@@ -19,6 +19,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   senderName: 'Alice',
   text: '',
   isGroup: false,
+  isBotMentioned: false,
   hasMedia: false,
   rawMessage: {},
   reply: mock(async () => {}),

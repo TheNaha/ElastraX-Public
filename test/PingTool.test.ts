@@ -10,6 +10,7 @@ describe('PingTool', () => {
     senderName: 'User',
     text: '',
     isGroup: false,
+    isBotMentioned: false,
     hasMedia: false,
     receivedAt: Date.now() - 100,
     language: 'en',

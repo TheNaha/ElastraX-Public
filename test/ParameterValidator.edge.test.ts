@@ -20,7 +20,7 @@ class NoArgTool extends BaseTool {
       },
     };
   }
-  async execute(): Promise<string> { return 'pong'; }
+  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> { return 'pong'; }
 }
 
 // Tool with an integer parameter
@@ -46,7 +46,7 @@ class CountTool extends BaseTool {
       },
     };
   }
-  async execute(): Promise<string> { return 'ok'; }
+  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> { return 'ok'; }
 }
 
 // Tool with aliases for getUsageHelp coverage
@@ -72,7 +72,7 @@ class AliasedTool extends BaseTool {
       },
     };
   }
-  async execute(): Promise<string> { return 'hi'; }
+  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> { return 'hi'; }
 }
 
 // Tool with enum parameters for getUsageHelp coverage
@@ -99,7 +99,7 @@ class EnumTool extends BaseTool {
       },
     };
   }
-  async execute(): Promise<string> { return 'done'; }
+  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> { return 'done'; }
 }
 
 describe('ParameterValidator – edge cases', () => {
