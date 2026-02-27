@@ -103,12 +103,17 @@ export class PrivilegeService {
    */
   static async getEffective(roles: string[]): Promise<RolePrivileges> {
     const all = await Promise.all(roles.map(r => this.getForRole(r)));
-    return {
+    const result = {
       maxMessagesPerWindow: mergeMax(all.map(p => p.maxMessagesPerWindow)),
       rateLimitWindowSec:   mergeMax(all.map(p => p.rateLimitWindowSec)),
       contextLimit:         mergeMax(all.map(p => p.contextLimit)),
       maxDownloadMb:        mergeMax(all.map(p => p.maxDownloadMb)),
     };
+    logger.debug(
+      { roles, effective: result },
+      '[PrivilegeService] getEffective — merged privileges (most permissive wins)',
+    );
+    return result;
   }
 
   /**
@@ -116,6 +121,7 @@ export class PrivilegeService {
    * Pass `null` for a field to remove the override (revert to env default).
    */
   static async setOverride(role: string, field: keyof RolePrivileges, value: number | null): Promise<void> {
+    logger.info({ role, field, value }, '[PrivilegeService] setOverride — updating DB');
     // Upsert into role_privileges
     const existing = await db
       .select()
@@ -146,6 +152,7 @@ export class PrivilegeService {
    * Reset all DB overrides for a role (revert everything to env defaults).
    */
   static async resetToDefaults(role: string): Promise<void> {
+    logger.info({ role }, '[PrivilegeService] resetToDefaults — clearing DB overrides');
     await db.delete(rolePrivileges).where(eq(rolePrivileges.role, role));
     this.dbCache.delete(role);
   }

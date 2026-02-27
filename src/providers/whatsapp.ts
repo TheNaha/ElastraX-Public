@@ -309,6 +309,11 @@ export class WhatsAppProvider implements BotProvider {
       ? (keyAny.participantPn ?? undefined)
       : (!senderId.includes('@lid') ? senderId : (keyAny.remoteJidAlt ?? undefined));
 
+    logger.debug(
+      { jid, isGroup, rawSender, senderId, _senderPn, keyParticipant: msg.key.participant, keyParticipantPn: keyAny.participantPn, senderLid: keyAny.senderLid },
+      '[WhatsApp] Sender resolution — LID/PN mapping',
+    );
+
     // ── Build quoted context object (adds socket-dependent WAMessage key) ───
     let quoted: MessageContext['quoted'] = undefined;
     if (parsed.quoted) {
@@ -428,12 +433,22 @@ export class WhatsAppProvider implements BotProvider {
     // ── Assemble the full MessageContext ────────────────────────────────────
     let _rolesCache: string[] | null = null;
 
+    // Sender phone-number JID for owner/role matching (LID ≠ PN).
+    // In DMs, jid IS the phone-number JID.  In groups, use _senderPn.
+    const senderPn: string | undefined = isGroup ? _senderPn : jid;
+
+    logger.debug(
+      { senderId, senderPn, isGroup, jid },
+      '[WhatsApp] Context senderPn resolved — will use for role/owner matching',
+    );
+
     return {
       platform: 'whatsapp',      
       receivedAt: Date.now(),      
       messageId: msg.key.id ?? 'unknown',
       chatId: jid,
       senderId,
+      senderPn,
       senderName: msg.pushName ?? 'Unknown',
       text: parsed.text,
       messageType: parsed.messageType,
@@ -516,11 +531,15 @@ export class WhatsAppProvider implements BotProvider {
       },
 
       checkPermissions: async (required: string) => {
-        return checkPermissions(sock, jid, senderId, isGroup, required);
+        return checkPermissions(sock, jid, senderId, isGroup, required, senderPn);
       },
 
       resolveRoles: async () => {
-        if (!_rolesCache) _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup);
+        if (!_rolesCache) {
+          logger.debug({ senderId, senderPn, chatId: jid, isGroup }, '[WhatsApp] resolveRoles invoked — cache miss');
+          _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup, senderPn);
+          logger.info({ senderId, senderPn, roles: _rolesCache }, '[WhatsApp] resolveRoles — cached result');
+        }
         return _rolesCache;
       },
     };

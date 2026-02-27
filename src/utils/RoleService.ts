@@ -27,7 +27,7 @@
 
 import { db } from '../db';
 import { userRoles } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 
 /** Built-in role names.  Custom roles are also allowed as plain strings. */
@@ -52,20 +52,44 @@ export class RoleService {
     userId: string,
     chatId?: string,
     isPlatformAdmin?: boolean,
+    senderPn?: string,
   ): Promise<string[]> {
     const roles = new Set<string>(['user']);
 
     try {
-      // 1. Env owner
-      if (process.env.BOT_OWNER_JID && userId === process.env.BOT_OWNER_JID) {
+      // 1. Env owner — check both LID-based userId AND phone-number JID.
+      //    BOT_OWNER_JID is typically a phone-number JID (e.g. 628xxx@s.whatsapp.net)
+      //    but senderId may be a @lid JID in Baileys V7.  Check both.
+      const ownerJid = process.env.BOT_OWNER_JID;
+      const ownerMatchUserId = ownerJid ? userId === ownerJid : false;
+      const ownerMatchPn = ownerJid && senderPn ? senderPn === ownerJid : false;
+
+      if (ownerJid && (ownerMatchUserId || ownerMatchPn)) {
         roles.add('owner');
+        logger.info(
+          { userId, senderPn, ownerJid, matchedVia: ownerMatchUserId ? 'userId' : 'senderPn' },
+          '[RoleService] Owner matched via env BOT_OWNER_JID',
+        );
+      } else if (ownerJid) {
+        logger.debug(
+          { userId, senderPn, ownerJid },
+          '[RoleService] Owner check — no match',
+        );
       }
 
       // 2. DB roles (global + per-room)
+      //    Query with both userId (LID) and senderPn (phone JID) to find all matching entries.
+      const userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+      logger.debug({ userIds, chatId }, '[RoleService] Querying DB for role entries');
+
       const rows = await db
         .select({ scope: userRoles.scope, role: userRoles.role })
         .from(userRoles)
-        .where(eq(userRoles.userId, userId));
+        .where(
+          userIds.length === 1
+            ? eq(userRoles.userId, userId)
+            : inArray(userRoles.userId, userIds),
+        );
 
       for (const row of rows) {
         if (row.scope === 'global' || row.scope === chatId) {
@@ -73,15 +97,28 @@ export class RoleService {
         }
       }
 
+      if (rows.length > 0) {
+        logger.debug(
+          { userId, dbRows: rows.length, appliedRoles: rows.filter(r => r.scope === 'global' || r.scope === chatId).map(r => r.role) },
+          '[RoleService] DB roles found',
+        );
+      }
+
       // 3. Platform-native admin
       if (isPlatformAdmin) {
         roles.add('admin');
+        logger.debug({ userId }, '[RoleService] Platform admin flag set — added admin role');
       }
     } catch (err) {
-      logger.error({ err, userId }, '[RoleService] Failed to resolve roles');
+      logger.error({ err, userId, senderPn }, '[RoleService] Failed to resolve roles');
     }
 
-    return Array.from(roles);
+    const result = Array.from(roles);
+    logger.info(
+      { userId, senderPn, chatId, roles: result },
+      '[RoleService] resolveRoles — final result',
+    );
+    return result;
   }
 
   // ── Permission Check ──────────────────────────────────────────────────
@@ -165,6 +202,8 @@ export class RoleService {
     platform: string,
     grantedBy: string,
   ): Promise<void> {
+    logger.info({ userId, role, scope, platform, grantedBy }, '[RoleService] setRole — start');
+
     const existing = await db
       .select()
       .from(userRoles)
@@ -176,6 +215,7 @@ export class RoleService {
         .update(userRoles)
         .set({ grantedBy })
         .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope), eq(userRoles.role, role)));
+      logger.info({ userId, role, scope }, '[RoleService] setRole — updated existing entry');
     } else {
       await db.insert(userRoles).values({
         userId,
@@ -185,6 +225,7 @@ export class RoleService {
         grantedBy,
         created_at: new Date(),
       });
+      logger.info({ userId, role, scope }, '[RoleService] setRole — inserted new entry');
     }
   }
 
@@ -192,6 +233,8 @@ export class RoleService {
    * Remove a specific role from a user in a given scope.
    */
   static async removeRole(userId: string, scope: string, role?: string): Promise<boolean> {
+    logger.info({ userId, scope, role }, '[RoleService] removeRole — start');
+
     const conditions = role
       ? and(eq(userRoles.userId, userId), eq(userRoles.scope, scope), eq(userRoles.role, role))
       : and(eq(userRoles.userId, userId), eq(userRoles.scope, scope));
@@ -202,9 +245,13 @@ export class RoleService {
       .where(conditions)
       .limit(1);
 
-    if (existing.length === 0) return false;
+    if (existing.length === 0) {
+      logger.warn({ userId, scope, role }, '[RoleService] removeRole — no matching entry found');
+      return false;
+    }
 
     await db.delete(userRoles).where(conditions);
+    logger.info({ userId, scope, role }, '[RoleService] removeRole — deleted');
     return true;
   }
 

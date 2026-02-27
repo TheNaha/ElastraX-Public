@@ -16,6 +16,13 @@ export interface MessageContext {
   mentionedIds?: string[];
 
   /**
+   * Phone-number JID of the sender (e.g. `6281234567890@s.whatsapp.net`).
+   * Present on WhatsApp when the senderId is a LID.
+   * Used by RoleService to match `BOT_OWNER_JID` and DB role entries.
+   */
+  senderPn?: string;
+
+  /**
    * Unix timestamp (ms) of when the message was received by the bot.
    * Used by PingTool to calculate round-trip latency.
    * Populated by providers before emitting the message event.

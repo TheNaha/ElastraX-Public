@@ -175,6 +175,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   const userRoles = await ctx.resolveRoles();
   const privileges = await PrivilegeService.getEffective(userRoles);
 
+  logger.info(
+    { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },
+    '[Agent] Role & privilege resolution complete',
+  );
+
   // Rate limit based on the user's merged privileges (-1 = unlimited → skip).
   if (privileges.maxMessagesPerWindow !== -1) {
     const rl = RateLimiter.checkWithLimits(
@@ -184,6 +189,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       privileges.rateLimitWindowSec,
     );
     if (!rl.allowed) {
+      logger.info(
+        { senderId: ctx.senderId, waitSeconds: rl.waitSeconds, limit: privileges.maxMessagesPerWindow },
+        '[Agent] Rate limited — rejecting message',
+      );
       await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
       return;
     }
