@@ -536,8 +536,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     await ctx.reply(finalAiResponseText);
     await ctx.react?.('✅'); // show success
     const usedFallbackError = finalAiResponseText === internalErrorText;
-    const logMethod = usedFallbackError ? logger.warn : logger.info;
-    logMethod({
+    const logPayload = {
       chatId,
       platform,
       usedFallbackError,
@@ -545,7 +544,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       replyLength: finalAiResponseText.length,
       hasMedia: ctx.hasMedia,
       quotedMedia: !!ctx.quoted?.hasMedia,
-    }, 'Successfully responded');
+    };
+    if (usedFallbackError) {
+      logger.warn(logPayload, 'Successfully responded');
+    } else {
+      logger.info(logPayload, 'Successfully responded');
+    }
 
   } catch (error) {
     logger.error(error, 'Error handling message');
