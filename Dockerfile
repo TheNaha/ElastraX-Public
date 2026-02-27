@@ -1,66 +1,88 @@
-# use the official Bun image
-# see all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 AS base
+# ───────────────────────────────────────────────────────────────────────
+# ElastraX v7 — Multi-stage Dockerfile
+# ───────────────────────────────────────────────────────────────────────
+# Stage 1: fetch     — download yt-dlp + ffmpeg static binaries
+# Stage 2: install   — bun install (dev + prod) with native build tools
+# Stage 3: prerelease — copy source + dev node_modules for optional tests
+# Stage 4: release   — minimal runtime image
+# ───────────────────────────────────────────────────────────────────────
+
+# ── Stage 1: Fetch external binaries ────────────────────────────────────
+FROM oven/bun:1 AS fetch
 ARG TARGETARCH
 RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
-	apt-get install -y --no-install-recommends \
-		ca-certificates \
-		curl \
-		xz-utils; \
+	apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
 	rm -rf /var/lib/apt/lists/*; \
-	update-ca-certificates; \
-	curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused \
-		"https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp" \
+	# ── Resolve architecture ──────────────────────────────────────────── \
+	ARCH="${TARGETARCH:-}"; \
+	if [ -z "$ARCH" ]; then ARCH="$(dpkg --print-architecture)"; fi; \
+	# ── yt-dlp standalone binary (no Python needed) ───────────────────── \
+	case "$ARCH" in \
+		amd64) YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" ;; \
+		arm64) YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64" ;; \
+		*) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
+	esac; \
+	curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$YTDLP_URL" \
 		-o /usr/local/bin/yt-dlp; \
 	chmod a+rx /usr/local/bin/yt-dlp; \
-	ARCH="${TARGETARCH:-}"; \
-	if [ -z "$ARCH" ]; then \
-		ARCH="$(dpkg --print-architecture)"; \
-	fi; \
+	# ── ffmpeg + ffprobe static build ─────────────────────────────────── \
 	case "$ARCH" in \
 		amd64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" ;; \
 		arm64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz" ;; \
-		*) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
 	esac; \
 	curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz; \
 	tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; \
 	FFMPEG_DIR="$(find /tmp -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"; \
 	test -n "$FFMPEG_DIR"; \
-	test -f "$FFMPEG_DIR/bin/ffmpeg"; \
-	test -f "$FFMPEG_DIR/bin/ffprobe"; \
-	install -m 0755 "$FFMPEG_DIR/bin/ffmpeg" /usr/local/bin/ffmpeg; \
+	install -m 0755 "$FFMPEG_DIR/bin/ffmpeg"  /usr/local/bin/ffmpeg; \
 	install -m 0755 "$FFMPEG_DIR/bin/ffprobe" /usr/local/bin/ffprobe; \
 	rm -rf /tmp/ffmpeg.tar.xz "$FFMPEG_DIR"
-WORKDIR /usr/src/app
 
-# install dependencies into temp directory
-# this will cache them and speed up future builds
-FROM base AS install
-RUN apt-get update && apt-get install -y python3 build-essential pkg-config
+# ── Stage 2: Install npm dependencies ──────────────────────────────────
+FROM oven/bun:1 AS install
+# better-sqlite3 (devDependency) needs native build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+		python3 build-essential pkg-config \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Dev install (includes devDependencies for testing/linting)
 RUN mkdir -p /temp/dev
 COPY package.json bun.lock /temp/dev/
 RUN cd /temp/dev && bun install --frozen-lockfile
 
-# install with --production (exclude devDependencies)
+# Production install (excludes devDependencies)
 RUN mkdir -p /temp/prod
 COPY package.json bun.lock /temp/prod/
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
-# copy node_modules from temp directory
-# then copy all (non-ignored) project files into the image
-FROM base AS prerelease
+# ── Stage 3: Pre-release (source + dev deps for optional tests) ────────
+FROM oven/bun:1 AS prerelease
+WORKDIR /usr/src/app
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
 
-# [optional] tests & build
 ENV NODE_ENV=production
 # RUN bun test
 # RUN bun run build
 
-# copy production dependencies and source code into final image
-FROM base AS release
+# ── Stage 4: Final runtime image ──────────────────────────────────────
+FROM oven/bun:1 AS release
+RUN set -eux; \
+	export DEBIAN_FRONTEND=noninteractive; \
+	apt-get update; \
+	apt-get install -y --no-install-recommends ca-certificates; \
+	rm -rf /var/lib/apt/lists/*; \
+	update-ca-certificates
+WORKDIR /usr/src/app
+
+# Copy external binaries from the fetch stage
+COPY --from=fetch /usr/local/bin/yt-dlp   /usr/local/bin/yt-dlp
+COPY --from=fetch /usr/local/bin/ffmpeg   /usr/local/bin/ffmpeg
+COPY --from=fetch /usr/local/bin/ffprobe  /usr/local/bin/ffprobe
+
+# Copy production node_modules and source
 COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/src src
 COPY --from=prerelease /usr/src/app/drizzle drizzle

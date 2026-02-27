@@ -141,27 +141,6 @@ def _check_running(p):
         raise subprocess.CalledProcessError(rc, cmd=p.args)
 
 
-def warmup():
-    """Run a few inference passes to warm up the engine."""
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [{"role": "user", "content": "Hello, how are you?"}],
-        "max_tokens": 16,
-    }
-    headers = {"Content-Type": "application/json"}
-    api_key = next((os.environ.get(k) for k in VLLM_API_KEY_ENV_NAMES if os.environ.get(k)), None)
-    if api_key:
-        headers["Authorization"] = f"Bearer {api_key}"
-
-    for _ in range(3):
-        req_lib.post(
-            f"http://127.0.0.1:{VLLM_PORT}/v1/chat/completions",
-            json=payload,
-            headers=headers,
-            timeout=60,
-        ).raise_for_status()
-
-
 def sleep_server(level=1):
     """Put vLLM into sleep mode (moves GPU tensors to CPU for snapshotting)."""
     req_lib.post(f"http://127.0.0.1:{VLLM_PORT}/sleep?level={level}").raise_for_status()
@@ -225,8 +204,6 @@ class Model:
 
         print("⏳ Waiting for model to load...")
         wait_ready(self.process)
-        print("✅ Server healthy. Running warmup...")
-        warmup()
         print("� Putting vLLM to sleep for GPU snapshot...")
         sleep_server(1)
         print("📸 Ready for snapshot.")
