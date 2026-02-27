@@ -1,16 +1,4 @@
-/**
- * agent.test.ts
- *
- * Unit tests for handleIncomingMessage() in src/agent/index.ts.
- *
- * Strategy: Rather than mocking the AIClient class (which is instantiated at
- * module-evaluation time and can't be easily replaced after the fact), we mock
- * global.fetch so the real AIClient succeeds with predictable responses.
- * Heavy deps (DB, logger, fs) are replaced via mock.module() before the agent
- * module is imported. Tools and FlowHandler use spyOn to avoid mock.module
- * bleed into registry.test.ts and FlowHandler.test.ts.
- */
-import { describe, test, expect, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
 // ─── Mutable state shared between mock closures and tests ────────────────────
@@ -98,15 +86,21 @@ mock.module('fs', () => ({
   existsSync: (_path: string) => shouldFileExist,
 }));
 
-// ConfigService: NOT mocked — use the real implementation.
-// Room settings are controlled via mockRoomRows so ConfigService reads them naturally.
+// Mocking `src/tools` fully to control both functions and the array
+const mockToolsArray: any[] = [];
+mock.module('../src/tools', () => {
+  return {
+    tools: mockToolsArray,
+    getToolDefinitions: () => [],
+    getToolByName: () => undefined,
+    getToolByAliasOrName: () => undefined,
+  };
+});
 
 // Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
 
-// Use spyOn for tools and FlowHandler AFTER importing agent.
-// spyOn replaces the live binding in the module namespace so the agent sees it,
-// but unlike mock.module() it does NOT bleed into other test files.
+// We need to re-import these after mocking
 import * as toolsModule from '../src/tools';
 import * as flowModule from '../src/core/FlowHandler';
 
@@ -208,6 +202,12 @@ describe('handleIncomingMessage', () => {
         function: { name: t.name, description: '', parameters: { type: 'object', properties: {}, required: [] } },
       }),
     );
+
+    // Update the mocked tools array for the suggestion loop
+    // Clear it first
+    mockToolsArray.length = 0;
+    // Push current mock tools
+    Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
   });
 
   afterEach(() => {
@@ -373,6 +373,9 @@ describe('handleIncomingMessage', () => {
           execute: mock(async () => 'Menu content'),
         },
       };
+      // Important: refresh mockToolsArray here because it's populated in beforeEach
+      mockToolsArray.length = 0;
+      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
     });
 
     test('should route a /menu command to the MenuTool', async () => {
@@ -412,10 +415,26 @@ describe('handleIncomingMessage', () => {
     });
 
     test('should reply "Unknown command" for unrecognised slash commands', async () => {
-      mockToolMap = {}; // no tools registered
+      // Clear tools for this specific test so no suggestions are found
+      mockToolsArray.length = 0;
+      mockToolMap = {};
+
       const ctx = makeCtx({ text: '/unknowncmd', isGroup: false });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'));
+    });
+
+    test('should suggest a similar command when a typo is made (e.g., /men -> /menu)', async () => {
+      const ctx = makeCtx({ text: '/men', isGroup: false });
+      await handleIncomingMessage(ctx);
+      // Should trigger "Did you mean /menu?"
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */menu*'));
+    });
+
+    test('should suggest a similar command based on alias (e.g., /hlp -> /help alias for menu)', async () => {
+      const ctx = makeCtx({ text: '/hlp', isGroup: false });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */help*'));
     });
 
     test('should pass query string arguments to the tool for multi-word commands', async () => {
@@ -440,6 +459,9 @@ describe('handleIncomingMessage', () => {
         execute: mock(async () => 'Search results here'),
       };
       mockToolMap = { web_search: searchTool };
+      // Refresh mockToolsArray
+      mockToolsArray.length = 0;
+      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
 
       let callCount = 0;
       global.fetch = mock(async () => {
@@ -506,6 +528,9 @@ describe('handleIncomingMessage', () => {
         execute: mock(async () => 'ok'),
       };
       mockToolMap = { dummy: dummyTool };
+      // Refresh mockToolsArray
+      mockToolsArray.length = 0;
+      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
 
       let callCount = 0;
       global.fetch = mock(async () => {
