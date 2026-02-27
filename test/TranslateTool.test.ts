@@ -1,4 +1,4 @@
-import { expect, test, describe, mock } from 'bun:test';
+import { expect, test, describe, mock, beforeEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
 const mockChatCompletion = mock(async () => ({ content: 'Hola mundo', role: 'assistant' }));
@@ -24,6 +24,11 @@ describe('TranslateTool', () => {
     ...overrides,
   } as MessageContext);
 
+  beforeEach(() => {
+    mockChatCompletion.mockClear();
+    mockChatCompletion.mockImplementation(async () => ({ content: 'Hola mundo', role: 'assistant' }));
+  });
+
   test('should have basic properties', () => {
     const tool = new TranslateTool();
     expect(tool.name).toBe('translate');
@@ -46,7 +51,6 @@ describe('TranslateTool', () => {
   describe('execute', () => {
     test('should call chatCompletion and return translated text', async () => {
       const tool = new TranslateTool();
-      mockChatCompletion.mockClear();
       const ctx = createMockCtx();
       const result = await tool.execute({ target_language: 'Spanish', text: 'Hello world' }, ctx);
 
@@ -64,7 +68,6 @@ describe('TranslateTool', () => {
 
     test('should use quoted text when no explicit text provided', async () => {
       const tool = new TranslateTool();
-      mockChatCompletion.mockClear();
       const ctx = createMockCtx({
         quoted: { text: 'Quoted message text' } as any,
       });
@@ -81,8 +84,6 @@ describe('TranslateTool', () => {
       const result = await tool.execute({ target_language: 'Spanish', text: 'Hello' }, ctx);
 
       expect(result).toContain('failed');
-      // Reset mock
-      mockChatCompletion.mockImplementation(async () => ({ content: 'Hola mundo', role: 'assistant' }));
     });
   });
 });

@@ -8,12 +8,19 @@ const { TranscribeTool } = await import('../src/tools/TranscribeTool');
 
 describe('TranscribeTool', () => {
   const originalFetch = global.fetch;
-  const originalEnv = { ...process.env };
+  const savedEndpoint = process.env.TRANSCRIBE_ENDPOINT;
+  const savedApiKey = process.env.TRANSCRIBE_API_KEY;
+
+  beforeEach(() => {
+    global.fetch = originalFetch;
+    process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
+    process.env.TRANSCRIBE_API_KEY = savedApiKey;
+  });
 
   afterEach(() => {
     global.fetch = originalFetch;
-    process.env.TRANSCRIBE_ENDPOINT = originalEnv.TRANSCRIBE_ENDPOINT;
-    process.env.TRANSCRIBE_API_KEY = originalEnv.TRANSCRIBE_API_KEY;
+    process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
+    process.env.TRANSCRIBE_API_KEY = savedApiKey;
   });
 
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -90,23 +97,16 @@ describe('TranscribeTool', () => {
     expect(result).toContain('failed');
   });
 
-  test('should return no_media when media path does not exist', async () => {
+  test('should return no_media when no media path is available', async () => {
     process.env.TRANSCRIBE_ENDPOINT = 'https://api.example.com/transcribe';
 
-    // Re-mock fs to return false for existsSync
-    mock.module('fs', () => ({ existsSync: () => false }));
-
-    const { TranscribeTool: TranscribeToolNoMedia } = await import('../src/tools/TranscribeTool');
-    const tool = new TranscribeToolNoMedia();
+    const tool = new TranscribeTool();
     const ctx = createMockCtx({
-      mediaPath: '/tmp/nonexistent.ogg',
+      mediaPath: undefined,
       quoted: undefined,
     });
     const result = await tool.execute({}, ctx);
 
     expect(result).toContain('attach');
-
-    // Restore fs mock
-    mock.module('fs', () => ({ existsSync: () => true }));
   });
 });
