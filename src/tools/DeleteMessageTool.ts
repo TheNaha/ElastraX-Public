@@ -17,6 +17,8 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'DeleteMessageTool' });
+
 export class DeleteMessageTool extends BaseTool {
   readonly name = 'delete_message';
   readonly description = 'Delete one of the bot\'s own previously sent messages. The user must reply to the bot message they want deleted, or explicitly ask to delete the last bot message.';
@@ -59,9 +61,10 @@ export class DeleteMessageTool extends BaseTool {
 
     try {
       await ctx.deleteMessage(ctx.quoted.rawMessage?.key);
+      log.info({ chatId: ctx.chatId, requestedBy: ctx.senderId }, 'Bot message deleted');
       return t(lang, 'delete.success');
     } catch (err: any) {
-      logger.error({ err }, '[DeleteMessageTool] Failed to delete message');
+      log.error({ err, chatId: ctx.chatId }, 'Failed to delete message');
       return t(lang, 'delete.error', { msg: err.message });
     }
   }

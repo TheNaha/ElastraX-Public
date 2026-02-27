@@ -31,6 +31,9 @@ import { db } from '../db';
 import { chatRooms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'ConfigTool' });
 
 export class ConfigTool extends BaseTool {
   readonly name = 'config';
@@ -80,6 +83,7 @@ export class ConfigTool extends BaseTool {
 
   async execute(args: any, ctx: MessageContext): Promise<string> {
     const { action, key, value } = args;
+    log.debug({ action, key, chatId: ctx.chatId, senderId: ctx.senderId }, 'Config tool invoked');
 
     // Fetch current room
     const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
@@ -89,6 +93,7 @@ export class ConfigTool extends BaseTool {
     const resolved = ConfigService.getResolvedConfig(room);
 
     if (action === 'get') {
+      log.debug({ chatId: ctx.chatId }, 'Retrieving config for room');
       return `*Current Configuration for ${ctx.chatId}*\n\n${this.buildKeyListing(room, resolved)}`;
     }
 
@@ -99,6 +104,7 @@ export class ConfigTool extends BaseTool {
       const updateData: any = {};
       updateData[key] = null;
       await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
+      log.info({ chatId: ctx.chatId, key, resetBy: ctx.senderId }, 'Config key reset to default');
       return `Configuration \`${key}\` has been reset to its global fallback value.`;
     }
 
@@ -141,9 +147,11 @@ export class ConfigTool extends BaseTool {
         }
 
         await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
+        log.info({ chatId: ctx.chatId, key, value: updateData[key], setBy: ctx.senderId }, 'Config key updated');
         return `Successfully updated \`${key}\` for this room.`;
 
       } catch (e: any) {
+        log.warn({ chatId: ctx.chatId, key, value, err: e.message }, 'Invalid config value rejected');
         return `Invalid value for ${key}: ${e.message}`;
       }
     }

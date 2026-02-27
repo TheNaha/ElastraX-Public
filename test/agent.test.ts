@@ -30,14 +30,15 @@ let mockToolMap: Record<string, any> = {};
 
 // ─── Module mocks ─────────────────────────────────────────────────────────────
 
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => _mockLogger,
+};
+mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 // DB mock: select().from(table).where() must be both awaitable (room lookup)
 // and chainable via .orderBy().limit() (history lookup).

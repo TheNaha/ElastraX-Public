@@ -30,6 +30,8 @@ import { SessionManager } from '../utils/SessionManager';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'MenfessTool' });
+
 /** Parse MENFESS_TARGETS env var into a name→chatId map. */
 function loadTargetAliases(): Map<string, string> {
   const map = new Map<string, string>();
@@ -72,9 +74,10 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
       // For menfess, we compose a fresh message rather than forwarding the original
       // This is handled by the provider; here we just trigger the action
       await ctx.forwardMessage(targetChatId, `📬 *Anonymous Message:*\n\n${message}`);
+      log.info({ targetChatId, senderId: ctx.senderId }, 'Anonymous message sent');
       await ctx.reply(t(lang, 'menfess.sent'));
     } catch (err: any) {
-      logger.error({ err }, '[MenfessTool] Failed to send anonymous message');
+      log.error({ err, targetChatId }, 'Failed to send anonymous message');
       await ctx.reply(t(lang, 'menfess.error', { msg: err.message }));
     }
   } else {
@@ -118,6 +121,8 @@ export class MenfessTool extends BaseTool {
     const lang = ctx.language ?? 'en';
     const targetInput = String(args.target || '').trim();
     const message = String(args.message || '').trim();
+
+    log.debug({ targetInput, senderId: ctx.senderId }, 'Menfess initiated');
 
     if (!targetInput) return t(lang, 'menfess.no_target');
     if (!message) return t(lang, 'menfess.no_message');

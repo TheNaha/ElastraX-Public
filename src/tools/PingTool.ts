@@ -14,6 +14,9 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'PingTool' });
 
 const PROCESS_START = Date.now();
 
@@ -55,6 +58,8 @@ export class PingTool extends BaseTool {
     const receivedAt = ctx.receivedAt ?? Date.now();
     const latency = Date.now() - receivedAt;
     const uptime = formatUptime(Date.now() - PROCESS_START);
+
+    log.debug({ latency, uptime, chatId: ctx.chatId }, 'Ping executed');
 
     return t(ctx.language, 'ping.response', {
       latency: String(latency > 0 ? latency : 0),

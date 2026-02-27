@@ -21,6 +21,9 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
 import * as os from 'os';
+import { logger } from './logger';
+
+const log = logger.child({ module: 'FFmpegConverter' });
 
 /** Utility class that wraps FFmpeg for buffer-to-buffer media conversion. */
 export class FFmpegConverter {
@@ -44,6 +47,8 @@ export class FFmpegConverter {
     if (!/^[a-zA-Z0-9]+$/.test(extIn) || !/^[a-zA-Z0-9]+$/.test(extOut)) {
       throw new Error('Invalid extension provided');
     }
+
+    log.debug({ extIn, extOut, inputSize: inputBuffer.length }, 'FFmpeg conversion starting');
 
     const tmpDir = path.join(os.tmpdir(), 'elastrax-tmp');
     await fs.mkdir(tmpDir, { recursive: true });
@@ -75,12 +80,14 @@ export class FFmpegConverter {
           
           if (code !== 0) {
             await fs.unlink(tmpOut).catch(() => {});
+            log.error({ code, stderr: stderr.slice(-300), extIn, extOut }, 'FFmpeg conversion failed');
             return reject(new Error(`FFmpeg error ${code}: ${stderr}`));
           }
           
           // Read success output and cleanup
           const data = await fs.readFile(tmpOut);
           await fs.unlink(tmpOut).catch(() => {});
+          log.debug({ extIn, extOut, outputSize: data.length }, 'FFmpeg conversion completed');
           resolve(data);
         } catch (e) {
           reject(e);

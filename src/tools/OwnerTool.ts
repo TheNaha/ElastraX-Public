@@ -23,6 +23,8 @@ import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import type { ModelTier } from '../types/ai';
 
+const log = logger.child({ module: 'OwnerTool' });
+
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
   const h = Math.floor((seconds % 86400) / 3600);
@@ -74,6 +76,8 @@ export class OwnerTool extends BaseTool {
     const lang = ctx.language ?? 'en';
     const cmd = String(args.__command || '').toLowerCase();
 
+    log.info({ action, cmd, senderId: ctx.senderId }, 'Owner action requested');
+
     // Slash command routing: /broadcast <msg>, /leave, /botleave
     if (cmd === 'broadcast' && action !== 'leave' && action !== 'system_info') {
       const broadcastMsg = [action, message].filter(Boolean).join(' ').trim();
@@ -113,6 +117,8 @@ export class OwnerTool extends BaseTool {
     let failed = 0;
     const broadcastText = `📢 *Broadcast from Bot Owner:*\n\n${message}`;
 
+    log.info({ roomCount: rooms.length, platform: ctx.platform }, 'Broadcast initiated');
+
     for (const room of rooms) {
       if (room.id === ctx.chatId) continue;
       try {
@@ -122,7 +128,7 @@ export class OwnerTool extends BaseTool {
         await new Promise(resolve => setTimeout(resolve, 200));
       } catch (err) {
         failed++;
-        logger.warn({ err, roomId: room.id }, '[OwnerTool] Broadcast failed for room');
+        log.warn({ err, roomId: room.id }, 'Broadcast failed for room');
       }
     }
 
@@ -139,6 +145,7 @@ export class OwnerTool extends BaseTool {
     }
 
     try {
+      log.info({ chatId: ctx.chatId, requestedBy: ctx.senderId }, 'Bot leaving group');
       await ctx.reply(t(lang, 'owner.leave_goodbye'));
       if (ctx.leaveGroup) {
         await ctx.leaveGroup();
@@ -147,7 +154,7 @@ export class OwnerTool extends BaseTool {
       }
       return '';
     } catch (err: any) {
-      logger.error({ err }, '[OwnerTool] Failed to leave group');
+      log.error({ err, chatId: ctx.chatId }, 'Failed to leave group');
       return t(lang, 'owner.leave_error', { msg: err.message });
     }
   }

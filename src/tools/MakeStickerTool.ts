@@ -25,6 +25,8 @@ import { t } from '../utils/i18n';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
+const log = logger.child({ module: 'MakeStickerTool' });
+
 export class MakeStickerTool extends BaseTool {
   readonly name = 'sticker';
   readonly description = 'Converts an image or short video into a WhatsApp sticker.';
@@ -60,6 +62,8 @@ export class MakeStickerTool extends BaseTool {
       //    If the download is already done this resolves instantly; otherwise we wait.
       //    We show 📥 to let the user know we're fetching their media.
       const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
+
+      log.debug({ chatId: ctx.chatId, mime: targetMessage.mimeType }, 'Sticker creation started');
 
       if (!targetMessage.mediaPath) {
         await ctx.react?.('📥');
@@ -110,6 +114,7 @@ export class MakeStickerTool extends BaseTool {
       const author = args.author || 'ElastraX v7';
 
       const stickerBuffer = await StickerUtils.writeExif(webpBuffer, { packname, author });
+      log.debug({ chatId: ctx.chatId, stickerSize: stickerBuffer.length }, 'Sticker WebP created');
 
       // 5. Send using provider's specific ability
       if (typeof ctx.sendSticker === 'function') {
@@ -122,7 +127,7 @@ export class MakeStickerTool extends BaseTool {
       return t(ctx.language, 'sticker.success');
 
     } catch (e: any) {
-      logger.error(e, 'Failed to make sticker tool');
+      log.error({ err: e, chatId: ctx.chatId }, 'Sticker creation failed');
       return t(ctx.language, 'sticker.error', { msg: e.message || 'Unknown error' });
     }
   }

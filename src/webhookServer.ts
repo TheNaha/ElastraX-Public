@@ -46,6 +46,8 @@ import { logger } from './utils/logger';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { healthMetrics } from './utils/HealthMetrics';
 
+const log = logger.child({ module: 'WebhookServer' });
+
 type SendFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
 // ─── Service Adapters ──────────────────────────────────────────────────────────
@@ -178,13 +180,13 @@ export class WebhookServer {
   start(): void {
     const enabled = process.env.WEBHOOK_ENABLED !== 'false';
     if (!enabled) {
-      logger.info('[WebhookServer] Disabled via WEBHOOK_ENABLED=false');
+      log.info('Webhook server disabled via WEBHOOK_ENABLED=false');
       return;
     }
 
     const secret = process.env.WEBHOOK_SECRET;
     if (!secret) {
-      logger.warn('[WebhookServer] WEBHOOK_SECRET not set — /webhook endpoint will be disabled, /health remains available.');
+      log.warn('WEBHOOK_SECRET not set — /webhook endpoint will be disabled, /health remains available');
     }
 
     const port = parseInt(process.env.WEBHOOK_PORT || '3500', 10);
@@ -194,6 +196,7 @@ export class WebhookServer {
       fetch: async (req) => {
         // Only accept POST /webhook
         const url = new URL(req.url);
+        log.trace({ method: req.method, pathname: url.pathname }, 'HTTP request received');
         if (req.method !== 'POST' || !url.pathname.startsWith('/webhook')) {
           // Health check endpoint
           if (req.method === 'GET' && url.pathname === '/health') {
@@ -266,12 +269,12 @@ export class WebhookServer {
 
         try {
           await this.send(roomId, text, platform);
-          logger.info({ roomId, source: headers['x-github-event'] || headers['x-grafana-origin'] || 'generic' }, '[WebhookServer] Message delivered');
+          log.info({ roomId, source: headers['x-github-event'] || headers['x-grafana-origin'] || 'generic' }, 'Webhook message delivered');
           return new Response(JSON.stringify({ ok: true }), {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (err: any) {
-          logger.error({ err, roomId }, '[WebhookServer] Failed to deliver message');
+          log.error({ err, roomId }, 'Failed to deliver webhook message');
           return new Response(JSON.stringify({ error: err.message }), {
             status: 500, headers: { 'Content-Type': 'application/json' },
           });
@@ -279,7 +282,7 @@ export class WebhookServer {
       },
     });
 
-    logger.info({ port }, '[WebhookServer] Started');
+    log.info({ port }, 'Webhook server started');
   }
 
   stop(): void {
