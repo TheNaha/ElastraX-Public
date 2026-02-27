@@ -26,10 +26,11 @@
  * Slash aliases: /role, /roles, /permission, /perm
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, ToolDefinition, ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { RoleService, BUILTIN_ROLES } from '../utils/RoleService';
 import { PrivilegeService, RolePrivileges } from '../utils/PrivilegeService';
+import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
@@ -88,7 +89,7 @@ export class RoleTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: Record<string, any>, ctx: MessageContext): Promise<ToolResult> {
     const lang = ctx.language ?? 'en';
     let { action, scope } = args;
     const { user, role, field, value } = args;
@@ -140,11 +141,16 @@ export class RoleTool extends BaseTool {
         '[RoleTool] check — result',
       );
 
-      return t(lang, 'role.check', {
-        userId: targetId,
+      // Resolve display name for mention
+      const { display, mentionJid } = await resolveUserDisplay(targetId);
+
+      const text = t(lang, 'role.check', {
+        userDisplay: display,
         effectiveRole: effectiveLabel,
         roles: rolesStr,
       }) + `\n\n*Effective privileges:*\n${privsStr}`;
+
+      return mentionJid ? { text, mentions: [mentionJid] } : text;
     }
 
     // ── LIST ───────────────────────────────────────────────────────────────
@@ -153,10 +159,21 @@ export class RoleTool extends BaseTool {
       if (roles.length === 0) {
         return t(lang, 'role.list_empty', { scope: scopeLabel });
       }
-      const items = roles
-        .map((r, i) => `${i + 1}. *${r.role}* — ${r.userId} (by ${r.grantedBy})`)
-        .join('\n');
-      return t(lang, 'role.list', { scope: scopeLabel, items });
+
+      const mentions: string[] = [];
+      const itemLines: string[] = [];
+
+      for (let i = 0; i < roles.length; i++) {
+        const r = roles[i];
+        const { display: userDisp, mentionJid: userMention } = await resolveUserDisplay(r.userId);
+        const { display: byDisp, mentionJid: byMention } = await resolveUserDisplay(r.grantedBy);
+        if (userMention) mentions.push(userMention);
+        if (byMention) mentions.push(byMention);
+        itemLines.push(`${i + 1}. *${r.role}* — @${userDisp} (by @${byDisp})`);
+      }
+
+      const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n') });
+      return mentions.length > 0 ? { text, mentions } : text;
     }
 
     // ── PRIVS ──────────────────────────────────────────────────────────────
@@ -224,7 +241,10 @@ export class RoleTool extends BaseTool {
 
       await RoleService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
       logger.info({ targetId, role, scope, grantedBy: ctx.senderId }, '[RoleTool] Role granted');
-      return t(lang, 'role.granted', { userId: targetId, role, scope: scopeLabel });
+
+      const { display, mentionJid } = await resolveUserDisplay(targetId);
+      const text = t(lang, 'role.granted', { userDisplay: display, role, scope: scopeLabel });
+      return mentionJid ? { text, mentions: [mentionJid] } : text;
     }
 
     // ── REVOKE ─────────────────────────────────────────────────────────────
@@ -244,10 +264,14 @@ export class RoleTool extends BaseTool {
 
       const removed = await RoleService.removeRole(targetId, scope, revokeRole);
       if (!removed) {
-        return `❌ No matching role found for \`${targetId}\` in *${scopeLabel}*.`;
+        const { display } = await resolveUserDisplay(targetId);
+        return `❌ No matching role found for @${display} in *${scopeLabel}*.`;
       }
       logger.info({ targetId, role: revokeRole, scope, revokedBy: ctx.senderId }, '[RoleTool] Role revoked');
-      return t(lang, 'role.revoked', { userId: targetId, scope: scopeLabel });
+
+      const { display, mentionJid } = await resolveUserDisplay(targetId);
+      const text = t(lang, 'role.revoked', { userDisplay: display, scope: scopeLabel });
+      return mentionJid ? { text, mentions: [mentionJid] } : text;
     }
 
     return t(lang, 'role.usage');
@@ -276,4 +300,45 @@ function formatPrivileges(p: RolePrivileges): string {
     `  Context limit: *${fmt(p.contextLimit)}*`,
     `  Max download (MB): *${fmt(p.maxDownloadMb)}*`,
   ].join('\n');
+}
+
+/** Strip `@domain` and `:device` suffixes for display. */
+function bareNumber(jid: string): string {
+  return jid.split('@')[0].split(':')[0];
+}
+
+/**
+ * Resolve the best human-readable display string for a JID and determine the
+ * correct JID to put in the Baileys `mentions` array.
+ *
+ * Strategy:
+ * 1. Look up `IdentityService.getIdentity()` to find PN and displayName.
+ * 2. If a PN is available, use the phone digits as the display and the PN JID for mentions.
+ * 3. If only a LID is known but has a displayName, show `displayName`.
+ * 4. Fallback: bare digits from the JID itself.
+ *
+ * The `mentionJid` must be a `@s.whatsapp.net` JID for WhatsApp mentions to
+ * render as clickable highlights.  If we only have a LID, we still include it
+ * since Baileys may resolve it.
+ */
+async function resolveUserDisplay(jid: string): Promise<{ display: string; mentionJid: string | null }> {
+  try {
+    const identity = await IdentityService.getIdentity(jid);
+    if (identity) {
+      // Prefer PN for display & mentions (WhatsApp renders @<phone> as the name)
+      if (identity.pn) {
+        return { display: bareNumber(identity.pn), mentionJid: identity.pn };
+      }
+      // No PN known — fall back to displayName or LID digits
+      if (identity.displayName) {
+        return { display: identity.displayName, mentionJid: identity.lid ?? jid };
+      }
+    }
+  } catch {
+    // IdentityService unavailable (e.g. in tests) — fall through
+  }
+
+  // Fallback: just use bare digits from the JID
+  const mentionJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+  return { display: bareNumber(jid), mentionJid };
 }

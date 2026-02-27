@@ -166,11 +166,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'menfess.error': '❌ Failed to send menfess: {msg}',
 
     // Role Management
-    'role.check': '🔐 *Role info for* `{userId}`\n\n*Effective roles:* *{effectiveRole}*\n\n*Assigned roles:*\n{roles}',
+    'role.check': '🔐 *Role info for* @{userDisplay}\n\n*Effective roles:* *{effectiveRole}*\n\n*Assigned roles:*\n{roles}',
     'role.list': '📋 *Roles for {scope}:*\n\n{items}',
     'role.list_empty': '📋 No roles assigned for *{scope}*.',
-    'role.granted': '✅ Granted *{role}* role to `{userId}` in *{scope}*.',
-    'role.revoked': '✅ Revoked role from `{userId}` in *{scope}*.',
+    'role.granted': '✅ Granted *{role}* role to @{userDisplay} in *{scope}*.',
+    'role.revoked': '✅ Revoked role from @{userDisplay} in *{scope}*.',
     'role.no_user': '❌ Please specify a user. Example: /role grant 628xxx admin',
     'role.invalid_role': "❌ Invalid role. Must be 'user', 'premium', 'admin', or 'owner'.",
     'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
@@ -328,11 +328,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'menfess.error': '❌ Gagal mengirim menfess: {msg}',
 
     // Role Management
-    'role.check': '🔐 *Info role untuk* `{userId}`\n\n*Role efektif:* *{effectiveRole}*\n\n*Role yang ditetapkan:*\n{roles}',
+    'role.check': '🔐 *Info role untuk* @{userDisplay}\n\n*Role efektif:* *{effectiveRole}*\n\n*Role yang ditetapkan:*\n{roles}',
     'role.list': '📋 *Role untuk {scope}:*\n\n{items}',
     'role.list_empty': '📋 Belum ada role yang ditetapkan untuk *{scope}*.',
-    'role.granted': '✅ Role *{role}* diberikan ke `{userId}` di *{scope}*.',
-    'role.revoked': '✅ Role dicabut dari `{userId}` di *{scope}*.',
+    'role.granted': '✅ Role *{role}* diberikan ke @{userDisplay} di *{scope}*.',
+    'role.revoked': '✅ Role dicabut dari @{userDisplay} di *{scope}*.',
     'role.no_user': '❌ Harap tentukan pengguna. Contoh: /role grant 628xxx admin',
     'role.invalid_role': "❌ Role tidak valid. Harus 'user', 'premium', 'admin', atau 'owner'.",
     'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',

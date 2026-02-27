@@ -34,7 +34,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { BotProvider } from './BotProvider';
-import { MessageContext, SendMediaOptions } from '../core/MessageContext';
+import { MessageContext, SendMediaOptions, ReplyOptions } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { checkPermissions, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
@@ -510,8 +510,8 @@ export class WhatsAppProvider implements BotProvider {
       downloadMedia,
       sendMedia,
 
-      reply: async (replyText: string) => {
-        await sock.sendMessage(jid, { text: replyText }, { quoted: msg });
+      reply: async (replyText: string, options?: ReplyOptions) => {
+        await sock.sendMessage(jid, { text: replyText, mentions: options?.mentions }, { quoted: msg });
       },
 
       sendTyping: async () => {
@@ -520,8 +520,8 @@ export class WhatsAppProvider implements BotProvider {
         } catch { /* best-effort */ }
       },
 
-      sendMessage: async (text: string) => {
-        const sent = await sock.sendMessage(jid, { text }, { quoted: msg });
+      sendMessage: async (text: string, options?: ReplyOptions) => {
+        const sent = await sock.sendMessage(jid, { text, mentions: options?.mentions }, { quoted: msg });
         return sent?.key;
       },
 

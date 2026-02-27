@@ -251,7 +251,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
         parsedArgs.__command = command;
         const result = await tool.execute(parsedArgs, ctx);
-        await ctx.reply(result);
+        // Support structured ToolResponse with mentions
+        if (typeof result === 'object' && result !== null && 'text' in result) {
+          await ctx.reply(result.text, { mentions: result.mentions });
+        } else {
+          await ctx.reply(result);
+        }
         await ctx.react?.('✅');
       } catch (err: any) {
         logger.error({ err, command }, '[Command Router] Tool execution failed');
@@ -625,7 +630,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 logger.info(`[Agent] Invoked tool (stream): ${toolName}`);
                 healthMetrics.recordToolInvocation(toolName);
                 await ctx.react?.('🔍');
-                toolResultStr = await tool.execute(args, ctx);
+                const rawResult = await tool.execute(args, ctx);
+                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                  ? rawResult.text : rawResult;
               } else {
                 logger.error({ toolName }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
@@ -689,7 +696,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               logger.info(`[Agent] Invoked tool: ${toolName} with args: ${JSON.stringify(args)}`);
               healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
-              toolResultStr = await tool.execute(args, ctx);
+              const rawResult = await tool.execute(args, ctx);
+              toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                ? rawResult.text : rawResult;
             } else {
               logger.error({ toolName }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;
