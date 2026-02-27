@@ -52,7 +52,8 @@ export class PingTool extends BaseTool {
   }
 
   async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
-    const latency = Date.now() - ctx.receivedAt;
+    const receivedAt = ctx.receivedAt ?? Date.now();
+    const latency = Date.now() - receivedAt;
     const uptime = formatUptime(Date.now() - PROCESS_START);
 
     return t(ctx.language, 'ping.response', {

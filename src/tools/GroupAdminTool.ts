@@ -10,10 +10,11 @@
  *   mute     — Restrict who can send messages (admins only / everyone).
  *   link     — Get the group's invite link.
  *
- * Phone number normalisation:
- *  - Non-digit characters are stripped.
- *  - Numbers starting with `0` are assumed to be Indonesian and prefixed with `62`.
- *  - The result is appended with `@s.whatsapp.net` to form a valid JID.
+ * User targeting:
+ *  - @mention a user in the message
+ *  - Reply (quote) to a target user's message
+ *  - Type a phone number / LID / JID directly
+ *  - The LLM can pass `"mentioned"` or `"quoted"` as the user arg
  *
  * Works conversationally ("kick @John", "promote this user to admin")
  * and via slash commands: /kick, /add, /promote, /demote, /mute, /grouplink
@@ -23,15 +24,9 @@
 
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
+import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
-
-function normaliseJid(input: string): string | null {
-  const digits = input.replace(/[^0-9]/g, '');
-  if (!digits) return null;
-  const normalized = digits.startsWith('0') ? `62${digits.slice(1)}` : digits;
-  return `${normalized}@s.whatsapp.net`;
-}
 
 export class GroupAdminTool extends BaseTool {
   readonly name = 'groupadmin';
@@ -56,7 +51,7 @@ export class GroupAdminTool extends BaseTool {
             },
             user: {
               type: 'string',
-              description: 'Phone number or JID of the target user. Required for add/remove/promote/demote.',
+              description: 'Target user: phone number, JID, "mentioned" (if @mentioned), or "quoted" (if replying to their message). Resolved automatically from context when omitted.',
             },
           },
           required: ['action', 'user'],
@@ -115,10 +110,9 @@ export class GroupAdminTool extends BaseTool {
     }
 
     // ── PARTICIPANT ACTIONS (require user JID) ─────────────────────────────────
-    if (!user) return t(lang, 'group.invalid_phone');
-
-    const userJid = normaliseJid(String(user));
-    if (!userJid) return t(lang, 'group.invalid_phone');
+    const target = resolveTargetUser(args, ctx, 'user');
+    if (!target) return t(lang, 'group.invalid_phone');
+    const userJid = target.jid;
 
     if (action === 'add' || action === 'remove') {
       if (!ctx.updateGroupParticipants) return t(lang, 'group.not_supported');

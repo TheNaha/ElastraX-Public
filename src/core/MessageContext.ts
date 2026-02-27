@@ -20,7 +20,7 @@ export interface MessageContext {
    * Used by PingTool to calculate round-trip latency.
    * Populated by providers before emitting the message event.
    */
-  receivedAt: number;
+  receivedAt?: number;
 
   /**
    * The active language for this chat room ('en' | 'id'). Populated by the agent
@@ -164,9 +164,17 @@ export interface MessageContext {
   leaveGroup?(): Promise<void>;
 
   /**
-   * Check if the sender has the required permissions
+   * Check if the sender has the required permissions.
+   * Accepts any role name string (e.g. 'user', 'premium', 'admin', 'owner').
    */
-  checkPermissions(required: 'user' | 'admin' | 'owner'): Promise<boolean>;
+  checkPermissions(required: string): Promise<boolean>;
+
+  /**
+   * Resolve the full set of roles the sender holds in this context.
+   * Returns an array of role names (always includes 'user').
+   * Implementations should cache the result for the lifetime of this context.
+   */
+  resolveRoles(): Promise<string[]>;
 
   /**
    * The raw original message metadata/object from the provider.

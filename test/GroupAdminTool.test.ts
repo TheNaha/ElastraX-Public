@@ -44,14 +44,14 @@ describe('GroupAdminTool', () => {
     test('should fail if not in a group', async () => {
       const tool = new GroupAdminTool();
       const ctx = createMockCtx({ isGroup: false });
-      const result = await tool.execute({ action: 'add', user: '62812' }, ctx);
+      const result = await tool.execute({ action: 'add', user: '628123456789' }, ctx);
       expect(result).toBe("❌ This command can only be used in a group.");
     });
 
     test('should fail if action is invalid', async () => {
       const tool = new GroupAdminTool();
       const ctx = createMockCtx();
-      const result = await tool.execute({ action: 'invalid', user: '62812' }, ctx);
+      const result = await tool.execute({ action: 'invalid', user: '628123456789' }, ctx);
       expect(result).toBe("❌ Invalid action. Must be 'add' or 'remove'.");
     });
 
@@ -65,7 +65,7 @@ describe('GroupAdminTool', () => {
     test('should fail if updateGroupParticipants is not supported', async () => {
       const tool = new GroupAdminTool();
       const ctx = createMockCtx({ updateGroupParticipants: undefined });
-      const result = await tool.execute({ action: 'add', user: '62812' }, ctx);
+      const result = await tool.execute({ action: 'add', user: '628123456789' }, ctx);
       expect(result).toBe("❌ Group Administration is not supported by the current adapter.");
     });
 
@@ -96,7 +96,7 @@ describe('GroupAdminTool', () => {
         updateGroupParticipants: mock(async () => { throw error; })
       });
 
-      const result = await tool.execute({ action: 'add', user: '62812' }, ctx);
+      const result = await tool.execute({ action: 'add', user: '628123456789' }, ctx);
       expect(result).toContain('❌ Error administering group: Failed to update.');
     });
   });

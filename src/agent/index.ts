@@ -43,6 +43,7 @@ import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
 import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
+import { PrivilegeService } from '../utils/PrivilegeService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall } from '../types/ai';
 import { healthMetrics } from '../utils/HealthMetrics';
@@ -170,11 +171,18 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   }
   ctx.language = room.language;
 
-  // Rate limit non-admin/non-owner users to protect inference and avoid spam floods.
-  const isOwner = await ctx.checkPermissions('owner');
-  const isAdmin = isOwner || await ctx.checkPermissions('admin');
-  if (!isAdmin) {
-    const rl = RateLimiter.check(ctx.senderId, platform);
+  // V7.11: Resolve user roles once and compute privilege-based rate limits.
+  const userRoles = await ctx.resolveRoles();
+  const privileges = await PrivilegeService.getEffective(userRoles);
+
+  // Rate limit based on the user's merged privileges (-1 = unlimited → skip).
+  if (privileges.maxMessagesPerWindow !== -1) {
+    const rl = RateLimiter.checkWithLimits(
+      ctx.senderId,
+      platform,
+      privileges.maxMessagesPerWindow,
+      privileges.rateLimitWindowSec,
+    );
     if (!rl.allowed) {
       await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
       return;
@@ -334,6 +342,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
+    // V7.11: Use the higher of room config vs role privilege context limit.
+    const effectiveContextLimit = Math.max(config.contextLimit, privileges.contextLimit);
+
     // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
     const historyDesc = await db.select({
       role: messages.role,
@@ -347,12 +358,16 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
       .orderBy(desc(messages.created_at))
-      .limit(config.contextLimit);
+      .limit(effectiveContextLimit);
 
     const history = historyDesc.slice().sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
 
+    // V7.11: Inject user name + role info into the system prompt so the AI is role-aware.
+    const roleLabel = userRoles.filter(r => r !== 'user').join(', ') || 'user';
+    const userContextLine = `\nCurrent user: ${senderName} (roles: ${roleLabel}).`;
+
     // Assemble system prompt with localized injection
-    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull);
+    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull) + userContextLine;
     
     // Assemble AI context
     const messagesForAI: AIChatMessage[] = [

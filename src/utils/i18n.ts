@@ -166,15 +166,15 @@ const translations: Record<Locale, Record<string, string>> = {
     'menfess.error': '❌ Failed to send menfess: {msg}',
 
     // Role Management
-    'role.check': '🔐 *Role info for* `{userId}`\n\n*Effective role:* *{effectiveRole}*\n\n*Assigned roles:*\n{roles}',
+    'role.check': '🔐 *Role info for* `{userId}`\n\n*Effective roles:* *{effectiveRole}*\n\n*Assigned roles:*\n{roles}',
     'role.list': '📋 *Roles for {scope}:*\n\n{items}',
     'role.list_empty': '📋 No roles assigned for *{scope}*.',
     'role.granted': '✅ Granted *{role}* role to `{userId}` in *{scope}*.',
     'role.revoked': '✅ Revoked role from `{userId}` in *{scope}*.',
     'role.no_user': '❌ Please specify a user. Example: /role grant 628xxx admin',
-    'role.invalid_role': "❌ Invalid role. Must be 'user', 'admin', or 'owner'.",
+    'role.invalid_role': "❌ Invalid role. Must be 'user', 'premium', 'admin', or 'owner'.",
     'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
-    'role.usage': '❓ *Usage:*\n• `/role check [user]` — Check role\n• `/role grant <user> <role> [global]` — Assign role\n• `/role revoke <user> [global]` — Remove role\n• `/role list [global]` — List assigned roles',
+    'role.usage': '❓ *Usage:*\n• `/role check [user]` — Check roles & privileges\n• `/role grant <user> <role> [global]` — Assign role\n• `/role revoke <user> <role> [global]` — Remove role\n• `/role list [global]` — List assigned roles\n• `/role privs <role>` — View privileges\n• `/role setpriv <role> <field> <value>` — Override privilege (owner)\n• `/role resetpriv <role>` — Reset to defaults (owner)',
 
     // Owner Admin
     'owner.broadcast_no_message': '❌ Please provide a broadcast message.',
@@ -334,9 +334,9 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.granted': '✅ Role *{role}* diberikan ke `{userId}` di *{scope}*.',
     'role.revoked': '✅ Role dicabut dari `{userId}` di *{scope}*.',
     'role.no_user': '❌ Harap tentukan pengguna. Contoh: /role grant 628xxx admin',
-    'role.invalid_role': "❌ Role tidak valid. Harus 'user', 'admin', atau 'owner'.",
+    'role.invalid_role': "❌ Role tidak valid. Harus 'user', 'premium', 'admin', atau 'owner'.",
     'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',
-    'role.usage': '❓ *Cara pakai:*\n• `/role check [user]` — Cek role\n• `/role grant <user> <role> [global]` — Tetapkan role\n• `/role revoke <user> [global]` — Cabut role\n• `/role list [global]` — Daftar role',
+    'role.usage': '❓ *Cara pakai:*\n• `/role check [user]` — Cek role & hak akses\n• `/role grant <user> <role> [global]` — Tetapkan role\n• `/role revoke <user> <role> [global]` — Cabut role\n• `/role list [global]` — Daftar role\n• `/role privs <role>` — Lihat hak akses\n• `/role setpriv <role> <field> <value>` — Ubah hak akses (owner)\n• `/role resetpriv <role>` — Reset ke default (owner)',
 
     // Owner Admin
     'owner.broadcast_no_message': '❌ Harap berikan pesan untuk disiarkan.',

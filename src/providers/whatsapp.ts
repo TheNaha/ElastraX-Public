@@ -36,7 +36,7 @@ import qrcode from 'qrcode-terminal';
 import { BotProvider } from './BotProvider';
 import { MessageContext, SendMediaOptions } from '../core/MessageContext';
 import { logger } from '../utils/logger';
-import { checkPermissions } from '../utils/permissions';
+import { checkPermissions, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
@@ -426,6 +426,8 @@ export class WhatsAppProvider implements BotProvider {
     };
 
     // ── Assemble the full MessageContext ────────────────────────────────────
+    let _rolesCache: string[] | null = null;
+
     return {
       platform: 'whatsapp',      
       receivedAt: Date.now(),      
@@ -513,8 +515,13 @@ export class WhatsAppProvider implements BotProvider {
         await sock.groupLeave(jid);
       },
 
-      checkPermissions: async (required: 'user' | 'admin' | 'owner') => {
+      checkPermissions: async (required: string) => {
         return checkPermissions(sock, jid, senderId, isGroup, required);
+      },
+
+      resolveRoles: async () => {
+        if (!_rolesCache) _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup);
+        return _rolesCache;
       },
     };
   }

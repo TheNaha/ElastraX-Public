@@ -53,7 +53,7 @@ mock.module('../src/db', () => ({
         return {
           where: (_cond: any) => {
             const rows = isMessages ? mockHistoryRows : mockRoomRows;
-            // Return something that is BOTH awaitable AND supports .orderBy().limit()
+            // Return something that is BOTH awaitable AND supports .orderBy().limit() or .limit()
             const result: any = {
               then(resolve: Function, reject?: Function) {
                 return Promise.resolve(rows).then(resolve as any, reject as any);
@@ -61,6 +61,7 @@ mock.module('../src/db', () => ({
               catch(rej: Function) {
                 return Promise.resolve(rows).catch(rej as any);
               },
+              limit: (_n: number) => Promise.resolve(rows),
               orderBy: (_ord: any) => ({
                 limit: (_n: number) =>
                   shouldThrowOnHistoryFetch && isMessages
@@ -154,6 +155,7 @@ const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   reply: mock(async () => {}),
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
+  resolveRoles: mock(async () => ['user', 'owner']),
   ...overrides,
 });
 

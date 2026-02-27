@@ -1,18 +1,34 @@
-import { expect, test, describe, beforeEach, afterEach } from 'bun:test';
+import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
+
+// Mock DB to return no stored roles (prevents hanging on real SQLite queries).
+// Tests control behaviour entirely through env vars & platform admin detection.
+let mockDbRows: any[] = [];
+mock.module('../src/db', () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: async () => mockDbRows,
+      }),
+    }),
+  },
+}));
+
+mock.module('../src/utils/logger', () => ({
+  logger: {
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+    child: () => ({
+      debug: () => {},
+      info: () => {},
+      warn: () => {},
+      error: () => {},
+    }),
+  },
+}));
+
 import { checkPermissions } from '../src/utils/permissions';
-
-// Mock logger to suppress errors in test output
-const mockLogger = {
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => mockLogger,
-};
-
-// Mock module requires manual mock setup or dependency injection.
-// Since checkPermissions imports logger directly, we rely on bun test runner environment
-// or just let it log. For cleanliness, we might want to mock it but Bun mocking of modules
-// is a bit different. Let's assume it's fine for now as logger is just side effect.
 
 describe('checkPermissions', () => {
   let mockSock: any;
@@ -69,9 +85,10 @@ describe('checkPermissions', () => {
     }
   });
 
-  test('should return true for admin permission in private chat', async () => {
+  test('should return false for admin permission in private chat (set-based model)', async () => {
+    // V7.11: admin is an explicit role, no longer auto-granted in private chats
     const result = await checkPermissions(mockSock, 'privateChatId', senderId, false, 'admin');
-    expect(result).toBe(true);
+    expect(result).toBe(false);
   });
 
   test('should return true for admin permission in group chat if user is admin', async () => {

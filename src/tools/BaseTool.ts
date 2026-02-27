@@ -75,9 +75,11 @@ export abstract class BaseTool {
   abstract readonly category: string;
 
   /**
-   * Permissions required to execute this tool as a command
+   * Permissions required to execute this tool as a command.
+   * Any role name: 'user' (everyone), 'premium', 'admin', 'owner', or custom.
+   * The user must hold this role (or 'owner' which subsumes all) to invoke the tool.
    */
-  abstract readonly permissions: 'user' | 'admin' | 'owner';
+  abstract readonly permissions: string;
 
   /**
    * If true, this tool can only be executed in a group chat directly

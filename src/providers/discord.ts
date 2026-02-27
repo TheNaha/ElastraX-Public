@@ -202,6 +202,25 @@ export class DiscordProvider implements BotProvider {
       return null;
     };
 
+    // ── Role resolution (cached per-context) ──────────────────────────────
+    let _rolesCache: string[] | null = null;
+    const _resolveRoles = async (): Promise<string[]> => {
+      if (_rolesCache) return _rolesCache;
+
+      let isPlatformAdmin = false;
+      if (isGroup && msg.guild) {
+        const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
+        if (member) {
+          isPlatformAdmin = member.permissions.has(PermissionsBitField.Flags.Administrator) ||
+                            member.permissions.has(PermissionsBitField.Flags.ManageGuild) ||
+                            msg.guild.ownerId === msg.author.id;
+        }
+      }
+
+      _rolesCache = await RoleService.resolveRoles(msg.author.id, msg.channelId, isPlatformAdmin);
+      return _rolesCache;
+    };
+
     return {
       platform: 'discord',
       receivedAt: Date.now(),
@@ -298,28 +317,13 @@ export class DiscordProvider implements BotProvider {
           }
         }
       },
-      checkPermissions: async (required: 'user' | 'admin' | 'owner') => {
+      checkPermissions: async (required: string) => {
         if (required === 'user') return true;
-
-        if (process.env.BOT_OWNER_JID && msg.author.id === process.env.BOT_OWNER_JID) {
-          return true;
-        }
-
-        const dbRole = await RoleService.getEffectiveRole(msg.author.id, msg.channelId);
-        if (dbRole && RoleService.meetsRequirement(dbRole, required)) {
-          return true;
-        }
-
-        if (!isGroup || !msg.guild) return false;
-        const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
-        if (!member) return false;
-        if (required === 'owner') return msg.guild.ownerId === msg.author.id;
-        if (required === 'admin') {
-          return member.permissions.has(PermissionsBitField.Flags.Administrator) ||
-                 member.permissions.has(PermissionsBitField.Flags.ManageGuild);
-        }
-        return false;
+        const roles = await _resolveRoles();
+        return RoleService.hasPermission(roles, required);
       },
+
+      resolveRoles: () => _resolveRoles(),
     };
   }
 }

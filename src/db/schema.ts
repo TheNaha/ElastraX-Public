@@ -110,6 +110,22 @@ export const userRoles = sqliteTable('user_roles', {
 
 export type UserRole = typeof userRoles.$inferSelect;
 
+// V7.11: Per-role privilege quotas (env defaults + DB overrides)
+export const rolePrivileges = sqliteTable('role_privileges', {
+  /** Role name: 'user', 'premium', 'admin', 'owner', or any custom role */
+  role: text('role').primaryKey(),
+  /** Max messages allowed per rate-limit window. -1 = unlimited. */
+  maxMessagesPerWindow: integer('max_messages_per_window'),
+  /** Rate-limit window duration in seconds. */
+  rateLimitWindowSec: integer('rate_limit_window_sec'),
+  /** Max conversation context messages sent to the LLM. */
+  contextLimit: integer('context_limit'),
+  /** Max download file size in MB. -1 = unlimited. */
+  maxDownloadMb: integer('max_download_mb'),
+});
+
+export type RolePrivilege = typeof rolePrivileges.$inferSelect;
+
 // V7.10: Persistent flow session state (survives container restarts)
 export const flowSessions = sqliteTable('flow_sessions', {
   /** Composite key "platform:userId" */
