@@ -29,6 +29,7 @@ import { db } from '../db';
 import { userRoles } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from './logger';
+import { IdentityService } from './IdentityService';
 
 /** Built-in role names.  Custom roles are also allowed as plain strings. */
 export type RoleName = 'user' | 'premium' | 'admin' | 'owner';
@@ -78,8 +79,20 @@ export class RoleService {
       }
 
       // 2. DB roles (global + per-room)
-      //    Query with both userId (LID) and senderPn (phone JID) to find all matching entries.
-      const userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+      //    Use IdentityService to find ALL known JIDs for this user (LID + PN),
+      //    then query user_roles with all of them.  This ensures roles granted
+      //    to either the LID or the PN are correctly picked up.
+      let userIds: string[];
+      try {
+        userIds = await IdentityService.getAllJids(userId);
+        // Also include senderPn if provided and not already in the set
+        if (senderPn && !userIds.includes(senderPn)) {
+          userIds.push(senderPn);
+        }
+      } catch {
+        // Fallback if IdentityService fails
+        userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+      }
       logger.debug({ userIds, chatId }, '[RoleService] Querying DB for role entries');
 
       const rows = await db
@@ -272,15 +285,27 @@ export class RoleService {
 
   /**
    * Get all role entries for a specific user.
+   * Uses IdentityService to find all JIDs (LID + PN) for comprehensive lookup.
    */
   static async getUserRoles(userId: string): Promise<Array<{ scope: string; role: string }>> {
+    let userIds: string[];
+    try {
+      userIds = await IdentityService.getAllJids(userId);
+    } catch {
+      userIds = [userId];
+    }
+
     const rows = await db
       .select({
         scope: userRoles.scope,
         role: userRoles.role,
       })
       .from(userRoles)
-      .where(eq(userRoles.userId, userId));
+      .where(
+        userIds.length === 1
+          ? eq(userRoles.userId, userId)
+          : inArray(userRoles.userId, userIds),
+      );
     return rows;
   }
 }

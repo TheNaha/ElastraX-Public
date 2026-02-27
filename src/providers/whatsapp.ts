@@ -48,6 +48,8 @@ import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
+import { IdentityService } from '../utils/IdentityService';
+import { RoleService } from '../utils/RoleService';
 
 /** Maximum file size in bytes that the bot will attempt to download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
@@ -172,6 +174,39 @@ export class WhatsAppProvider implements BotProvider {
             }
           } catch (err) {
             logger.debug({ err }, '[WhatsApp] Could not resolve bot LID (will retry per-message)');
+          }
+        }
+
+        // ── Seed bot owner in DB at startup ─────────────────────────────────
+        // BOT_OWNER_JID is a phone-number JID.  We persist it as an `owner`
+        // role in user_roles so it's visible via /role check and DB queries.
+        // Also seed the identity mapping so RoleService can resolve LID↔PN.
+        const ownerJid = process.env.BOT_OWNER_JID;
+        if (ownerJid) {
+          try {
+            // Try to resolve the owner's LID via Baileys signal store
+            let ownerLid: string | undefined;
+            try {
+              ownerLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(ownerJid);
+            } catch { /* LID mapping may not exist yet — that's OK */ }
+
+            // Seed identity mapping
+            await IdentityService.upsert(ownerLid, ownerJid, undefined, 'whatsapp');
+
+            // Seed owner role in DB (global scope) — uses the PN JID as the
+            // canonical userId since that's what BOT_OWNER_JID is.
+            // Also seed with LID if we have it, so both JIDs are covered.
+            await RoleService.setRole(ownerJid, 'owner', 'global', 'whatsapp', 'system:startup');
+            if (ownerLid && ownerLid !== ownerJid) {
+              await RoleService.setRole(ownerLid, 'owner', 'global', 'whatsapp', 'system:startup');
+            }
+
+            logger.info(
+              { ownerJid, ownerLid },
+              '[WhatsApp] Owner role seeded in DB at startup',
+            );
+          } catch (err) {
+            logger.error({ err, ownerJid }, '[WhatsApp] Failed to seed owner role at startup');
           }
         }
       }
@@ -441,6 +476,16 @@ export class WhatsAppProvider implements BotProvider {
       { senderId, senderPn, isGroup, jid },
       '[WhatsApp] Context senderPn resolved — will use for role/owner matching',
     );
+
+    // ── Persist identity mapping (fire-and-forget) ──────────────────────────
+    // Upsert LID ↔ PN mapping so RoleService can resolve all JIDs for this user.
+    const identityLid = senderId.includes('@lid') ? senderId : undefined;
+    const identityPn = senderPn && !senderPn.includes('@lid') ? senderPn : undefined;
+    if (identityLid || identityPn) {
+      IdentityService.upsert(identityLid, identityPn, msg.pushName ?? undefined, 'whatsapp').catch((err) => {
+        logger.warn({ err }, '[WhatsApp] Identity upsert failed (non-fatal)');
+      });
+    }
 
     return {
       platform: 'whatsapp',      

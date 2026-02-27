@@ -111,13 +111,8 @@ export class RoleTool extends BaseTool {
       const targetId = resolved?.jid ?? ctx.senderId;
       const targetPn = targetId === ctx.senderId ? ctx.senderPn : undefined;
 
-      // Query DB with both LID and PN identifiers
+      // getUserRoles now internally uses IdentityService to find all JIDs
       const allDbRoles = await RoleService.getUserRoles(targetId);
-      const pnDbRoles = targetPn && targetPn !== targetId
-        ? await RoleService.getUserRoles(targetPn)
-        : [];
-
-      const mergedDbRoles = [...allDbRoles, ...pnDbRoles];
 
       // Owner check — match against both LID and PN
       const ownerJid = process.env.BOT_OWNER_JID;
@@ -126,12 +121,12 @@ export class RoleTool extends BaseTool {
       // Build effective role list for display
       const effectiveRoles = new Set<string>(['user']);
       if (isEnvOwner) effectiveRoles.add('owner');
-      for (const r of mergedDbRoles) {
+      for (const r of allDbRoles) {
         if (r.scope === 'global' || r.scope === ctx.chatId) effectiveRoles.add(r.role);
       }
 
-      const rolesStr = mergedDbRoles.length > 0
-        ? mergedDbRoles.map(r => `• *${r.role}* (${r.scope === 'global' ? 'global' : r.scope})`).join('\n')
+      const rolesStr = allDbRoles.length > 0
+        ? allDbRoles.map(r => `• *${r.role}* (${r.scope === 'global' ? 'global' : r.scope})`).join('\n')
         : '_No explicit roles assigned_';
 
       const effectiveLabel = Array.from(effectiveRoles).join(', ');
@@ -141,7 +136,7 @@ export class RoleTool extends BaseTool {
       const privsStr = formatPrivileges(privs);
 
       logger.info(
-        { targetId, targetPn, isEnvOwner, effectiveRoles: Array.from(effectiveRoles), dbRolesCount: mergedDbRoles.length },
+        { targetId, targetPn, isEnvOwner, effectiveRoles: Array.from(effectiveRoles), dbRolesCount: allDbRoles.length },
         '[RoleTool] check — result',
       );
 
