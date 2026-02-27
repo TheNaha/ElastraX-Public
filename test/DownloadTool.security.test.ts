@@ -4,14 +4,15 @@ import { MessageContext } from '../src/core/MessageContext';
 import { EventEmitter } from 'events';
 
 // Mock logger
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => _mockLogger,
+};
+mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 // Mock child_process
 let spawnedProcesses: any[] = [];

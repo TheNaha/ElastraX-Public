@@ -173,7 +173,6 @@ export class AIClient {
     const msg = data.choices?.[0]?.message;
     log.trace({ hasContent: !!msg?.content, hasToolCalls: !!(msg?.tool_calls?.length) }, 'Response message details');
 
-    const msg = data.choices?.[0]?.message;
     return msg ?? { role: 'assistant', content: 'No response generated.' };
   }
 

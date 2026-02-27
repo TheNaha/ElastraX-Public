@@ -2,14 +2,15 @@ import { expect, test, describe, mock } from 'bun:test';
 import { MakeStickerTool } from '../src/tools/MakeStickerTool';
 import { MessageContext } from '../src/core/MessageContext';
 
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => _mockLogger,
+};
+mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
