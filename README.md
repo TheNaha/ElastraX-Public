@@ -133,6 +133,15 @@ MEDIA_CLEANUP_INTERVAL_MS=21600000
 MEDIA_RETENTION_HOURS=72
 ```
 
+### 5) Fixture Dump Path (Optional)
+
+```env
+# Used during graceful shutdown to export parser fixtures.
+# In production defaults to ./data/fixtures/wa_messages
+# In non-production defaults to ./test/fixtures/wa_messages
+FIXTURE_DUMP_DIR=./data/fixtures/wa_messages
+```
+
 ## Testing
 
 Run unit tests via `bun`:

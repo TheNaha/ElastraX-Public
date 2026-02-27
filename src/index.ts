@@ -33,7 +33,10 @@ import { RateLimiter } from './utils/RateLimiter';
 import { MediaCleanup } from './utils/MediaCleanup';
 
 // Directory where one JSON fixture file per WAMessage type will be written.
-const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
+const FIXTURE_DIR = process.env.FIXTURE_DUMP_DIR?.trim()
+  || (process.env.NODE_ENV === 'production'
+    ? resolve('./data/fixtures/wa_messages')
+    : resolve('./test/fixtures/wa_messages'));
 
 // ─── Blob fields that make fixture files large and unreadable in the repo ───
 const BLOB_KEYS = new Set([
@@ -77,13 +80,29 @@ async function dumpFixtures(botUserId: string | null): Promise<void> {
   const result = await scanParserCoverage(rows, botUserId);
   logCoverageSummary(result);
 
-  await mkdir(FIXTURE_DIR, { recursive: true });
+  try {
+    await mkdir(FIXTURE_DIR, { recursive: true });
+  } catch (err: any) {
+    if (err?.code === 'EACCES' || err?.code === 'EROFS') {
+      logger.warn({ path: FIXTURE_DIR, code: err.code }, '[FixtureDumper] Fixture directory is not writable; skipping fixture dump.');
+      return;
+    }
+    throw err;
+  }
   let written = 0;
 
   for (const [messageType, { raw }] of result.uniqueByType) {
     const filepath = join(FIXTURE_DIR, `${messageType}.json`);
     if (existsSync(filepath)) continue; // don't overwrite existing fixtures
-    await writeFile(filepath, JSON.stringify(stripBlobs(raw), null, 2), 'utf-8');
+    try {
+      await writeFile(filepath, JSON.stringify(stripBlobs(raw), null, 2), 'utf-8');
+    } catch (err: any) {
+      if (err?.code === 'EACCES' || err?.code === 'EROFS') {
+        logger.warn({ path: filepath, code: err.code }, '[FixtureDumper] Cannot write fixture file; skipping remaining fixture dump.');
+        return;
+      }
+      throw err;
+    }
     logger.info(`[FixtureDumper] Wrote ${messageType}.json`);
     written++;
   }
@@ -191,7 +210,7 @@ async function main() {
 
     // Dump fixtures before exit so the test suite grows automatically
     await dumpFixtures(null).catch(err => {
-      logger.error(err, '[FixtureDumper] Failed during SIGINT — fixtures may be incomplete');
+      logger.error(err, `[FixtureDumper] Failed during ${signal} — fixtures may be incomplete`);
     });
 
     Scheduler.stop();
