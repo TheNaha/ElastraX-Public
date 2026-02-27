@@ -21,13 +21,13 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { spawn } from 'child_process';
-
-const log = logger.child({ module: 'DownloadTool' });
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { existsSync } from 'fs';
+
+const log = logger.child({ module: 'DownloadTool' });
 
 type AudioFormat = 'mp3' | 'aac' | 'm4a' | 'ogg' | 'opus';
 type VideoFormat = 'mp4' | 'mkv' | 'webm';
