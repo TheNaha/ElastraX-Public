@@ -92,7 +92,8 @@ export class AIClient {
   async chatCompletion(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
-    temperature: number = 0.7
+    temperature: number = 0.7,
+    maxTokens: number = parseInt(process.env.AI_MAX_TOKENS || '2048', 10)
   ): Promise<any> {
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
@@ -102,7 +103,7 @@ export class AIClient {
       model: this.modelName,
       messages,
       temperature,
-      max_tokens: 1000,
+      max_tokens: maxTokens,
     };
 
     if (tools && tools.length > 0) {
@@ -124,6 +125,7 @@ export class AIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(parseInt(process.env.AI_TIMEOUT_MS || '60000', 10)),
     });
 
     const elapsed = Date.now() - startTime;

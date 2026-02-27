@@ -33,11 +33,11 @@ import { t } from '../utils/i18n';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
-import { ModelRouter } from '../utils/ModelRouter';
+import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 
-const modelRouter = new ModelRouter();
+const modelRouter = getModelRouter();
 
 function extractAssistantText(aiMsgObj: any): string {
   const content = aiMsgObj?.content;
@@ -147,6 +147,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       systemPrompt: null,
       contextLimit: null,
       temperature: null,
+      maxTokens: null,
       allowTools: null,
       autoReplyAll: null,
     };
@@ -318,7 +319,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
-    const history = await db.select({
+    const historyDesc = await db.select({
       role: messages.role,
       content: messages.content,
       senderName: messages.senderName,
@@ -331,9 +332,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       .where(eq(messages.chatRoomId, chatId))
       .orderBy(desc(messages.created_at))
       .limit(config.contextLimit);
-    
-    // Reverse to put chronological order back
-    history.reverse();
+
+    const history = historyDesc.slice().sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
 
     // Assemble system prompt with localized injection
     const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull);
@@ -435,10 +435,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let finalAiResponseText = '';
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     const availableTools = config.allowTools ? getToolDefinitions() : undefined;
+    const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
 
-    while (!isDone) {
+    for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
-        const aiMsgObj = await modelRouter.chatCompletion(messagesForAI, availableTools, config.temperature);
+        const aiMsgObj = await modelRouter.chatCompletion(messagesForAI, availableTools, config.temperature, config.maxTokens);
 
         if (verboseAiLogs) {
           logger.info({
@@ -508,6 +509,15 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         finalAiResponseText = "I'm sorry, I encountered an error during inference.";
         isDone = true;
       }
+    }
+
+    if (!isDone) {
+      logger.warn({
+        chatId,
+        platform,
+        maxToolIterations,
+      }, '[Agent] Aborted inference loop after reaching max tool iterations');
+      finalAiResponseText = internalErrorText;
     }
 
     // 4. Save Final AI Response

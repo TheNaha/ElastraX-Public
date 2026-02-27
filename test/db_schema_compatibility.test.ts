@@ -18,6 +18,7 @@ describe('Schema Compatibility', () => {
         system_prompt TEXT,
         context_limit INTEGER,
         temperature REAL,
+        max_tokens INTEGER,
         allow_tools INTEGER,
         auto_reply_all INTEGER,
         created_at INTEGER NOT NULL

@@ -6,6 +6,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
+    "lint": "bun x eslint src test",
     "test": "bun test test/",
     "db:generate": "bun x drizzle-kit generate",
     "db:push": "bun x drizzle-kit push",

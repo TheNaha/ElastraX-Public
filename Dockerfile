@@ -65,6 +65,7 @@ COPY --from=install /temp/prod/node_modules node_modules
 COPY --from=prerelease /usr/src/app/src src
 COPY --from=prerelease /usr/src/app/drizzle drizzle
 COPY --from=prerelease /usr/src/app/package.json .
+COPY --from=prerelease /usr/src/app/drizzle.config.ts .
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
 	CMD bun -e "fetch('http://127.0.0.1:' + (process.env.WEBHOOK_PORT || 3500) + '/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"

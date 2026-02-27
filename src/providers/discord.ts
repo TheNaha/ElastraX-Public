@@ -25,6 +25,7 @@ import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, Attachm
 import { BotProvider } from './BotProvider';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { RoleService } from '../utils/RoleService';
 import { randomUUID } from 'crypto';
 import { join } from 'path';
 import { writeFile } from 'fs/promises';
@@ -289,6 +290,16 @@ export class DiscordProvider implements BotProvider {
       },
       checkPermissions: async (required: 'user' | 'admin' | 'owner') => {
         if (required === 'user') return true;
+
+        if (process.env.BOT_OWNER_JID && msg.author.id === process.env.BOT_OWNER_JID) {
+          return true;
+        }
+
+        const dbRole = await RoleService.getEffectiveRole(msg.author.id, msg.channelId);
+        if (dbRole && RoleService.meetsRequirement(dbRole, required)) {
+          return true;
+        }
+
         if (!isGroup || !msg.guild) return false;
         const member = await msg.guild.members.fetch(msg.author.id).catch(() => null);
         if (!member) return false;

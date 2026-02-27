@@ -84,8 +84,7 @@ export class PDFTool extends BaseTool {
       // Lazy-import pdf-lib to avoid crashing if not installed
       let PDFDocument: any;
       try {
-        const dynamicImport = new Function('return import("pdf-lib")');
-        const pdfLib: any = await dynamicImport();
+        const pdfLib: any = await import('pdf-lib');
         PDFDocument = pdfLib.PDFDocument;
       } catch {
         return '❌ pdf-lib is not installed. Run `bun add pdf-lib` to enable PDF features.';

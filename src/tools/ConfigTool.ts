@@ -33,12 +33,12 @@ import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
 
 export class ConfigTool extends BaseTool {
-  name = 'config';
-  description = 'Manage dynamic bot configurations for this chat room.';
-  aliases = ['conf', 'settings'];
-  category = 'Admin';
-  permissions: 'admin' | 'owner' | 'user' = 'admin';
-  groupOnly = false;
+  readonly name = 'config';
+  readonly description = 'Manage dynamic bot configurations for this chat room.';
+  readonly aliases = ['conf', 'settings'];
+  readonly category = 'Admin';
+  readonly permissions: 'admin' | 'owner' | 'user' = 'admin';
+  readonly groupOnly = false;
 
   get definition() {
     return {
@@ -50,7 +50,7 @@ export class ConfigTool extends BaseTool {
           type: 'object' as const,
           properties: {
             action: { type: 'string', description: 'get, set, or reset', enum: ['get', 'set', 'reset'] },
-            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'allowTools', 'autoReplyAll'] },
+            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll'] },
             value: { type: 'string', description: 'The new value' }
           },
           required: ['action']
@@ -72,6 +72,7 @@ export class ConfigTool extends BaseTool {
       `  *System Prompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,
       `  *Context Limit*: ${room.contextLimit ?? `[DEFAULT: ${resolved.contextLimit}]`}`,
       `  *Temperature*: ${room.temperature ?? `[DEFAULT: ${resolved.temperature}]`}`,
+      `  *Max Tokens*: ${room.maxTokens ?? `[DEFAULT: ${resolved.maxTokens}]`}`,
       `  *Allow Tools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
       `  *Auto Reply All*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
     ].join('\n');
@@ -84,7 +85,7 @@ export class ConfigTool extends BaseTool {
     const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
     if (!room) return 'Error: Chat room not found in database.';
 
-    const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'allowTools', 'autoReplyAll'];
+    const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll'];
     const resolved = ConfigService.getResolvedConfig(room);
 
     if (action === 'get') {
@@ -126,6 +127,11 @@ export class ConfigTool extends BaseTool {
           if (isNaN(parsed)) throw new Error('Must be a number.');
           // Security: Ensure valid temperature range for AI stability
           if (parsed < 0 || parsed > 2.0) throw new Error('Must be between 0.0 and 2.0.');
+          updateData[key] = parsed;
+        } else if (key === 'maxTokens') {
+          const parsed = parseInt(value, 10);
+          if (isNaN(parsed)) throw new Error('Must be an integer.');
+          if (parsed < 64 || parsed > 8192) throw new Error('Must be between 64 and 8192.');
           updateData[key] = parsed;
         } else if (key === 'allowTools' || key === 'autoReplyAll') {
           const lower = value.toLowerCase();

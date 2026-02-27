@@ -43,6 +43,7 @@
  */
 
 import { logger } from './utils/logger';
+import { createHmac, timingSafeEqual } from 'crypto';
 
 type SendFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
@@ -107,6 +108,15 @@ function buildMessage(headers: Record<string, string | undefined>, body: any): s
 
   // Last resort: stringify the body
   return `📨 Webhook payload:\n${JSON.stringify(body, null, 2).slice(0, 500)}`;
+}
+
+function verifyGitHubSignature(payload: string, secret: string, signatureHeader: string | null): boolean {
+  if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
+  const expected = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
+  const expectedBuf = Buffer.from(expected);
+  const providedBuf = Buffer.from(signatureHeader);
+  if (expectedBuf.length !== providedBuf.length) return false;
+  return timingSafeEqual(expectedBuf, providedBuf);
 }
 
 // ─── Server ────────────────────────────────────────────────────────────────────
@@ -185,21 +195,35 @@ export class WebhookServer {
           });
         }
 
+        let bodyRaw = '';
         let body: any = {};
         try {
-          body = await req.json();
+          bodyRaw = await req.text();
+          body = bodyRaw ? JSON.parse(bodyRaw) : {};
         } catch {
           return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
             status: 400, headers: { 'Content-Type': 'application/json' },
           });
         }
 
-        // Resolve secret: body > query param > header
-        const bodySecret = body.secret || url.searchParams.get('secret') || req.headers.get('x-webhook-secret') || '';
-        if (bodySecret !== secret) {
-          return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
-            status: 401, headers: { 'Content-Type': 'application/json' },
-          });
+        const githubEvent = req.headers.get('x-github-event');
+        if (githubEvent) {
+          const sigHeader = req.headers.get('x-hub-signature-256');
+          if (!verifyGitHubSignature(bodyRaw, secret, sigHeader)) {
+            return new Response(JSON.stringify({ error: 'Invalid GitHub signature' }), {
+              status: 401, headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
+
+        // Non-GitHub sources use shared secret: body > query param > header
+        if (!githubEvent) {
+          const bodySecret = body.secret || url.searchParams.get('secret') || req.headers.get('x-webhook-secret') || '';
+          if (bodySecret !== secret) {
+            return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
+              status: 401, headers: { 'Content-Type': 'application/json' },
+            });
+          }
         }
 
         // Resolve room_id: body > query param

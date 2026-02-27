@@ -15,7 +15,7 @@ import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { messages } from '../db/schema';
-import { eq, count, min, sql } from 'drizzle-orm';
+import { eq, count, min, sql, desc, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
@@ -45,53 +45,48 @@ export class StatsTool extends BaseTool {
     const lang = ctx.language ?? 'en';
 
     try {
-      const allMessages = db
+      const summaryRows = db
         .select({
-          role: messages.role,
-          senderName: messages.senderName,
-          senderId: messages.senderId,
-          created_at: messages.created_at,
+          total: count(messages.id),
+          botReplies: sql<number>`sum(case when ${messages.role} = 'assistant' then 1 else 0 end)`,
+          oldest: min(messages.created_at),
         })
         .from(messages)
         .where(eq(messages.chatRoomId, ctx.chatId))
         .all();
 
-      if (allMessages.length === 0) {
+      const summary = summaryRows[0];
+      const total = summary?.total ?? 0;
+
+      if (total === 0) {
         return t(lang, 'stats.no_data');
       }
 
-      const total = allMessages.length;
-      const botReplies = allMessages.filter(m => m.role === 'assistant').length;
+      const botReplies = Number(summary?.botReplies ?? 0);
       const humanMessages = total - botReplies;
 
-      // Find the room's oldest message timestamp
-      const oldest = allMessages.reduce((min, m) =>
-        m.created_at < min ? m.created_at : min,
-        allMessages[0].created_at,
-      );
+      const oldest = summary?.oldest ?? new Date();
       const since = oldest.toLocaleDateString('en-GB', {
         day: '2-digit', month: 'short', year: 'numeric',
       });
 
-      // Count per-user message frequency (human messages only)
-      const userCounts = new Map<string, { name: string; count: number }>();
-      for (const m of allMessages) {
-        if (m.role !== 'user') continue;
-        const existing = userCounts.get(m.senderId);
-        if (existing) {
-          existing.count++;
-        } else {
-          userCounts.set(m.senderId, { name: m.senderName, count: 1 });
-        }
-      }
-
       let topUser = '—';
       let topCount = 0;
-      for (const { name, count } of userCounts.values()) {
-        if (count > topCount) {
-          topCount = count;
-          topUser = name;
-        }
+      const topRows = db
+        .select({
+          senderName: messages.senderName,
+          msgCount: count(messages.id),
+        })
+        .from(messages)
+        .where(and(eq(messages.chatRoomId, ctx.chatId), eq(messages.role, 'user')))
+        .groupBy(messages.senderId, messages.senderName)
+        .orderBy(desc(sql`count(${messages.id})`))
+        .limit(1)
+        .all();
+
+      if (topRows[0]) {
+        topUser = topRows[0].senderName;
+        topCount = topRows[0].msgCount;
       }
 
       return t(lang, 'stats.response', {

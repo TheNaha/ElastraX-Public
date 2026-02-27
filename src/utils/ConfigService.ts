@@ -29,12 +29,14 @@ export class ConfigService {
 
     const envContextLimit = parseInt(process.env.CONTEXT_MESSAGE_LIMIT || '10', 10);
     const envTemperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
+    const envMaxTokens = parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
     const envAutoReplyAll = process.env.AUTO_REPLY_ALL === 'true';
 
     return {
       systemPrompt: room.systemPrompt || defaultSystemPrompt,
       contextLimit: room.contextLimit ?? envContextLimit,
       temperature: room.temperature ?? envTemperature,
+      maxTokens: room.maxTokens ?? envMaxTokens,
       allowTools: room.allowTools ?? true, // allow tools by default unless explicitly disabled in DB
       autoReplyAll: room.autoReplyAll ?? envAutoReplyAll,
     };

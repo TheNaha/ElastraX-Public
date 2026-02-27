@@ -31,6 +31,7 @@
  */
 
 import { logger } from './logger';
+import { AIClient } from '../ai/client';
 import type { AIChatMessage } from '../ai/client';
 import type { ToolDefinition } from '../tools/BaseTool';
 
@@ -90,69 +91,41 @@ async function callProvider(
   messages: AIChatMessage[],
   tools?: ToolDefinition[],
   temperature: number = 0.7,
+  maxTokens?: number,
 ): Promise<any> {
   if (!provider.baseUrl) {
     throw new Error(`Provider "${provider.name}" has no base URL configured.`);
   }
 
-  const url = resolveChatCompletionsUrl(provider.baseUrl);
   const verbose = process.env.AI_VERBOSE_LOGS === 'true';
-
-  const body: Record<string, any> = {
-    model: provider.modelName,
-    messages,
-    temperature,
-    max_tokens: parseInt(process.env.AI_MAX_TOKENS || '2048', 10),
-  };
-
-  if (tools && tools.length > 0) {
-    body.tools = tools;
-    body.tool_choice = 'auto';
-  }
+  const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+  const aiClient = new AIClient({
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    modelName: provider.modelName,
+  });
 
   if (verbose) {
     logger.info({
       provider: provider.name,
-      url,
+      url: resolveChatCompletionsUrl(provider.baseUrl),
       model: provider.modelName,
       messageCount: messages.length,
       toolsEnabled: !!(tools && tools.length > 0),
       temperature,
+      maxTokens: resolvedMaxTokens,
     }, '[ModelRouter] Sending chat completion request');
   }
-
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${provider.apiKey}`,
-    },
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(parseInt(process.env.AI_TIMEOUT_MS || '60000', 10)),
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => response.statusText);
-    const trimmed = errorText.length > 600 ? `${errorText.slice(0, 600)}...` : errorText;
-    throw new Error(`HTTP ${response.status} (${provider.name}): ${trimmed}`);
-  }
-
-  const data: any = await response.json();
+  const data: any = await aiClient.chatCompletion(messages, tools, temperature, resolvedMaxTokens);
 
   if (verbose) {
     logger.info({
       provider: provider.name,
-      hasChoices: Array.isArray(data?.choices),
-      choiceCount: Array.isArray(data?.choices) ? data.choices.length : 0,
-      usage: data?.usage,
+      hasToolCalls: Array.isArray(data?.tool_calls) && data.tool_calls.length > 0,
+      contentType: Array.isArray(data?.content) ? 'array' : typeof data?.content,
     }, '[ModelRouter] Provider response received');
   }
-
-  if (!data.choices || data.choices.length === 0) {
-    throw new Error('No choices returned from provider.');
-  }
-
-  return data.choices[0].message;
+  return data;
 }
 
 /**
@@ -182,13 +155,14 @@ export class ModelRouter {
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
+    maxTokens?: number,
   ): Promise<any> {
     let lastError: Error | null = null;
 
     for (const provider of this.providers) {
       try {
         const start = Date.now();
-        const result = await callProvider(provider, messages, tools, temperature);
+        const result = await callProvider(provider, messages, tools, temperature, maxTokens);
         const latency = Date.now() - start;
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
         return result;
@@ -205,4 +179,13 @@ export class ModelRouter {
   getProviders(): ProviderConfig[] {
     return this.providers;
   }
+}
+
+let singletonRouter: ModelRouter | null = null;
+
+export function getModelRouter(): ModelRouter {
+  if (!singletonRouter) {
+    singletonRouter = new ModelRouter();
+  }
+  return singletonRouter;
 }

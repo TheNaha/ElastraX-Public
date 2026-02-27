@@ -25,8 +25,8 @@ export const chatRooms = sqliteTable('chat_rooms', {
   // V7.5 Dynamic Configuration Overrides (nullable means fallback to .env)
   systemPrompt: text('system_prompt'), 
   contextLimit: integer('context_limit'),
-  temperature: integer('temperature', { mode: 'number' }), // SQLite REAL requires integer/decimal mapping depending on driver, drizzle uses integer or real
-  // actually drizzle has `real` type for floats
+  temperature: real('temperature'),
+  maxTokens: integer('max_tokens'),
   allowTools: integer('allow_tools', { mode: 'boolean' }),
   autoReplyAll: integer('auto_reply_all', { mode: 'boolean' }),
   

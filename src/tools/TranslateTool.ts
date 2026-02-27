@@ -20,14 +20,7 @@ import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
-import { ModelRouter } from '../utils/ModelRouter';
-
-// Module-level router reuse
-let router: ModelRouter | null = null;
-function getRouter(): ModelRouter {
-  if (!router) router = new ModelRouter();
-  return router;
-}
+import { getModelRouter } from '../utils/ModelRouter';
 
 export class TranslateTool extends BaseTool {
   readonly name = 'translate';
@@ -66,8 +59,8 @@ export class TranslateTool extends BaseTool {
 
     // Resolve source text: explicit arg > quoted message > error
     let sourceText = args.text ? String(args.text) : '';
-    if (!sourceText && ctx.quoted?.body) {
-      sourceText = ctx.quoted.body;
+    if (!sourceText && ctx.quoted) {
+      sourceText = ctx.quoted.text || ctx.quoted.body;
     }
 
     if (!sourceText.trim()) {
@@ -77,7 +70,7 @@ export class TranslateTool extends BaseTool {
     try {
       await ctx.react?.('🌐');
 
-      const aiMsg = await getRouter().chatCompletion([
+      const aiMsg = await getModelRouter().chatCompletion([
         {
           role: 'system',
           content: `You are a professional translator. Translate the following text to ${targetLang}. Output ONLY the translated text. Do NOT add explanations, notes, or quotes around the result.`,

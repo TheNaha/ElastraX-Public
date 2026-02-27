@@ -30,6 +30,7 @@ import { validateEnv } from './config/env';
 import { Scheduler } from './utils/Scheduler';
 import { WebhookServer } from './webhookServer';
 import { RateLimiter } from './utils/RateLimiter';
+import { MediaCleanup } from './utils/MediaCleanup';
 
 // Directory where one JSON fixture file per WAMessage type will be written.
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
@@ -164,6 +165,14 @@ async function main() {
   // Clean up stale rate-limit buckets every 10 minutes
   setInterval(() => RateLimiter.prune(), 10 * 60 * 1000);
 
+  // ── Media cache pruning ─────────────────────────────────────────────────────
+  const mediaCleanupIntervalMs = parseInt(process.env.MEDIA_CLEANUP_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
+  setInterval(() => {
+    MediaCleanup.pruneOldFiles().catch((err) => {
+      logger.warn({ err }, '[MediaCleanup] Periodic prune failed');
+    });
+  }, mediaCleanupIntervalMs);
+
   logger.info('Bot is running. Press Ctrl+C to stop.');
 
   // Background startup scan — runs after providers are up, never blocks
@@ -174,8 +183,10 @@ async function main() {
     runStartupCoverageScan(null);
   }, 5000);
 
-  // Handle graceful shutdown
-  process.on('SIGINT', async () => {
+  let shuttingDown = false;
+  const shutdown = async (signal: 'SIGINT' | 'SIGTERM') => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     logger.info('Shutting down gracefully...');
 
     // Dump fixtures before exit so the test suite grows automatically
@@ -189,7 +200,11 @@ async function main() {
     await waProvider.stop();
     await discordProvider.stop();
     process.exit(0);
-  });
+  };
+
+  // Handle graceful shutdown
+  process.on('SIGINT', () => void shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 main().catch((err) => {

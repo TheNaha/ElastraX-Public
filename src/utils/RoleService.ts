@@ -54,6 +54,7 @@ export class RoleService {
       if (rows.length === 0) return null;
 
       let best: RoleName | null = null;
+      let bestScore = Number.NEGATIVE_INFINITY;
 
       for (const row of rows) {
         const role = row.role as RoleName;
@@ -63,15 +64,10 @@ export class RoleService {
 
         if (!isScoped && !isGlobal) continue;
 
-        if (best === null) {
+        const currentScore = ROLE_WEIGHT[role] + (isScoped ? 0.5 : 0);
+        if (currentScore > bestScore) {
           best = role;
-        } else {
-          // Prefer chat-scoped over global with same rank; prefer higher rank overall
-          const bestWeight = ROLE_WEIGHT[best];
-          const curWeight = ROLE_WEIGHT[role] + (isScoped ? 0.5 : 0);
-          if (curWeight > bestWeight) {
-            best = role;
-          }
+          bestScore = currentScore;
         }
       }
 
@@ -119,7 +115,15 @@ export class RoleService {
    * Remove a user's role for a given scope.
    */
   static async removeRole(userId: string, scope: string): Promise<boolean> {
-    const result = await db
+    const existing = await db
+      .select({ id: userRoles.id })
+      .from(userRoles)
+      .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)))
+      .limit(1);
+
+    if (existing.length === 0) return false;
+
+    await db
       .delete(userRoles)
       .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
     return true;

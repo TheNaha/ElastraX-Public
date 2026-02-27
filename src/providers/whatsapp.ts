@@ -59,6 +59,8 @@ export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private starting = false;
   /**
    * The bot's own LID JID (e.g. "265841933336713@lid"), resolved once the
    * connection is open via sock.signalRepository.lidMapping.getLIDForPN().
@@ -72,11 +74,24 @@ export class WhatsAppProvider implements BotProvider {
     return userId.split(':')[0].split('@')[0] + '@s.whatsapp.net';
   }
 
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.start().catch((err) => {
+        logger.error({ err }, '[WhatsApp] Reconnect start failed');
+      });
+    }, 1500);
+  }
+
   /**
    * Initialises the Baileys WebSocket socket, registers all event handlers,
    * and begins the WhatsApp connection handshake (QR code or cached session).
    */
   async start(): Promise<void> {
+    if (this.starting) return;
+    this.starting = true;
+
     const { state, saveCreds } = await useDBAuthState();
     const { version, isLatest } = await fetchLatestBaileysVersion();
 
@@ -85,7 +100,17 @@ export class WhatsAppProvider implements BotProvider {
 
     logger.info(`[WhatsApp] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
-    this.sock = makeWASocket({
+    const existingSock = this.sock;
+    if (existingSock) {
+      try {
+        existingSock.end(new Error('Restarting WhatsApp socket'));
+      } catch {
+        // no-op
+      }
+      this.sock = null;
+    }
+
+    const sock = makeWASocket({
       version,
       auth: state,
       printQRInTerminal: false,
@@ -105,10 +130,13 @@ export class WhatsAppProvider implements BotProvider {
         return proto.Message.fromObject({});
       },
     });
+    this.sock = sock;
+    this.starting = false;
 
-    this.sock.ev.on('creds.update', saveCreds);
+    sock.ev.on('creds.update', saveCreds);
 
-    this.sock.ev.on('connection.update', async (update) => {
+    sock.ev.on('connection.update', async (update) => {
+      if (this.sock !== sock) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         logger.info('[WhatsApp] Scan this QR code to login:');
@@ -124,18 +152,20 @@ export class WhatsAppProvider implements BotProvider {
           '[WhatsApp] Connection closed'
         );
 
+        this.sock = null;
+
         if (shouldReconnect) {
-          this.start();
+          this.scheduleReconnect();
         }
       } else if (connection === 'open') {
         logger.info('[WhatsApp] Connected successfully!');
         // Resolve the bot's LID via Baileys' LID-PN mapping store.
         // In WA V7 sessions, contextInfo.participant uses LIDs so we need
         // the bot's own LID to correctly set `fromMe` on quoted messages.
-        if (this.sock?.user?.id) {
-          const botPn = WhatsAppProvider.botPnJid(this.sock.user.id);
+        if (sock.user?.id) {
+          const botPn = WhatsAppProvider.botPnJid(sock.user.id);
           try {
-            this.botLid = await (this.sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+            this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
             if (this.botLid) {
               logger.info({ botLid: this.botLid }, '[WhatsApp] Resolved bot LID');
             }
@@ -146,7 +176,8 @@ export class WhatsAppProvider implements BotProvider {
       }
     });
 
-    this.sock.ev.on('messages.upsert', async (m) => {
+    sock.ev.on('messages.upsert', async (m) => {
+      if (this.sock !== sock) return;
       if (m.type !== 'notify') return;
 
       await Promise.all(m.messages.map(async (msg) => {
@@ -154,7 +185,7 @@ export class WhatsAppProvider implements BotProvider {
 
         // Automatically mark the message as read (blue checkmark)
         try {
-          await this.sock?.readMessages([msg.key]);
+          await sock.readMessages([msg.key]);
         } catch (err) {
           logger.warn({ err, key: msg.key }, '[WhatsApp] Failed to mark message as read');
         }
@@ -168,7 +199,8 @@ export class WhatsAppProvider implements BotProvider {
       }));
     });
 
-    this.sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
+    sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
+      if (this.sock !== sock) return;
       logger.info(`[WhatsApp] Received history sync with ${histMsgs.length} messages.`);
 
       const contexts: MessageContext[] = [];
@@ -190,7 +222,14 @@ export class WhatsAppProvider implements BotProvider {
 
   /** Closes the Baileys WebSocket connection gracefully. */
   async stop(): Promise<void> {
-    this.sock?.end(new Error('Stop called'));
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    this.starting = false;
+    const sock = this.sock;
+    this.sock = null;
+    sock?.end(new Error('Stop called'));
   }
 
   /** Register the application-level callback that will receive every parsed MessageContext. */
