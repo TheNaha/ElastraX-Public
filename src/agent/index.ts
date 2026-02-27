@@ -39,6 +39,46 @@ import { summarizeHistory } from '../utils/ConversationSummarizer';
 
 const modelRouter = new ModelRouter();
 
+function extractAssistantText(aiMsgObj: any): string {
+  const content = aiMsgObj?.content;
+
+  if (typeof content === 'string') {
+    return content.trim();
+  }
+
+  if (Array.isArray(content)) {
+    const text = content
+      .map((part: any) => {
+        if (typeof part === 'string') return part;
+        if (typeof part?.text === 'string') return part.text;
+        return '';
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (text) return text;
+  }
+
+  if (typeof aiMsgObj?.refusal === 'string' && aiMsgObj.refusal.trim()) {
+    return aiMsgObj.refusal.trim();
+  }
+
+  if (Array.isArray(aiMsgObj?.refusal)) {
+    const refusalText = aiMsgObj.refusal
+      .map((part: any) => (typeof part === 'string' ? part : part?.text || ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+    if (refusalText) return refusalText;
+  }
+
+  if (typeof aiMsgObj?.output_text === 'string' && aiMsgObj.output_text.trim()) {
+    return aiMsgObj.output_text.trim();
+  }
+
+  return '';
+}
+
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
   const endpoint = process.env.TRANSCRIBE_ENDPOINT;
   if (!endpoint) return null;
@@ -89,6 +129,7 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
  */
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
+  const verboseAiLogs = process.env.AI_VERBOSE_LOGS === 'true';
 
   // Fetch or create the chat room early so that ctx.language is available to all
   // tools and flow handlers before any routing takes place.
@@ -392,11 +433,22 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     
     let isDone = false;
     let finalAiResponseText = '';
+    const internalErrorText = t(ctx.language, 'agent.internal_error');
     const availableTools = config.allowTools ? getToolDefinitions() : undefined;
 
     while (!isDone) {
       try {
         const aiMsgObj = await modelRouter.chatCompletion(messagesForAI, availableTools, config.temperature);
+
+        if (verboseAiLogs) {
+          logger.info({
+            chatId,
+            platform,
+            hasToolCalls: Array.isArray(aiMsgObj?.tool_calls) && aiMsgObj.tool_calls.length > 0,
+            contentType: Array.isArray(aiMsgObj?.content) ? 'array' : typeof aiMsgObj?.content,
+            messageKeys: Object.keys(aiMsgObj || {}),
+          }, '[Agent] Raw AI step received');
+        }
 
         // Append the AI's step back to the context
         messagesForAI.push(aiMsgObj);
@@ -437,9 +489,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         } else {
           // Standard text response (terminal state)
           isDone = true;
-          finalAiResponseText = String(aiMsgObj.content || '').trim();
+          finalAiResponseText = extractAssistantText(aiMsgObj);
           if (!finalAiResponseText) {
-            finalAiResponseText = t(ctx.language, 'agent.internal_error');
+            finalAiResponseText = internalErrorText;
+            logger.warn({
+              chatId,
+              platform,
+              contentType: Array.isArray(aiMsgObj?.content) ? 'array' : typeof aiMsgObj?.content,
+              hasRefusal: !!aiMsgObj?.refusal,
+              hasOutputText: !!aiMsgObj?.output_text,
+              messageKeys: Object.keys(aiMsgObj || {}),
+            }, '[Agent] AI returned no usable assistant text; using internal_error fallback');
           }
         }
 
@@ -465,7 +525,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // 5. Send Response
     await ctx.reply(finalAiResponseText);
     await ctx.react?.('✅'); // show success
-    logger.info({ chatId }, 'Successfully responded');
+    const usedFallbackError = finalAiResponseText === internalErrorText;
+    const logMethod = usedFallbackError ? logger.warn : logger.info;
+    logMethod({
+      chatId,
+      platform,
+      usedFallbackError,
+      replyPreview: finalAiResponseText.slice(0, 160),
+      replyLength: finalAiResponseText.length,
+      hasMedia: ctx.hasMedia,
+      quotedMedia: !!ctx.quoted?.hasMedia,
+    }, 'Successfully responded');
 
   } catch (error) {
     logger.error(error, 'Error handling message');

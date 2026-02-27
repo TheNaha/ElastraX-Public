@@ -44,6 +44,10 @@ vllm_image = (
     .env({
         "HF_XET_HIGH_PERFORMANCE": "1",
         "VLLM_SERVER_DEV_MODE": "1",
+        # Reduce noisy C++/distributed warnings in Modal logs
+        "TORCH_CPP_LOG_LEVEL": "ERROR",
+        "TORCH_DISTRIBUTED_DEBUG": "OFF",
+        "NCCL_DEBUG": "ERROR",
     })
 )
 
@@ -64,9 +68,15 @@ N_GPU = 1
 VLLM_PORT = 8000
 MIN_CONTAINERS = 0
 
-# Optional API key for OpenAI-compatible Authorization: Bearer <key>
-# Works for both vLLM server and Whisper endpoint below.
-API_KEY_ENV_NAMES = ("VLLM_API_KEY", "OPENAI_API_KEY")
+# Modal secret names
+# - my-huggingface-secret: HF token(s)
+# - elastra-api-secrets: API keys (OPENAI_API_KEY, VLLM_API_KEY, WHISPER_API_KEY)
+HF_SECRET_NAME = "my-huggingface-secret"
+API_SECRET_NAME = "elastra-api-secrets"
+
+# API key lookup priority
+VLLM_API_KEY_ENV_NAMES = ("OPENAI_API_KEY", "VLLM_API_KEY")
+WHISPER_API_KEY_ENV_NAMES = ("WHISPER_API_KEY", "OPENAI_API_KEY", "VLLM_API_KEY")
 
 # Whisper API defaults
 WHISPER_MODEL = "Systran/faster-whisper-large-v3"
@@ -106,7 +116,7 @@ def _build_vllm_cmd():
         cmd += ["--no-enforce-eager"]
     cmd += ["--tensor-parallel-size", str(N_GPU)]
 
-    api_key = next((os.environ.get(k) for k in API_KEY_ENV_NAMES if os.environ.get(k)), None)
+    api_key = next((os.environ.get(k) for k in VLLM_API_KEY_ENV_NAMES if os.environ.get(k)), None)
     if api_key:
         cmd += ["--api-key", api_key]
 
@@ -138,10 +148,17 @@ def warmup():
         "messages": [{"role": "user", "content": "Hello, how are you?"}],
         "max_tokens": 16,
     }
+    headers = {"Content-Type": "application/json"}
+    api_key = next((os.environ.get(k) for k in VLLM_API_KEY_ENV_NAMES if os.environ.get(k)), None)
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
     for _ in range(3):
         req_lib.post(
             f"http://127.0.0.1:{VLLM_PORT}/v1/chat/completions",
-            json=payload, timeout=60,
+            json=payload,
+            headers=headers,
+            timeout=60,
         ).raise_for_status()
 
 
@@ -182,14 +199,17 @@ whisper_image = (
 
 @app.cls(
     image=vllm_image,
-    gpu=f"L40S:{N_GPU}",
-    scaledown_window=3 * MINUTES,
+    gpu=f"A100-40GB:{N_GPU}",
+    scaledown_window=1 * MINUTES,
     timeout=10 * MINUTES,
     volumes={
         "/root/.cache/huggingface": hf_cache_vol,
         "/root/.cache/vllm": vllm_cache_vol,
     },
-    secrets=[modal.Secret.from_name("my-huggingface-secret")],
+    secrets=[
+        modal.Secret.from_name(HF_SECRET_NAME),
+        modal.Secret.from_name(API_SECRET_NAME),
+    ],
     enable_memory_snapshot=True,
     experimental_options={"enable_gpu_snapshot": True},
     min_containers=MIN_CONTAINERS,
@@ -220,7 +240,18 @@ class Model:
 
     @modal.exit()
     def stop(self):
-        self.process.terminate()
+        # Graceful teardown first to reduce noisy NCCL/TCPStore broken-pipe logs.
+        try:
+            sleep_server(1)
+        except Exception:
+            pass
+
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
 
     @modal.web_server(port=VLLM_PORT, startup_timeout=10 * MINUTES)
     def serve(self):
@@ -228,37 +259,60 @@ class Model:
         pass
 
 
-@app.function(
-        image=whisper_image,
-        gpu=WHISPER_GPU,
-        scaledown_window=1 * MINUTES,
-        timeout=10 * MINUTES,
-        volumes={
-                "/root/.cache/huggingface": hf_cache_vol,
-        },
-        secrets=[modal.Secret.from_name("my-huggingface-secret")],
-        min_containers=0,
+@app.cls(
+    image=whisper_image,
+    gpu=WHISPER_GPU,
+    scaledown_window=1 * MINUTES,
+    timeout=10 * MINUTES,
+    volumes={
+        "/root/.cache/huggingface": hf_cache_vol,
+    },
+    secrets=[
+        modal.Secret.from_name(HF_SECRET_NAME),
+        modal.Secret.from_name(API_SECRET_NAME),
+    ],
+    enable_memory_snapshot=True,
+    experimental_options={"enable_gpu_snapshot": True},
+    min_containers=0,
 )
-@modal.asgi_app()
-def whisper_api():
+@modal.concurrent(max_inputs=32)
+class WhisperAPI:
+    @modal.enter(snap=True)
+    def startup(self):
+        from faster_whisper import WhisperModel
+
+        model_name = os.environ.get("WHISPER_MODEL", WHISPER_MODEL)
+        compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
+        print(f"🎙️ Loading Whisper model: {model_name} ({compute_type})")
+        self.model = WhisperModel(
+            model_name,
+            device="cuda",
+            compute_type=compute_type,
+        )
+        print("📸 Whisper model loaded and ready for snapshot.")
+
+    @modal.enter(snap=False)
+    def restore(self):
+        print("⚡ Whisper restored from GPU snapshot — ready!")
+
+    @modal.asgi_app()
+    def serve(self):
         """
         OpenAI-compatible Whisper-style endpoint:
             POST /v1/audio/transcriptions
 
         Auth:
             - If VLLM_API_KEY or OPENAI_API_KEY is set, requires
-                Authorization: Bearer <key>
+              Authorization: Bearer <key>
         """
         from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
         from fastapi.responses import JSONResponse, PlainTextResponse
-        from faster_whisper import WhisperModel
         import tempfile
 
         app_api = FastAPI(title="Elastra Whisper API")
-        _model_holder: dict[str, WhisperModel | None] = {"model": None}
 
         def _expected_api_key() -> str | None:
-            for key in API_KEY_ENV_NAMES:
+            for key in WHISPER_API_KEY_ENV_NAMES:
                 value = os.environ.get(key)
                 if value:
                     return value
@@ -273,17 +327,6 @@ def whisper_api():
             received = authorization[len("Bearer "):].strip()
             if received != expected:
                 raise HTTPException(status_code=401, detail="Invalid API key")
-
-        def _get_model() -> WhisperModel:
-            if _model_holder["model"] is None:
-                model_name = os.environ.get("WHISPER_MODEL", WHISPER_MODEL)
-                compute_type = os.environ.get("WHISPER_COMPUTE_TYPE", "float16")
-                _model_holder["model"] = WhisperModel(
-                    model_name,
-                    device="cuda",
-                    compute_type=compute_type,
-                )
-            return _model_holder["model"]
 
         @app_api.get("/health")
         async def health():
@@ -302,7 +345,6 @@ def whisper_api():
             _check_bearer(authorization)
             del model, temperature
 
-            whisper_model = _get_model()
             suffix = os.path.splitext(file.filename or "audio.bin")[1] or ".bin"
 
             try:
@@ -310,7 +352,7 @@ def whisper_api():
                     tmp.write(await file.read())
                     tmp_path = tmp.name
 
-                segments, info = whisper_model.transcribe(
+                segments, info = self.model.transcribe(
                     tmp_path,
                     language=language,
                     initial_prompt=prompt,
@@ -340,7 +382,6 @@ def whisper_api():
                         ],
                     })
 
-                # OpenAI json default
                 return JSONResponse({"text": text})
             finally:
                 try:
@@ -391,7 +432,7 @@ async def test(test_timeout=10 * MINUTES, content=None, twice=True):
 async def _send_request(session, model, messages):
     payload = {"messages": messages, "model": model, "stream": True}
     headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-    api_key = next((os.environ.get(k) for k in API_KEY_ENV_NAMES if os.environ.get(k)), None)
+    api_key = next((os.environ.get(k) for k in VLLM_API_KEY_ENV_NAMES if os.environ.get(k)), None)
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 

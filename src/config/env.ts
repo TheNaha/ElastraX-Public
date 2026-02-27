@@ -27,17 +27,30 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   const errors: string[] = [];
   const providerList = env.AI_PROVIDERS?.trim();
 
+  const buildCloudflareBaseUrl = (accountId?: string) => {
+    const trimmed = (accountId || '').trim();
+    if (!trimmed) return '';
+    return `https://api.cloudflare.com/client/v4/accounts/${trimmed}/ai/v1`;
+  };
+
   if (!providerList) {
     // Legacy single-provider mode
-    const requiredVars = ['AI_API_KEY', 'AI_MODEL_NAME', 'AI_API_BASE_URL'];
-    for (const key of requiredVars) {
-      const val = env[key];
-      if (!val || val.trim() === '') {
-        errors.push(`${key} is missing or empty`);
-      }
+    const modelName = env.AI_MODEL_NAME;
+    if (!modelName || modelName.trim() === '') {
+      errors.push('AI_MODEL_NAME is missing or empty');
     }
 
-    const baseUrl = env.AI_API_BASE_URL;
+    const baseUrl = env.AI_API_BASE_URL || buildCloudflareBaseUrl(env.AI_CF_ACCOUNT_ID);
+    const apiKey = env.AI_API_KEY || env.AI_CF_API_TOKEN;
+
+    if (!apiKey || apiKey.trim() === '') {
+      errors.push('AI_API_KEY is missing or empty');
+    }
+
+    if (!baseUrl || baseUrl.trim() === '') {
+      errors.push('AI_API_BASE_URL is missing or empty');
+    }
+
     if (baseUrl && baseUrl.trim() !== '') {
       try {
         new URL(baseUrl);
@@ -55,11 +68,14 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
     for (const provider of providers) {
       const baseKey = `AI_${provider}_BASE_URL`;
       const modelKey = `AI_${provider}_MODEL`;
-      const baseUrl = env[baseKey];
+      const cfAccountKey = `AI_${provider}_CF_ACCOUNT_ID`;
+      const apiKey = `AI_${provider}_API_KEY`;
+      const cfTokenKey = `AI_${provider}_CF_API_TOKEN`;
+      const baseUrl = env[baseKey] || buildCloudflareBaseUrl(env[cfAccountKey]);
       const modelName = env[modelKey];
 
       if (!baseUrl || baseUrl.trim() === '') {
-        errors.push(`${baseKey} is missing or empty`);
+        errors.push(`${baseKey} is missing or empty (or set ${cfAccountKey} for Cloudflare shorthand)`);
       } else {
         try {
           new URL(baseUrl);
@@ -70,6 +86,11 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
 
       if (!modelName || modelName.trim() === '') {
         errors.push(`${modelKey} is missing or empty`);
+      }
+
+      const keyValue = env[apiKey] || env[cfTokenKey];
+      if (!keyValue || keyValue.trim() === '') {
+        errors.push(`${apiKey} is missing or empty (or set ${cfTokenKey} for Cloudflare shorthand)`);
       }
     }
   }

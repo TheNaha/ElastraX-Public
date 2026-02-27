@@ -41,26 +41,41 @@ export interface ProviderConfig {
   modelName: string;
 }
 
+function buildCloudflareBaseUrl(accountId?: string): string {
+  const trimmed = (accountId || '').trim();
+  if (!trimmed) return '';
+  return `https://api.cloudflare.com/client/v4/accounts/${trimmed}/ai/v1`;
+}
+
+function resolveChatCompletionsUrl(baseUrl: string): string {
+  const normalized = baseUrl.replace(/\/$/, '');
+  return normalized.endsWith('/chat/completions')
+    ? normalized
+    : `${normalized}/chat/completions`;
+}
+
 /** Loads all provider configs from process.env according to the documented pattern. */
 function loadProviders(): ProviderConfig[] {
   const providerList = process.env.AI_PROVIDERS;
 
   // Legacy single-provider fallback
   if (!providerList || providerList.trim() === '') {
+    const legacyCfBase = buildCloudflareBaseUrl(process.env.AI_CF_ACCOUNT_ID);
     return [{
       name: 'default',
-      baseUrl: process.env.AI_API_BASE_URL || '',
-      apiKey: process.env.AI_API_KEY || 'dummy',
+      baseUrl: process.env.AI_API_BASE_URL || legacyCfBase,
+      apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || 'dummy',
       modelName: process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct',
     }];
   }
 
   return providerList.split(',').map(p => p.trim().toLowerCase()).filter(Boolean).map(name => {
     const upper = name.toUpperCase();
+    const cfBase = buildCloudflareBaseUrl(process.env[`AI_${upper}_CF_ACCOUNT_ID`]);
     return {
       name,
-      baseUrl: process.env[`AI_${upper}_BASE_URL`] || '',
-      apiKey: process.env[`AI_${upper}_API_KEY`] || 'dummy',
+      baseUrl: process.env[`AI_${upper}_BASE_URL`] || cfBase,
+      apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || 'dummy',
       modelName: process.env[`AI_${upper}_MODEL`] || 'gpt-4o-mini',
     };
   });
@@ -80,7 +95,8 @@ async function callProvider(
     throw new Error(`Provider "${provider.name}" has no base URL configured.`);
   }
 
-  const url = `${provider.baseUrl.replace(/\/$/, '')}/chat/completions`;
+  const url = resolveChatCompletionsUrl(provider.baseUrl);
+  const verbose = process.env.AI_VERBOSE_LOGS === 'true';
 
   const body: Record<string, any> = {
     model: provider.modelName,
@@ -92,6 +108,17 @@ async function callProvider(
   if (tools && tools.length > 0) {
     body.tools = tools;
     body.tool_choice = 'auto';
+  }
+
+  if (verbose) {
+    logger.info({
+      provider: provider.name,
+      url,
+      model: provider.modelName,
+      messageCount: messages.length,
+      toolsEnabled: !!(tools && tools.length > 0),
+      temperature,
+    }, '[ModelRouter] Sending chat completion request');
   }
 
   const response = await fetch(url, {
@@ -106,10 +133,20 @@ async function callProvider(
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => response.statusText);
-    throw new Error(`HTTP ${response.status}: ${errorText}`);
+    const trimmed = errorText.length > 600 ? `${errorText.slice(0, 600)}...` : errorText;
+    throw new Error(`HTTP ${response.status} (${provider.name}): ${trimmed}`);
   }
 
   const data: any = await response.json();
+
+  if (verbose) {
+    logger.info({
+      provider: provider.name,
+      hasChoices: Array.isArray(data?.choices),
+      choiceCount: Array.isArray(data?.choices) ? data.choices.length : 0,
+      usage: data?.usage,
+    }, '[ModelRouter] Provider response received');
+  }
 
   if (!data.choices || data.choices.length === 0) {
     throw new Error('No choices returned from provider.');
