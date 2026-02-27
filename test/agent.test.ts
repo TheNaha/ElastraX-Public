@@ -86,21 +86,12 @@ mock.module('fs', () => ({
   existsSync: (_path: string) => shouldFileExist,
 }));
 
-// Mocking `src/tools` fully to control both functions and the array
-const mockToolsArray: any[] = [];
-mock.module('../src/tools', () => {
-  return {
-    tools: mockToolsArray,
-    getToolDefinitions: () => [],
-    getToolByName: () => undefined,
-    getToolByAliasOrName: () => undefined,
-  };
-});
-
 // Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
 
-// We need to re-import these after mocking
+// Use spyOn for tools and FlowHandler AFTER importing agent.
+// spyOn replaces the live binding in the module namespace so the agent sees it,
+// but unlike mock.module() it does NOT bleed into other test files.
 import * as toolsModule from '../src/tools';
 import * as flowModule from '../src/core/FlowHandler';
 
@@ -203,11 +194,6 @@ describe('handleIncomingMessage', () => {
       }),
     );
 
-    // Update the mocked tools array for the suggestion loop
-    // Clear it first
-    mockToolsArray.length = 0;
-    // Push current mock tools
-    Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
   });
 
   afterEach(() => {
@@ -373,9 +359,6 @@ describe('handleIncomingMessage', () => {
           execute: mock(async () => 'Menu content'),
         },
       };
-      // Important: refresh mockToolsArray here because it's populated in beforeEach
-      mockToolsArray.length = 0;
-      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
     });
 
     test('should route a /menu command to the MenuTool', async () => {
@@ -414,17 +397,18 @@ describe('handleIncomingMessage', () => {
       expect(calls).toContain('❌');
     });
 
-    test('should reply "Unknown command" for unrecognised slash commands', async () => {
-      // Clear tools for this specific test so no suggestions are found
-      mockToolsArray.length = 0;
-      mockToolMap = {};
-
-      const ctx = makeCtx({ text: '/unknowncmd', isGroup: false });
+    test('should reply "Unknown command" for unrecognised slash commands when no close match is found', async () => {
+      // Use a completely random string that won't match any real tools (like menu, sticker, etc.)
+      const ctx = makeCtx({ text: '/xyzzy_super_random_command_123', isGroup: false });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'));
     });
 
     test('should suggest a similar command when a typo is made (e.g., /men -> /menu)', async () => {
+      // Since we are NOT mocking the tools array anymore, we rely on the fact that
+      // 'menu' tool exists in the real registry (which agent.ts imports).
+      // mockToolMap is still used for execution spies, but the suggestion logic uses the real array.
+
       const ctx = makeCtx({ text: '/men', isGroup: false });
       await handleIncomingMessage(ctx);
       // Should trigger "Did you mean /menu?"
@@ -434,6 +418,7 @@ describe('handleIncomingMessage', () => {
     test('should suggest a similar command based on alias (e.g., /hlp -> /help alias for menu)', async () => {
       const ctx = makeCtx({ text: '/hlp', isGroup: false });
       await handleIncomingMessage(ctx);
+      // 'help' is an alias for 'menu' in the real tool registry
       expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */help*'));
     });
 
@@ -459,9 +444,6 @@ describe('handleIncomingMessage', () => {
         execute: mock(async () => 'Search results here'),
       };
       mockToolMap = { web_search: searchTool };
-      // Refresh mockToolsArray
-      mockToolsArray.length = 0;
-      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
 
       let callCount = 0;
       global.fetch = mock(async () => {
@@ -528,9 +510,6 @@ describe('handleIncomingMessage', () => {
         execute: mock(async () => 'ok'),
       };
       mockToolMap = { dummy: dummyTool };
-      // Refresh mockToolsArray
-      mockToolsArray.length = 0;
-      Object.values(mockToolMap).forEach((t: any) => mockToolsArray.push(t));
 
       let callCount = 0;
       global.fetch = mock(async () => {
