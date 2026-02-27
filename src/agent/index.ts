@@ -53,13 +53,22 @@ const streamingEnabled = process.env.AI_STREAMING === 'true';
 const WA_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_WA || '1500', 10);
 const DC_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_DC || '500', 10);
 
+/**
+ * Strip Qwen3-style `<think>…</think>` reasoning blocks from model output,
+ * returning only the user-visible portion of the response.
+ */
+function stripThinkTags(text: string): string {
+  // Remove one or more <think>…</think> blocks (greedy, dotall via [\s\S])
+  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
 function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   // Use `any` for content because some providers may return non-spec formats
   // (e.g., array-of-parts) even though the typed interface expects string|null.
   const content: any = aiMsgObj?.content;
 
   if (typeof content === 'string') {
-    return content.trim();
+    return stripThinkTags(content);
   }
 
   if (Array.isArray(content)) {
@@ -72,15 +81,15 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
       .filter(Boolean)
       .join('\n')
       .trim();
-    if (text) return text;
+    if (text) return stripThinkTags(text);
   }
 
   if (typeof aiMsgObj?.refusal === 'string' && aiMsgObj.refusal.trim()) {
-    return aiMsgObj.refusal.trim();
+    return stripThinkTags(aiMsgObj.refusal);
   }
 
   if (typeof aiMsgObj?.output_text === 'string' && aiMsgObj.output_text.trim()) {
-    return aiMsgObj.output_text.trim();
+    return stripThinkTags(aiMsgObj.output_text);
   }
 
   return '';

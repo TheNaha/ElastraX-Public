@@ -194,7 +194,20 @@ export class ModelRouter {
             provider: provider.name,
             hasToolCalls: Array.isArray(result?.tool_calls) && result.tool_calls.length > 0,
             contentType: Array.isArray(result?.content) ? 'array' : typeof result?.content,
+            contentPreview: typeof result?.content === 'string' ? result.content.slice(0, 120) : undefined,
           }, '[ModelRouter] Provider response received');
+        }
+
+        // Guard: if the provider returned HTTP 200 but the response has no useful
+        // content AND no tool calls, treat it as a failure and try the next provider.
+        // Also strip Qwen3-style <think>…</think> blocks before checking emptiness.
+        const hasToolCalls = Array.isArray(result?.tool_calls) && result.tool_calls.length > 0;
+        const rawContent = typeof result?.content === 'string' ? result.content : '';
+        const strippedContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+        if (!hasToolCalls && !strippedContent) {
+          logger.warn({ provider: provider.name, latency }, '[ModelRouter] Provider returned empty content, trying next');
+          lastError = new Error(`Provider "${provider.name}" returned empty content`);
+          continue;
         }
 
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
