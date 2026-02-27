@@ -142,15 +142,16 @@ export class RoleTool extends BaseTool {
       );
 
       // Resolve display name for mention
-      const { display, mentionJid } = await resolveUserDisplay(targetId);
+      const { tag, mentionJid } = await resolveUserTag(targetId);
+      const mentions = mentionJid ? [mentionJid] : [];
 
       const text = t(lang, 'role.check', {
-        userDisplay: display,
+        userTag: tag,
         effectiveRole: effectiveLabel,
         roles: rolesStr,
       }) + `\n\n*Effective privileges:*\n${privsStr}`;
 
-      return mentionJid ? { text, mentions: [mentionJid] } : text;
+      return mentions.length > 0 ? { text, mentions } : text;
     }
 
     // ── LIST ───────────────────────────────────────────────────────────────
@@ -165,11 +166,11 @@ export class RoleTool extends BaseTool {
 
       for (let i = 0; i < roles.length; i++) {
         const r = roles[i];
-        const { display: userDisp, mentionJid: userMention } = await resolveUserDisplay(r.userId);
-        const { display: byDisp, mentionJid: byMention } = await resolveUserDisplay(r.grantedBy);
-        if (userMention) mentions.push(userMention);
-        if (byMention) mentions.push(byMention);
-        itemLines.push(`${i + 1}. *${r.role}* — @${userDisp} (by @${byDisp})`);
+        const userRes = await resolveUserTag(r.userId);
+        const byRes = await resolveUserTag(r.grantedBy);
+        if (userRes.mentionJid) mentions.push(userRes.mentionJid);
+        if (byRes.mentionJid) mentions.push(byRes.mentionJid);
+        itemLines.push(`${i + 1}. *${r.role}* — ${userRes.tag} (by ${byRes.tag})`);
       }
 
       const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n') });
@@ -242,8 +243,8 @@ export class RoleTool extends BaseTool {
       await RoleService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
       logger.info({ targetId, role, scope, grantedBy: ctx.senderId }, '[RoleTool] Role granted');
 
-      const { display, mentionJid } = await resolveUserDisplay(targetId);
-      const text = t(lang, 'role.granted', { userDisplay: display, role, scope: scopeLabel });
+      const { tag, mentionJid } = await resolveUserTag(targetId);
+      const text = t(lang, 'role.granted', { userTag: tag, role, scope: scopeLabel });
       return mentionJid ? { text, mentions: [mentionJid] } : text;
     }
 
@@ -264,13 +265,13 @@ export class RoleTool extends BaseTool {
 
       const removed = await RoleService.removeRole(targetId, scope, revokeRole);
       if (!removed) {
-        const { display } = await resolveUserDisplay(targetId);
-        return `❌ No matching role found for @${display} in *${scopeLabel}*.`;
+        const { tag } = await resolveUserTag(targetId);
+        return `❌ No matching role found for ${tag} in *${scopeLabel}*.`;
       }
       logger.info({ targetId, role: revokeRole, scope, revokedBy: ctx.senderId }, '[RoleTool] Role revoked');
 
-      const { display, mentionJid } = await resolveUserDisplay(targetId);
-      const text = t(lang, 'role.revoked', { userDisplay: display, scope: scopeLabel });
+      const { tag, mentionJid } = await resolveUserTag(targetId);
+      const text = t(lang, 'role.revoked', { userTag: tag, scope: scopeLabel });
       return mentionJid ? { text, mentions: [mentionJid] } : text;
     }
 
@@ -308,37 +309,40 @@ function bareNumber(jid: string): string {
 }
 
 /**
- * Resolve the best human-readable display string for a JID and determine the
- * correct JID to put in the Baileys `mentions` array.
+ * Resolve a JID into a display tag and (optionally) a mentionable PN JID.
  *
- * Strategy:
- * 1. Look up `IdentityService.getIdentity()` to find PN and displayName.
- * 2. If a PN is available, use the phone digits as the display and the PN JID for mentions.
- * 3. If only a LID is known but has a displayName, show `displayName`.
- * 4. Fallback: bare digits from the JID itself.
+ * Returns:
+ *  - `tag`        — The display text to embed in the message.
+ *                   `@<phone>` when mentionable (PN known), otherwise the
+ *                   display name or bare digits (no `@` prefix).
+ *  - `mentionJid` — A `@s.whatsapp.net` JID for the Baileys `mentions` array,
+ *                   or `null` when the user can't be @-mentioned.
  *
- * The `mentionJid` must be a `@s.whatsapp.net` JID for WhatsApp mentions to
- * render as clickable highlights.  If we only have a LID, we still include it
- * since Baileys may resolve it.
+ * WhatsApp only renders clickable mentions for `@s.whatsapp.net` JIDs.
+ * LID-only users are shown as plain text so WhatsApp doesn't swallow the tag.
  */
-async function resolveUserDisplay(jid: string): Promise<{ display: string; mentionJid: string | null }> {
+async function resolveUserTag(jid: string): Promise<{ tag: string; mentionJid: string | null }> {
   try {
     const identity = await IdentityService.getIdentity(jid);
     if (identity) {
-      // Prefer PN for display & mentions (WhatsApp renders @<phone> as the name)
+      // Prefer PN — this is the only path that produces a real mention
       if (identity.pn) {
-        return { display: bareNumber(identity.pn), mentionJid: identity.pn };
+        return { tag: `@${bareNumber(identity.pn)}`, mentionJid: identity.pn };
       }
-      // No PN known — fall back to displayName or LID digits
+      // No PN known — show displayName or LID digits (no mention)
       if (identity.displayName) {
-        return { display: identity.displayName, mentionJid: identity.lid ?? jid };
+        return { tag: identity.displayName, mentionJid: null };
       }
     }
   } catch {
     // IdentityService unavailable (e.g. in tests) — fall through
   }
 
-  // Fallback: just use bare digits from the JID
-  const mentionJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-  return { display: bareNumber(jid), mentionJid };
+  // If the JID itself is a PN, we can still @-mention
+  if (jid.endsWith('@s.whatsapp.net')) {
+    return { tag: `@${bareNumber(jid)}`, mentionJid: jid };
+  }
+
+  // LID or unknown — plain text, no mention
+  return { tag: bareNumber(jid), mentionJid: null };
 }
