@@ -35,6 +35,8 @@ import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
 import { getToolDefinitions, getToolByName, getToolByAliasOrName } from '../tools';
+
+const log = logger.child({ module: 'Agent' });
 import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
@@ -130,7 +132,7 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
     const text = (data.text || data.transcript || '').trim();
     return text || null;
   } catch (err: any) {
-    logger.warn({ err }, '[Transcription] Failed to transcribe voice note');
+    log.warn({ err }, '[Transcription] Failed to transcribe voice note');
     return null;
   }
 }
@@ -152,6 +154,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // tools and flow handlers before any routing takes place.
   let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
   if (!room) {
+    log.info({ chatId, platform }, 'New chat room created');
     const newRoom = {
       id: chatId,
       platform,
@@ -234,7 +237,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const command = (spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx)).toLowerCase();
     const queryStr = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
 
-    logger.info(`[Command Router] Received command: /${command} with query: "${queryStr}"`);
+    log.info({ command, query: queryStr, chatId, senderId: ctx.senderId }, 'Slash command received');
 
     // Map explicit commands dynamically
     const tool = getToolByAliasOrName(command);
@@ -242,6 +245,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       // Check permissions
       const hasPermission = await ctx.checkPermissions(tool.permissions);
       if (!hasPermission) {
+        log.debug({ command, senderId: ctx.senderId, requiredPermission: tool.permissions }, 'Permission denied for command');
         await ctx.reply(t(ctx.language, 'agent.no_permission'));
         return;
       }
@@ -250,6 +254,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       try {
         const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
         parsedArgs.__command = command;
+        log.debug({ command, toolName: tool.name, args: parsedArgs }, 'Executing slash command');
         const result = await tool.execute(parsedArgs, ctx);
         // Support structured ToolResponse with mentions
         if (typeof result === 'object' && result !== null && 'text' in result) {
@@ -258,8 +263,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           await ctx.reply(result);
         }
         await ctx.react?.('✅');
+        log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: any) {
-        logger.error({ err, command }, '[Command Router] Tool execution failed');
+        log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
         await ctx.reply(err?.message || t(ctx.language, 'agent.internal_error'));
         await ctx.react?.('❌');
       }
@@ -267,6 +273,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     // If an unknown command is issued, warn the user in their language
+    log.debug({ command, chatId }, 'Unknown command attempted');
     await ctx.reply(t(ctx.language, 'agent.unknown_command', { cmd: command }));
     return;
   }
@@ -292,7 +299,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   if (!userContent && !ctx.hasMedia) return;
 
   const chatType = isGroup ? 'Group' : 'Private';
-  logger.info(`[WhatsApp | ${chatType}] ${senderName} (${chatId}): ${userContent || '<media only>'}`);
+  log.info({ chatType, senderName, chatId, platform, hasMedia: ctx.hasMedia, textPreview: (userContent || '<media only>').slice(0, 100) }, 'Incoming message received');
 
   try {
     // Room is already fetched above; derive the language label for the system prompt.
@@ -334,7 +341,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               .where(eq(messages.providerMessageId, ctx.quoted.stanzaId));
           }
         } catch (err) {
-          logger.error({ err }, 'Failed to sync DB with downloaded media paths');
+          log.error({ err }, 'Failed to sync DB with downloaded media paths');
         }
       };
 
@@ -420,7 +427,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             ];
           }
         } catch (err) {
-          logger.error({ err, path: mediaPath }, 'Failed to read media for AI context');
+          log.error({ err, path: mediaPath }, 'Failed to read media for AI context');
         }
       }
       return finalContent;
@@ -514,13 +521,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             } else {
               messagesForAI.push(branchMsg);
             }
-            logger.info(
+            log.info(
               { chatId, quotedId: ctx.quoted.stanzaId },
               '[Agent] Injected branched context for out-of-window quoted message',
             );
           }
         } catch (err) {
-          logger.warn({ err }, '[Agent] Failed to load branched quoted context');
+          log.warn({ err }, '[Agent] Failed to load branched quoted context');
         }
       }
     }
@@ -627,14 +634,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               const tool = getToolByName(toolName);
               let toolResultStr = '';
               if (tool) {
-                logger.info(`[Agent] Invoked tool (stream): ${toolName}`);
+                log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
                 await ctx.react?.('🔍');
                 const rawResult = await tool.execute(args, ctx);
                 toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
                   ? rawResult.text : rawResult;
               } else {
-                logger.error({ toolName }, 'LLM requested unknown tool');
+                log.error({ toolName, chatId }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
               }
               return { role: 'tool' as const, tool_call_id: tc.id, name: toolName, content: toolResultStr };
@@ -662,7 +669,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         );
 
         if (verboseAiLogs) {
-          logger.info({
+          log.info({
             chatId,
             platform,
             hasToolCalls: Array.isArray(aiMsgObj?.tool_calls) && aiMsgObj.tool_calls.length > 0,
@@ -679,6 +686,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         });
 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
+          log.info({ chatId, toolCount: aiMsgObj.tool_calls.length, iteration }, 'LLM requested tool calls');
           // Tool Call Requested - Parallel Execution
           const toolPromises = aiMsgObj.tool_calls.map(async (tc: ToolCall) => {
             const toolName = tc.function.name;
@@ -686,21 +694,21 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             try {
               args = JSON.parse(tc.function.arguments);
             } catch (e) {
-              logger.warn({ raw: tc.function.arguments }, 'Failed to parse tool arguments');
+              log.warn({ raw: tc.function.arguments, toolName }, 'Failed to parse tool arguments');
             }
 
             const tool = getToolByName(toolName);
             let toolResultStr = '';
             
             if (tool) {
-              logger.info(`[Agent] Invoked tool: ${toolName} with args: ${JSON.stringify(args)}`);
+              log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
               const rawResult = await tool.execute(args, ctx);
               toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
                 ? rawResult.text : rawResult;
             } else {
-              logger.error({ toolName }, 'LLM requested unknown tool');
+              log.error({ toolName, chatId }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;
             }
 
@@ -720,7 +728,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           finalAiResponseText = extractAssistantText(aiMsgObj);
           if (!finalAiResponseText) {
             finalAiResponseText = internalErrorText;
-            logger.warn({
+            log.warn({
               chatId,
               platform,
               contentType: Array.isArray(aiMsgObj?.content) ? 'array' : typeof aiMsgObj?.content,
@@ -732,7 +740,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         }
 
       } catch (e) {
-        logger.error(e, 'Failed to get AI completion / execute tool');
+        log.error(e, 'Failed to get AI completion / execute tool');
         healthMetrics.recordMessageError();
         finalAiResponseText = "I'm sorry, I encountered an error during inference.";
         isDone = true;
@@ -740,7 +748,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     if (!isDone) {
-      logger.warn({
+      log.warn({
         chatId,
         platform,
         maxToolIterations,
@@ -782,13 +790,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       quotedMedia: !!ctx.quoted?.hasMedia,
     };
     if (usedFallbackError) {
-      logger.warn(logPayload, 'Successfully responded');
+      log.warn(logPayload, 'Successfully responded');
     } else {
-      logger.info(logPayload, 'Successfully responded');
+      log.info(logPayload, 'Successfully responded');
     }
 
   } catch (error) {
-    logger.error(error, 'Error handling message');
+    log.error(error, 'Error handling message');
     healthMetrics.recordMessageError();
     await ctx.react?.('❌'); // show error
     await ctx.reply(t(ctx.language, 'agent.internal_error'));

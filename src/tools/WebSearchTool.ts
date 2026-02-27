@@ -19,6 +19,8 @@ import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 
+const log = logger.child({ module: 'WebSearchTool' });
+
 export class WebSearchTool extends BaseTool {
   readonly name = 'web_search';
   readonly description = 'Searches the web for up-to-date information. Use this whenever you need to look up facts, news, or answer questions that require recent knowledge.';
@@ -58,6 +60,8 @@ export class WebSearchTool extends BaseTool {
     const query = args.query;
     if (!query) return 'Error: query parameter is missing.';
 
+    log.debug({ query }, 'Web search initiated');
+
     try {
       const baseUrl = this.searxngUrl.endsWith('/') ? this.searxngUrl : `${this.searxngUrl}/`;
       const url = new URL(baseUrl);
@@ -82,8 +86,11 @@ export class WebSearchTool extends BaseTool {
       const data = await response.json();
       
       if (!data.results || data.results.length === 0) {
+        log.debug({ query }, 'No search results found');
         return `No results found on the web for: ${query}`;
       }
+
+      log.debug({ query, resultCount: data.results.length }, 'Search results received');
 
       // Format the top 5 results for the LLM context
       const textResults = data.results.slice(0, 5).map((item: any, idx: number) => {
@@ -92,7 +99,7 @@ export class WebSearchTool extends BaseTool {
 
       return `Search results for "${query}":\n\n${textResults}`;
     } catch (err) {
-      logger.error(err, 'WebSearchTool failed');
+      log.error({ err, query }, 'Web search failed');
       return `Failed to search the web for "${query}" due to an internal error. Make sure the SearXNG instance is reachable.`;
     }
   }

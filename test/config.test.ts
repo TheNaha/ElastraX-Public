@@ -2,14 +2,15 @@ import { describe, expect, test, mock, beforeEach } from "bun:test";
 
 // Mock the logger to verify calls and suppress output
 const mockLoggerError = mock(() => {});
-mock.module("../src/utils/logger", () => ({
-  logger: {
-    error: mockLoggerError,
-    info: () => {},
-    warn: () => {},
-    debug: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: mockLoggerError,
+  child: () => _mockLogger,
+};
+mock.module("../src/utils/logger", () => ({ logger: _mockLogger }));
 
 // Import dynamically to ensure mock is applied
 const { validateEnv } = await import("../src/config/env");

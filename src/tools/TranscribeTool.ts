@@ -5,6 +5,8 @@ import { logger } from '../utils/logger';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
+const log = logger.child({ module: 'TranscribeTool' });
+
 /**
  * @file src/tools/TranscribeTool.ts
  * @description Explicit voice-note transcription tool.
@@ -44,6 +46,8 @@ export class TranscribeTool extends BaseTool {
       await ctx.react?.('🎤');
       await ctx.reply(t(ctx.language, 'transcribe.starting'));
 
+      log.debug({ chatId: ctx.chatId, mimeType: ctx.mimeType }, 'Transcription started');
+
       await ctx.mediaReady;
       let mediaPath = ctx.mediaPath;
       let mimeType = ctx.mimeType || 'audio/ogg';
@@ -82,9 +86,11 @@ export class TranscribeTool extends BaseTool {
         throw new Error('Empty transcript');
       }
 
+      log.info({ chatId: ctx.chatId, transcriptLength: transcript.length }, 'Transcription completed');
+
       return t(ctx.language, 'transcribe.result', { text: transcript });
     } catch (err: any) {
-      logger.error({ err }, '[TranscribeTool] Failed');
+      log.error({ err, chatId: ctx.chatId }, 'Transcription failed');
       return t(ctx.language, 'transcribe.error', { msg: err.message });
     }
   }

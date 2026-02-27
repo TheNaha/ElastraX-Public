@@ -23,11 +23,13 @@ mock.module('../src/db', () => ({
 
 mock.module('../src/utils/logger', () => ({
   logger: {
+    trace: () => {},
     debug: () => {},
     info: () => {},
     warn: () => {},
     error: () => {},
     child: () => ({
+      trace: () => {},
       debug: () => {},
       info: () => {},
       warn: () => {},

@@ -27,6 +27,8 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { existsSync } from 'fs';
 
+const log = logger.child({ module: 'DownloadTool' });
+
 type AudioFormat = 'mp3' | 'aac' | 'm4a' | 'ogg' | 'opus';
 type VideoFormat = 'mp4' | 'mkv' | 'webm';
 type DownloadFormat = AudioFormat | VideoFormat;
@@ -160,9 +162,13 @@ export class DownloadTool extends BaseTool {
       await ctx.react?.('⬇️');
       await ctx.reply(t(lang, 'download.starting'));
 
+      log.info({ url, format, chatId: ctx.chatId, senderId: ctx.senderId }, 'Download started');
+
       const buffer = await downloadViaYtDlp(url, format);
 
       const sizeMb = buffer.length / (1024 * 1024);
+      log.debug({ url, format, sizeMb: sizeMb.toFixed(1) }, 'Download completed');
+
       if (sizeMb > maxMb) {
         return t(lang, 'download.too_large', {
           size: sizeMb.toFixed(1),
@@ -181,7 +187,7 @@ export class DownloadTool extends BaseTool {
 
       return t(lang, 'download.success');
     } catch (err: any) {
-      logger.error({ err, url }, '[DownloadTool] Download failed');
+      log.error({ err, url, format }, 'Download failed');
       if (err.message.includes('not found') || err.message.includes('YTDLP_PATH')) {
         return t(lang, 'download.ytdlp_missing');
       }

@@ -22,6 +22,8 @@ import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getModelRouter } from '../utils/ModelRouter';
 
+const log = logger.child({ module: 'TranslateTool' });
+
 export class TranslateTool extends BaseTool {
   readonly name = 'translate';
   readonly description = 'Translate text from one language to another. If the user replies to a message, translate that quoted message. Otherwise translate the provided text. Auto-detect the source language.';
@@ -70,6 +72,8 @@ export class TranslateTool extends BaseTool {
     try {
       await ctx.react?.('🌐');
 
+      log.debug({ targetLang, sourceLength: sourceText.length, chatId: ctx.chatId }, 'Translation requested');
+
       const aiMsg = await getModelRouter().chatCompletion([
         {
           role: 'system',
@@ -90,7 +94,7 @@ export class TranslateTool extends BaseTool {
         result: translated,
       });
     } catch (err: any) {
-      logger.error({ err }, '[TranslateTool] Translation failed');
+      log.error({ err, targetLang, chatId: ctx.chatId }, 'Translation failed');
       return t(lang, 'translate.error', { msg: err.message });
     }
   }

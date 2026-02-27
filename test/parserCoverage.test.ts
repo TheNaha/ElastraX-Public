@@ -1,13 +1,14 @@
 import { describe, test, expect, mock, spyOn, afterEach } from 'bun:test';
 
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => _mockLogger,
+};
+mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 import { scanParserCoverage, logCoverageSummary } from '../src/utils/parserCoverage';
 import * as whatsappParser from '../src/providers/whatsappParser';

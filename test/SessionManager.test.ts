@@ -2,14 +2,15 @@ import { expect, test, describe, beforeEach, afterEach, setSystemTime, mock } fr
 import { SessionManager, FlowSession } from '../src/utils/SessionManager';
 
 // Mock logger to suppress output
-mock.module("../src/utils/logger", () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    error: () => {},
-    warn: () => {},
-  }
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  error: () => {},
+  warn: () => {},
+  child: () => _mockLogger,
+};
+mock.module("../src/utils/logger", () => ({ logger: _mockLogger }));
 
 describe('SessionManager', () => {
   // Clear sessions before each test to ensure isolation

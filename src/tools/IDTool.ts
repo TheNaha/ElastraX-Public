@@ -15,6 +15,9 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'IDTool' });
 
 export class IDTool extends BaseTool {
   readonly name = 'get_id';
@@ -39,6 +42,7 @@ export class IDTool extends BaseTool {
   }
 
   async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
+    log.debug({ senderId: ctx.senderId, chatId: ctx.chatId, platform: ctx.platform }, 'ID lookup requested');
     return t(ctx.language, 'id.response', {
       name: ctx.senderName,
       userId: ctx.senderId,

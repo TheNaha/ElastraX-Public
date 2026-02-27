@@ -16,6 +16,9 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'MenuTool' });
 
 /** A function that returns the current list of all registered tools (injected to avoid circular imports). */
 type ToolGetter = () => BaseTool[];
@@ -59,6 +62,8 @@ export class MenuTool extends BaseTool {
     const { command_name } = args;
     const lang = ctx.language;
     const tools = this.getTools();
+
+    log.debug({ command_name: command_name || null, chatId: ctx.chatId }, 'Menu requested');
 
     if (command_name) {
       const tool = tools.find(

@@ -24,6 +24,8 @@ import { logger } from '../utils/logger';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
+const log = logger.child({ module: 'PDFTool' });
+
 export class PDFTool extends BaseTool {
   readonly name = 'pdf_tool';
   readonly description = 'Perform operations on a PDF file attached to the current or quoted message. Actions: "info" (show page count and size), "compress" (reduce file size). The user must attach or reply to a PDF file.';
@@ -95,6 +97,8 @@ export class PDFTool extends BaseTool {
       const pageCount = pdfDoc.getPageCount();
       const sizeKb = Math.round(pdfBytes.length / 1024);
 
+      log.debug({ action, pageCount, sizeKb, chatId: ctx.chatId }, 'PDF loaded');
+
       if (action === 'info') {
         return t(lang, 'pdf.info', {
           pages: String(pageCount),
@@ -125,7 +129,7 @@ export class PDFTool extends BaseTool {
 
       return t(lang, 'pdf.error', { msg: `Unknown action: ${action}` });
     } catch (err: any) {
-      logger.error({ err }, '[PDFTool] PDF operation failed');
+      log.error({ err, action, chatId: ctx.chatId }, 'PDF operation failed');
       return t(lang, 'pdf.error', { msg: err.message.slice(0, 200) });
     }
   }

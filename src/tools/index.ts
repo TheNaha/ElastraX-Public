@@ -41,6 +41,9 @@ import { MenfessTool } from './MenfessTool';
 import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
 import { OwnerTool } from './OwnerTool';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'ToolRegistry' });
 
 // Instantiate all active tools here
 const toolsList: BaseTool[] = [];
@@ -88,6 +91,8 @@ for (const tool of toolsList) {
     aliasMap.set(alias, tool);
   }
 }
+
+log.info({ toolCount: toolsList.length, tools: toolsList.map(t => t.name) }, 'Tool registry initialized');
 
 // Pre-compute tool definitions once at module load time to avoid mapping on every request
 const cachedToolDefinitions = toolsList.map(t => t.definition);

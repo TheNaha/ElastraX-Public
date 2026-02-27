@@ -20,14 +20,15 @@ mock.module('../src/db', () => ({
   },
 }));
 
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-  },
-}));
+const _mockLogger = {
+  trace: () => {},
+  debug: () => {},
+  info: () => {},
+  warn: () => {},
+  error: () => {},
+  child: () => _mockLogger,
+};
+mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 // Import AFTER mocks are set up
 import { ConfigTool } from '../src/tools/ConfigTool';

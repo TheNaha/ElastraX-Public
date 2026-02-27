@@ -26,6 +26,8 @@ import { logger } from '../utils/logger';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
+const log = logger.child({ module: 'MediaConvertTool' });
+
 type ConvertFormat = 'mp3' | 'mp4' | 'ogg' | 'aac' | 'opus' | 'm4a' | 'wav' | 'webm' | 'mkv' | 'gif' | 'png' | 'jpg' | 'webp';
 
 const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
@@ -148,7 +150,11 @@ export class MediaConvertTool extends BaseTool {
       const extIn = getExtension(mimeType || 'video/mp4');
       const ffmpegArgs = FORMAT_ARGS[targetFmt];
 
+      log.info({ from: extIn, to: targetFmt, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
+
       const outputBuffer = await FFmpegConverter.convert(inputBuffer, ffmpegArgs, extIn, targetFmt);
+
+      log.debug({ from: extIn, to: targetFmt, outputSize: outputBuffer.length }, 'Media conversion completed');
 
       await ctx.sendMedia(outputBuffer, {
         mimetype: MIME_MAP[targetFmt],
@@ -157,7 +163,7 @@ export class MediaConvertTool extends BaseTool {
 
       return t(lang, 'convert.success');
     } catch (err: any) {
-      logger.error({ err }, '[MediaConvertTool] Conversion failed');
+      log.error({ err, targetFmt, chatId: ctx.chatId }, 'Media conversion failed');
       return t(lang, 'convert.error', { msg: err.message.slice(0, 200) });
     }
   }
