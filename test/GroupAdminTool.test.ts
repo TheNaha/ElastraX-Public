@@ -32,6 +32,7 @@ describe('GroupAdminTool', () => {
         senderName: 'User',
         text: '',
         isGroup: true,
+        isBotMentioned: false,
         hasMedia: false,
         reply: mock(async () => {}),
         react: mock(async () => {}),

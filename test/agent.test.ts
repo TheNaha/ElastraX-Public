@@ -133,6 +133,7 @@ const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   senderName: 'Alice',
   text: 'Hello ElastraX',
   isGroup: false,
+  isBotMentioned: false,
   hasMedia: false,
   rawMessage: {},
   messageId: 'msg-1',
@@ -293,9 +294,21 @@ describe('handleIncomingMessage', () => {
         isGroup: true,
         text: 'Hey @bot what is 2+2?',
         mentionedIds: ['bot@s.whatsapp.net'],
+        isBotMentioned: true,
       });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalled();
+    });
+
+    test('should NOT reply in a group when another user is @mentioned', async () => {
+        const ctx = makeCtx({
+          isGroup: true,
+          text: 'Hey @user2 what is 2+2?',
+          mentionedIds: ['user2@s.whatsapp.net'],
+        });
+        await handleIncomingMessage(ctx);
+        // This fails currently because the code checks if ANYONE is mentioned
+        expect(ctx.reply).not.toHaveBeenCalled();
     });
 
     test('should reply in a group when the user replies to a bot message', async () => {

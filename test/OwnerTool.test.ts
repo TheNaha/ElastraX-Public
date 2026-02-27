@@ -28,6 +28,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   senderName: 'User',
   text: '',
   isGroup: false,
+  isBotMentioned: false,
   hasMedia: false,
   language: 'en',
   messageType: 'conversation',

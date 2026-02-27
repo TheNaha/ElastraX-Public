@@ -34,6 +34,7 @@ describe('TranscribeTool', () => {
     senderName: 'User',
     text: '',
     isGroup: false,
+    isBotMentioned: false,
     hasMedia: false,
     language: 'en',
     reply: mock(async () => {}),

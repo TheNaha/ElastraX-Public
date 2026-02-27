@@ -29,6 +29,12 @@ export interface MessageContext {
   mentionedIds?: string[];
 
   /**
+   * True if the bot itself was explicitly mentioned in the message.
+   * Providers must calculate this based on the platform-specific mention syntax/IDs.
+   */
+  isBotMentioned: boolean;
+
+  /**
    * Phone-number JID of the sender (e.g. `6281234567890@s.whatsapp.net`).
    * Present on WhatsApp when the senderId is a LID.
    * Used by RoleService to match `BOT_OWNER_JID` and DB role entries.

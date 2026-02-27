@@ -219,7 +219,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       shouldTriggerAI = true;
     }
     // Check if the bot was explicitly mentioned using its ID.
-    if (mentionedIds && mentionedIds.length > 0) {
+    if (ctx.isBotMentioned) {
       shouldTriggerAI = true;
     }
     // Check if the user is replying to a message originally sent by the bot

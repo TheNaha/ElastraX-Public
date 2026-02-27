@@ -487,9 +487,25 @@ export class WhatsAppProvider implements BotProvider {
       });
     }
 
+    // Determine if bot is mentioned.
+    // Check both PN (remoteJid) and LID (if resolved).
+    const botPn = sock.user?.id ? WhatsAppProvider.botPnJid(sock.user.id) : '';
+    const isBotMentioned = parsed.mentionedIds.some((m) => {
+      // Compare LIDs directly
+      if (this.botLid && m === this.botLid) return true;
+      // Compare Phone Number JIDs strictly (user part match)
+      if (botPn) {
+        const mUser = m.split('@')[0];
+        const botUser = botPn.split('@')[0];
+        // Ensure exact match of the user part (phone number)
+        return mUser === botUser;
+      }
+      return false;
+    });
+
     return {
-      platform: 'whatsapp',      
-      receivedAt: Date.now(),      
+      platform: 'whatsapp',
+      receivedAt: Date.now(),
       messageId: msg.key.id ?? 'unknown',
       chatId: jid,
       senderId,
@@ -499,6 +515,7 @@ export class WhatsAppProvider implements BotProvider {
       messageType: parsed.messageType,
       isGroup,
       mentionedIds: parsed.mentionedIds,
+      isBotMentioned,
       hasMedia: parsed.hasMedia,
       get mediaPath() { return mediaPath; },
       get mimeType() { return mimeType; },

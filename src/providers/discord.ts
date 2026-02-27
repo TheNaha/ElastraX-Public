@@ -121,6 +121,9 @@ export class DiscordProvider implements BotProvider {
     const isGroup = !msg.channel.isDMBased();
     const mentionedIds = Array.from(msg.mentions.users.keys());
     
+    // Check if the bot's own ID is in the mention list
+    const isBotMentioned = !!this.client?.user?.id && msg.mentions.users.has(this.client.user.id);
+
     const hasMedia = msg.attachments.size > 0;
     
     let quoted: MessageContext['quoted'] = undefined;
@@ -232,6 +235,7 @@ export class DiscordProvider implements BotProvider {
       messageType: hasMedia ? 'document' : 'conversation',
       isGroup,
       mentionedIds,
+      isBotMentioned,
       hasMedia,
       mediaPath,
       mimeType,

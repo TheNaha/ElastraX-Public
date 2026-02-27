@@ -28,7 +28,7 @@ describe('MenuTool', () => {
     const menuTool = new MenuTool(() => mockTools);
 
     // ctx without language defaults to English
-    const ctx = { senderName: 'User' } as MessageContext;
+    const ctx = { senderName: 'User', isBotMentioned: false } as MessageContext;
 
     const result = await menuTool.execute({}, ctx);
 
@@ -55,7 +55,7 @@ describe('MenuTool', () => {
     const mockTools = [new MockTool()];
     const menuTool = new MenuTool(() => mockTools);
 
-    const ctx = { senderName: 'User', language: 'id' } as MessageContext;
+    const ctx = { senderName: 'User', language: 'id', isBotMentioned: false } as MessageContext;
 
     const result = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
 
