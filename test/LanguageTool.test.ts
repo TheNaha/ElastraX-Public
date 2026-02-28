@@ -103,8 +103,16 @@ describe('LanguageTool', () => {
   test('should return error message if database update throws', async () => {
     mockWhere = mock(async () => { throw new Error('DB connection failed'); });
     const tool = new LanguageTool();
-    const ctx = createMockCtx();
+    const ctx = createMockCtx({ language: 'en' });
     const result = await tool.execute({ lang_code: 'en' }, ctx);
     expect(result).toContain('❌ Error updating language');
+  });
+
+  test('should return error message in correct language if database update throws', async () => {
+    mockWhere = mock(async () => { throw new Error('DB connection failed'); });
+    const tool = new LanguageTool();
+    const ctx = createMockCtx({ language: 'id' });
+    const result = await tool.execute({ lang_code: 'id' }, ctx);
+    expect(result).toContain('❌ Gagal memperbarui bahasa');
   });
 });
