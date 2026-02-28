@@ -52,7 +52,7 @@ describe('TranslateTool', () => {
     expect(def.type).toBe('function');
     expect(def.function.name).toBe('translate');
     expect(def.function.parameters.properties).toHaveProperty('query');
-    expect(def.function.parameters.required).toBeUndefined(); // Query is optional
+    expect(def.function.parameters.required).toEqual([]); // Query is optional
   });
 
   describe('execute', () => {
