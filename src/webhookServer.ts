@@ -50,6 +50,66 @@ const log = logger.child({ module: 'WebhookServer' });
 
 type SendFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
+type WebhookBody = Record<string, any>;
+
+function asNonEmptyString(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function toStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/[;,]/)
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+function uniqueStable(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function normalizePriority(value: string | null): string | null {
+  if (!value) return null;
+  const normalized = value.toLowerCase();
+  if (normalized === 'critical' || normalized === 'emergency') return 'critical';
+  if (normalized === 'high' || normalized === 'warning' || normalized === 'warn') return 'high';
+  if (normalized === 'low' || normalized === 'debug') return 'low';
+  return 'normal';
+}
+
+function truncateText(text: string): string {
+  const maxLength = Math.max(200, parseInt(process.env.WEBHOOK_MAX_TEXT_LENGTH || '3500', 10) || 3500);
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
+}
+
+export function resolveRoomIds(body: WebhookBody, url: URL): string[] {
+  const directRoomId = asNonEmptyString(body.room_id);
+  const queryRoomId = asNonEmptyString(url.searchParams.get('room_id'));
+  const bodyRoomIds = toStringArray(body.room_ids);
+  const queryRoomIds = toStringArray(url.searchParams.get('room_ids'));
+
+  const allRoomIds = [
+    ...(directRoomId ? [directRoomId] : []),
+    ...(queryRoomId ? [queryRoomId] : []),
+    ...bodyRoomIds,
+    ...queryRoomIds,
+  ];
+
+  return uniqueStable(allRoomIds);
+}
+
 // ─── Service Adapters ──────────────────────────────────────────────────────────
 
 function adaptGitHub(event: string, body: any): string {
@@ -96,7 +156,109 @@ function adaptGrafana(body: any): string {
   }).join('\n\n');
 }
 
-function buildMessage(headers: Record<string, string | undefined>, body: any): string {
+function adaptApprise(body: WebhookBody): string {
+  const title = asNonEmptyString(body.title) || asNonEmptyString(body.subject);
+  const content = asNonEmptyString(body.body)
+    || asNonEmptyString(body.message)
+    || asNonEmptyString(body.text)
+    || asNonEmptyString(body.msg)
+    || '';
+  const notifyType = asNonEmptyString(body.notify_type)
+    || asNonEmptyString(body.type)
+    || 'info';
+  const tags = toStringArray(body.tag ?? body.tags);
+  const source = asNonEmptyString(body.source)
+    || asNonEmptyString(body.service)
+    || asNonEmptyString(body.app)
+    || null;
+  const timestamp = asNonEmptyString(body.timestamp) || asNonEmptyString(body.ts);
+  const link = asNonEmptyString(body.url) || asNonEmptyString(body.link);
+
+  const icon = notifyType.toLowerCase() === 'success'
+    ? '✅'
+    : notifyType.toLowerCase() === 'warning'
+      ? '⚠️'
+      : (notifyType.toLowerCase() === 'failure' || notifyType.toLowerCase() === 'error')
+        ? '❌'
+        : notifyType.toLowerCase() === 'info'
+          ? 'ℹ️'
+          : '🔔';
+
+  const lines = [
+    `${icon} *${title || 'Apprise Notification'}*`,
+    content || '(empty message body)',
+  ];
+
+  if (source) lines.push(`🧩 Source: ${source}`);
+  if (tags.length > 0) lines.push(`🏷️ Tags: ${tags.join(', ')}`);
+  if (timestamp) lines.push(`🕒 Time: ${timestamp}`);
+  if (link) lines.push(`🔗 ${link}`);
+
+  return lines.join('\n');
+}
+
+function buildGenericMessage(body: WebhookBody): string {
+  const title = asNonEmptyString(body.title);
+  const text = asNonEmptyString(body.text)
+    || asNonEmptyString(body.message)
+    || asNonEmptyString(body.body)
+    || asNonEmptyString(body.description)
+    || null;
+  const source = asNonEmptyString(body.source) || asNonEmptyString(body.service);
+  const event = asNonEmptyString(body.event) || asNonEmptyString(body.event_type);
+  const level = normalizePriority(
+    asNonEmptyString(body.priority)
+    || asNonEmptyString(body.severity)
+    || asNonEmptyString(body.level),
+  );
+  const tags = toStringArray(body.tags ?? body.tag);
+  const link = asNonEmptyString(body.url) || asNonEmptyString(body.link);
+
+  const icon = level === 'critical'
+    ? '🚨'
+    : level === 'high'
+      ? '⚠️'
+      : level === 'low'
+        ? '🔎'
+        : '📨';
+
+  if (!title && !text && !source && !event && tags.length === 0 && !link) {
+    return `📨 Webhook payload:\n${JSON.stringify(body, null, 2).slice(0, 500)}`;
+  }
+
+  const lines: string[] = [];
+  if (title) {
+    lines.push(`${icon} *${title}*`);
+  } else if (event) {
+    lines.push(`${icon} *${event}*`);
+  }
+
+  if (text) lines.push(text);
+  if (source) lines.push(`🧩 Source: ${source}`);
+  if (event && title) lines.push(`📌 Event: ${event}`);
+  if (level) lines.push(`📊 Priority: ${level}`);
+  if (tags.length > 0) lines.push(`🏷️ Tags: ${tags.join(', ')}`);
+  if (link) lines.push(`🔗 ${link}`);
+
+  return lines.join('\n');
+}
+
+function isApprisePayload(headers: Record<string, string | undefined>, body: WebhookBody): boolean {
+  if (headers['x-apprise-notification-type']) return true;
+  if (headers['x-apprise-title']) return true;
+
+  if (body.notify_type !== undefined && body.notify_type !== null) return true;
+  if (body.apprise !== undefined && body.apprise !== null) return true;
+
+  const hasSubject = asNonEmptyString(body.subject) !== null;
+  const hasBodyLikeText = asNonEmptyString(body.body)
+    || asNonEmptyString(body.message)
+    || asNonEmptyString(body.text);
+
+  return hasSubject && hasBodyLikeText !== null;
+}
+
+export function buildWebhookMessage(headers: Record<string, string | undefined>, body: WebhookBody): string {
   // GitHub
   const githubEvent = headers['x-github-event'];
   if (githubEvent) return adaptGitHub(githubEvent, body);
@@ -105,12 +267,11 @@ function buildMessage(headers: Record<string, string | undefined>, body: any): s
   const grafanaOrigin = headers['x-grafana-origin'];
   if (grafanaOrigin || body.alerts) return adaptGrafana(body);
 
-  // Canonical / Generic
-  if (typeof body.text === 'string' && body.text) return body.text;
-  if (typeof body.message === 'string' && body.message) return body.message;
+  // Apprise-compatible payload
+  if (isApprisePayload(headers, body)) return adaptApprise(body);
 
-  // Last resort: stringify the body
-  return `📨 Webhook payload:\n${JSON.stringify(body, null, 2).slice(0, 500)}`;
+  // Rich generic payload
+  return buildGenericMessage(body);
 }
 
 function verifyGitHubSignature(payload: string, secret: string, signatureHeader: string | null): boolean {
@@ -252,10 +413,9 @@ export class WebhookServer {
           }
         }
 
-        // Resolve room_id: body > query param
-        const roomId = String(body.room_id || url.searchParams.get('room_id') || '').trim();
-        if (!roomId) {
-          return new Response(JSON.stringify({ error: 'room_id is required' }), {
+        const roomIds = resolveRoomIds(body, url);
+        if (roomIds.length === 0) {
+          return new Response(JSON.stringify({ error: 'room_id (or room_ids) is required' }), {
             status: 400, headers: { 'Content-Type': 'application/json' },
           });
         }
@@ -264,17 +424,48 @@ export class WebhookServer {
         const headers: Record<string, string | undefined> = {};
         req.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
 
-        const text = buildMessage(headers, body);
+        const text = truncateText(buildWebhookMessage(headers, body));
         const platform = body.platform as string | undefined;
 
         try {
-          await this.send(roomId, text, platform);
-          log.info({ roomId, source: headers['x-github-event'] || headers['x-grafana-origin'] || 'generic' }, 'Webhook message delivered');
+          const deliveryResults = await Promise.allSettled(
+            roomIds.map((roomId) => this.send(roomId, text, platform)),
+          );
+
+          const failed: Array<{ roomId: string; error: string }> = [];
+          for (let i = 0; i < deliveryResults.length; i++) {
+            const result = deliveryResults[i];
+            if (result.status === 'rejected') {
+              const errorMessage = result.reason instanceof Error
+                ? result.reason.message
+                : String(result.reason || 'Unknown error');
+              failed.push({ roomId: roomIds[i], error: errorMessage });
+            }
+          }
+
+          const delivered = roomIds.length - failed.length;
+          log.info(
+            {
+              roomIds,
+              delivered,
+              failed: failed.length,
+              source: headers['x-github-event'] || headers['x-grafana-origin'] || (isApprisePayload(headers, body) ? 'apprise' : 'generic'),
+            },
+            'Webhook message delivery completed',
+          );
+
+          if (failed.length > 0) {
+            return new Response(JSON.stringify({ ok: false, delivered, failed }), {
+              status: 207,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+
           return new Response(JSON.stringify({ ok: true }), {
             headers: { 'Content-Type': 'application/json' },
           });
         } catch (err: any) {
-          log.error({ err, roomId }, 'Failed to deliver webhook message');
+          log.error({ err, roomIds }, 'Failed to deliver webhook message');
           return new Response(JSON.stringify({ error: err.message }), {
             status: 500, headers: { 'Content-Type': 'application/json' },
           });

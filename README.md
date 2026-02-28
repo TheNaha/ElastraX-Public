@@ -110,6 +110,41 @@ Content-Type: application/json
 }
 ```
 
+Comprehensive notifier payload (optional fields):
+```json
+{
+   "room_ids": ["120363xxxxxx@g.us", "123456789012345678"],
+   "platform": "whatsapp",
+   "title": "Prod API Alert",
+   "message": "HTTP 5xx ratio > 5% for 10m",
+   "priority": "critical",
+   "event": "alerts.api.error_rate",
+   "source": "Grafana",
+   "tags": ["prod", "api", "pager"],
+   "url": "https://grafana.example.com/alert/123",
+   "secret": "your_shared_secret"
+}
+```
+
+Apprise-compatible payload support:
+```json
+{
+   "room_id": "120363xxxxxx@g.us",
+   "title": "Build Notification",
+   "body": "Pipeline completed successfully",
+   "notify_type": "success",
+   "tags": ["ci", "release"],
+   "source": "GitHub Actions",
+   "secret": "your_shared_secret"
+}
+```
+
+Notes:
+- `room_id` and `room_ids` are both supported (fan-out delivery to multiple rooms).
+- Generic payload keys supported: `title`, `text|message|body`, `priority|severity|level`, `event|event_type`, `source|service`, `tags|tag`, `url|link`.
+- Apprise-like payload keys supported: `title|subject`, `body|message|text`, `notify_type|type`, `tag|tags`, plus optional `source/service`, `timestamp`, and `url/link`.
+- Message length is truncated safely using `WEBHOOK_MAX_TEXT_LENGTH` (default `3500`).
+
 Health endpoint:
 ```http
 GET /health
