@@ -72,7 +72,7 @@ export class AIClient {
     // If no URL is provided, it falls back to empty string or env var
     // Alternatively, for Google AI Studio (Gemini), use: "https://generativelanguage.googleapis.com/v1beta/openai/"
     this.baseUrl = config?.baseUrl || process.env.AI_API_BASE_URL || '';
-    this.apiKey = config?.apiKey || process.env.AI_API_KEY || 'dummy';
+    this.apiKey = config?.apiKey || process.env.AI_API_KEY || '';
     // Model name defaults to the Llama 3 model deployed on Modal. 
     // If using Gemini, set this to e.g., "gemini-2.5-flash"
     this.modelName = config?.modelName || process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
@@ -143,6 +143,10 @@ export class AIClient {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
     }
 
+    if (!this.apiKey) {
+      throw new Error('AI_API_KEY is missing or empty. A valid API key is required.');
+    }
+
     const endpoint = this.resolveEndpoint();
     const payload = this.buildPayload(messages, tools, temperature, maxTokens);
 
@@ -194,6 +198,10 @@ export class AIClient {
   ): AsyncGenerator<ChatCompletionChunk> {
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
+    }
+
+    if (!this.apiKey) {
+      throw new Error('AI_API_KEY is missing or empty. A valid API key is required.');
     }
 
     const endpoint = this.resolveEndpoint();
