@@ -116,10 +116,11 @@ export class MenuTool extends BaseTool {
     // Group tools by category
     const categories: Record<string, BaseTool[]> = {};
     for (const tool of tools) {
-      if (!categories[tool.category]) {
-        categories[tool.category] = [];
+      const normalizedCategory = tool.category.toLowerCase();
+      if (!categories[normalizedCategory]) {
+        categories[normalizedCategory] = [];
       }
-      categories[tool.category].push(tool);
+      categories[normalizedCategory].push(tool);
     }
 
     for (const [cat, catTools] of Object.entries(categories)) {

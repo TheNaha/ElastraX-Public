@@ -75,4 +75,49 @@ describe('MenuTool', () => {
 
     expect(result).toContain('Halo User!');
   });
+  test('should group case-insensitive categories together', async () => {
+    class MockAdminTool extends BaseTool {
+      name = 'admin_tool';
+      description = 'Admin tool';
+      aliases = [];
+      category = 'Admin';
+      permissions = 'admin' as const;
+      get definition(): ToolDefinition {
+        return {
+          type: 'function',
+          function: { name: this.name, description: this.description, parameters: { type: 'object', properties: {}, required: [] } },
+        };
+      }
+      async execute() { return 'admin'; }
+    }
+
+    class MockAdminTool2 extends BaseTool {
+      name = 'admin_tool2';
+      description = 'Another Admin tool';
+      aliases = [];
+      category = 'admin';
+      permissions = 'admin' as const;
+      get definition(): ToolDefinition {
+        return {
+          type: 'function',
+          function: { name: this.name, description: this.description, parameters: { type: 'object', properties: {}, required: [] } },
+        };
+      }
+      async execute() { return 'admin2'; }
+    }
+
+    const mockTools = [new MockAdminTool(), new MockAdminTool2()];
+    const menuTool = new MenuTool(() => mockTools);
+
+    const ctx = { senderName: 'User' } as MessageContext;
+    const result = await menuTool.execute({}, ctx);
+
+    // Should only have one ADMIN group
+    const adminGroups = result.match(/\*╭───「 ADMIN 」\*/g);
+    expect(adminGroups).not.toBeNull();
+    expect(adminGroups!.length).toBe(1);
+
+    expect(result).toContain('/admin_tool');
+    expect(result).toContain('/admin_tool2');
+  });
 });
