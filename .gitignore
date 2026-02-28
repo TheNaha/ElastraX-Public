@@ -1,5 +1,5 @@
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -19,11 +19,24 @@ dist/
 build/
 .cache
 .parcel-cache
+coverage/
+tmp/
 
-# Database and Storage
-data/
+# Runtime database and storage (do not commit local state)
+data/bot.db
+data/bot.db-*
+data/*.db
+data/*.sqlite
 *.sqlite
 *.db
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+
+# Keep Drizzle migrations tracked
+!drizzle/migrations/
+!drizzle/migrations/*.sql
 
 # Env variables
 .env
@@ -44,8 +57,7 @@ data/
 __pycache__/
 *.pyc
 
-#Database Log
-*.log
+# Database log
 db_error.txt
 
 # Git
@@ -53,6 +65,9 @@ db_error.txt
 
 # Ignore previous bots if dragged in
 ElastraBOT-v6/
+
+#Data
+data/
 
 #Misc
 qwenreadme.md
