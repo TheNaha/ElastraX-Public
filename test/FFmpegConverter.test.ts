@@ -62,6 +62,7 @@ describe('FFmpegConverter', () => {
   });
 
   test('should handle ffmpeg failure', async () => {
+    expect.assertions(3);
     const inputBuffer = Buffer.from('input');
 
     // Setup spawn to fail
@@ -87,7 +88,35 @@ describe('FFmpegConverter', () => {
     expect(mockUnlink).toHaveBeenCalled();
   });
 
+  test('should handle unlink input error gracefully on close', async () => {
+    expect.assertions(2);
+    const inputBuffer = Buffer.from('input');
+
+    // Setup spawn to fail
+    mockSpawn.mockImplementationOnce(() => {
+        const child = new EventEmitter() as any;
+        child.stderr = new EventEmitter();
+        setTimeout(() => {
+            child.emit('close', 1);
+        }, 10);
+        return child;
+    });
+
+    // Make unlink fail
+    mockUnlink.mockImplementationOnce(() => Promise.reject(new Error('unlink failed')));
+
+    try {
+        await FFmpegConverter.convert(inputBuffer, [], 'img', 'webp');
+    } catch (e: any) {
+        expect(e.message).toContain('FFmpeg error 1');
+    }
+
+    // We only mocked the first unlink to fail, let's see if the second one works
+    expect(mockUnlink).toHaveBeenCalled();
+  });
+
   test('should handle spawn error', async () => {
+      expect.assertions(1);
       const inputBuffer = Buffer.from('input');
 
       mockSpawn.mockImplementationOnce(() => {
@@ -114,5 +143,26 @@ describe('FFmpegConverter', () => {
     await expect(
       FFmpegConverter.convert(Buffer.from('data'), [], 'mp4', 'out.put')
     ).rejects.toThrow('Invalid extension provided');
+  });
+
+  test('should handle exception during success flow in close event', async () => {
+    const inputBuffer = Buffer.from('input');
+
+    // Simulate an error in reading the file
+    mockReadFile.mockImplementationOnce(async () => {
+        throw new Error('Read failed');
+    });
+
+    // Setup spawn to succeed
+    mockSpawn.mockImplementationOnce(() => {
+        const child = new EventEmitter() as any;
+        child.stderr = new EventEmitter();
+        setTimeout(() => child.emit('close', 0), 10);
+        return child;
+    });
+
+    await expect(
+      FFmpegConverter.convert(inputBuffer, [], 'img', 'webp')
+    ).rejects.toThrow('Read failed');
   });
 });

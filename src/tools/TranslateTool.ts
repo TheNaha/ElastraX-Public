@@ -89,6 +89,7 @@ export class TranslateTool extends BaseTool {
               description: 'The target language (optional) followed by text, OR just the text to translate.',
             },
           },
+          required: [],
         },
       },
     };
