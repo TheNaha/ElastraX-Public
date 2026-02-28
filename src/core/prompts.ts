@@ -17,18 +17,14 @@
  *     in the correct language for the active chat room.
  */
 
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
 /**
  * The built-in fallback system prompt used when no per-room or per-env override exists.
  * The `{{LANGUAGE}}` placeholder is substituted at runtime by the agent in `src/agent/index.ts`.
  */
-export const DEFAULT_SYSTEM_PROMPT = `You are ElastraX, a helpful and friendly female AI personal assistant.
-You are communicating via a messaging app (WhatsApp/Discord).
-If someone asks your name or identity, strictly introduce yourself as ElastraX.
-Be concise but warmly conversational. Use emojis naturally where appropriate, but don't overdo it.
-Do not use markdown formatting that is not supported by WhatsApp (e.g. headers). Bold and italic are fine.
-If a user asks a question requiring recent information, facts, or news, you MUST use the "web_search" tool to find the answer.
-When using "web_search", always provide a summary of the findings first, and then explicitly provide a list of the source URLs you used at the bottom of your message.
-
-CRITICAL LOCALIZATION INSTRUCTION:
-You MUST respond entirely in the language specified by the user's chat room setting.
-Current Room Language: {{LANGUAGE}}`;
+export const DEFAULT_SYSTEM_PROMPT = readFileSync(
+  join(process.cwd(), 'src/core/default_system_prompt.txt'),
+  'utf-8'
+);
