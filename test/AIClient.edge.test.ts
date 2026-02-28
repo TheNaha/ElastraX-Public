@@ -32,13 +32,13 @@ describe('AIClient – edge cases', () => {
     expect((client as any).modelName).toContain('Llama');
   });
 
-  test('should use "dummy" as default apiKey when none provided', () => {
+  test('should use "" as default apiKey when none provided', () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
-    expect((client as any).apiKey).toBe('dummy');
+    expect((client as any).apiKey).toBe('');
   });
 
   test('chatCompletion should not add tools to payload when tools array is empty', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     let capturedBody: any;
     global.fetch = mock(async (_url: any, init: any) => {
@@ -55,7 +55,7 @@ describe('AIClient – edge cases', () => {
   });
 
   test('chatCompletion should include tools in payload when tools are provided', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     const fakeTool = {
       type: 'function' as const,
@@ -81,7 +81,7 @@ describe('AIClient – edge cases', () => {
   });
 
   test('chatCompletion should not duplicate /chat/completions suffix when already in baseUrl', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1/chat/completions' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1/chat/completions', apiKey: 'test' });
 
     let capturedUrl = '';
     global.fetch = mock(async (url: any) => {
@@ -97,7 +97,7 @@ describe('AIClient – edge cases', () => {
   });
 
   test('chatCompletion should strip trailing slash before appending path', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1/' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1/', apiKey: 'test' });
 
     let capturedUrl = '';
     global.fetch = mock(async (url: any) => {
@@ -113,7 +113,7 @@ describe('AIClient – edge cases', () => {
   });
 
   test('chatCompletion should throw when response is not ok', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     global.fetch = mock(async () => {
       return new Response('Unauthorized', { status: 401 });
@@ -125,7 +125,7 @@ describe('AIClient – edge cases', () => {
   });
 
   test('chatCompletion should return fallback message when choices is empty', async () => {
-    const client = new AIClient({ baseUrl: 'https://api.example.com/v1' });
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     global.fetch = mock(async () => {
       return new Response(JSON.stringify({ choices: [], usage: {} }), { status: 200 });

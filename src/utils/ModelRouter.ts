@@ -79,7 +79,7 @@ function loadProviders(): ResolvedProvider[] {
     const cfg: ProviderConfig = {
       name: 'default',
       baseUrl: process.env.AI_API_BASE_URL || legacyCfBase,
-      apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || 'dummy',
+      apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || '',
       modelName: process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct',
       tier: parseTier(process.env.AI_TIER),
     };
@@ -95,7 +95,7 @@ function loadProviders(): ResolvedProvider[] {
     const cfg: ProviderConfig = {
       name,
       baseUrl: process.env[`AI_${upper}_BASE_URL`] || cfBase,
-      apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || 'dummy',
+      apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || '',
       modelName: process.env[`AI_${upper}_MODEL`] || 'gpt-4o-mini',
       tier: parseTier(process.env[`AI_${upper}_TIER`]),
     };

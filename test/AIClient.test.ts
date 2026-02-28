@@ -78,7 +78,7 @@ describe("AIClient", () => {
 
   test("chatCompletion should make a fetch request if configured", async () => {
     const originalFetch = global.fetch;
-    const client = new AIClient({ baseUrl: "https://api.example.com/v1" });
+    const client = new AIClient({ baseUrl: "https://api.example.com/v1", apiKey: "test" });
 
     const mockFetch = mock(async () => {
       return new Response(JSON.stringify({
@@ -105,7 +105,7 @@ describe("AIClient", () => {
 
   test("chatCompletion should throw error on non-OK response", async () => {
     const originalFetch = global.fetch;
-    const client = new AIClient({ baseUrl: "https://api.example.com/v1" });
+    const client = new AIClient({ baseUrl: "https://api.example.com/v1", apiKey: "test" });
 
     const mockFetch = mock(async () => {
       return new Response("Internal Server Error", { status: 500 });
