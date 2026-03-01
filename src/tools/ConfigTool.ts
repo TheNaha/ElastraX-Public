@@ -39,7 +39,7 @@ export class ConfigTool extends BaseTool {
   readonly name = 'config';
   readonly description = 'Manage dynamic bot configurations for this chat room.';
   readonly aliases = ['conf', 'settings'];
-  readonly category = 'Admin';
+  readonly category = 'admin';
   readonly permissions: 'admin' | 'owner' | 'user' = 'admin';
   readonly groupOnly = false;
 
