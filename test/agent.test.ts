@@ -6,7 +6,7 @@ import { MessageContext } from '../src/core/MessageContext';
 let mockRoomRows: any[] = [];
 let mockHistoryRows: any[] = [];
 const insertedValues: any[] = [];
-let mockUpdateSets: any[] = [];
+const mockUpdateSets: any[] = [];
 let shouldThrowOnHistoryFetch = false;
 let shouldFileExist = false;
 

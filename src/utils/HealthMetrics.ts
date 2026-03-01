@@ -21,6 +21,12 @@
  * ```
  */
 
+interface ToolStats {
+  invocations: number;
+  errors: number;
+  duration: LatencyWindow;
+}
+
 interface LatencyWindow {
   values: number[];
   maxSize: number;
@@ -53,7 +59,13 @@ export interface MetricsSnapshot {
     heapUsed: number;
   };
   providers: Record<string, { success: number; failures: number }>;
-  tools: Record<string, number>;
+  tools: Record<string, {
+    invocations: number;
+    errors: number;
+    durationP50: number;
+    durationP95: number;
+    durationP99: number;
+  }>;
   queue: {
     totalRooms: number;
     totalPending: number;
@@ -74,7 +86,7 @@ class HealthMetricsCollector {
   private messageDuration: LatencyWindow = { values: [], maxSize: 1000 };
 
   private providerStats = new Map<string, { success: number; failures: number }>();
-  private toolInvocations = new Map<string, number>();
+  private toolStats = new Map<string, ToolStats>();
 
   private queueStatsGetter: (() => { totalRooms: number; totalPending: number; totalRunning: number }) | null = null;
 
@@ -129,8 +141,27 @@ class HealthMetricsCollector {
     else stats.failures++;
   }
 
+  private getToolStats(toolName: string): ToolStats {
+    if (!this.toolStats.has(toolName)) {
+      this.toolStats.set(toolName, { invocations: 0, errors: 0, duration: { values: [], maxSize: 100 } });
+    }
+    return this.toolStats.get(toolName)!;
+  }
+
   recordToolInvocation(toolName: string): void {
-    this.toolInvocations.set(toolName, (this.toolInvocations.get(toolName) || 0) + 1);
+    this.getToolStats(toolName).invocations++;
+  }
+
+  recordToolError(toolName: string): void {
+    this.getToolStats(toolName).errors++;
+  }
+
+  recordToolDuration(toolName: string, durationMs: number): void {
+    const stats = this.getToolStats(toolName);
+    if (stats.duration.values.length >= stats.duration.maxSize) {
+      stats.duration.values.shift();
+    }
+    stats.duration.values.push(durationMs);
   }
 
   private percentile(sorted: number[], p: number): number {
@@ -152,9 +183,16 @@ class HealthMetricsCollector {
       providers[name] = { ...stats };
     }
 
-    const tools: Record<string, number> = {};
-    for (const [name, count] of this.toolInvocations) {
-      tools[name] = count;
+    const tools: Record<string, { invocations: number; errors: number; durationP50: number; durationP95: number; durationP99: number }> = {};
+    for (const [name, stats] of this.toolStats) {
+      const sortedDuration = [...stats.duration.values].sort((a, b) => a - b);
+      tools[name] = {
+        invocations: stats.invocations,
+        errors: stats.errors,
+        durationP50: this.percentile(sortedDuration, 50),
+        durationP95: this.percentile(sortedDuration, 95),
+        durationP99: this.percentile(sortedDuration, 99),
+      };
     }
 
     const tokens: Record<string, { prompt: number; completion: number }> = {};
@@ -247,8 +285,22 @@ class HealthMetricsCollector {
 
     lines.push('# HELP elastrax_tool_invocations_total Tool invocations');
     lines.push('# TYPE elastrax_tool_invocations_total counter');
-    for (const [name, count] of Object.entries(m.tools)) {
-      lines.push(`elastrax_tool_invocations_total{tool="${name}"} ${count}`);
+    for (const [name, stats] of Object.entries(m.tools)) {
+      lines.push(`elastrax_tool_invocations_total{tool="${name}"} ${stats.invocations}`);
+    }
+
+    lines.push('# HELP elastrax_tool_errors_total Tool execution errors');
+    lines.push('# TYPE elastrax_tool_errors_total counter');
+    for (const [name, stats] of Object.entries(m.tools)) {
+      lines.push(`elastrax_tool_errors_total{tool="${name}"} ${stats.errors}`);
+    }
+
+    lines.push('# HELP elastrax_tool_duration_ms Tool execution duration percentiles');
+    lines.push('# TYPE elastrax_tool_duration_ms gauge');
+    for (const [name, stats] of Object.entries(m.tools)) {
+      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.5"} ${stats.durationP50}`);
+      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.95"} ${stats.durationP95}`);
+      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.99"} ${stats.durationP99}`);
     }
 
     lines.push('# HELP elastrax_tokens_total Token usage by model and type');

@@ -63,7 +63,7 @@ describe('HealthMetrics', () => {
   test('recordToolInvocation increments tool counter', () => {
     healthMetrics.recordToolInvocation('test_tool');
     const m = healthMetrics.getMetrics();
-    expect(m.tools['test_tool']).toBeGreaterThanOrEqual(1);
+    expect(m.tools['test_tool'].invocations).toBeGreaterThanOrEqual(1);
   });
 
   test('percentile calculation with multiple latencies', () => {
