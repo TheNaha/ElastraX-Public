@@ -259,25 +259,15 @@ export class ModelRouter {
 
         const stream = provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
 
-        let finalUsage = null;
         for await (const chunk of stream) {
-          if (chunk.usage) {
-            finalUsage = chunk.usage;
-          }
           yield chunk;
         }
 
         const latency = Date.now() - start;
         healthMetrics.recordLLMRequest(provider.name, latency, true);
 
-        // Final usage metrics might be available in the last chunk
-        if (finalUsage) {
-          healthMetrics.recordTokenUsage(
-            provider.model,
-            finalUsage.prompt_tokens ?? 0,
-            finalUsage.completion_tokens ?? 0
-          );
-        }
+        // Note: token usage metrics are not currently available for streaming responses.
+        // When streaming usage is supported by the client/types, it can be recorded here.
 
         return; // Successfully streamed from this provider
       } catch (err: any) {
