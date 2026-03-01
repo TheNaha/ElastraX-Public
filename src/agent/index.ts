@@ -665,9 +665,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
                 await ctx.react?.('🔍');
-                const rawResult = await tool.execute(args, ctx);
-                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                  ? rawResult.text : rawResult;
+                const startMs = Date.now();
+                try {
+                  const rawResult = await tool.execute(args, ctx);
+                  toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                    ? rawResult.text : rawResult;
+                  healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
+                } catch (err: any) {
+                  healthMetrics.recordToolError(toolName);
+                  healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
+                  throw err;
+                }
               } else {
                 log.error({ toolName, chatId }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
@@ -732,9 +740,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
-              const rawResult = await tool.execute(args, ctx);
-              toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                ? rawResult.text : rawResult;
+              const startMs = Date.now();
+              try {
+                const rawResult = await tool.execute(args, ctx);
+                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                  ? rawResult.text : rawResult;
+                healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
+              } catch (err: any) {
+                healthMetrics.recordToolError(toolName);
+                healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
+                throw err;
+              }
             } else {
               log.error({ toolName, chatId }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;
