@@ -21,8 +21,6 @@
  * ```
  */
 
-import { logger } from './logger';
-
 interface LatencyWindow {
   values: number[];
   maxSize: number;
@@ -43,6 +41,17 @@ export interface MetricsSnapshot {
     latencyP99: number;
     avgLatency: number;
   };
+  tokens: Record<string, { prompt: number; completion: number }>;
+  messageDuration: {
+    latencyP50: number;
+    latencyP95: number;
+    latencyP99: number;
+  };
+  memory: {
+    rss: number;
+    heapTotal: number;
+    heapUsed: number;
+  };
   providers: Record<string, { success: number; failures: number }>;
   tools: Record<string, number>;
   queue: {
@@ -60,6 +69,9 @@ class HealthMetricsCollector {
   private llmRequests = 0;
   private llmFailures = 0;
   private llmLatency: LatencyWindow = { values: [], maxSize: 1000 };
+
+  private tokenStats = new Map<string, { prompt: number; completion: number }>();
+  private messageDuration: LatencyWindow = { values: [], maxSize: 1000 };
 
   private providerStats = new Map<string, { success: number; failures: number }>();
   private toolInvocations = new Map<string, number>();
@@ -81,6 +93,22 @@ class HealthMetricsCollector {
 
   recordMessageError(): void {
     this.messageErrors++;
+  }
+
+  recordMessageDuration(durationMs: number): void {
+    if (this.messageDuration.values.length >= this.messageDuration.maxSize) {
+      this.messageDuration.values.shift();
+    }
+    this.messageDuration.values.push(durationMs);
+  }
+
+  recordTokenUsage(model: string, promptTokens: number, completionTokens: number): void {
+    if (!this.tokenStats.has(model)) {
+      this.tokenStats.set(model, { prompt: 0, completion: 0 });
+    }
+    const stats = this.tokenStats.get(model)!;
+    stats.prompt += promptTokens;
+    stats.completion += completionTokens;
   }
 
   /** Record an LLM request completion with latency in milliseconds. */
@@ -112,10 +140,12 @@ class HealthMetricsCollector {
   }
 
   getMetrics(): MetricsSnapshot {
-    const sorted = [...this.llmLatency.values].sort((a, b) => a - b);
-    const avg = sorted.length > 0
-      ? Math.round(sorted.reduce((a, b) => a + b, 0) / sorted.length)
+    const sortedLLM = [...this.llmLatency.values].sort((a, b) => a - b);
+    const avgLLM = sortedLLM.length > 0
+      ? Math.round(sortedLLM.reduce((a, b) => a + b, 0) / sortedLLM.length)
       : 0;
+
+    const sortedMsg = [...this.messageDuration.values].sort((a, b) => a - b);
 
     const providers: Record<string, { success: number; failures: number }> = {};
     for (const [name, stats] of this.providerStats) {
@@ -127,7 +157,13 @@ class HealthMetricsCollector {
       tools[name] = count;
     }
 
+    const tokens: Record<string, { prompt: number; completion: number }> = {};
+    for (const [name, stats] of this.tokenStats) {
+      tokens[name] = { ...stats };
+    }
+
     const queueStats = this.queueStatsGetter?.() ?? { totalRooms: 0, totalPending: 0, totalRunning: 0 };
+    const memUsage = process.memoryUsage();
 
     return {
       uptime: process.uptime(),
@@ -139,10 +175,21 @@ class HealthMetricsCollector {
       llm: {
         requests: this.llmRequests,
         failures: this.llmFailures,
-        latencyP50: this.percentile(sorted, 50),
-        latencyP95: this.percentile(sorted, 95),
-        latencyP99: this.percentile(sorted, 99),
-        avgLatency: avg,
+        latencyP50: this.percentile(sortedLLM, 50),
+        latencyP95: this.percentile(sortedLLM, 95),
+        latencyP99: this.percentile(sortedLLM, 99),
+        avgLatency: avgLLM,
+      },
+      tokens,
+      messageDuration: {
+        latencyP50: this.percentile(sortedMsg, 50),
+        latencyP95: this.percentile(sortedMsg, 95),
+        latencyP99: this.percentile(sortedMsg, 99),
+      },
+      memory: {
+        rss: memUsage.rss,
+        heapTotal: memUsage.heapTotal,
+        heapUsed: memUsage.heapUsed,
       },
       providers,
       tools,
@@ -203,6 +250,25 @@ class HealthMetricsCollector {
     for (const [name, count] of Object.entries(m.tools)) {
       lines.push(`elastrax_tool_invocations_total{tool="${name}"} ${count}`);
     }
+
+    lines.push('# HELP elastrax_tokens_total Token usage by model and type');
+    lines.push('# TYPE elastrax_tokens_total counter');
+    for (const [model, stats] of Object.entries(m.tokens)) {
+      lines.push(`elastrax_tokens_total{model="${model}",type="prompt"} ${stats.prompt}`);
+      lines.push(`elastrax_tokens_total{model="${model}",type="completion"} ${stats.completion}`);
+    }
+
+    lines.push('# HELP elastrax_message_duration_ms Message processing duration percentiles');
+    lines.push('# TYPE elastrax_message_duration_ms gauge');
+    lines.push(`elastrax_message_duration_ms{quantile="0.5"} ${m.messageDuration.latencyP50}`);
+    lines.push(`elastrax_message_duration_ms{quantile="0.95"} ${m.messageDuration.latencyP95}`);
+    lines.push(`elastrax_message_duration_ms{quantile="0.99"} ${m.messageDuration.latencyP99}`);
+
+    lines.push('# HELP elastrax_process_memory_bytes Process memory usage');
+    lines.push('# TYPE elastrax_process_memory_bytes gauge');
+    lines.push(`elastrax_process_memory_bytes{type="rss"} ${m.memory.rss}`);
+    lines.push(`elastrax_process_memory_bytes{type="heapTotal"} ${m.memory.heapTotal}`);
+    lines.push(`elastrax_process_memory_bytes{type="heapUsed"} ${m.memory.heapUsed}`);
 
     return lines.join('\n') + '\n';
   }

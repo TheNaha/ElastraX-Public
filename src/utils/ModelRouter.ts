@@ -188,6 +188,13 @@ export class ModelRouter {
         const latency = Date.now() - start;
 
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+        if (result?.usage) {
+          healthMetrics.recordTokenUsage(
+            provider.model,
+            result.usage.prompt_tokens ?? 0,
+            result.usage.completion_tokens ?? 0
+          );
+        }
 
         if (verbose) {
           logger.info({
@@ -250,10 +257,18 @@ export class ModelRouter {
         const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
         const start = Date.now();
 
-        yield* provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+        const stream = provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+
+        for await (const chunk of stream) {
+          yield chunk;
+        }
 
         const latency = Date.now() - start;
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+
+        // Note: token usage metrics are not currently available for streaming responses.
+        // When streaming usage is supported by the client/types, it can be recorded here.
+
         return; // Successfully streamed from this provider
       } catch (err: any) {
         lastError = err;
