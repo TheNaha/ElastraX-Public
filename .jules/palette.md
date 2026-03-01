@@ -1,0 +1,3 @@
+## 2024-05-18 - [Consistent Tool Category Casing]
+**Learning:** In the CLI/bot menu UX, inconsistent casing in configuration properties (e.g., `'Admin'` vs `'admin'`) can lead to duplicated categories being displayed if the rendering logic doesn't explicitly normalize strings. We noticed `ConfigTool` used uppercase 'A' while other admin tools used lowercase, potentially causing visual clutter in the `/menu` output before the fix was added in the MenuTool itself.
+**Action:** Enforce consistent lowercase string literals for internal category keys across all tool definitions. Only capitalize the category string at the presentation layer when formatting the final output.
