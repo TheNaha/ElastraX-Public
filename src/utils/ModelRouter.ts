@@ -188,6 +188,13 @@ export class ModelRouter {
         const latency = Date.now() - start;
 
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+        if (result?.usage) {
+          healthMetrics.recordTokenUsage(
+            provider.model,
+            result.usage.prompt_tokens ?? 0,
+            result.usage.completion_tokens ?? 0
+          );
+        }
 
         if (verbose) {
           logger.info({
@@ -250,10 +257,28 @@ export class ModelRouter {
         const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
         const start = Date.now();
 
-        yield* provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+        const stream = provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+
+        let finalUsage = null;
+        for await (const chunk of stream) {
+          if (chunk.usage) {
+            finalUsage = chunk.usage;
+          }
+          yield chunk;
+        }
 
         const latency = Date.now() - start;
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+
+        // Final usage metrics might be available in the last chunk
+        if (finalUsage) {
+          healthMetrics.recordTokenUsage(
+            provider.model,
+            finalUsage.prompt_tokens ?? 0,
+            finalUsage.completion_tokens ?? 0
+          );
+        }
+
         return; // Successfully streamed from this provider
       } catch (err: any) {
         lastError = err;

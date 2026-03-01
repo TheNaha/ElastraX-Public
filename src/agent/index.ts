@@ -148,6 +148,7 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
  * @param ctx - Normalised message context provided by the active BotProvider.
  */
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
+  const startMs = Date.now();
   const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
   const verboseAiLogs = process.env.AI_VERBOSE_LOGS === 'true';
 
@@ -656,7 +657,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             const toolPromises = toolCalls.map(async (tc: ToolCall) => {
               const toolName = tc.function.name;
               let args: Record<string, unknown> = {};
-              try { args = JSON.parse(tc.function.arguments); } catch { }
+              try { args = JSON.parse(tc.function.arguments); } catch { /* ignore parse error */ }
 
               const tool = getToolByName(toolName);
               let toolResultStr = '';
@@ -806,6 +807,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     await ctx.react?.('✅'); // show success
     healthMetrics.recordMessageProcessed();
 
+    const duration_ms = Date.now() - startMs;
+    healthMetrics.recordMessageDuration(duration_ms);
+
     const usedFallbackError = finalAiResponseText === internalErrorText;
     const logPayload = {
       chatId,
@@ -815,6 +819,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       replyLength: finalAiResponseText.length,
       hasMedia: ctx.hasMedia,
       quotedMedia: !!ctx.quoted?.hasMedia,
+      duration_ms,
+      roles: await ctx.resolveRoles(),
+      usedTokens: -1, // DEPRECATED - now tracked in health metrics natively
     };
     if (usedFallbackError) {
       log.warn(logPayload, 'Successfully responded');
