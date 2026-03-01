@@ -820,7 +820,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       hasMedia: ctx.hasMedia,
       quotedMedia: !!ctx.quoted?.hasMedia,
       duration_ms,
-      roles: await ctx.resolveRoles(),
+      roles: userRoles,
       usedTokens: -1, // DEPRECATED - now tracked in health metrics natively
     };
     if (usedFallbackError) {
