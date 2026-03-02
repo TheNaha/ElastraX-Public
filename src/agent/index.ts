@@ -489,7 +489,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }
     };
 
-    for (const m of history) {
+    // ⚡ Bolt: Use Promise.all to prevent sequential I/O bottlenecks when processing history with media
+    const historyMessages = await Promise.all(history.map(async (m) => {
       const isCurrentMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
       const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
       const textContent = textPrefix + m.content;
@@ -514,11 +515,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         finalContent = [...quotedArr, ...currentArr] as AIChatMessage['content'];
       }
 
-      messagesForAI.push({
+      return {
         role: m.role as 'user' | 'assistant',
         content: finalContent,
-      });
-    }
+      };
+    }));
+
+    messagesForAI.push(...historyMessages);
 
     // V7.13: Summarize overflow history only when summarization is enabled for this room.
     // When disabled, the DB query already enforced the limit so no further trimming is needed.
