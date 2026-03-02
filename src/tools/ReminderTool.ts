@@ -146,7 +146,8 @@ export class ReminderTool extends BaseTool {
   }
 
   async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
-    let { action, time, message, number, recurrence } = args;
+    let { action, time, message } = args;
+    const { number, recurrence } = args;
     const lang = ctx.language ?? 'en';
 
     log.debug({ action, chatId: ctx.chatId, senderId: ctx.senderId }, 'Reminder action requested');
