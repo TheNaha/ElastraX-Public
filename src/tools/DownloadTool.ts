@@ -175,7 +175,7 @@ export class DownloadTool extends BaseTool {
     }
 
     // Security: Strict format validation
-    if (!MIME_MAP[format]) {
+    if (!Object.prototype.hasOwnProperty.call(MIME_MAP, format)) {
       return t(lang, 'download.error', { msg: 'Invalid format requested.' });
     }
 
