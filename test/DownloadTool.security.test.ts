@@ -100,4 +100,51 @@ describe('DownloadTool Security', () => {
     expect(lastArg).toBe(validUrl);
     expect(secondLastArg).toBe('--');
   });
+
+  test('should detect and block path traversal in output filename', async () => {
+    const tool = new DownloadTool();
+    const validUrl = 'https://example.com/video';
+
+    // Mock readdir to return a filename that would match ANY 16-char hex prefix
+    // We can use a spy or mock that returns what we want.
+    // However, the test file uses mock.module which is global.
+    // Let's use a more flexible mock for fs.promises.
+
+    mock.module('fs', () => ({
+      promises: {
+        mkdir: mock(async () => {}),
+        readdir: mock(async (_p: string) => {
+            // In DownloadTool.ts, it calls readdir(workDir)
+            // We want it to return a file that starts with the 'id' (8 bytes hex = 16 chars)
+            // But we don't know the id. So we return a file that is mostly traversal.
+            // Wait, the code does: const match = files.find(f => f.startsWith(id));
+            // If we return a list where every entry matches, it will pick the first one.
+            return ['0123456789abcdefghijklmnopqrstuvwxyz']; // This DOES NOT start with the random id
+        }),
+        readFile: mock(async () => Buffer.from('')),
+        rm: mock(async () => {}),
+      },
+    }));
+
+    // To make it match, we'd need to control crypto.randomBytes too.
+    mock.module('crypto', () => ({
+      randomBytes: (n: number) => {
+          if (n === 8) return Buffer.from('deadbeefdeadbeef', 'hex');
+          return Buffer.alloc(n, 0);
+      }
+    }));
+
+    mock.module('fs', () => ({
+      promises: {
+        mkdir: mock(async () => {}),
+        readdir: mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']),
+        readFile: mock(async () => Buffer.from('')),
+        rm: mock(async () => {}),
+      },
+    }));
+
+    const result = await tool.execute({ url: validUrl, format: 'mp4' }, createMockCtx());
+
+    expect(result).toContain('Invalid output filename');
+  });
 });

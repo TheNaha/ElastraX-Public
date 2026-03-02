@@ -25,7 +25,6 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { existsSync } from 'fs';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -53,53 +52,75 @@ function isAudioFormat(fmt: string): fmt is AudioFormat {
 async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Buffer> {
   const ytdlpBin = process.env.YTDLP_PATH || 'yt-dlp';
 
-  const tmpDir = path.join(os.tmpdir(), 'elastrax-dl');
-  await fs.mkdir(tmpDir, { recursive: true });
-  const id = crypto.randomBytes(8).toString('hex');
-  const outTemplate = path.join(tmpDir, `${id}.%(ext)s`);
+  // Security: Use a unique subdirectory for each job to prevent interference
+  // and simplify cleanup of potential multiple output files.
+  const baseTmpDir = path.join(os.tmpdir(), 'elastrax-dl');
+  const jobId = crypto.randomBytes(16).toString('hex');
+  const workDir = path.join(baseTmpDir, jobId);
 
-  // Security: Place URL last after '--' to prevent argument injection
-  const args: string[] = [
-    '-o', outTemplate,
-    '--no-playlist',
-    '--max-filesize', `${(parseInt(process.env.DOWNLOAD_MAX_MB || '50', 10)) + 5}m`,
-  ];
+  await fs.mkdir(workDir, { recursive: true });
 
-  if (isAudioFormat(format)) {
-    args.push('-x', '--audio-format', format, '--audio-quality', '0');
-  } else {
-    args.push(
-      '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-      '--recode-video', format,
-    );
-  }
+  try {
+    const id = crypto.randomBytes(8).toString('hex');
+    const outTemplate = path.join(workDir, `${id}.%(ext)s`);
 
-  // Append URL last, protected by --
-  args.push('--', url);
+    // Security: Place URL last after '--' to prevent argument injection
+    const args: string[] = [
+      '-o', outTemplate,
+      '--no-playlist',
+      '--max-filesize', `${(parseInt(process.env.DOWNLOAD_MAX_MB || '50', 10)) + 5}m`,
+    ];
 
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(ytdlpBin, args);
-    let stderr = '';
-    child.stderr.on('data', d => { stderr += d.toString(); });
-    child.on('error', err => reject(new Error(`yt-dlp not found. Install it or set YTDLP_PATH. Details: ${err.message}`)));
-    child.on('close', code => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`yt-dlp exited with code ${code}: ${stderr.slice(-300)}`));
-      }
+    if (isAudioFormat(format)) {
+      args.push('-x', '--audio-format', format, '--audio-quality', '0');
+    } else {
+      args.push(
+        '-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        '--recode-video', format,
+      );
+    }
+
+    // Append URL last, protected by --
+    args.push('--', url);
+
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn(ytdlpBin, args);
+      let stderr = '';
+      child.stderr.on('data', d => { stderr += d.toString(); });
+      child.on('error', err => reject(new Error(`yt-dlp not found. Install it or set YTDLP_PATH. Details: ${err.message}`)));
+      child.on('close', code => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}: ${stderr.slice(-300)}`));
+        }
+      });
     });
-  });
 
-  // Find the output file (extension may differ from requested format)
-  const files = await fs.readdir(tmpDir);
-  const match = files.find(f => f.startsWith(id));
-  if (!match) throw new Error('yt-dlp produced no output file.');
+    // Find the output file (extension may differ from requested format)
+    const files = await fs.readdir(workDir);
+    const match = files.find(f => f.startsWith(id));
+    if (!match) throw new Error('yt-dlp produced no output file.');
 
-  const outPath = path.join(tmpDir, match);
-  const buffer = await fs.readFile(outPath);
-  await fs.unlink(outPath).catch(() => {});
-  return buffer;
+    // Security: Validate the filename to prevent path traversal
+    // Only allow alphanumeric, dots, hyphens, and underscores.
+    if (!/^[a-zA-Z0-9._-]+$/.test(match)) {
+      throw new Error('Invalid output filename produced by downloader.');
+    }
+
+    const outPath = path.join(workDir, match);
+
+    // Security: Double-check that the resolved path is still within workDir
+    const resolvedPath = path.resolve(outPath);
+    if (!resolvedPath.startsWith(path.resolve(workDir))) {
+      throw new Error('Path traversal detected in downloader output.');
+    }
+
+    return await fs.readFile(outPath);
+  } finally {
+    // Security: Cleanup the entire unique directory
+    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 export class DownloadTool extends BaseTool {
