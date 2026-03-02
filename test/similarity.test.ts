@@ -28,6 +28,8 @@ describe('Levenshtein Similarity', () => {
   test('should return length of non-empty string when comparing with empty string', () => {
     expect(levenshtein('hello', '')).toBe(5);
     expect(levenshtein('', 'world')).toBe(5);
+    expect(levenshtein('', 'abc')).toBe(3);
+    expect(levenshtein('abc', '')).toBe(3);
   });
 
   test('should handle case sensitivity correctly (Levenshtein is case-sensitive)', () => {
