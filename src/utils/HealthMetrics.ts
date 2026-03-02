@@ -73,7 +73,7 @@ export interface MetricsSnapshot {
   };
 }
 
-class HealthMetricsCollector {
+export class HealthMetricsCollector {
   private messagesReceived = 0;
   private messagesProcessed = 0;
   private messageErrors = 0;
