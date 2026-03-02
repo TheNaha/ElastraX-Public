@@ -3,10 +3,12 @@ import { describe, test, expect, mock } from 'bun:test';
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { healthMetrics } from '../src/utils/HealthMetrics';
+import { HealthMetricsCollector } from '../src/utils/HealthMetrics';
 import type { MetricsSnapshot } from '../src/utils/HealthMetrics';
 
 describe('HealthMetrics', () => {
+  const healthMetrics = new HealthMetricsCollector();
+
   test('getMetrics returns proper MetricsSnapshot structure', () => {
     const m: MetricsSnapshot = healthMetrics.getMetrics();
     expect(m).toHaveProperty('uptime');
