@@ -29,6 +29,8 @@ export const chatRooms = sqliteTable('chat_rooms', {
   maxTokens: integer('max_tokens'),
   allowTools: integer('allow_tools', { mode: 'boolean' }),
   autoReplyAll: integer('auto_reply_all', { mode: 'boolean' }),
+  /** V7.13: Per-room summarization toggle. null = inherit CONTEXT_SUMMARIZE env (default: true). */
+  summarize: integer('summarize', { mode: 'boolean' }),
   
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });

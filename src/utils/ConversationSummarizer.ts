@@ -40,9 +40,10 @@ export async function summarizeHistory(
   contextLimit: number,
   callLLM: (messages: AIChatMessage[]) => Promise<string>,
 ): Promise<SummaryResult | null> {
-  // Only summarize if we have substantially more history than the active window
-  // V7.12: Increased multiplier from 1.5 to 10 to trigger summarization much less frequently
-  const OVERFLOW_THRESHOLD = Math.floor(contextLimit * 10);
+  // Only summarize if we have substantially more history than the active window.
+  // V7.13: Reduced multiplier from 10 to 2 so summarization fires before histories grow
+  // too large to fit in providers' context windows (old value of 10 was effectively never).
+  const OVERFLOW_THRESHOLD = Math.floor(contextLimit * 2);
   if (fullHistory.length <= OVERFLOW_THRESHOLD) {
     return null;
   }

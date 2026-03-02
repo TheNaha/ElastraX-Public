@@ -15,10 +15,10 @@ function makeMessages(count: number): AIChatMessage[] {
 }
 
 describe('ConversationSummarizer', () => {
-  test('returns null when history <= contextLimit * 10', async () => {
+  test('returns null when history <= contextLimit * 2', async () => {
     const contextLimit = 10;
-    // With multiplier 10, threshold is 100
-    const history = makeMessages(100);
+    // With multiplier 2, threshold is 20
+    const history = makeMessages(20);
     const callLLM = mock(async () => 'summary');
     const result = await summarizeHistory(history, contextLimit, callLLM);
     expect(result).toBeNull();
@@ -27,17 +27,17 @@ describe('ConversationSummarizer', () => {
 
   test('returns null when history is exactly at threshold', async () => {
     const contextLimit = 10;
-    const threshold = Math.floor(contextLimit * 10);
+    const threshold = Math.floor(contextLimit * 2);
     const history = makeMessages(threshold);
     const callLLM = mock(async () => 'summary');
     const result = await summarizeHistory(history, contextLimit, callLLM);
     expect(result).toBeNull();
   });
 
-  test('returns SummaryResult when history > contextLimit * 10', async () => {
+  test('returns SummaryResult when history > contextLimit * 2', async () => {
     const contextLimit = 10;
-    // Threshold is 100, so 101 should trigger summarization
-    const history = makeMessages(101);
+    // Threshold is 20, so 21 should trigger summarization
+    const history = makeMessages(21);
     const callLLM = mock(async () => 'This is the summary.');
     const result = await summarizeHistory(history, contextLimit, callLLM);
     expect(result).not.toBeNull();

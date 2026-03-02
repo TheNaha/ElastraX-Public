@@ -20,6 +20,7 @@
  *  | temperature    | float   | LLM sampling temperature (0.0–2.0)                        |
  *  | allowTools     | boolean | Enable/disable LLM function-calling for this room         |
  *  | autoReplyAll   | boolean | Reply to every group message without requiring a mention  |
+ *  | summarize      | boolean | Compress old chat history into a rolling summary (V7.13)  |
  *
  * Permissions required: `admin`
  * Slash command aliases: `/conf`, `/settings`
@@ -53,7 +54,7 @@ export class ConfigTool extends BaseTool {
           type: 'object' as const,
           properties: {
             action: { type: 'string', description: 'get, set, or reset', enum: ['get', 'set', 'reset'] },
-            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll'] },
+            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] },
             value: { type: 'string', description: 'The new value' }
           },
           required: ['action']
@@ -78,6 +79,7 @@ export class ConfigTool extends BaseTool {
       `  *Max Tokens*: ${room.maxTokens ?? `[DEFAULT: ${resolved.maxTokens}]`}`,
       `  *Allow Tools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
       `  *Auto Reply All*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
+      `  *Summarize History*: ${room.summarize ?? `[DEFAULT: ${resolved.summarize}]`}`,
     ].join('\n');
   }
 
@@ -89,7 +91,7 @@ export class ConfigTool extends BaseTool {
     const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
     if (!room) return 'Error: Chat room not found in database.';
 
-    const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll'];
+    const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'];
     const resolved = ConfigService.getResolvedConfig(room);
 
     if (action === 'get') {
@@ -139,7 +141,7 @@ export class ConfigTool extends BaseTool {
           if (isNaN(parsed)) throw new Error('Must be an integer.');
           if (parsed < 64 || parsed > 8192) throw new Error('Must be between 64 and 8192.');
           updateData[key] = parsed;
-        } else if (key === 'allowTools' || key === 'autoReplyAll') {
+        } else if (key === 'allowTools' || key === 'autoReplyAll' || key === 'summarize') {
           const lower = value.toLowerCase();
           if (lower === 'true' || lower === '1') updateData[key] = true;
           else if (lower === 'false' || lower === '0') updateData[key] = false;

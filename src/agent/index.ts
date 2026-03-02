@@ -172,6 +172,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       maxTokens: null,
       allowTools: null,
       autoReplyAll: null,
+      summarize: null,
     };
   }
   ctx.language = room.language;
@@ -423,61 +424,93 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       { role: 'system', content: systemPromptText }
     ];
 
-    // Helper to generate AI message parts from local media
-    const buildMediaParts = async (mediaPath: string, mimeType: string, textContext: string): Promise<AIChatMessage['content']> => {
-      let finalContent: AIChatMessage['content'] = textContext;
-      
-      if (mediaPath && existsSync(mediaPath)) {
-        try {
-          const fileBuffer = await readFile(mediaPath);
-          const base64Data = fileBuffer.toString('base64');
-          const dataUri = `data:${mimeType};base64,${base64Data}`;
-          
-          if (mimeType.startsWith('image/')) {
-            finalContent = [
-              { type: 'text', text: textContext },
-              { type: 'image_url', image_url: { url: dataUri } }
-            ];
-          } else if (mimeType.startsWith('video/')) {
-            finalContent = [
-              { type: 'text', text: textContext },
-              { type: 'video_url', video_url: { url: dataUri } }
-            ];
-          } else if (mimeType.startsWith('audio/')) {
-            finalContent = [
-              { type: 'text', text: textContext },
-              { type: 'audio_url', audio_url: { url: dataUri } }
-            ];
-          } else {
-            // Docs/PDFs: just inform the AI a file is attached so it can use tools (e.g., pdf reader)
-            finalContent = [
-              { type: 'text', text: `${textContext}\n[Attachment included: ${mimeType}]` }
-            ];
-          }
-        } catch (err) {
-          log.error({ err, path: mediaPath }, 'Failed to read media for AI context');
-        }
+    /**
+     * V7.13: Build content parts for a message with media.
+     *
+     * @param mediaPath   Absolute path to the local media file.
+     * @param mimeType    MIME type of the file.
+     * @param textContext The text content to accompany the media.
+     * @param embedInline When true, read the file and embed it as a base64 data URI content
+     *                    block (image_url / video_url / audio_url). When false, only emit a
+     *                    plain-text note describing the attachment — used for history messages
+     *                    so we don't flood providers with every image ever sent.
+     */
+    const buildMediaParts = async (
+      mediaPath: string,
+      mimeType: string,
+      textContext: string,
+      embedInline: boolean,
+    ): Promise<AIChatMessage['content']> => {
+      if (!mediaPath || !existsSync(mediaPath)) return textContext;
+
+      if (!embedInline) {
+        // History context: just tell the AI what kind of media was there
+        const mediaLabel = mimeType.startsWith('image/')
+          ? '[Image attached]'
+          : mimeType.startsWith('video/')
+          ? '[Video attached]'
+          : mimeType.startsWith('audio/')
+          ? '[Audio attached]'
+          : `[Attachment: ${mimeType}]`;
+        return `${textContext}\n${mediaLabel}`;
       }
-      return finalContent;
+
+      // Inline embed for the current turn (current message or quoted attachment)
+      try {
+        const fileBuffer = await readFile(mediaPath);
+        const base64Data = fileBuffer.toString('base64');
+        const dataUri = `data:${mimeType};base64,${base64Data}`;
+
+        if (mimeType.startsWith('image/')) {
+          return [
+            { type: 'text', text: textContext },
+            { type: 'image_url', image_url: { url: dataUri } },
+          ];
+        } else if (mimeType.startsWith('video/')) {
+          // video_url is only supported by vLLM/multimodal providers.
+          // ModelRouter.sanitizeMessagesForProvider() will strip it for providers that don't support it.
+          return [
+            { type: 'text', text: textContext },
+            { type: 'video_url', video_url: { url: dataUri } },
+          ];
+        } else if (mimeType.startsWith('audio/')) {
+          // audio_url is only supported by vLLM/multimodal providers.
+          return [
+            { type: 'text', text: textContext },
+            { type: 'audio_url', audio_url: { url: dataUri } },
+          ];
+        } else {
+          // Docs/PDFs: text note so the AI can invoke a tool (e.g., pdf reader)
+          return [{ type: 'text', text: `${textContext}\n[Attachment included: ${mimeType}]` }];
+        }
+      } catch (err) {
+        log.error({ err, path: mediaPath }, 'Failed to read media for AI context');
+        return textContext;
+      }
     };
 
     for (const m of history) {
-      const isLastMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
+      const isCurrentMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
       const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
       const textContent = textPrefix + m.content;
-      
-      let finalContent = await buildMediaParts(m.mediaPath || '', m.mimeType || '', textContent);
 
-      // Explicitly inject quoted media into the context of the CURRENT message being sent
-      if (isLastMessage && ctx.quoted?.mediaPath) {
-        // If the AI already has image parts, we merge the quoted ones. 
-        // For simplicity, we just transform this entire message payload into a merged array
-        const quotedParts = await buildMediaParts(ctx.quoted.mediaPath, ctx.quoted.mimeType || '', `[Quoted attachment context]`);
-        
-        // Merge the two arrays (or strings converted to arrays)
+      // V7.13: Only embed media inline for the current incoming message.
+      // History rows use text notes to avoid flooding providers with every past image.
+      const embedInlet = !!isCurrentMessage;
+      let finalContent = await buildMediaParts(m.mediaPath || '', m.mimeType || '', textContent, embedInlet);
+
+      // Inject quoted media inline into the context of the CURRENT message only
+      if (isCurrentMessage && ctx.quoted?.mediaPath) {
+        const quotedParts = await buildMediaParts(
+          ctx.quoted.mediaPath,
+          ctx.quoted.mimeType || '',
+          '[Quoted attachment context]',
+          true, // Always embed inline for the active quoted attachment
+        );
+
         const currentArr = Array.isArray(finalContent) ? finalContent : [{ type: 'text', text: finalContent as string }];
         const quotedArr = Array.isArray(quotedParts) ? quotedParts : [{ type: 'text', text: quotedParts as string }];
-        
+
         finalContent = [...quotedArr, ...currentArr] as AIChatMessage['content'];
       }
 
@@ -487,25 +520,28 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       });
     }
 
-    // Summarize overflow history to preserve long-term context while staying token efficient.
-    const nonSystemHistory = messagesForAI.slice(1);
-    const summaryResult = await summarizeHistory(
-      nonSystemHistory,
-      config.contextLimit,
-      async (summaryMessages) => {
-        const msg = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2);
-        return String(msg?.content || '');
-      }
-    );
-
-    if (summaryResult && summaryResult.summary) {
-      messagesForAI.splice(1, messagesForAI.length - 1,
-        {
-          role: 'system',
-          content: `Conversation memory summary:\n${summaryResult.summary}`,
-        },
-        ...summaryResult.activeHistory,
+    // V7.13: Summarize overflow history only when summarization is enabled for this room.
+    // When disabled, the DB query already enforced the limit so no further trimming is needed.
+    if (config.summarize) {
+      const nonSystemHistory = messagesForAI.slice(1);
+      const summaryResult = await summarizeHistory(
+        nonSystemHistory,
+        config.contextLimit,
+        async (summaryMessages) => {
+          const msg = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2);
+          return String(msg?.content || '');
+        }
       );
+
+      if (summaryResult && summaryResult.summary) {
+        messagesForAI.splice(1, messagesForAI.length - 1,
+          {
+            role: 'system',
+            content: `Conversation memory summary:\n${summaryResult.summary}`,
+          },
+          ...summaryResult.activeHistory,
+        );
+      }
     }
 
     // ── Conversation Branching ─────────────────────────────────────────────────

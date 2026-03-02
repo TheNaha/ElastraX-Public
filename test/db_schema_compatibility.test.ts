@@ -21,6 +21,7 @@ describe('Schema Compatibility', () => {
         max_tokens INTEGER,
         allow_tools INTEGER,
         auto_reply_all INTEGER,
+        summarize INTEGER,
         created_at INTEGER NOT NULL
       )
     `);

@@ -10,21 +10,28 @@
  *   AI_PROVIDERS=modal,gemini,ollama        (default: just uses the legacy AI_API_BASE_URL setup)
  *
  * Per-provider environment variables (replace {NAME} with the provider name in uppercase):
- *   AI_{NAME}_BASE_URL   — OpenAI-compatible endpoint (required per provider)
- *   AI_{NAME}_API_KEY    — Bearer token (optional, defaults to 'dummy')
- *   AI_{NAME}_MODEL      — Model identifier
+ *   AI_{NAME}_BASE_URL        — OpenAI-compatible endpoint (required per provider)
+ *   AI_{NAME}_API_KEY         — Bearer token (optional, defaults to 'dummy')
+ *   AI_{NAME}_MODEL           — Model identifier
+ *   AI_{NAME}_SUPPORTS_VIDEO  — 'true' if the model/provider accepts video_url content blocks
+ *   AI_{NAME}_SUPPORTS_AUDIO  — 'true' if the model/provider accepts audio_url content blocks
+ *
+ * Well-known provider auto-defaults (can be overridden via env):
+ *   modal      — supportsVideo: true,  supportsAudio: true  (vLLM / Qwen3-Omni)
+ *   gemini     — supportsVideo: false, supportsAudio: false (inline base64 not supported via OAI compat)
+ *   openrouter — supportsVideo: false, supportsAudio: false
+ *   groq       — supportsVideo: false, supportsAudio: false
+ *   cloudflare — supportsVideo: false, supportsAudio: false
+ *   pollinations— supportsVideo: false, supportsAudio: false
+ *   airforce   — supportsVideo: false, supportsAudio: false
  *
  * Example .env block:
- *   AI_PROVIDERS=modal,gemini
- *   AI_MODAL_BASE_URL=https://your-modal-endpoint.modal.run
- *   AI_MODAL_API_KEY=sk-modal-xxx
- *   AI_MODAL_MODEL=meta-llama/Meta-Llama-3-8B-Instruct
- *   AI_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
- *   AI_GEMINI_API_KEY=AIzaSy...
- *   AI_GEMINI_MODEL=gemini-2.5-flash
- *   AI_OLLAMA_BASE_URL=http://localhost:11434/v1
- *   AI_OLLAMA_API_KEY=ollama
- *   AI_OLLAMA_MODEL=llama3
+ *   AI_PROVIDERS=modal1,pollinations,airforce,cloudflare,openrouter,groq,gemini
+ *   AI_MODAL1_BASE_URL=https://your-modal-endpoint.modal.run/v1
+ *   AI_MODAL1_API_KEY=dummy
+ *   AI_MODAL1_MODEL=cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit
+ *   AI_MODAL1_SUPPORTS_VIDEO=true
+ *   AI_MODAL1_SUPPORTS_AUDIO=true
  *
  * If AI_PROVIDERS is not set, it falls back to the legacy single-provider setup
  * (AI_API_BASE_URL / AI_API_KEY / AI_MODEL_NAME).
@@ -44,11 +51,35 @@ export interface ProviderConfig {
   modelName: string;
   /** Model tier for multi-model routing. Defaults to 'standard'. */
   tier: ModelTier;
+  /**
+   * V7.13: Whether this provider's model accepts `video_url` content blocks.
+   * Defaults to false for all providers except modal-style vLLM deployments.
+   */
+  supportsVideo: boolean;
+  /**
+   * V7.13: Whether this provider's model accepts `audio_url` content blocks.
+   * Defaults to false for all providers except modal-style vLLM deployments.
+   */
+  supportsAudio: boolean;
 }
 
 /** Internal provider with a pre-built, cached AIClient instance. */
 interface ResolvedProvider extends ProviderConfig {
   client: AIClient;
+}
+
+/**
+ * Provider name prefixes that support video and audio by default (vLLM multimodal deployments).
+ * Any provider whose name starts with one of these strings gets supportsVideo/Audio=true
+ * unless the env var explicitly overrides it to 'false'.
+ */
+const MULTIMODAL_PREFIXES = ['modal'];
+
+/** Resolve default video/audio support based on well-known provider names. */
+function defaultMediaSupport(name: string): { supportsVideo: boolean; supportsAudio: boolean } {
+  const n = name.toLowerCase();
+  const isMultimodal = MULTIMODAL_PREFIXES.some(prefix => n.startsWith(prefix));
+  return { supportsVideo: isMultimodal, supportsAudio: isMultimodal };
 }
 
 function buildCloudflareBaseUrl(accountId?: string): string {
@@ -69,6 +100,11 @@ function parseTier(raw?: string): ModelTier {
   return 'standard';
 }
 
+function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
+  if (raw === undefined) return defaultVal;
+  return raw.toLowerCase() === 'true';
+}
+
 /** Loads all provider configs from process.env according to the documented pattern. */
 function loadProviders(): ResolvedProvider[] {
   const providerList = process.env.AI_PROVIDERS;
@@ -76,12 +112,15 @@ function loadProviders(): ResolvedProvider[] {
   // Legacy single-provider fallback
   if (!providerList || providerList.trim() === '') {
     const legacyCfBase = buildCloudflareBaseUrl(process.env.AI_CF_ACCOUNT_ID);
+    const defaults = defaultMediaSupport('default');
     const cfg: ProviderConfig = {
       name: 'default',
       baseUrl: process.env.AI_API_BASE_URL || legacyCfBase,
       apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || '',
       modelName: process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct',
       tier: parseTier(process.env.AI_TIER),
+      supportsVideo: parseBool(process.env.AI_SUPPORTS_VIDEO, defaults.supportsVideo),
+      supportsAudio: parseBool(process.env.AI_SUPPORTS_AUDIO, defaults.supportsAudio),
     };
     return [{
       ...cfg,
@@ -92,17 +131,54 @@ function loadProviders(): ResolvedProvider[] {
   return providerList.split(',').map(p => p.trim().toLowerCase()).filter(Boolean).map(name => {
     const upper = name.toUpperCase();
     const cfBase = buildCloudflareBaseUrl(process.env[`AI_${upper}_CF_ACCOUNT_ID`]);
+    const defaults = defaultMediaSupport(name);
     const cfg: ProviderConfig = {
       name,
       baseUrl: process.env[`AI_${upper}_BASE_URL`] || cfBase,
       apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || '',
       modelName: process.env[`AI_${upper}_MODEL`] || 'gpt-4o-mini',
       tier: parseTier(process.env[`AI_${upper}_TIER`]),
+      supportsVideo: parseBool(process.env[`AI_${upper}_SUPPORTS_VIDEO`], defaults.supportsVideo),
+      supportsAudio: parseBool(process.env[`AI_${upper}_SUPPORTS_AUDIO`], defaults.supportsAudio),
     };
     return {
       ...cfg,
       client: new AIClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, modelName: cfg.modelName }),
     };
+  });
+}
+
+/**
+ * V7.13: Sanitize a messages array for a specific provider's capabilities.
+ *
+ * Strips `video_url` and `audio_url` content block types if the provider doesn't support them,
+ * replacing them with a plain-text description so the AI is still aware media was present.
+ *
+ * Returns a new messages array (does not mutate the original).
+ */
+export function sanitizeMessagesForProvider(
+  messages: AIChatMessage[],
+  provider: Pick<ProviderConfig, 'supportsVideo' | 'supportsAudio'>,
+): AIChatMessage[] {
+  if (provider.supportsVideo && provider.supportsAudio) {
+    // Provider supports everything — no transformation needed
+    return messages;
+  }
+
+  return messages.map(msg => {
+    if (!Array.isArray(msg.content)) return msg;
+
+    const sanitized = msg.content.flatMap((part: any) => {
+      if (part?.type === 'video_url' && !provider.supportsVideo) {
+        return [{ type: 'text', text: '[Video attached — not supported by this provider]' }];
+      }
+      if (part?.type === 'audio_url' && !provider.supportsAudio) {
+        return [{ type: 'text', text: '[Audio attached — not supported by this provider]' }];
+      }
+      return [part];
+    });
+
+    return { ...msg, content: sanitized };
   });
 }
 
@@ -120,7 +196,7 @@ export class ModelRouter {
       throw new Error('No AI providers configured. Set AI_PROVIDERS or AI_API_BASE_URL.');
     }
     logger.info({
-      providers: this.providers.map(p => ({ name: p.name, tier: p.tier })),
+      providers: this.providers.map(p => ({ name: p.name, tier: p.tier, supportsVideo: p.supportsVideo, supportsAudio: p.supportsAudio })),
     }, '[ModelRouter] Loaded providers with cached clients');
   }
 
@@ -169,6 +245,8 @@ export class ModelRouter {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
         const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+        // V7.13: Strip unsupported video_url/audio_url blocks for this provider
+        const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
 
         if (verbose) {
           logger.info({
@@ -176,7 +254,7 @@ export class ModelRouter {
             tier: provider.tier,
             url: resolveChatCompletionsUrl(provider.baseUrl),
             model: provider.modelName,
-            messageCount: messages.length,
+            messageCount: sanitizedMessages.length,
             toolsEnabled: !!(tools && tools.length > 0),
             temperature,
             maxTokens: resolvedMaxTokens,
@@ -184,15 +262,17 @@ export class ModelRouter {
         }
 
         const start = Date.now();
-        const result = await provider.client.chatCompletion(messages, tools, temperature, resolvedMaxTokens);
+        const result = await provider.client.chatCompletion(sanitizedMessages, tools, temperature, resolvedMaxTokens);
         const latency = Date.now() - start;
 
         healthMetrics.recordLLMRequest(provider.name, latency, true);
-        if (result?.usage) {
+        // V7.13: Usage may be on the message object for some providers (runtime-only field)
+        const usage = (result as any)?.usage;
+        if (usage) {
           healthMetrics.recordTokenUsage(
-            provider.model,
-            result.usage.prompt_tokens ?? 0,
-            result.usage.completion_tokens ?? 0
+            provider.modelName,
+            usage.prompt_tokens ?? 0,
+            usage.completion_tokens ?? 0
           );
         }
 
@@ -255,9 +335,11 @@ export class ModelRouter {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
         const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+        // V7.13: Strip unsupported video_url/audio_url blocks for this provider
+        const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
         const start = Date.now();
 
-        const stream = provider.client.chatCompletionStream(messages, tools, temperature, resolvedMaxTokens);
+        const stream = provider.client.chatCompletionStream(sanitizedMessages, tools, temperature, resolvedMaxTokens);
 
         for await (const chunk of stream) {
           yield chunk;
@@ -265,9 +347,6 @@ export class ModelRouter {
 
         const latency = Date.now() - start;
         healthMetrics.recordLLMRequest(provider.name, latency, true);
-
-        // Note: token usage metrics are not currently available for streaming responses.
-        // When streaming usage is supported by the client/types, it can be recorded here.
 
         return; // Successfully streamed from this provider
       } catch (err: any) {

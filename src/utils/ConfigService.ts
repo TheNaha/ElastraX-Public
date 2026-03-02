@@ -31,6 +31,9 @@ export class ConfigService {
     const envTemperature = parseFloat(process.env.AI_TEMPERATURE || '0.7');
     const envMaxTokens = parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
     const envAutoReplyAll = process.env.AUTO_REPLY_ALL === 'true';
+    // V7.13: Global summarization toggle. When false, no LLM summarization call is made
+    // and only the most recent contextLimit messages are sent to the LLM.
+    const envSummarize = process.env.CONTEXT_SUMMARIZE !== 'false'; // default true
 
     return {
       systemPrompt: room.systemPrompt || defaultSystemPrompt,
@@ -39,6 +42,8 @@ export class ConfigService {
       maxTokens: room.maxTokens ?? envMaxTokens,
       allowTools: room.allowTools ?? true, // allow tools by default unless explicitly disabled in DB
       autoReplyAll: room.autoReplyAll ?? envAutoReplyAll,
+      // V7.13: Per-room summarization. null in DB → fall back to env default.
+      summarize: room.summarize ?? envSummarize,
     };
   }
 }

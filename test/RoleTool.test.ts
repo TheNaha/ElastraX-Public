@@ -1,4 +1,39 @@
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+
+// ─── Override the db mock that leaks from agent.test.ts (mock.module is process-scoped) ───
+// agent.test.ts permanently replaces '../src/db' without a `delete` method, which
+// breaks code paths that call db.delete() even when most service methods are spied.
+// This re-registers a safe, complete mock that covers all db operations used by
+// RoleTool's service dependencies (RoleService, IdentityService, PrivilegeService).
+mock.module('../src/db', () => {
+  const safeMock: any = {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          then: (resolve: Function) => Promise.resolve([]).then(resolve as any),
+          catch: (rej: Function) => Promise.resolve([]).catch(rej as any),
+          limit: () => Promise.resolve([]),
+          orderBy: () => ({ limit: () => Promise.resolve([]) }),
+        }),
+        limit: () => Promise.resolve([]),
+      }),
+    }),
+    insert: () => ({
+      values: () => ({
+        onConflictDoNothing: async () => ({}),
+        then: (resolve: Function) => Promise.resolve({}).then(resolve as any),
+      }),
+    }),
+    update: () => ({
+      set: () => ({ where: async () => {} }),
+    }),
+    delete: () => ({
+      where: async () => ({}),
+    }),
+  };
+  return { db: safeMock };
+});
+
 import { MessageContext } from '../src/core/MessageContext';
 import { RoleTool } from '../src/tools/RoleTool';
 import { RoleService } from '../src/utils/RoleService';
