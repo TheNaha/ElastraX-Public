@@ -1,64 +1,54 @@
 {
+  "version": "7",
+  "dialect": "sqlite",
   "entries": [
     {
       "tag": "0000_white_gressill",
-      "breakpoints": [],
-      "when": 1
+      "breakpoints": true
     },
     {
       "tag": "0001_flowery_korg",
-      "breakpoints": [],
-      "when": 2
+      "breakpoints": true
     },
     {
       "tag": "0002_woozy_molecule_man",
-      "breakpoints": [],
-      "when": 3
+      "breakpoints": true
     },
     {
       "tag": "0003_square_doomsday",
-      "breakpoints": [],
-      "when": 4
+      "breakpoints": true
     },
     {
       "tag": "0004_left_spot",
-      "breakpoints": [],
-      "when": 5
+      "breakpoints": true
     },
     {
       "tag": "0005_colossal_patch",
-      "breakpoints": [],
-      "when": 6
+      "breakpoints": true
     },
     {
       "tag": "0006_breezy_reminders",
-      "breakpoints": [],
-      "when": 7
+      "breakpoints": true
     },
     {
       "tag": "0007_keen_user_roles",
-      "breakpoints": [],
-      "when": 8
+      "breakpoints": true
     },
     {
       "tag": "0008_calm_token_room",
-      "breakpoints": [],
-      "when": 9
+      "breakpoints": true
     },
     {
       "tag": "0009_sturdy_features",
-      "breakpoints": [],
-      "when": 10
+      "breakpoints": true
     },
     {
       "tag": "0010_role_privileges",
-      "breakpoints": [],
-      "when": 11
+      "breakpoints": true
     },
     {
       "tag": "0011_user_identities",
-      "breakpoints": [],
-      "when": 12
+      "breakpoints": true
     }
   ]
 }

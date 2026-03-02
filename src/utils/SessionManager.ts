@@ -52,8 +52,11 @@ export class SessionManager {
       // Dynamic import to avoid circular dependency with db module
       const { db } = await import('../db');
       const { flowSessions } = await import('../db/schema');
+      const { inArray } = await import('drizzle-orm');
       const rows = db.select().from(flowSessions).all();
       const now = Date.now();
+      const expiredIds: string[] = [];
+
       for (const row of rows) {
         try {
           const session = JSON.parse(row.data) as UserSession;
@@ -69,12 +72,17 @@ export class SessionManager {
           if (Object.keys(session.flows).length > 0) {
             this.sessions.set(row.id, session);
           } else if (hasExpired) {
-            // Clean up fully expired session from DB
-            db.delete(flowSessions).where((await import('drizzle-orm')).eq(flowSessions.id, row.id)).run();
+            // Collect ID to clean up fully expired session from DB in bulk
+            expiredIds.push(row.id);
           }
         } catch { /* skip corrupt rows */ }
       }
-      logger.debug({ count: this.sessions.size }, '[SessionManager] Loaded sessions from DB');
+
+      if (expiredIds.length > 0) {
+        db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
+      }
+
+      logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[SessionManager] Loaded sessions from DB');
     } catch (err) {
       logger.warn({ err }, '[SessionManager] Failed to load sessions from DB (non-fatal)');
     }
