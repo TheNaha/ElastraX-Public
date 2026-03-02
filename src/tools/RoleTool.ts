@@ -240,7 +240,10 @@ export class RoleTool extends BaseTool {
       }
       const resolved = resolveTargetUser(args, ctx, 'user');
       if (!resolved) return t(lang, 'role.no_user');
-      const targetId = resolved.jid;
+      const resolvedTarget = resolved.jid;
+
+      const identity = await IdentityService.getIdentity(resolvedTarget);
+      const targetId = identity?.lid ? identity.lid : resolvedTarget;
 
       const callerRoles = await ctx.resolveRoles();
       if (!canAssign(callerRoles, role)) {
@@ -261,7 +264,10 @@ export class RoleTool extends BaseTool {
       if (!user) return t(lang, 'role.no_user');
       const resolved = resolveTargetUser(args, ctx, 'user');
       if (!resolved) return t(lang, 'role.no_user');
-      const targetId = resolved.jid;
+      const resolvedTarget = resolved.jid;
+
+      const identity = await IdentityService.getIdentity(resolvedTarget);
+      const targetId = identity?.lid ? identity.lid : resolvedTarget;
 
       const revokeRole = role; // which specific role to revoke
       const callerRoles = await ctx.resolveRoles();

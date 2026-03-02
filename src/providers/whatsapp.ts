@@ -38,10 +38,6 @@ import { MessageContext, SendMediaOptions, ReplyOptions } from '../core/MessageC
 import { logger } from '../utils/logger';
 import { checkPermissions, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
-import { randomUUID } from 'crypto';
-import { join } from 'path';
-import { writeFile } from 'fs/promises';
-import { fileTypeFromBuffer } from 'file-type';
 import { saveMediaBuffer } from '../utils/MediaStorage';
 import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
@@ -193,13 +189,10 @@ export class WhatsAppProvider implements BotProvider {
             // Seed identity mapping
             await IdentityService.upsert(ownerLid, ownerJid, undefined, 'whatsapp');
 
-            // Seed owner role in DB (global scope) — uses the PN JID as the
-            // canonical userId since that's what BOT_OWNER_JID is.
-            // Also seed with LID if we have it, so both JIDs are covered.
-            await RoleService.setRole(ownerJid, 'owner', 'global', 'whatsapp', 'system:startup');
-            if (ownerLid && ownerLid !== ownerJid) {
-              await RoleService.setRole(ownerLid, 'owner', 'global', 'whatsapp', 'system:startup');
-            }
+            // Seed owner role in DB (global scope) — prefer LID for consistency
+            // if available, otherwise fallback to the PN JID.
+            const primaryId = ownerLid && ownerLid !== ownerJid ? ownerLid : ownerJid;
+            await RoleService.setRole(primaryId, 'owner', 'global', 'whatsapp', 'system:startup');
 
             logger.info(
               { ownerJid, ownerLid },
