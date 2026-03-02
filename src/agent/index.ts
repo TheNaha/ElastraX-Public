@@ -461,7 +461,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       return finalContent;
     };
 
-    for (const m of history) {
+    // ⚡ Bolt: Use Promise.all to prevent sequential I/O bottlenecks when processing history with media
+    const historyMessages = await Promise.all(history.map(async (m) => {
       const isLastMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
       const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
       const textContent = textPrefix + m.content;
@@ -481,11 +482,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         finalContent = [...quotedArr, ...currentArr] as AIChatMessage['content'];
       }
 
-      messagesForAI.push({
+      return {
         role: m.role as 'user' | 'assistant',
         content: finalContent,
-      });
-    }
+      };
+    }));
+
+    messagesForAI.push(...historyMessages);
 
     // Summarize overflow history to preserve long-term context while staying token efficient.
     const nonSystemHistory = messagesForAI.slice(1);
