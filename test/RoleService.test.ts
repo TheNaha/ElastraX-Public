@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
@@ -7,11 +7,7 @@ let mockRoleRows: any[] = [];
 let lastInsertedRole: any = null;
 let lastDeletedCond: any = false;
 
-mock.module('../src/utils/IdentityService', () => ({
-  IdentityService: {
-    getAllJids: mock(async (jid: string) => [jid]),
-  },
-}));
+import { IdentityService } from '../src/utils/IdentityService';
 
 /** Creates a chainable thenable mock query that resolves to mockRoleRows. */
 function mockQuery() {
@@ -57,6 +53,7 @@ describe('RoleService', () => {
     lastInsertedRole = null;
     lastDeletedCond = false;
     process.env.BOT_OWNER_JID = '';
+    spyOn(IdentityService, 'getAllJids').mockImplementation(async (jid: string) => [jid]);
   });
 
   afterEach(() => {

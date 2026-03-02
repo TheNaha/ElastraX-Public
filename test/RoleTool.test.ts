@@ -76,7 +76,7 @@ describe('RoleTool', () => {
     spies.push(spyOn(PrivilegeService, 'getDefaults').mockReturnValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
     spies.push(spyOn(PrivilegeService, 'setOverride').mockResolvedValue(undefined));
     spies.push(spyOn(PrivilegeService, 'resetToDefaults').mockResolvedValue(undefined));
-    spies.push(spyOn(IdentityService, 'getIdentity').mockResolvedValue(null));
+    spies.push(spyOn(IdentityService, 'getIdentity').mockImplementation(async () => null));
     spies.push(spyOn(IdentityService, 'getAllJids').mockImplementation(async (jid: string) => [jid]));
   });
 
