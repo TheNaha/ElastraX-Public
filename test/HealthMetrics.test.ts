@@ -66,6 +66,34 @@ describe('HealthMetrics', () => {
     expect(m.tools['test_tool'].invocations).toBeGreaterThanOrEqual(1);
   });
 
+  test('recordToolError increments tool error counter', () => {
+    const before = healthMetrics.getMetrics().tools['test_tool']?.errors || 0;
+    healthMetrics.recordToolError('test_tool');
+    const after = healthMetrics.getMetrics().tools['test_tool'].errors;
+    expect(after - before).toBe(1);
+  });
+
+  test('recordToolDuration tracks tool execution latency', () => {
+    healthMetrics.recordToolDuration('test_tool', 100);
+    healthMetrics.recordToolDuration('test_tool', 200);
+    healthMetrics.recordToolDuration('test_tool', 300);
+    const m = healthMetrics.getMetrics();
+    expect(m.tools['test_tool'].durationP50).toBe(200);
+  });
+
+  test('recordTokenUsage tracks prompt and completion tokens', () => {
+    healthMetrics.recordTokenUsage('test_model', 10, 20);
+    const m = healthMetrics.getMetrics();
+    expect(m.tokens['test_model'].prompt).toBeGreaterThanOrEqual(10);
+    expect(m.tokens['test_model'].completion).toBeGreaterThanOrEqual(20);
+  });
+
+  test('recordMessageDuration tracks message processing latency', () => {
+    healthMetrics.recordMessageDuration(150);
+    const m = healthMetrics.getMetrics();
+    expect(m.messageDuration.latencyP50).toBeGreaterThan(0);
+  });
+
   test('percentile calculation with multiple latencies', () => {
     // Record enough latencies to test percentiles
     for (let i = 1; i <= 100; i++) {
