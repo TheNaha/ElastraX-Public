@@ -239,16 +239,17 @@ export class WhatsAppProvider implements BotProvider {
       if (this.sock !== sock) return;
       logger.info(`[WhatsApp] Received history sync with ${histMsgs.length} messages.`);
 
-      const contexts: MessageContext[] = [];
-      for (const msg of histMsgs) {
-        if (!msg.message) continue;
-        try {
-          const ctx = await this.createContext(msg, true); // true = skipMediaDownload
-          if (ctx) contexts.push(ctx);
-        } catch (e) {
-          logger.warn({ id: msg.key.id }, 'Failed to parse historical message context');
-        }
-      }
+      const contexts = (await Promise.all(
+        histMsgs.map(async (msg) => {
+          if (!msg.message) return null;
+          try {
+            return await this.createContext(msg, true); // true = skipMediaDownload
+          } catch {
+            logger.warn({ id: msg.key.id }, 'Failed to parse historical message context');
+            return null;
+          }
+        })
+      )).filter((ctx): ctx is MessageContext => ctx !== null);
 
       syncHistoricalDatabase(contexts).catch(err => {
         logger.error(err, 'Background history sync failed');
