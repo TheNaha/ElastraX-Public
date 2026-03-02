@@ -147,4 +147,16 @@ describe('DownloadTool Security', () => {
 
     expect(result).toContain('Invalid output filename');
   });
+
+  test('should reject prototype pollution vectors in format parameter', async () => {
+    const tool = new DownloadTool();
+    const validUrl = 'https://example.com/video';
+    const maliciousFormat = '__proto__';
+
+    const result = await tool.execute({ url: validUrl, format: maliciousFormat }, createMockCtx());
+
+    // Should return error message about invalid format
+    expect(result).toContain('Invalid format requested');
+    expect(spawnedProcesses.length).toBe(0);
+  });
 });
