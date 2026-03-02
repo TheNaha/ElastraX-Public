@@ -54,7 +54,7 @@ export const useDBAuthState = async (): Promise<{
         return JSON.parse(dataStr, BufferJSON.reviver);
       }
       return null;
-    } catch (e) {
+    } catch {
       return null;
     }
   };
