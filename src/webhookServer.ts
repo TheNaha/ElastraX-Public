@@ -274,12 +274,17 @@ export function buildWebhookMessage(headers: Record<string, string | undefined>,
   return buildGenericMessage(body);
 }
 
-function verifyGitHubSignature(payload: string, secret: string, signatureHeader: string | null): boolean {
+export function verifyGitHubSignature(payload: string, secret: string, signatureHeader: string | null): boolean {
   if (!signatureHeader || !signatureHeader.startsWith('sha256=')) return false;
   const expected = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
   const expectedBuf = Buffer.from(expected);
   const providedBuf = Buffer.from(signatureHeader);
-  if (expectedBuf.length !== providedBuf.length) return false;
+
+  if (expectedBuf.length !== providedBuf.length) {
+    // Perform a dummy comparison to maintain constant time
+    timingSafeEqual(expectedBuf, expectedBuf);
+    return false;
+  }
   return timingSafeEqual(expectedBuf, providedBuf);
 }
 
