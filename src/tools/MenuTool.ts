@@ -123,9 +123,14 @@ export class MenuTool extends BaseTool {
       categories[normalizedCategory].push(tool);
     }
 
-    for (const [cat, catTools] of Object.entries(categories)) {
+    // Sort categories alphabetically
+    const sortedCategories = Object.entries(categories).sort((a, b) => a[0].localeCompare(b[0]));
+
+    for (const [cat, catTools] of sortedCategories) {
       menu += `*╭───「 ${cat.toUpperCase()} 」*\n`;
-      for (const tool of catTools) {
+      // Sort tools within category alphabetically
+      const sortedTools = catTools.sort((a, b) => a.name.localeCompare(b.name));
+      for (const tool of sortedTools) {
         const aliasesStr = tool.aliases.length > 0 ? ` (${tool.aliases.join(', ')})` : '';
         menu += `*│* ❏ /${tool.name}${aliasesStr}\n`;
       }
