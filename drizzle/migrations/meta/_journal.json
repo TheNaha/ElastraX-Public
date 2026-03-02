@@ -59,6 +59,11 @@
       "tag": "0011_user_identities",
       "breakpoints": [],
       "when": 12
+    },
+    {
+      "tag": "0012_add_summarize",
+      "breakpoints": [],
+      "when": 13
     }
   ]
 }
