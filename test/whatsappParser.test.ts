@@ -364,6 +364,32 @@ describe('getFileLength', () => {
     };
     expect(getFileLength(msg as any)).toBe(333);
   });
+
+  test('should return null when message is an empty object and has no type', () => {
+    expect(getFileLength({} as any)).toBeNull();
+  });
+
+  test('should parse fileLength correctly when it is provided as a string', () => {
+    expect(getFileLength({ imageMessage: { fileLength: "1024" } } as any)).toBe(1024);
+  });
+
+  test('should return NaN when fileLength is an invalid string', () => {
+    expect(getFileLength({ imageMessage: { fileLength: "not-a-number" } } as any)).toBeNaN();
+  });
+
+  test('should handle nested containers without an inner type', () => {
+    const msg = {
+      viewOnceMessage: { message: {} },
+    };
+    expect(getFileLength(msg as any)).toBeNull();
+  });
+
+  test('should handle nested containers where the inner content is missing fileLength', () => {
+    const msg = {
+      viewOnceMessage: { message: { imageMessage: { caption: "hello" } } },
+    };
+    expect(getFileLength(msg as any)).toBeNull();
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
