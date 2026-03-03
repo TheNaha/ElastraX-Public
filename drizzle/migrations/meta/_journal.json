@@ -49,12 +49,12 @@
     {
       "tag": "0011_user_identities",
       "breakpoints": true
-      "when": 12
+      ,"when": 12
     },
     {
       "tag": "0012_add_summarize",
       "breakpoints": true
-      "when": 13
+      ,"when": 13
     }
   ]
 }
