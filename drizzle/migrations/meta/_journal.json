@@ -48,13 +48,20 @@
     },
     {
       "tag": "0011_user_identities",
-      "breakpoints": true
-      ,"when": 12
+      "breakpoints": true,
+      "when": 12
     },
     {
       "tag": "0012_add_summarize",
+      "breakpoints": true,
+      "when": 13
+    },
+    {
+      "idx": null,
+      "version": "6",
+      "when": 1772545598829,
+      "tag": "0NaN_public_ego",
       "breakpoints": true
-      ,"when": 13
     }
   ]
 }

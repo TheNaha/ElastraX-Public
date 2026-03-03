@@ -81,8 +81,10 @@ export class MenuTool extends BaseTool {
         help += `${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n`;
       }
 
-      help += `${t(lang, 'menu.category')} ${tool.category}\n`;
-      help += `${t(lang, 'menu.permissions')} ${tool.permissions}\n\n`;
+      const catCap = tool.category.charAt(0).toUpperCase() + tool.category.slice(1);
+      const permCap = tool.permissions.charAt(0).toUpperCase() + tool.permissions.slice(1);
+      help += `${t(lang, 'menu.category')} ${catCap}\n`;
+      help += `${t(lang, 'menu.permissions')} ${permCap}\n\n`;
 
       const props = tool.definition.function.parameters.properties;
       const required = tool.definition.function.parameters.required || [];
@@ -97,7 +99,9 @@ export class MenuTool extends BaseTool {
       if (Object.keys(props).length > 0) {
         help += `${t(lang, 'menu.parameters')}\n`;
         for (const [key, prop] of Object.entries(props)) {
-          help += `  - *${key}*: ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
+          const isReq = required.includes(key);
+          const reqText = isReq ? 'Required' : 'Optional';
+          help += `  - *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
           if (prop.enum && prop.enum.length > 0) {
             help += `\n    *${t(lang, 'menu.options')}* ${prop.enum.join(' | ')}`;
           }
