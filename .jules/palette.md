@@ -1,3 +1,7 @@
 ## 2024-05-18 - [Consistent Tool Category Casing]
 **Learning:** In the CLI/bot menu UX, inconsistent casing in configuration properties (e.g., `'Admin'` vs `'admin'`) can lead to duplicated categories being displayed if the rendering logic doesn't explicitly normalize strings. We noticed `ConfigTool` used uppercase 'A' while other admin tools used lowercase, potentially causing visual clutter in the `/menu` output before the fix was added in the MenuTool itself.
 **Action:** Enforce consistent lowercase string literals for internal category keys across all tool definitions. Only capitalize the category string at the presentation layer when formatting the final output.
+
+## 2025-03-03 - [Explicit Parameter Requirements in CLI]
+**Learning:** In text-based CLI or conversational bot menus, relying solely on symbolic conventions (like `<required>` vs `[optional]`) for command usage is often insufficient for accessibility and clear UX. Explicitly labeling parameter descriptions with "Required" or "Optional" significantly improves readability and user comprehension. Additionally, ensuring consistent capitalization for metadata labels (like Category or Permissions) provides visual polish and consistency with other parts of the UI.
+**Action:** When designing text-based help menus or usage instructions, explicitly spell out parameter requirement states alongside symbols, and normalize capitalization for displayed category strings at the presentation layer.
