@@ -2,6 +2,10 @@
 
 A multi-platform, general-purpose hybrid bot with conversational AI, built on Bun.
 
+## Documentation
+
+For a deep dive into the architecture, configuration, and deployment, please see the [docs folder](./docs/README.md).
+
 ## Features
 
 - **Agentic Framework**: The bot acts as an AI conversational agent first. It can dynamically use tools (like Web Search) to answer your questions.
