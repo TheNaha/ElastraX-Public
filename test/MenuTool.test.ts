@@ -113,7 +113,7 @@ describe('MenuTool', () => {
     const result = await menuTool.execute({}, ctx);
 
     // Should only have one ADMIN group
-    const adminGroups = result.match(/\*╭───「 ADMIN 」\*/g);
+    const adminGroups = result.match(/\*=== ADMIN ===\*/g);
     expect(adminGroups).not.toBeNull();
     expect(adminGroups!.length).toBe(1);
 
