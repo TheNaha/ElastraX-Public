@@ -13,3 +13,7 @@
 ## 2026-03-07 - [Concurrent History Message Context Resolution]
 **Learning:** Sequential processing of historical messages during startup or reconnection using a `for...of` loop with `await` creates a significant I/O bottleneck, as each message must be parsed and resolved (including potentially slow JID-to-LID lookups) before the next one starts.
 **Action:** Replaced sequential loops with `Promise.all()` to process `createContext` calls concurrently. This reduced history processing time for 100 messages from ~1046ms to ~11ms in benchmarks, a ~95x speedup.
+
+## 2026-03-04 - [Batch DB Inserts for History Sync]
+**Learning:** Sequential `await db.insert` for every incoming message during historical sync creates an I/O bottleneck when handling large payloads (hundreds of messages).
+**Action:** Batch inserts using `db.insert().values(chunk)` and chunking the payloads to reduce DB round-trips significantly.

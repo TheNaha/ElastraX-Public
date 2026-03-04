@@ -33,52 +33,72 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
   logger.info(`[History Sync] Starting bulk ingestion of ${historicalMessages.length} historical messages...`);
 
   let count = 0;
-  
+
   // We can't guarantee all chat rooms already exist, so we track them lightly
-  const knownRooms = new Set<string>();
+  const knownRooms = new Map<string, { id: string; platform: string; language: string; created_at: Date }>();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const messagePayloads: any[] = [];
 
   for (const ctx of historicalMessages) {
-    try {
-      // 1. Ensure the room exists first
-      if (!knownRooms.has(ctx.chatId)) {
-        await db.insert(chatRooms)
-          .values({
-            id: ctx.chatId,
-            platform: ctx.platform,
-            language: 'en', // Default language for historical rooms
-            created_at: new Date(),
-          })
-          .onConflictDoNothing();
-        knownRooms.add(ctx.chatId);
-      }
+    // 1. Prepare room payloads
+    if (!knownRooms.has(ctx.chatId)) {
+      knownRooms.set(ctx.chatId, {
+        id: ctx.chatId,
+        platform: ctx.platform,
+        language: 'en', // Default language for historical rooms
+        created_at: new Date(),
+      });
+    }
 
-      // 2. Insert the message idempotently
-      // For historical syncs, we assume these are 'user' role messages or group members.
-      // We don't try to sync bot's own past messages currently unless we explicitly checking fromMe.
-      // Usually Baileys history sync includes fromMe. If fromMe is true, role could be 'assistant'.
-      
-      const isFromMe = (ctx.rawMessage as any)?.key?.fromMe;
-      
-      await db.insert(messages)
-        .values({
-          chatRoomId: ctx.chatId,
-          providerMessageId: ctx.messageId,
-          senderId: ctx.senderId,
-          senderName: ctx.senderName,
-          role: isFromMe ? 'assistant' : 'user',
-          content: ctx.text,
-          rawMessage: JSON.stringify(ctx.rawMessage),
-          // We don't historically mass-download media right now as that would hammer the network
-          // We just leave mediaPath null for historical messages until natively requested
-          // We can record the mime type though.
-          mimeType: Array.from(ctx.text).length > 0 ? undefined : 'application/octet-stream', // heuristic
-          created_at: new Date(((ctx.rawMessage as any)?.messageTimestamp || Date.now() / 1000) * 1000), 
-        })
-        .onConflictDoNothing();
-        
-      count++;
+    // 2. Prepare message payloads
+    // For historical syncs, we assume these are 'user' role messages or group members.
+    // We don't try to sync bot's own past messages currently unless we explicitly checking fromMe.
+    // Usually Baileys history sync includes fromMe. If fromMe is true, role could be 'assistant'.
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const isFromMe = (ctx.rawMessage as any)?.key?.fromMe;
+
+    messagePayloads.push({
+      chatRoomId: ctx.chatId,
+      providerMessageId: ctx.messageId,
+      senderId: ctx.senderId,
+      senderName: ctx.senderName,
+      role: isFromMe ? 'assistant' : 'user',
+      content: ctx.text,
+      rawMessage: JSON.stringify(ctx.rawMessage),
+      // We don't historically mass-download media right now as that would hammer the network
+      // We just leave mediaPath null for historical messages until natively requested
+      // We can record the mime type though.
+      mimeType: Array.from(ctx.text).length > 0 ? undefined : 'application/octet-stream', // heuristic
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      created_at: new Date(((ctx.rawMessage as any)?.messageTimestamp || Date.now() / 1000) * 1000),
+    });
+  }
+
+  // 3. Batch insert rooms
+  const roomsToInsert = Array.from(knownRooms.values());
+  if (roomsToInsert.length > 0) {
+    try {
+      // Chunk room inserts to avoid sqlite variable limits (max 999 vars)
+      for (let i = 0; i < roomsToInsert.length; i += 100) {
+        const chunk = roomsToInsert.slice(i, i + 100);
+        await db.insert(chatRooms).values(chunk).onConflictDoNothing();
+      }
     } catch (err) {
-      logger.error({ err, messageId: ctx.messageId }, 'Failed to sync historical message');
+      logger.error({ err }, 'Failed to batch sync historical chat rooms');
+    }
+  }
+
+  // 4. Batch insert messages
+  if (messagePayloads.length > 0) {
+    try {
+      for (let i = 0; i < messagePayloads.length; i += 100) {
+        const chunk = messagePayloads.slice(i, i + 100);
+        await db.insert(messages).values(chunk).onConflictDoNothing();
+        count += chunk.length;
+      }
+    } catch (err) {
+      logger.error({ err }, 'Failed to batch sync historical messages');
     }
   }
 
