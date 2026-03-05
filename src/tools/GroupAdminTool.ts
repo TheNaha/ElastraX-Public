@@ -56,7 +56,7 @@ export class GroupAdminTool extends BaseTool {
               description: 'Target user: phone number, JID, "mentioned" (if @mentioned), or "quoted" (if replying to their message). Resolved automatically from context when omitted.',
             },
           },
-          required: ['action', 'user'],
+          required: ['action'],
         },
       },
     };
