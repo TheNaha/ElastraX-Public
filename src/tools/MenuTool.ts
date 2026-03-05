@@ -100,7 +100,7 @@ export class MenuTool extends BaseTool {
         help += `${t(lang, 'menu.parameters')}\n`;
         for (const [key, prop] of Object.entries(props)) {
           const isReq = required.includes(key);
-          const reqText = isReq ? 'Required' : 'Optional';
+          const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
           help += `  - *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
           if (prop.enum && prop.enum.length > 0) {
             help += `\n    *${t(lang, 'menu.options')}* ${prop.enum.join(' | ')}`;
