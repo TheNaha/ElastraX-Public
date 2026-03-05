@@ -28,8 +28,8 @@ ElastraX v7 is a robust, multi-platform conversational AI agent built on a moder
     -   Responsible for persisting conversation history (crucial for LLM context), user configurations, and scheduled reminders.
 -   **`src/providers/` (The Ears and Voice)**:
     -   Platform-specific adapters.
-    -   **`providers/whatsapp/`**: Wraps the Baileys library to connect to WhatsApp. Converts Baileys messages into `MessageContext` and vice-versa.
-    -   **`providers/discord/`**: Wraps discord.js for Discord connectivity.
+    -   **`src/providers/whatsapp.ts`**: Wraps the Baileys library to connect to WhatsApp. Converts Baileys messages into `MessageContext` and vice-versa.
+    -   **`src/providers/discord.ts`**: Wraps discord.js for Discord connectivity.
 -   **`src/tools/` (The Hands)**:
     -   A collection of independent modules implementing the `BaseTool` interface.
     -   Examples: `WebSearchTool`, `DownloadTool`, `PDFTool`.
