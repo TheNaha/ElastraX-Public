@@ -82,6 +82,11 @@ WHISPER_API_KEY_ENV_NAMES = ("WHISPER_API_KEY", "OPENAI_API_KEY", "VLLM_API_KEY"
 WHISPER_MODEL = "Systran/faster-whisper-large-v3"
 WHISPER_GPU = "L4"
 
+# Whisper ASR Box container defaults
+WHISPER_BOX_IMAGE = "onerahmet/openai-whisper-asr-webservice:latest-gpu"
+WHISPER_BOX_PORT = 9000
+WHISPER_BOX_GPU = "L4"
+
 # ## Helper Functions
 
 with vllm_image.imports():
@@ -173,6 +178,11 @@ whisper_image = (
     .env({
         "HF_XET_HIGH_PERFORMANCE": "1",
     })
+)
+
+whisper_box_image = (
+    modal.Image.from_registry(WHISPER_BOX_IMAGE)
+    .entrypoint([])
 )
 
 
@@ -282,7 +292,7 @@ class WhisperAPI:
             - If VLLM_API_KEY or OPENAI_API_KEY is set, requires
               Authorization: Bearer <key>
         """
-        from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
+        from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
         from fastapi.responses import JSONResponse, PlainTextResponse
         import tempfile
 
@@ -305,6 +315,186 @@ class WhisperAPI:
             if received != expected:
                 raise HTTPException(status_code=401, detail="Invalid API key")
 
+        def _format_timestamp(seconds: float, decimal_marker: str = ".") -> str:
+            millis = max(0, int(round(seconds * 1000.0)))
+            hours = millis // 3_600_000
+            millis %= 3_600_000
+            minutes = millis // 60_000
+            millis %= 60_000
+            secs = millis // 1000
+            ms = millis % 1000
+            return f"{hours:02d}:{minutes:02d}:{secs:02d}{decimal_marker}{ms:03d}"
+
+        def _build_vtt(segment_items) -> str:
+            lines = ["WEBVTT", ""]
+            for seg in segment_items:
+                lines.append(
+                    f"{_format_timestamp(seg.start)} --> {_format_timestamp(seg.end)}"
+                )
+                lines.append(seg.text.strip())
+                lines.append("")
+            return "\n".join(lines).strip() + "\n"
+
+        def _build_srt(segment_items) -> str:
+            lines = []
+            for idx, seg in enumerate(segment_items, start=1):
+                lines.append(str(idx))
+                lines.append(
+                    f"{_format_timestamp(seg.start, ',')} --> {_format_timestamp(seg.end, ',')}"
+                )
+                lines.append(seg.text.strip())
+                lines.append("")
+            return "\n".join(lines).strip() + "\n"
+
+        def _build_tsv(segment_items) -> str:
+            lines = ["start\tend\ttext"]
+            for seg in segment_items:
+                lines.append(f"{seg.start:.3f}\t{seg.end:.3f}\t{seg.text.strip()}")
+            return "\n".join(lines) + "\n"
+
+        async def _run_transcription(
+            *,
+            upload: UploadFile,
+            task: str,
+            language: str | None,
+            prompt: str | None,
+            vad_filter: bool,
+            word_timestamps: bool,
+        ):
+            suffix = os.path.splitext(upload.filename or "audio.bin")[1] or ".bin"
+            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                tmp.write(await upload.read())
+                tmp_path = tmp.name
+
+            try:
+                segments, info = self.model.transcribe(
+                    tmp_path,
+                    task=task,
+                    language=language,
+                    initial_prompt=prompt,
+                    vad_filter=vad_filter,
+                    word_timestamps=word_timestamps,
+                )
+                segment_items = list(segments)
+                text = "".join(s.text for s in segment_items).strip()
+                return text, segment_items, info
+            finally:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+
+        def _segment_to_json(idx: int, seg, include_words: bool) -> dict:
+            item = {
+                "id": idx,
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text,
+                "tokens": list(seg.tokens) if getattr(seg, "tokens", None) is not None else None,
+            }
+            for key in ("seek", "temperature", "avg_logprob", "compression_ratio", "no_speech_prob"):
+                value = getattr(seg, key, None)
+                if value is not None:
+                    item[key] = value
+            if include_words and getattr(seg, "words", None):
+                item["words"] = [
+                    {
+                        "word": word.word,
+                        "start": word.start,
+                        "end": word.end,
+                        "probability": getattr(word, "probability", None),
+                    }
+                    for word in seg.words
+                ]
+            return item
+
+        @app_api.post("/asr")
+        async def asr(
+            audio_file: UploadFile = File(...),
+            output: str = Query(default="text", pattern="^(text|json|vtt|srt|tsv)$"),
+            task: str = Query(default="transcribe", pattern="^(transcribe|translate)$"),
+            language: str | None = Query(default=None),
+            word_timestamps: bool = Query(default=False),
+            vad_filter: bool = Query(default=False),
+            encode: bool = Query(default=True),
+            diarize: bool = Query(default=False),
+            min_speakers: int | None = Query(default=None),
+            max_speakers: int | None = Query(default=None),
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ):
+            _check_bearer(authorization)
+            del encode, diarize, min_speakers, max_speakers
+
+            text, segment_items, info = await _run_transcription(
+                upload=audio_file,
+                task=task,
+                language=language,
+                prompt=None,
+                vad_filter=vad_filter,
+                word_timestamps=word_timestamps,
+            )
+
+            if output == "text":
+                return PlainTextResponse(text)
+            if output == "vtt":
+                return PlainTextResponse(_build_vtt(segment_items), media_type="text/vtt")
+            if output == "srt":
+                return PlainTextResponse(_build_srt(segment_items), media_type="application/x-subrip")
+            if output == "tsv":
+                return PlainTextResponse(_build_tsv(segment_items), media_type="text/tab-separated-values")
+
+            return JSONResponse({
+                "text": text,
+                "language": getattr(info, "language", None),
+                "segments": [
+                    _segment_to_json(idx, seg, include_words=word_timestamps)
+                    for idx, seg in enumerate(segment_items)
+                ],
+            })
+
+        @app_api.post("/detect-language")
+        async def detect_language(
+            audio_file: UploadFile = File(...),
+            authorization: str | None = Header(default=None, alias="Authorization"),
+        ):
+            _check_bearer(authorization)
+
+            _, _, info = await _run_transcription(
+                upload=audio_file,
+                task="transcribe",
+                language=None,
+                prompt=None,
+                vad_filter=False,
+                word_timestamps=False,
+            )
+
+            lang_code = getattr(info, "language", None)
+            lang_prob = getattr(info, "language_probability", None)
+            language_names = {
+                "en": "english",
+                "id": "indonesian",
+                "fr": "french",
+                "de": "german",
+                "es": "spanish",
+                "it": "italian",
+                "pt": "portuguese",
+                "tr": "turkish",
+                "ja": "japanese",
+                "ko": "korean",
+                "zh": "chinese",
+                "ru": "russian",
+                "ar": "arabic",
+                "hi": "hindi",
+                "nl": "dutch",
+                "pl": "polish",
+                "uk": "ukrainian",
+                "vi": "vietnamese",
+                "th": "thai",
+            }
+            return JSONResponse({
+                "detected_language": language_names.get(lang_code, lang_code),
+                "language_code": lang_code,
+                "confidence": lang_prob,
+            })
+
         @app_api.get("/health")
         async def health():
             return {"ok": True, "service": "whisper"}
@@ -322,52 +512,89 @@ class WhisperAPI:
             _check_bearer(authorization)
             del model, temperature
 
-            suffix = os.path.splitext(file.filename or "audio.bin")[1] or ".bin"
+            text, segment_items, info = await _run_transcription(
+                upload=file,
+                task="transcribe",
+                language=language,
+                prompt=prompt,
+                vad_filter=True,
+                word_timestamps=False,
+            )
 
-            try:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                    tmp.write(await file.read())
-                    tmp_path = tmp.name
+            if response_format == "text":
+                return PlainTextResponse(text)
 
-                segments, info = self.model.transcribe(
-                    tmp_path,
-                    language=language,
-                    initial_prompt=prompt,
-                    vad_filter=True,
-                )
+            if response_format == "verbose_json":
+                return JSONResponse({
+                    "task": "transcribe",
+                    "language": info.language,
+                    "duration": info.duration,
+                    "text": text,
+                    "segments": [
+                        {
+                            "id": idx,
+                            "start": seg.start,
+                            "end": seg.end,
+                            "text": seg.text,
+                        }
+                        for idx, seg in enumerate(segment_items)
+                    ],
+                })
 
-                segment_items = list(segments)
-                text = "".join(s.text for s in segment_items).strip()
-
-                if response_format == "text":
-                    return PlainTextResponse(text)
-
-                if response_format == "verbose_json":
-                    return JSONResponse({
-                        "task": "transcribe",
-                        "language": info.language,
-                        "duration": info.duration,
-                        "text": text,
-                        "segments": [
-                            {
-                                "id": idx,
-                                "start": seg.start,
-                                "end": seg.end,
-                                "text": seg.text,
-                            }
-                            for idx, seg in enumerate(segment_items)
-                        ],
-                    })
-
-                return JSONResponse({"text": text})
-            finally:
-                try:
-                    if "tmp_path" in locals() and os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                except Exception:
-                    pass
+            return JSONResponse({"text": text})
 
         return app_api
+
+
+@app.cls(
+    image=whisper_box_image,
+    gpu=WHISPER_BOX_GPU,
+    scaledown_window=1 * MINUTES,
+    timeout=20 * MINUTES,
+    volumes={
+        "/root/.cache": hf_cache_vol,
+    },
+    secrets=[
+        modal.Secret.from_name(HF_SECRET_NAME),
+    ],
+    min_containers=0,
+)
+@modal.concurrent(max_inputs=16)
+class WhisperASRBox:
+    @modal.enter()
+    def startup(self):
+        cmd = [
+            "whisper-asr-webservice",
+            "--host",
+            "0.0.0.0",
+            "--port",
+            str(WHISPER_BOX_PORT),
+        ]
+        print(f"🚀 Starting Whisper ASR Box: {' '.join(cmd)}")
+        self.process = subprocess.Popen(cmd)
+        deadline = time.time() + 5 * MINUTES
+        while time.time() < deadline:
+            _check_running(self.process)
+            try:
+                req_lib.get(f"http://127.0.0.1:{WHISPER_BOX_PORT}/docs").raise_for_status()
+                print("✅ Whisper ASR Box is ready")
+                return
+            except Exception:
+                time.sleep(2)
+        raise TimeoutError("Whisper ASR Box did not become ready in time")
+
+    @modal.exit()
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+
+    @modal.web_server(port=WHISPER_BOX_PORT, startup_timeout=10 * MINUTES)
+    def serve(self):
+        pass
 
 
 # ## Test Entrypoint
