@@ -30,6 +30,7 @@ interface ToolStats {
 interface LatencyWindow {
   values: number[];
   maxSize: number;
+  cursor: number;
 }
 
 export interface MetricsSnapshot {
@@ -80,10 +81,10 @@ export class HealthMetricsCollector {
 
   private llmRequests = 0;
   private llmFailures = 0;
-  private llmLatency: LatencyWindow = { values: [], maxSize: 1000 };
+  private llmLatency: LatencyWindow = { values: [], maxSize: 1000, cursor: 0 };
 
   private tokenStats = new Map<string, { prompt: number; completion: number }>();
-  private messageDuration: LatencyWindow = { values: [], maxSize: 1000 };
+  private messageDuration: LatencyWindow = { values: [], maxSize: 1000, cursor: 0 };
 
   private providerStats = new Map<string, { success: number; failures: number }>();
   private toolStats = new Map<string, ToolStats>();
@@ -108,10 +109,13 @@ export class HealthMetricsCollector {
   }
 
   recordMessageDuration(durationMs: number): void {
-    if (this.messageDuration.values.length >= this.messageDuration.maxSize) {
-      this.messageDuration.values.shift();
+    const win = this.messageDuration;
+    if (win.values.length < win.maxSize) {
+      win.values.push(durationMs);
+    } else {
+      win.values[win.cursor] = durationMs;
+      win.cursor = (win.cursor + 1) % win.maxSize;
     }
-    this.messageDuration.values.push(durationMs);
   }
 
   recordTokenUsage(model: string, promptTokens: number, completionTokens: number): void {
@@ -128,10 +132,13 @@ export class HealthMetricsCollector {
     this.llmRequests++;
     if (!success) this.llmFailures++;
 
-    if (this.llmLatency.values.length >= this.llmLatency.maxSize) {
-      this.llmLatency.values.shift();
+    const win = this.llmLatency;
+    if (win.values.length < win.maxSize) {
+      win.values.push(latencyMs);
+    } else {
+      win.values[win.cursor] = latencyMs;
+      win.cursor = (win.cursor + 1) % win.maxSize;
     }
-    this.llmLatency.values.push(latencyMs);
 
     if (!this.providerStats.has(providerName)) {
       this.providerStats.set(providerName, { success: 0, failures: 0 });
@@ -143,7 +150,7 @@ export class HealthMetricsCollector {
 
   private getToolStats(toolName: string): ToolStats {
     if (!this.toolStats.has(toolName)) {
-      this.toolStats.set(toolName, { invocations: 0, errors: 0, duration: { values: [], maxSize: 100 } });
+      this.toolStats.set(toolName, { invocations: 0, errors: 0, duration: { values: [], maxSize: 100, cursor: 0 } });
     }
     return this.toolStats.get(toolName)!;
   }
@@ -158,10 +165,13 @@ export class HealthMetricsCollector {
 
   recordToolDuration(toolName: string, durationMs: number): void {
     const stats = this.getToolStats(toolName);
-    if (stats.duration.values.length >= stats.duration.maxSize) {
-      stats.duration.values.shift();
+    const win = stats.duration;
+    if (win.values.length < win.maxSize) {
+      win.values.push(durationMs);
+    } else {
+      win.values[win.cursor] = durationMs;
+      win.cursor = (win.cursor + 1) % win.maxSize;
     }
-    stats.duration.values.push(durationMs);
   }
 
   private percentile(sorted: number[], p: number): number {
