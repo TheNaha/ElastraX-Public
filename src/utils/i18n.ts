@@ -48,11 +48,11 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Group Admin
     'group.not_in_group': '❌ This command can only be used in a group.',
-    'group.invalid_action': "❌ Invalid action. Must be 'add' or 'remove'.",
+    'group.invalid_action': "❌ Invalid action. Must be one of: add, remove, promote, demote, mute, unmute, link.",
     'group.invalid_phone': '❌ Invalid user phone number.',
     'group.not_supported': '❌ Group Administration is not supported by the current adapter.',
-    'group.success_add': '✅ Successfully Added user {jid}.',
-    'group.success_remove': '✅ Successfully Removed user {jid}.',
+    'group.success_add': '✅ Successfully added user {jid}.',
+    'group.success_remove': '✅ Successfully removed user {jid}.',
     'group.error': '❌ Error administering group: {msg}. Note: Ensure the bot is an admin of the group.',
 
     // Sticker
@@ -213,7 +213,7 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Group Admin
     'group.not_in_group': '❌ Perintah ini hanya dapat digunakan di dalam grup.',
-    'group.invalid_action': "❌ Tindakan tidak valid. Harus 'add' atau 'remove'.",
+    'group.invalid_action': "❌ Tindakan tidak valid. Harus salah satu: add, remove, promote, demote, mute, unmute, link.",
     'group.invalid_phone': '❌ Nomor telepon pengguna tidak valid.',
     'group.not_supported': '❌ Administrasi Grup tidak didukung oleh adaptor saat ini.',
     'group.success_add': '✅ Berhasil menambahkan pengguna {jid}.',
