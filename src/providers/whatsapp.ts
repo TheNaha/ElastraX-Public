@@ -91,50 +91,50 @@ export class WhatsAppProvider implements BotProvider {
     if (this.starting) return;
     this.starting = true;
 
-    const { state, saveCreds } = await useDBAuthState();
-    const { version, isLatest } = await fetchLatestBaileysVersion();
+    try {
+      const { state, saveCreds } = await useDBAuthState();
+      const { version, isLatest } = await fetchLatestBaileysVersion();
 
-    const baileysLogger = logger.child({ module: 'baileys' });
-    baileysLogger.level = 'warn';
+      const baileysLogger = logger.child({ module: 'baileys' });
+      baileysLogger.level = 'warn';
 
-    logger.info(`[WhatsApp] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
+      logger.info(`[WhatsApp] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
-    const existingSock = this.sock;
-    if (existingSock) {
-      try {
-        existingSock.end(new Error('Restarting WhatsApp socket'));
-      } catch {
-        // no-op
-      }
-      this.sock = null;
-    }
-
-    const sock = makeWASocket({
-      version,
-      auth: state,
-      printQRInTerminal: false,
-      logger: baileysLogger as any,
-      // Allows Baileys to decrypt messages whose Signal session key is not in memory
-      // by looking them up in the SQLite message store. Fixes "No session to decrypt" errors.
-      getMessage: async (key) => {
+      const existingSock = this.sock;
+      if (existingSock) {
         try {
-          const row = await db.select()
-            .from(messages)
-            .where(eq(messages.providerMessageId, key.id ?? ''))
-            .limit(1);
-          if (row[0]?.rawMessage) {
-            return JSON.parse(row[0].rawMessage) as proto.IMessage;
-          }
-        } catch { /* ignore db errors */ }
-        return proto.Message.fromObject({});
-      },
-    });
-    this.sock = sock;
-    this.starting = false;
+          existingSock.end(new Error('Restarting WhatsApp socket'));
+        } catch {
+          // no-op
+        }
+        this.sock = null;
+      }
 
-    sock.ev.on('creds.update', saveCreds);
+      const sock = makeWASocket({
+        version,
+        auth: state,
+        printQRInTerminal: false,
+        logger: baileysLogger as any,
+        // Allows Baileys to decrypt messages whose Signal session key is not in memory
+        // by looking them up in the SQLite message store. Fixes "No session to decrypt" errors.
+        getMessage: async (key) => {
+          try {
+            const row = await db.select()
+              .from(messages)
+              .where(eq(messages.providerMessageId, key.id ?? ''))
+              .limit(1);
+            if (row[0]?.rawMessage) {
+              return JSON.parse(row[0].rawMessage) as proto.IMessage;
+            }
+          } catch { /* ignore db errors */ }
+          return proto.Message.fromObject({});
+        },
+      });
+      this.sock = sock;
 
-    sock.ev.on('connection.update', async (update) => {
+      sock.ev.on('creds.update', saveCreds);
+
+      sock.ev.on('connection.update', async (update) => {
       if (this.sock !== sock) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
@@ -203,9 +203,9 @@ export class WhatsAppProvider implements BotProvider {
           }
         }
       }
-    });
+      });
 
-    sock.ev.on('messages.upsert', async (m) => {
+      sock.ev.on('messages.upsert', async (m) => {
       if (this.sock !== sock) return;
       if (m.type !== 'notify') return;
 
@@ -226,9 +226,9 @@ export class WhatsAppProvider implements BotProvider {
           }
         }
       }));
-    });
+      });
 
-    sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
+      sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
       if (this.sock !== sock) return;
       logger.info(`[WhatsApp] Received history sync with ${histMsgs.length} messages.`);
 
@@ -247,7 +247,13 @@ export class WhatsAppProvider implements BotProvider {
       syncHistoricalDatabase(contexts).catch(err => {
         logger.error(err, 'Background history sync failed');
       });
-    });
+      });
+    } catch (err) {
+      logger.error({ err }, '[WhatsApp] Failed to start provider');
+      this.scheduleReconnect();
+    } finally {
+      this.starting = false;
+    }
   }
 
   /** Closes the Baileys WebSocket connection gracefully. */

@@ -79,8 +79,8 @@ export class DiscordProvider implements BotProvider {
 
     try {
       await this.client.login(token);
-    } catch (e: any) {
-      logger.error(e, '[Discord] Failed to log in.');
+    } catch (err: unknown) {
+      logger.error(err, '[Discord] Failed to log in.');
     }
   }
 
@@ -105,7 +105,10 @@ export class DiscordProvider implements BotProvider {
     if (!channel || !channel.isTextBased()) {
       throw new Error(`Discord channel ${chatId} is not text-based or not accessible.`);
     }
-    await (channel as any).send(text);
+    if (!('send' in channel) || typeof channel.send !== 'function') {
+      throw new Error(`Discord channel ${chatId} cannot send messages.`);
+    }
+    await channel.send(text);
   }
 
   /**
@@ -142,8 +145,8 @@ export class DiscordProvider implements BotProvider {
             rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }),
           };
         }
-      } catch (e) {
-        logger.warn('Failed to fetch Discord quoted message');
+      } catch (err) {
+        logger.warn({ err }, 'Failed to fetch Discord quoted message');
       }
     }
 
@@ -259,10 +262,12 @@ export class DiscordProvider implements BotProvider {
           try {
             const targetChannel = await this.client.channels.fetch(_targetJid);
             if (targetChannel && targetChannel.isTextBased()) {
-              await (targetChannel as any).send(text);
+              if ('send' in targetChannel && typeof targetChannel.send === 'function') {
+                await targetChannel.send(text);
+              }
             }
-          } catch (e) {
-            logger.warn({ _targetJid, e }, '[Discord] forwardMessage to channel failed');
+          } catch (err) {
+            logger.warn({ _targetJid, err }, '[Discord] forwardMessage to channel failed');
           }
         }
       },
@@ -297,7 +302,7 @@ export class DiscordProvider implements BotProvider {
       react: async (emoji: string) => {
         try {
           await msg.react(emoji);
-        } catch (e) {
+        } catch {
           // Some emojis might not be supported natively without exact parsing, ignore safely
         }
       },
@@ -316,8 +321,8 @@ export class DiscordProvider implements BotProvider {
         for (const userId of userIds) {
           try {
             await msg.guild.members.kick(userId, 'Automated by ElastraX GroupAdmin wrapper');
-          } catch (e) {
-            logger.error({ userId }, 'Failed to kick Discord user');
+          } catch (err) {
+            logger.error({ userId, err }, 'Failed to kick Discord user');
           }
         }
       },

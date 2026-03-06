@@ -34,7 +34,6 @@ import { RateLimiter } from './utils/RateLimiter';
 import { MediaCleanup } from './utils/MediaCleanup';
 import { MessageQueue } from './utils/MessageQueue';
 import { SessionManager } from './utils/SessionManager';
-import { healthMetrics } from './utils/HealthMetrics';
 
 // Per-room message queue — ensures sequential processing within each chat room.
 const messageQueue = new MessageQueue();
@@ -57,14 +56,26 @@ const BLOB_KEYS = new Set([
  * the resulting JSON fixture file is small and human-readable.
  * Fields listed in BLOB_KEYS are removed entirely; all other values are kept.
  */
-function stripBlobs(raw: any): any {
+type JsonLike = Record<string, unknown> | unknown[];
+
+function stripBlobs(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null) return raw;
-  const out: any = Array.isArray(raw) ? [] : {};
+  const out: JsonLike = Array.isArray(raw) ? [] : {};
   for (const [k, v] of Object.entries(raw)) {
     if (BLOB_KEYS.has(k)) continue;
-    out[k] = typeof v === 'object' ? stripBlobs(v) : v;
+    if (Array.isArray(out)) {
+      out.push(typeof v === 'object' ? stripBlobs(v) : v);
+    } else {
+      out[k] = typeof v === 'object' ? stripBlobs(v) : v;
+    }
   }
   return out;
+}
+
+function getErrorCode(err: unknown): string | undefined {
+  if (typeof err !== 'object' || err === null || !('code' in err)) return undefined;
+  const { code } = err as { code?: unknown };
+  return typeof code === 'string' ? code : undefined;
 }
 
 /**
@@ -89,9 +100,10 @@ async function dumpFixtures(botUserId: string | null): Promise<void> {
 
   try {
     await mkdir(FIXTURE_DIR, { recursive: true });
-  } catch (err: any) {
-    if (err?.code === 'EACCES' || err?.code === 'EROFS') {
-      logger.warn({ path: FIXTURE_DIR, code: err.code }, '[FixtureDumper] Fixture directory is not writable; skipping fixture dump.');
+  } catch (err: unknown) {
+    const code = getErrorCode(err);
+    if (code === 'EACCES' || code === 'EROFS') {
+      logger.warn({ path: FIXTURE_DIR, code }, '[FixtureDumper] Fixture directory is not writable; skipping fixture dump.');
       return;
     }
     throw err;
@@ -103,9 +115,10 @@ async function dumpFixtures(botUserId: string | null): Promise<void> {
     if (existsSync(filepath)) continue; // don't overwrite existing fixtures
     try {
       await writeFile(filepath, JSON.stringify(stripBlobs(raw), null, 2), 'utf-8');
-    } catch (err: any) {
-      if (err?.code === 'EACCES' || err?.code === 'EROFS') {
-        logger.warn({ path: filepath, code: err.code }, '[FixtureDumper] Cannot write fixture file; skipping remaining fixture dump.');
+    } catch (err: unknown) {
+      const code = getErrorCode(err);
+      if (code === 'EACCES' || code === 'EROFS') {
+        logger.warn({ path: filepath, code }, '[FixtureDumper] Cannot write fixture file; skipping remaining fixture dump.');
         return;
       }
       throw err;
@@ -149,7 +162,7 @@ async function main() {
     logger.info('Running database migrations...');
     migrate(db, { migrationsFolder: './drizzle/migrations' });
     logger.info('Database migrations applied successfully.');
-  } catch (err: any) {
+  } catch (err: unknown) {
     logger.error(err, 'Failed to run database migrations');
     process.exit(1);
   }
@@ -200,7 +213,18 @@ async function main() {
   setInterval(() => RateLimiter.prune(), 10 * 60 * 1000);
 
   // ── Media cache pruning ─────────────────────────────────────────────────────
-  const mediaCleanupIntervalMs = parseInt(process.env.MEDIA_CLEANUP_INTERVAL_MS || String(6 * 60 * 60 * 1000), 10);
+  const defaultMediaCleanupIntervalMs = 6 * 60 * 60 * 1000;
+  const rawMediaCleanupInterval = process.env.MEDIA_CLEANUP_INTERVAL_MS;
+  const parsedMediaCleanupInterval = parseInt(rawMediaCleanupInterval || String(defaultMediaCleanupIntervalMs), 10);
+  const mediaCleanupIntervalMs = Number.isFinite(parsedMediaCleanupInterval) && parsedMediaCleanupInterval >= 60_000
+    ? parsedMediaCleanupInterval
+    : defaultMediaCleanupIntervalMs;
+  if (rawMediaCleanupInterval && mediaCleanupIntervalMs !== parsedMediaCleanupInterval) {
+    logger.warn(
+      { raw: rawMediaCleanupInterval, using: mediaCleanupIntervalMs },
+      '[MediaCleanup] Invalid MEDIA_CLEANUP_INTERVAL_MS; falling back to default',
+    );
+  }
   setInterval(() => {
     MediaCleanup.pruneOldFiles().catch((err) => {
       logger.warn({ err }, '[MediaCleanup] Periodic prune failed');

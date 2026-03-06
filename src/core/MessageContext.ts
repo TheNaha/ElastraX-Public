@@ -125,13 +125,13 @@ export interface MessageContext {
    * Used for streaming responses — send an initial message, then edit it as chunks arrive.
    * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
-  sendMessage?(text: string, options?: ReplyOptions): Promise<any>;
+  sendMessage?(text: string, options?: ReplyOptions): Promise<unknown>;
 
   /**
    * Edit a previously sent message by its key/handle.
    * The key is obtained from `sendMessage()`. Used for streaming response updates.
    */
-  editMessage?(key: any, text: string): Promise<void>;
+  editMessage?(key: unknown, text: string): Promise<void>;
 
   /**
    * React to the message with an emoji (if supported by platform)
@@ -159,7 +159,7 @@ export interface MessageContext {
    * Delete a message. Defaults to the current incoming message if no key is provided.
    * On WhatsApp, only the bot's own messages can be deleted for everyone.
    */
-  deleteMessage?(key?: any): Promise<void>;
+  deleteMessage?(key?: unknown): Promise<void>;
 
   /**
    * Forward the current message to another chat JID / channel ID.

@@ -44,11 +44,14 @@ mock.module('../src/db', () => ({
             const rows = isMessages ? mockHistoryRows : mockRoomRows;
             // Return something that is BOTH awaitable AND supports .orderBy().limit() or .limit()
             const result: any = {
-              then(resolve: Function, reject?: Function) {
-                return Promise.resolve(rows).then(resolve as any, reject as any);
+              then(
+                resolve: (value: unknown[]) => unknown,
+                reject?: (reason: unknown) => unknown,
+              ) {
+                return Promise.resolve(rows).then(resolve, reject);
               },
-              catch(rej: Function) {
-                return Promise.resolve(rows).catch(rej as any);
+              catch(reject: (reason: unknown) => unknown) {
+                return Promise.resolve(rows).catch(reject);
               },
               limit: (_n: number) => Promise.resolve(rows),
               orderBy: (_ord: any) => ({
@@ -85,6 +88,8 @@ mock.module('fs/promises', () => ({
 mock.module('fs', () => ({
   existsSync: (_path: string) => shouldFileExist,
 }));
+
+process.env.AI_STREAMING = 'true';
 
 // Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
@@ -155,6 +160,7 @@ afterAll(() => {
   getToolByNameSpy.mockRestore();
   getToolByAliasOrNameSpy.mockRestore();
   flowHandleSpy.mockRestore();
+  delete process.env.AI_STREAMING;
 });
 
 describe('handleIncomingMessage', () => {
@@ -241,6 +247,18 @@ describe('handleIncomingMessage', () => {
   describe('private DM – AI conversation', () => {
     test('should send the AI reply for a private DM', async () => {
       const ctx = makeCtx({ isGroup: false, text: 'How are you?' });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
+    });
+
+    test('should still reply when streaming is enabled but non-stream path is selected', async () => {
+      mockRoomRows = [{ ...defaultRoom(), allowTools: true }];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Hello',
+        sendMessage: mock(async () => ({ id: 'sent-1' })),
+        editMessage: mock(async () => {}),
+      });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
     });
@@ -349,6 +367,7 @@ describe('handleIncomingMessage', () => {
       // The reply should be the AI response
       expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
     });
+
   });
 
   // ── Explicit slash command routing ────────────────────────────────────────

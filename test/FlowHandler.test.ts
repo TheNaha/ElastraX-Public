@@ -32,6 +32,7 @@ describe('FlowHandler', () => {
   const originalSessionClear = SessionManager.clear;
   const originalLoggerDebug = logger.debug;
   const originalLoggerError = logger.error;
+  const originalLoggerWarn = logger.warn;
 
   // Mocks
   let mockGetSession: Mock<any>;
@@ -50,6 +51,7 @@ describe('FlowHandler', () => {
     // Mock Logger methods (suppress output)
     logger.debug = mock(() => {});
     logger.error = mock(() => {});
+    logger.warn = mock(() => {});
   });
 
   afterEach(() => {
@@ -58,6 +60,7 @@ describe('FlowHandler', () => {
     SessionManager.clear = originalSessionClear;
     logger.debug = originalLoggerDebug;
     logger.error = originalLoggerError;
+    logger.warn = originalLoggerWarn;
   });
 
   describe('register', () => {
@@ -192,7 +195,7 @@ describe('FlowHandler', () => {
     });
 
     test('should return false if no processor is registered for the active flow', async () => {
-       mockGetSession.mockReturnValue({
+      mockGetSession.mockReturnValue({
         activeFlow: 'unknownFlow',
         flows: { 'unknownFlow': { flow: 'unknownFlow', step: '1', data: {} } },
       });
@@ -201,6 +204,7 @@ describe('FlowHandler', () => {
       const result = await FlowHandler.handle(ctx);
 
       expect(result).toBe(false);
+      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'unknownFlow', 'whatsapp');
     });
   });
 });

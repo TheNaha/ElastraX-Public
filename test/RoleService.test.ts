@@ -3,28 +3,60 @@ import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-let mockRoleRows: any[] = [];
-let lastInsertedRole: any = null;
-let lastDeletedCond: any = false;
+type GenericRow = Record<string, unknown>;
+
+let mockRoleRows: GenericRow[] = [];
+let lastInsertedRole: GenericRow | null = null;
+let lastWhereCondition: unknown = null;
 
 import { IdentityService } from '../src/utils/IdentityService';
 
 /** Creates a chainable thenable mock query that resolves to mockRoleRows. */
 function mockQuery() {
-  const obj: any = {
+  const obj = {
     from: () => obj,
-    where: () => obj,
+    where: (condition: unknown) => {
+      lastWhereCondition = condition;
+      return obj;
+    },
     limit: () => obj,
-    then: (resolve: any) => resolve(mockRoleRows),
+    then: (resolve: (rows: GenericRow[]) => unknown) => resolve(mockRoleRows),
   };
   return obj;
+}
+
+function extractSqlParamStrings(condition: unknown): string[] {
+  const values: string[] = [];
+  const visited = new Set<object>();
+
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== 'object') return;
+    const obj = node as Record<string, unknown>;
+    if (visited.has(obj)) return;
+    visited.add(obj);
+
+    if ('value' in obj && typeof obj.value === 'string') {
+      values.push(obj.value);
+    }
+
+    for (const value of Object.values(obj)) {
+      if (Array.isArray(value)) {
+        for (const item of value) walk(item);
+      } else {
+        walk(value);
+      }
+    }
+  };
+
+  walk(condition);
+  return values;
 }
 
 mock.module('../src/db', () => ({
   db: {
     select: () => mockQuery(),
     insert: () => ({
-      values: (vals: any) => {
+      values: (vals: GenericRow) => {
         lastInsertedRole = vals;
         return Promise.resolve();
       },
@@ -35,10 +67,7 @@ mock.module('../src/db', () => ({
       }),
     }),
     delete: () => ({
-      where: () => {
-        lastDeletedCond = true;
-        return Promise.resolve();
-      },
+      where: () => Promise.resolve(),
     }),
   },
 }));
@@ -51,7 +80,7 @@ describe('RoleService', () => {
   beforeEach(() => {
     mockRoleRows = [];
     lastInsertedRole = null;
-    lastDeletedCond = false;
+    lastWhereCondition = null;
     process.env.BOT_OWNER_JID = '';
     spyOn(IdentityService, 'getAllJids').mockImplementation(async (jid: string) => [jid]);
   });
@@ -102,6 +131,17 @@ describe('RoleService', () => {
     expect(roles).toContain('premium');
   });
 
+  test('resolveRoles uses canonical identity when getAllJids returns a single mapped JID', async () => {
+    spyOn(IdentityService, 'getAllJids').mockImplementation(async () => ['canonical@s.whatsapp.net']);
+    mockRoleRows = [{ scope: 'global', role: 'premium' }];
+
+    await RoleService.resolveRoles('user@lid', 'chat-1');
+
+    const params = extractSqlParamStrings(lastWhereCondition);
+    expect(params).toContain('canonical@s.whatsapp.net');
+    expect(params).not.toContain('user@lid');
+  });
+
   test('setRole calls insert for new role', async () => {
     mockRoleRows = [];
     await RoleService.setRole('user-1', 'admin', 'global', 'whatsapp', 'owner-1');
@@ -119,6 +159,17 @@ describe('RoleService', () => {
     mockRoleRows = [{ id: 1 }];
     const result = await RoleService.removeRole('user-1', 'global', 'admin');
     expect(result).toBe(true);
+  });
+
+  test('getUserRoles uses canonical identity when getAllJids returns a single mapped JID', async () => {
+    spyOn(IdentityService, 'getAllJids').mockImplementation(async () => ['canonical@s.whatsapp.net']);
+    mockRoleRows = [{ scope: 'global', role: 'admin' }];
+
+    await RoleService.getUserRoles('user@lid');
+
+    const params = extractSqlParamStrings(lastWhereCondition);
+    expect(params).toContain('canonical@s.whatsapp.net');
+    expect(params).not.toContain('user@lid');
   });
 
   test('meetsRequirement works correctly', () => {

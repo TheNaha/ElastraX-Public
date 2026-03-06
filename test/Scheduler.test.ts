@@ -52,4 +52,18 @@ describe('Scheduler', () => {
     Scheduler.stop();
     expect(() => Scheduler.stop()).not.toThrow();
   });
+
+  test('monthly recurrence should always return a future date', () => {
+    const lastFire = new Date('2020-01-01T00:00:00.000Z');
+    const next = (Scheduler as any).computeNextOccurrence(lastFire, 'monthly') as Date | null;
+    expect(next).not.toBeNull();
+    if (!next) throw new Error('next should not be null');
+    expect(next.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  test('invalid recurrence should return null', () => {
+    const lastFire = new Date();
+    const next = (Scheduler as any).computeNextOccurrence(lastFire, 'every maybe');
+    expect(next).toBeNull();
+  });
 });

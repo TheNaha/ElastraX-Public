@@ -58,24 +58,26 @@ export class RateLimiter {
   ): { allowed: boolean; waitSeconds?: number } {
     // -1 means unlimited — always allow
     if (maxMessages === -1) return { allowed: true };
+    const safeMaxMessages = Number.isFinite(maxMessages) ? Math.max(1, Math.floor(maxMessages)) : 1;
+    const safeWindowSec = Number.isFinite(windowSec) ? Math.max(1, Math.floor(windowSec)) : 60;
 
     const key = `${platform}:${userId}`;
     const now = Date.now();
-    const windowMs = windowSec * 1000;
+    const windowMs = safeWindowSec * 1000;
 
     let bucket = this.buckets.get(key);
 
     // If the bucket exists but its limits changed (e.g., user gained a role), re-size it
-    if (bucket && (bucket.maxTokens !== maxMessages || bucket.windowMs !== windowMs)) {
+    if (bucket && (bucket.maxTokens !== safeMaxMessages || bucket.windowMs !== windowMs)) {
       // Scale tokens proportionally to new capacity
       const ratio = bucket.tokens / bucket.maxTokens;
-      bucket.maxTokens = maxMessages;
+      bucket.maxTokens = safeMaxMessages;
       bucket.windowMs = windowMs;
-      bucket.tokens = Math.min(maxMessages, Math.floor(ratio * maxMessages));
+      bucket.tokens = Math.min(safeMaxMessages, Math.floor(ratio * safeMaxMessages));
     }
 
     if (!bucket) {
-      bucket = { tokens: maxMessages - 1, lastRefill: now, maxTokens: maxMessages, windowMs };
+      bucket = { tokens: safeMaxMessages - 1, lastRefill: now, maxTokens: safeMaxMessages, windowMs };
       this.buckets.set(key, bucket);
       return { allowed: true };
     }

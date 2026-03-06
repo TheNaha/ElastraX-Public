@@ -22,7 +22,7 @@
  */
 
 import { MessageContext } from './MessageContext';
-import { SessionManager } from '../utils/SessionManager';
+import { SessionManager, type FlowSession } from '../utils/SessionManager';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 import { CANCEL_COMMANDS } from './constants';
@@ -34,7 +34,7 @@ import { CANCEL_COMMANDS } from './constants';
  * @param activeFlowData - The current flow session data (step, collected inputs, etc.).
  * @param flowId         - The unique name of the flow (same key used in `FlowHandler.register`).
  */
-export type FlowProcessor = (ctx: MessageContext, activeFlowData: any, flowId: string) => Promise<void>;
+export type FlowProcessor = (ctx: MessageContext, activeFlowData: FlowSession, flowId: string) => Promise<void>;
 
 export class FlowHandler {
   private static flows: Record<string, FlowProcessor> = {};
@@ -81,14 +81,22 @@ export class FlowHandler {
       try {
         await flowProcessor(ctx, activeFlowData, session.activeFlow);
         return true;
-      } catch (err: any) {
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : 'unknown error';
         logger.error(err, `[FlowHandler] Error in flow: ${activeFlowData.flow}`);
-        await ctx.reply(t(ctx.language, 'flow.error', { msg: err.message }));
+        await ctx.reply(t(ctx.language, 'flow.error', { msg: errMsg }));
         SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
         return true;
       }
     }
 
+    // Flow processor missing (e.g. after deploy where flow code was removed).
+    // Clear stale session so user is not stuck with a dangling active flow forever.
+    SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
+    logger.warn(
+      { flow: activeFlowData.flow, senderId: ctx.senderId, platform: ctx.platform },
+      '[FlowHandler] No processor registered for active flow; session cleared',
+    );
     return false;
   }
 }

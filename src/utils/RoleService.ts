@@ -95,14 +95,14 @@ export class RoleService {
       }
       logger.debug({ userIds, chatId }, '[RoleService] Querying DB for role entries');
 
+      const roleLookupCondition = userIds.length === 1
+        ? eq(userRoles.userId, userIds[0]!)
+        : inArray(userRoles.userId, userIds);
+
       const rows = await db
         .select({ scope: userRoles.scope, role: userRoles.role })
         .from(userRoles)
-        .where(
-          userIds.length === 1
-            ? eq(userRoles.userId, userId)
-            : inArray(userRoles.userId, userIds),
-        );
+        .where(roleLookupCondition);
 
       for (const row of rows) {
         if (row.scope === 'global' || row.scope === chatId) {
@@ -295,17 +295,17 @@ export class RoleService {
       userIds = [userId];
     }
 
+    const roleLookupCondition = userIds.length === 1
+      ? eq(userRoles.userId, userIds[0]!)
+      : inArray(userRoles.userId, userIds);
+
     const rows = await db
       .select({
         scope: userRoles.scope,
         role: userRoles.role,
       })
       .from(userRoles)
-      .where(
-        userIds.length === 1
-          ? eq(userRoles.userId, userId)
-          : inArray(userRoles.userId, userIds),
-      );
+      .where(roleLookupCondition);
     return rows;
   }
 }

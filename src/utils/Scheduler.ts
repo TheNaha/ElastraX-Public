@@ -137,7 +137,10 @@ export class Scheduler {
         break;
       case 'monthly': {
         const next = new Date(lastFire);
-        next.setMonth(next.getMonth() + 1);
+        // Catch up to the first monthly occurrence that is actually in the future.
+        do {
+          next.setMonth(next.getMonth() + 1);
+        } while (next.getTime() <= now);
         return next;
       }
       default: {

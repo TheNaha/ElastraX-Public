@@ -29,7 +29,7 @@
  */
 
 import { db } from '../db';
-import { chatRooms, messages, ChatRoom } from '../db/schema';
+import { chatRooms, messages } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
@@ -67,9 +67,9 @@ function stripThinkTags(text: string): string {
 }
 
 function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
-  // Use `any` for content because some providers may return non-spec formats
+  // Keep content as unknown because some providers may return non-spec formats
   // (e.g., array-of-parts) even though the typed interface expects string|null.
-  const content: any = aiMsgObj?.content;
+  const content: unknown = aiMsgObj?.content;
 
   if (typeof content === 'string') {
     return stripThinkTags(content);
@@ -77,9 +77,16 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
 
   if (Array.isArray(content)) {
     const text = content
-      .map((part: any) => {
+      .map((part: unknown) => {
         if (typeof part === 'string') return part;
-        if (typeof part?.text === 'string') return part.text;
+        if (
+          typeof part === 'object'
+          && part !== null
+          && 'text' in part
+          && typeof (part as { text?: unknown }).text === 'string'
+        ) {
+          return (part as { text: string }).text;
+        }
         return '';
       })
       .filter(Boolean)
@@ -129,10 +136,10 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
       throw new Error(`Transcription HTTP ${response.status}`);
     }
 
-    const data: any = await response.json();
+    const data = (await response.json()) as { text?: string; transcript?: string };
     const text = (data.text || data.transcript || '').trim();
     return text || null;
-  } catch (err: any) {
+  } catch (err: unknown) {
     log.warn({ err }, '[Transcription] Failed to transcribe voice note');
     return null;
   }
@@ -149,7 +156,7 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
  */
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const startMs = Date.now();
-  const { chatId, platform, senderName, text, isGroup, mentionedIds } = ctx;
+  const { chatId, platform, senderName, text, isGroup } = ctx;
   const verboseAiLogs = process.env.AI_VERBOSE_LOGS === 'true';
 
   // Fetch or create the chat room early so that ctx.language is available to all
@@ -267,9 +274,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         }
         await ctx.react?.('✅');
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
-      } catch (err: any) {
+      } catch (err: unknown) {
         log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
-        await ctx.reply(err?.message || t(ctx.language, 'agent.internal_error'));
+        const errMessage = err instanceof Error ? err.message : '';
+        await ctx.reply(errMessage || t(ctx.language, 'agent.internal_error'));
         await ctx.react?.('❌');
       }
       return;
@@ -340,7 +348,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       userContent = `${userContent}\n\n[Voice Transcript]\n${transcript}`;
     }
 
-    const insertResult = await db.insert(messages).values({
+    await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: ctx.senderId,
       senderName,
@@ -605,6 +613,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     
     let isDone = false;
     let finalAiResponseText = '';
+    let streamedResponseSent = false;
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     const availableTools = config.allowTools ? getToolDefinitions() : undefined;
     const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
@@ -628,7 +637,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         if (useStreaming) {
           // Accumulate chunks and do rate-limited edits of the live message
           let accumulated = '';
-          let sentKey: any = null;
+          let sentKey: unknown = null;
           let lastEditTime = 0;
           const toolCallDeltas: Map<number, { id: string; name: string; args: string }> = new Map();
 
@@ -670,6 +679,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 const displayText = accumulated + ' ▌';
                 if (!sentKey) {
                   sentKey = await ctx.sendMessage!(displayText);
+                  streamedResponseSent = true;
                 } else {
                   await ctx.editMessage!(sentKey, displayText).catch(() => {});
                 }
@@ -710,7 +720,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                   toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
                     ? rawResult.text : rawResult;
                   healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-                } catch (err: any) {
+                } catch (err: unknown) {
                   healthMetrics.recordToolError(toolName);
                   healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
                   throw err;
@@ -768,7 +778,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             let args: Record<string, unknown> = {};
             try {
               args = JSON.parse(tc.function.arguments);
-            } catch (e) {
+            } catch {
               log.warn({ raw: tc.function.arguments, toolName }, 'Failed to parse tool arguments');
             }
 
@@ -785,7 +795,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
                   ? rawResult.text : rawResult;
                 healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-              } catch (err: any) {
+              } catch (err: unknown) {
                 healthMetrics.recordToolError(toolName);
                 healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
                 throw err;
@@ -854,9 +864,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // 5. Send Response
     // When streaming was used, the final text was already sent via edits.
     // We only need ctx.reply for the non-streaming path or error fallback.
-    const streamAlreadySent = streamingEnabled && finalAiResponseText !== internalErrorText
-      && typeof ctx.sendMessage === 'function';
-    if (!streamAlreadySent) {
+    const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
+    if (!replyAlreadyDelivered) {
       await ctx.reply(finalAiResponseText);
     }
     await ctx.react?.('✅'); // show success

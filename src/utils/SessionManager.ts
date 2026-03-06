@@ -21,6 +21,7 @@
  */
 
 import { logger } from './logger';
+import { eq, inArray } from 'drizzle-orm';
 
 /** State data for a single interactive flow step. */
 export interface FlowSession {
@@ -40,6 +41,21 @@ export interface UserSession {
 export class SessionManager {
   private static sessions = new Map<string, UserSession>();
   private static dbLoaded = false;
+  private static dbLoadPromise: Promise<void> | null = null;
+  private static dbDepsPromise: Promise<{ db: any; flowSessions: any }> | null = null;
+
+  private static getDbDeps(): Promise<{ db: any; flowSessions: any }> {
+    if (!this.dbDepsPromise) {
+      this.dbDepsPromise = Promise.all([
+        import('../db'),
+        import('../db/schema'),
+      ]).then(([dbMod, schemaMod]) => ({
+        db: dbMod.db,
+        flowSessions: schemaMod.flowSessions,
+      }));
+    }
+    return this.dbDepsPromise;
+  }
 
   /**
    * Lazily load all persisted sessions from the database on first access.
@@ -47,55 +63,60 @@ export class SessionManager {
    */
   private static async loadFromDB(): Promise<void> {
     if (this.dbLoaded) return;
-    this.dbLoaded = true;
-    try {
-      // Dynamic import to avoid circular dependency with db module
-      const { db } = await import('../db');
-      const { flowSessions } = await import('../db/schema');
-      const { inArray } = await import('drizzle-orm');
-      const rows = db.select().from(flowSessions).all();
-      const now = Date.now();
-      const expiredIds: string[] = [];
+    if (this.dbLoadPromise) return this.dbLoadPromise;
 
-      for (const row of rows) {
-        try {
-          const session = JSON.parse(row.data) as UserSession;
-          // Prune expired flows during load
-          let hasExpired = false;
-          for (const [flowId, flow] of Object.entries(session.flows)) {
-            if (now > flow.expiresAt) {
-              delete session.flows[flowId];
-              if (session.activeFlow === flowId) session.activeFlow = null;
-              hasExpired = true;
+    this.dbLoadPromise = (async () => {
+      try {
+        // Dynamic import to avoid circular dependency with db module
+        const { db, flowSessions } = await this.getDbDeps();
+        const rows = db.select().from(flowSessions).all();
+        const now = Date.now();
+        const expiredIds: string[] = [];
+
+        for (const row of rows) {
+          try {
+            const session = JSON.parse(row.data) as UserSession;
+            // Prune expired flows during load
+            let hasExpired = false;
+            for (const [flowId, flow] of Object.entries(session.flows)) {
+              if (now > flow.expiresAt) {
+                delete session.flows[flowId];
+                if (session.activeFlow === flowId) session.activeFlow = null;
+                hasExpired = true;
+              }
             }
-          }
-          if (Object.keys(session.flows).length > 0) {
-            this.sessions.set(row.id, session);
-          } else if (hasExpired) {
-            // Collect ID to clean up fully expired session from DB in bulk
-            expiredIds.push(row.id);
-          }
-        } catch { /* skip corrupt rows */ }
-      }
+            if (Object.keys(session.flows).length > 0) {
+              this.sessions.set(row.id, session);
+            } else if (hasExpired) {
+              // Collect ID to clean up fully expired session from DB in bulk
+              expiredIds.push(row.id);
+            }
+          } catch { /* skip corrupt rows */ }
+        }
 
-      if (expiredIds.length > 0) {
-        db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
-      }
+        if (expiredIds.length > 0) {
+          db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
+        }
 
-      logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[SessionManager] Loaded sessions from DB');
-    } catch (err) {
-      logger.warn({ err }, '[SessionManager] Failed to load sessions from DB (non-fatal)');
-    }
+        this.dbLoaded = true;
+        logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[SessionManager] Loaded sessions from DB');
+      } catch (err) {
+        this.dbLoaded = false;
+        logger.warn({ err }, '[SessionManager] Failed to load sessions from DB (non-fatal)');
+      } finally {
+        this.dbLoadPromise = null;
+      }
+    })();
+
+    return this.dbLoadPromise;
   }
 
-  /** Write-through: persist session state to SQLite. */
-  private static persistToDB(key: string, session: UserSession | null): void {
+  private static async persistToDBInternal(key: string, session: UserSession | null): Promise<void> {
     try {
       // Dynamic import to avoid circular dependency
-      const { db } = require('../db');
-      const { flowSessions } = require('../db/schema');
+      const { db, flowSessions } = await this.getDbDeps();
       if (!session || Object.keys(session.flows).length === 0) {
-        db.delete(flowSessions).where(require('drizzle-orm').eq(flowSessions.id, key)).run();
+        db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {
         const data = JSON.stringify(session);
         db.insert(flowSessions)
@@ -109,6 +130,11 @@ export class SessionManager {
     } catch (err) {
       logger.warn({ err, key }, '[SessionManager] Failed to persist session to DB');
     }
+  }
+
+  /** Write-through: persist session state to SQLite. */
+  private static persistToDB(key: string, session: UserSession | null): void {
+    void this.persistToDBInternal(key, session);
   }
 
   /**

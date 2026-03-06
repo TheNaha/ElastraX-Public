@@ -26,13 +26,13 @@ export interface AIChatMessage {
     audio_url?: { url: string };
   }>;
   name?: string;
-  tool_calls?: any[];
+  tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
 
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
-import type { ChatCompletionMessage, ChatCompletionResponse, ChatCompletionChunk } from '../types/ai';
+import type { ChatCompletionMessage, ChatCompletionResponse, ChatCompletionChunk, ToolCall } from '../types/ai';
 
 const log = logger.child({ module: 'AIClient' });
 

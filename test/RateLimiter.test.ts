@@ -81,4 +81,14 @@ describe('RateLimiter', () => {
     // Clean up
     RateLimiter.reset('resize-user', 'whatsapp');
   });
+
+  test('checkWithLimits() sanitizes invalid limits to safe defaults', () => {
+    const first = RateLimiter.checkWithLimits('invalid-user', 'whatsapp', 0, 0);
+    expect(first.allowed).toBe(true);
+    const second = RateLimiter.checkWithLimits('invalid-user', 'whatsapp', 0, 0);
+    expect(second.allowed).toBe(false);
+    expect(second.waitSeconds).toBeGreaterThan(0);
+
+    RateLimiter.reset('invalid-user', 'whatsapp');
+  });
 });

@@ -11,7 +11,7 @@ const _mockLogger = {
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { buildWebhookMessage, resolveRoomIds } from '../src/webhookServer';
+import { buildWebhookMessage, resolveRoomIds, resolveWebhookPort } from '../src/webhookServer';
 
 describe('WebhookServer helpers', () => {
   test('buildWebhookMessage should parse Apprise-like payload', () => {
@@ -79,5 +79,18 @@ describe('WebhookServer helpers', () => {
       'alpha',
       'beta',
     ]);
+  });
+
+  test('resolveWebhookPort should return configured valid ports', () => {
+    expect(resolveWebhookPort('0')).toBe(0);
+    expect(resolveWebhookPort('3501')).toBe(3501);
+  });
+
+  test('resolveWebhookPort should fall back to default on invalid values', () => {
+    expect(resolveWebhookPort(undefined)).toBe(3500);
+    expect(resolveWebhookPort('')).toBe(3500);
+    expect(resolveWebhookPort('not-a-number')).toBe(3500);
+    expect(resolveWebhookPort('-1')).toBe(3500);
+    expect(resolveWebhookPort('70000')).toBe(3500);
   });
 });

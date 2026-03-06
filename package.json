@@ -8,6 +8,7 @@
     "dev": "bun run --watch src/index.ts",
     "lint": "bun x eslint src test",
     "test": "bun test test/",
+    "test:coverage": "bun test --coverage test/",
     "db:generate": "bun x drizzle-kit generate",
     "db:push": "bun x drizzle-kit push",
     "db:migrate": "bun x drizzle-kit migrate",

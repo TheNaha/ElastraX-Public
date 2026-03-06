@@ -94,6 +94,16 @@ function truncateText(text: string): string {
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
+function isValidPort(value: number): boolean {
+  return Number.isInteger(value) && value >= 0 && value <= 65535;
+}
+
+export function resolveWebhookPort(rawPort: string | undefined): number {
+  const defaultPort = 3500;
+  const parsed = Number.parseInt((rawPort ?? '').trim(), 10);
+  return isValidPort(parsed) ? parsed : defaultPort;
+}
+
 export function resolveRoomIds(body: WebhookBody, url: URL): string[] {
   const directRoomId = asNonEmptyString(body.room_id);
   const queryRoomId = asNonEmptyString(url.searchParams.get('room_id'));
@@ -355,7 +365,12 @@ export class WebhookServer {
       log.warn('WEBHOOK_SECRET not set — /webhook endpoint will be disabled, /health remains available');
     }
 
-    const port = parseInt(process.env.WEBHOOK_PORT || '3500', 10);
+    const rawPort = process.env.WEBHOOK_PORT;
+    const parsedPort = Number.parseInt((rawPort ?? '').trim(), 10);
+    const port = resolveWebhookPort(rawPort);
+    if (rawPort && rawPort.trim() !== '' && !isValidPort(parsedPort)) {
+      log.warn({ rawPort, fallbackPort: port }, 'Invalid WEBHOOK_PORT value; falling back to default');
+    }
 
     this.server = Bun.serve({
       port,
@@ -410,8 +425,11 @@ export class WebhookServer {
 
         // Non-GitHub sources use shared secret with constant-time comparison
         if (!githubEvent) {
-          const bodySecret = body.secret || url.searchParams.get('secret') || req.headers.get('x-webhook-secret') || '';
-          if (!safeSecretCompare(bodySecret, secret)) {
+          const providedSecret = asNonEmptyString(body.secret)
+            || asNonEmptyString(url.searchParams.get('secret'))
+            || asNonEmptyString(req.headers.get('x-webhook-secret'))
+            || '';
+          if (!safeSecretCompare(providedSecret, secret)) {
             return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
               status: 401, headers: { 'Content-Type': 'application/json' },
             });
@@ -430,7 +448,7 @@ export class WebhookServer {
         req.headers.forEach((v, k) => { headers[k.toLowerCase()] = v; });
 
         const text = truncateText(buildWebhookMessage(headers, body));
-        const platform = body.platform as string | undefined;
+        const platform = asNonEmptyString(body.platform) || undefined;
 
         try {
           const deliveryResults = await Promise.allSettled(
