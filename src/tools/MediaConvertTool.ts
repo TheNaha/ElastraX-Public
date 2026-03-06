@@ -114,7 +114,8 @@ export class MediaConvertTool extends BaseTool {
     const lang = ctx.language ?? 'en';
     const targetFmt = (args.format || '').toLowerCase() as ConvertFormat;
 
-    if (!FORMAT_ARGS[targetFmt]) {
+    // Security: Validate the requested format safely to prevent prototype pollution
+    if (!Object.prototype.hasOwnProperty.call(FORMAT_ARGS, targetFmt)) {
       return t(lang, 'convert.unsupported', { from: 'source', to: targetFmt });
     }
 

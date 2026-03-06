@@ -108,7 +108,8 @@ export class TranslateTool extends BaseTool {
     if (tokens.length > 0) {
       const firstTokenLower = tokens[0].toLowerCase();
 
-      if (LANGUAGE_MAP[firstTokenLower]) {
+      // Security: Validate the language token safely to prevent prototype pollution
+      if (Object.prototype.hasOwnProperty.call(LANGUAGE_MAP, firstTokenLower)) {
         // First token is a language -> Use it
         targetLang = LANGUAGE_MAP[firstTokenLower];
         // The rest is the source text

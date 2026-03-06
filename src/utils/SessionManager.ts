@@ -21,6 +21,8 @@
  */
 
 import { logger } from './logger';
+import { db } from '../db';
+import { flowSessions } from '../db/schema';
 import { eq, inArray } from 'drizzle-orm';
 
 /** State data for a single interactive flow step. */
@@ -63,15 +65,15 @@ export class SessionManager {
    */
   private static async loadFromDB(): Promise<void> {
     if (this.dbLoaded) return;
-    if (this.dbLoadPromise) return this.dbLoadPromise;
-
-    this.dbLoadPromise = (async () => {
-      try {
-        // Dynamic import to avoid circular dependency with db module
-        const { db, flowSessions } = await this.getDbDeps();
-        const rows = db.select().from(flowSessions).all();
-        const now = Date.now();
-        const expiredIds: string[] = [];
+    this.dbLoaded = true;
+    try {
+      // Dynamic import to avoid circular dependency with db module
+      const { db } = await import('../db');
+      const { flowSessions } = await import('../db/schema');
+      const { inArray } = await import('drizzle-orm');
+      const rows = db.select().from(flowSessions).all();
+      const now = Date.now();
+      const expiredIds: string[] = [];
 
         for (const row of rows) {
           try {
@@ -114,7 +116,8 @@ export class SessionManager {
   private static async persistToDBInternal(key: string, session: UserSession | null): Promise<void> {
     try {
       // Dynamic import to avoid circular dependency
-      const { db, flowSessions } = await this.getDbDeps();
+      const { db } = require('../db');
+      const { flowSessions } = require('../db/schema');
       if (!session || Object.keys(session.flows).length === 0) {
         db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {

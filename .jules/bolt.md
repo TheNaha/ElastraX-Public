@@ -17,3 +17,11 @@
 ## 2026-03-04 - [Batch DB Inserts for History Sync]
 **Learning:** Sequential `await db.insert` for every incoming message during historical sync creates an I/O bottleneck when handling large payloads (hundreds of messages).
 **Action:** Batch inserts using `db.insert().values(chunk)` and chunking the payloads to reduce DB round-trips significantly.
+
+## 2026-03-09 - [O(1) Ring Buffer for High-Frequency Metrics]
+**Learning:** For tracking rolling metric windows (e.g. last 1000 message latencies), using an Array and calling `Array.prototype.shift()` when full results in an O(N) operation per insertion. While small arrays might not be a huge issue, in high-throughput areas like `HealthMetricsCollector`, this introduces unnecessary CPU overhead and garbage collection.
+**Action:** Replaced the `shift()` based sliding window with an O(1) circular ring buffer utilizing a `cursor` pointer and modulo arithmetic (`cursor = (cursor + 1) % maxSize`). This maintains the constant size and allows fast, in-place replacements.
+
+## 2026-03-10 - [O(N) History Context Sorting]
+**Learning:** Re-sorting the historical message array (`historyDesc`) using `.sort(...)` by `created_at` timestamp is an unnecessary O(N log N) operation when the database query already returns the results ordered by `created_at` in descending order (`desc(messages.created_at)`).
+**Action:** Replace the `.sort()` call with `.reverse()` to reorder the context window chronologically in O(N) time and reduce CPU overhead.

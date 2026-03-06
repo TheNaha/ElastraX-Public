@@ -65,6 +65,10 @@ export class WebSearchTool extends BaseTool {
     try {
       const baseUrl = this.searxngUrl.endsWith('/') ? this.searxngUrl : `${this.searxngUrl}/`;
       const url = new URL(baseUrl);
+
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+        throw new Error(`Invalid protocol for SEARXNG_URL: ${url.protocol}. Must be http: or https:`);
+      }
       
       const params = new URLSearchParams({
         q: query,

@@ -73,13 +73,13 @@ export class ConfigTool extends BaseTool {
    */
   private buildKeyListing(room: any, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
     return [
-      `  *System Prompt*: ${room.systemPrompt ? '[CUSTOM]' : '[DEFAULT (env)]'}`,
-      `  *Context Limit*: ${room.contextLimit ?? `[DEFAULT: ${resolved.contextLimit}]`}`,
-      `  *Temperature*: ${room.temperature ?? `[DEFAULT: ${resolved.temperature}]`}`,
-      `  *Max Tokens*: ${room.maxTokens ?? `[DEFAULT: ${resolved.maxTokens}]`}`,
-      `  *Allow Tools*: ${room.allowTools ?? `[DEFAULT: ${resolved.allowTools}]`}`,
-      `  *Auto Reply All*: ${room.autoReplyAll ?? `[DEFAULT: ${resolved.autoReplyAll}]`}`,
-      `  *Summarize History*: ${room.summarize ?? `[DEFAULT: ${resolved.summarize}]`}`,
+      ` • *System Prompt*: ${room.systemPrompt ? '(Custom)' : '(Default: env)'}`,
+      ` • *Context Limit*: ${room.contextLimit ?? `(Default: ${resolved.contextLimit})`}`,
+      ` • *Temperature*: ${room.temperature ?? `(Default: ${resolved.temperature})`}`,
+      ` • *Max Tokens*: ${room.maxTokens ?? `(Default: ${resolved.maxTokens})`}`,
+      ` • *Allow Tools*: ${room.allowTools ?? `(Default: ${resolved.allowTools})`}`,
+      ` • *Auto Reply All*: ${room.autoReplyAll ?? `(Default: ${resolved.autoReplyAll})`}`,
+      ` • *Summarize History*: ${room.summarize ?? `(Default: ${resolved.summarize})`}`,
     ].join('\n');
   }
 

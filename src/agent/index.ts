@@ -418,7 +418,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       .orderBy(desc(messages.created_at))
       .limit(effectiveContextLimit);
 
-    const history = historyDesc.slice().sort((a, b) => a.created_at.getTime() - b.created_at.getTime());
+    // ⚡ Bolt: Reverse the descending array in O(N) instead of sorting in O(N log N)
+    const history = historyDesc.reverse();
 
     // V7.11: Inject user name + role info into the system prompt so the AI is role-aware.
     const roleLabel = userRoles.filter(r => r !== 'user').join(', ') || 'user';

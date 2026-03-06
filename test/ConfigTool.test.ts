@@ -100,15 +100,15 @@ describe('ConfigTool', () => {
       expect(result).toContain('Temperature');
     });
 
-    test('should show [DEFAULT] labels when DB fields are null', async () => {
+    test('should show (Default) labels when DB fields are null', async () => {
       const result = await tool.execute({ action: 'get' }, createCtx());
-      expect(result).toContain('[DEFAULT');
+      expect(result).toContain('(Default');
     });
 
-    test('should show [CUSTOM] for systemPrompt when DB has a custom value', async () => {
+    test('should show (Custom) for systemPrompt when DB has a custom value', async () => {
       mockRoomRows = [{ ...defaultRoom(), systemPrompt: 'My custom prompt' }];
       const result = await tool.execute({ action: 'get' }, createCtx());
-      expect(result).toContain('[CUSTOM]');
+      expect(result).toContain('(Custom)');
     });
 
     test('should return error message when room does not exist', async () => {
