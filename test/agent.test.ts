@@ -44,11 +44,14 @@ mock.module('../src/db', () => ({
             const rows = isMessages ? mockHistoryRows : mockRoomRows;
             // Return something that is BOTH awaitable AND supports .orderBy().limit() or .limit()
             const result: any = {
-              then(resolve: Function, reject?: Function) {
+              then<T = unknown>(
+                resolve: (value: typeof rows) => T | Promise<T>,
+                reject?: (reason: unknown) => unknown,
+              ) {
                 return Promise.resolve(rows).then(resolve as any, reject as any);
               },
-              catch(rej: Function) {
-                return Promise.resolve(rows).catch(rej as any);
+              catch<T = unknown>(reject: (reason: unknown) => T | Promise<T>) {
+                return Promise.resolve(rows).catch(reject as any);
               },
               limit: (_n: number) => Promise.resolve(rows),
               orderBy: (_ord: any) => ({
