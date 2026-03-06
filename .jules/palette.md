@@ -5,3 +5,7 @@
 ## 2025-03-03 - [Explicit Parameter Requirements in CLI]
 **Learning:** In text-based CLI or conversational bot menus, relying solely on symbolic conventions (like `<required>` vs `[optional]`) for command usage is often insufficient for accessibility and clear UX. Explicitly labeling parameter descriptions with "Required" or "Optional" significantly improves readability and user comprehension. Additionally, ensuring consistent capitalization for metadata labels (like Category or Permissions) provides visual polish and consistency with other parts of the UI.
 **Action:** When designing text-based help menus or usage instructions, explicitly spell out parameter requirement states alongside symbols, and normalize capitalization for displayed category strings at the presentation layer.
+
+## 2025-03-06 - [Standardized List Formatting for Settings]
+**Learning:** Text-based menus (such as the configuration viewer in `ConfigTool`) suffer in readability when they use harsh, all-caps bracketed tags (e.g. `[DEFAULT (env)]`) and rely purely on spaces for indentation. A simple list styling using standard bullet points (`•`) and properly capitalized text inside parentheses (e.g. `(Default)`) makes the dense information much easier to scan and feels significantly more polished.
+**Action:** Apply a consistent text formatting pattern across list-based UI outputs. Use standard bullets (`•`) instead of spaces, and reserve all-caps for distinct category headers rather than inline status tags.
