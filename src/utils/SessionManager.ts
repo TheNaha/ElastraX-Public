@@ -21,6 +21,9 @@
  */
 
 import { logger } from './logger';
+import { db } from '../db';
+import { flowSessions } from '../db/schema';
+import { eq, inArray } from 'drizzle-orm';
 
 /** State data for a single interactive flow step. */
 export interface FlowSession {
@@ -49,10 +52,6 @@ export class SessionManager {
     if (this.dbLoaded) return;
     this.dbLoaded = true;
     try {
-      // Dynamic import to avoid circular dependency with db module
-      const { db } = await import('../db');
-      const { flowSessions } = await import('../db/schema');
-      const { inArray } = await import('drizzle-orm');
       const rows = db.select().from(flowSessions).all();
       const now = Date.now();
       const expiredIds: string[] = [];
@@ -91,11 +90,8 @@ export class SessionManager {
   /** Write-through: persist session state to SQLite. */
   private static persistToDB(key: string, session: UserSession | null): void {
     try {
-      // Dynamic import to avoid circular dependency
-      const { db } = require('../db');
-      const { flowSessions } = require('../db/schema');
       if (!session || Object.keys(session.flows).length === 0) {
-        db.delete(flowSessions).where(require('drizzle-orm').eq(flowSessions.id, key)).run();
+        db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {
         const data = JSON.stringify(session);
         db.insert(flowSessions)

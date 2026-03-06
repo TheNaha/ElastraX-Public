@@ -10,8 +10,8 @@ mock.module('../src/db', () => {
     select: () => ({
       from: () => ({
         where: () => ({
-          then: (resolve: Function) => Promise.resolve([]).then(resolve as any),
-          catch: (rej: Function) => Promise.resolve([]).catch(rej as any),
+          then: (resolve: (rows: unknown[]) => unknown) => Promise.resolve([] as unknown[]).then(resolve as any),
+          catch: (reject: (reason: unknown) => unknown) => Promise.resolve([] as unknown[]).catch(reject as any),
           limit: () => Promise.resolve([]),
           orderBy: () => ({ limit: () => Promise.resolve([]) }),
         }),
@@ -21,7 +21,7 @@ mock.module('../src/db', () => {
     insert: () => ({
       values: () => ({
         onConflictDoNothing: async () => ({}),
-        then: (resolve: Function) => Promise.resolve({}).then(resolve as any),
+        then: (resolve: (value: unknown) => unknown) => Promise.resolve({}).then(resolve as any),
       }),
     }),
     update: () => ({
