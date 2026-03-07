@@ -1,9 +1,15 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
+type MockRoom = ReturnType<typeof defaultRoom>;
+
+function createMockUpdateWhere() {
+  return mock(async (..._args: unknown[]) => {});
+}
+
 // ── Mutable state captured by the db mock ────────────────────────────────────
-let mockRoomRows: any[] = [];
-let mockUpdateWhere = mock(async () => {});
+let mockRoomRows: MockRoom[] = [];
+let mockUpdateWhere = createMockUpdateWhere();
 
 mock.module('../src/db', () => ({
   db: {
@@ -14,7 +20,7 @@ mock.module('../src/db', () => ({
     }),
     update: () => ({
       set: () => ({
-        where: (...args: any[]) => mockUpdateWhere(...args),
+        where: (...args: unknown[]) => mockUpdateWhere(...args),
       }),
     }),
   },
@@ -41,8 +47,10 @@ const defaultRoom = () => ({
   systemPrompt: null,
   contextLimit: null,
   temperature: null,
+  maxTokens: null,
   allowTools: null,
   autoReplyAll: null,
+  summarize: null,
   created_at: new Date(),
 });
 
@@ -68,7 +76,7 @@ describe('ConfigTool Security', () => {
   beforeEach(() => {
     tool = new ConfigTool();
     mockRoomRows = [defaultRoom()];
-    mockUpdateWhere = mock(async () => {});
+    mockUpdateWhere = createMockUpdateWhere();
   });
 
   test('Security: should reject huge contextLimit (DoS risk)', async () => {
@@ -99,6 +107,16 @@ describe('ConfigTool Security', () => {
     );
     expect(result).toContain('Invalid value');
     expect(result).toContain('System prompt too long');
+    expect(mockUpdateWhere).not.toHaveBeenCalled();
+  });
+
+  test('Security: should reject huge maxTokens (resource exhaustion risk)', async () => {
+    const result = await tool.execute(
+      { action: 'set', key: 'maxTokens', value: '9000' },
+      createCtx(),
+    );
+    expect(result).toContain('Invalid value');
+    expect(result).toContain('Must be between 64 and 8192');
     expect(mockUpdateWhere).not.toHaveBeenCalled();
   });
 });

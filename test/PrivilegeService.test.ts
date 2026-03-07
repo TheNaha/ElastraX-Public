@@ -1,11 +1,18 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 
+type PrivilegeOverrideRow = {
+  maxMessagesPerWindow: number | null;
+  rateLimitWindowSec: number | null;
+  contextLimit: number | null;
+  maxDownloadMb: number | null;
+};
+
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-let mockPrivRows: any[] = [];
-let lastInsertedPriv: any = null;
-let lastDeletedRole: any = null;
+let mockPrivRows: PrivilegeOverrideRow[] = [];
+let lastInsertedPriv: Record<string, unknown> | null = null;
+let lastDeletedRole = false;
 
 mock.module('../src/db', () => ({
   db: {
@@ -17,7 +24,7 @@ mock.module('../src/db', () => ({
       }),
     }),
     insert: () => ({
-      values: (vals: any) => {
+      values: (vals: Record<string, unknown>) => {
         lastInsertedPriv = vals;
         return Promise.resolve();
       },
@@ -36,7 +43,7 @@ mock.module('../src/db', () => ({
   },
 }));
 
-import { PrivilegeService } from '../src/utils/PrivilegeService';
+import { PrivilegeService, isPrivilegeField } from '../src/utils/PrivilegeService';
 
 describe('PrivilegeService', () => {
   beforeEach(() => {
@@ -79,6 +86,11 @@ describe('PrivilegeService', () => {
     mockPrivRows = [];
     const privs = await PrivilegeService.getEffective(['user', 'owner']);
     expect(privs.maxMessagesPerWindow).toBe(-1);
+  });
+
+  test('isPrivilegeField accepts known fields and rejects unknown ones', () => {
+    expect(isPrivilegeField('contextLimit')).toBe(true);
+    expect(isPrivilegeField('unknownField')).toBe(false);
   });
 
   test('setOverride inserts new override', async () => {

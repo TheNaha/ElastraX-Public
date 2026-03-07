@@ -1,9 +1,15 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 
+type MockRoom = ReturnType<typeof defaultRoom>;
+
+function createMockUpdateWhere() {
+  return mock(async (..._args: unknown[]) => {});
+}
+
 // ── Mutable state captured by the db mock ────────────────────────────────────
-let mockRoomRows: any[] = [];
-let mockUpdateWhere = mock(async () => {});
+let mockRoomRows: MockRoom[] = [];
+let mockUpdateWhere = createMockUpdateWhere();
 
 mock.module('../src/db', () => ({
   db: {
@@ -14,7 +20,7 @@ mock.module('../src/db', () => ({
     }),
     update: () => ({
       set: () => ({
-        where: (...args: any[]) => mockUpdateWhere(...args),
+        where: (...args: unknown[]) => mockUpdateWhere(...args),
       }),
     }),
   },
@@ -41,8 +47,10 @@ const defaultRoom = () => ({
   systemPrompt: null,
   contextLimit: null,
   temperature: null,
+  maxTokens: null,
   allowTools: null,
   autoReplyAll: null,
+  summarize: null,
   created_at: new Date(),
 });
 
@@ -69,7 +77,7 @@ describe('ConfigTool', () => {
   beforeEach(() => {
     tool = new ConfigTool();
     mockRoomRows = [defaultRoom()];
-    mockUpdateWhere = mock(async () => {});
+    mockUpdateWhere = createMockUpdateWhere();
   });
 
   describe('metadata', () => {
@@ -206,6 +214,33 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('autoReplyAll');
+      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+    });
+
+    test('should update maxTokens with a valid integer', async () => {
+      const result = await tool.execute(
+        { action: 'set', key: 'maxTokens', value: '512' },
+        createCtx(),
+      );
+      expect(result).toContain('maxTokens');
+      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+    });
+
+    test('should reject maxTokens outside the allowed range', async () => {
+      const result = await tool.execute(
+        { action: 'set', key: 'maxTokens', value: '32' },
+        createCtx(),
+      );
+      expect(result).toContain('Invalid value');
+      expect(mockUpdateWhere).not.toHaveBeenCalled();
+    });
+
+    test('should update summarize with boolean aliases', async () => {
+      const result = await tool.execute(
+        { action: 'set', key: 'summarize', value: '0' },
+        createCtx(),
+      );
+      expect(result).toContain('summarize');
       expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
     });
 

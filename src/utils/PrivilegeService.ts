@@ -36,6 +36,15 @@ export interface RolePrivileges {
   maxDownloadMb: number;
 }
 
+export const PRIVILEGE_FIELDS = [
+  'maxMessagesPerWindow',
+  'rateLimitWindowSec',
+  'contextLimit',
+  'maxDownloadMb',
+] as const;
+
+export type PrivilegeField = (typeof PRIVILEGE_FIELDS)[number];
+
 // ── Hardcoded fallbacks (used when env is also unset) ───────────────────────
 const HARDCODED: Record<string, RolePrivileges> = {
   user:    { maxMessagesPerWindow: 10, rateLimitWindowSec: 60,  contextLimit: 20,  maxDownloadMb: 25  },
@@ -73,6 +82,10 @@ function envDefaults(role: string): RolePrivileges {
 function mergeMax(values: number[]): number {
   if (values.includes(-1)) return -1;
   return Math.max(...values);
+}
+
+export function isPrivilegeField(value: string | undefined): value is PrivilegeField {
+  return value !== undefined && PRIVILEGE_FIELDS.includes(value as PrivilegeField);
 }
 
 export class PrivilegeService {
@@ -120,7 +133,7 @@ export class PrivilegeService {
    * Set a DB override for a specific role's privileges.
    * Pass `null` for a field to remove the override (revert to env default).
    */
-  static async setOverride(role: string, field: keyof RolePrivileges, value: number | null): Promise<void> {
+  static async setOverride(role: string, field: PrivilegeField, value: number | null): Promise<void> {
     logger.info({ role, field, value }, '[PrivilegeService] setOverride — updating DB');
     // Upsert into role_privileges
     const existing = await db
@@ -129,7 +142,7 @@ export class PrivilegeService {
       .where(eq(rolePrivileges.role, role))
       .limit(1);
 
-    const colMap: Record<keyof RolePrivileges, string> = {
+    const colMap: Record<PrivilegeField, string> = {
       maxMessagesPerWindow: 'maxMessagesPerWindow',
       rateLimitWindowSec:   'rateLimitWindowSec',
       contextLimit:         'contextLimit',

@@ -30,12 +30,18 @@ import { userRoles } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
+import { PrivilegeService, type RolePrivileges } from './PrivilegeService';
 
 /** Built-in role names.  Custom roles are also allowed as plain strings. */
 export type RoleName = 'user' | 'premium' | 'admin' | 'owner';
 
 /** All built-in role names for validation. */
 export const BUILTIN_ROLES: readonly string[] = ['user', 'premium', 'admin', 'owner'] as const;
+
+export interface AccessProfile {
+  roles: string[];
+  privileges: RolePrivileges;
+}
 
 export class RoleService {
   // ── Role Resolution ────────────────────────────────────────────────────
@@ -150,6 +156,15 @@ export class RoleService {
     if (required === 'user') return true;
     if (roles.includes('owner')) return true;
     return roles.includes(required);
+  }
+
+  /**
+   * Build the effective access profile for an already-resolved role set.
+   * This is the canonical boundary for runtime policy decisions.
+   */
+  static async getAccessProfile(roles: string[]): Promise<AccessProfile> {
+    const privileges = await PrivilegeService.getEffective(roles);
+    return { roles, privileges };
   }
 
   // ── Legacy convenience (used by existing callers) ─────────────────────

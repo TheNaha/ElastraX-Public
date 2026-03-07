@@ -1,57 +1,62 @@
 # Architecture Overview
 
-ElastraX v7 is a robust, multi-platform conversational AI agent built on a modern stack. This document outlines the key architectural components and their interactions.
+ElastraX v7 is a multi-platform conversational agent built around a normalized message contract, a queued runtime, and a tool-driven LLM loop. The current architecture is optimized for behavior-preserving changes: risky platform, startup, and permission paths are separated into narrower modules with direct tests.
 
 ## Core Principles
 
-1.  **Unified Interface (`MessageContext`)**: The foundation of multi-platform support. Whether a message originates from WhatsApp or Discord, it is normalized into a standard `MessageContext` object. This shields the core logic from platform-specific APIs.
-2.  **Agentic Framework**: The bot is not a simple command-response script. It uses Large Language Models (LLMs) to understand intent and can autonomously select and execute "tools" to fulfill complex requests.
-3.  **Explicit Routing**: While capable of autonomous tool selection, ElastraX also supports direct slash-commands (e.g., `/search`) to bypass the LLM for predictable, fast execution.
-4.  **Resilience**: Designed with failover mechanisms, primarily for LLM providers (e.g., falling back to Gemini if Modal is unavailable).
+1. **Single runtime contract**: Provider adapters normalize incoming events into `MessageContext`, so the agent loop and tools operate against one platform-agnostic shape.
+2. **Queued room execution**: Messages are processed through per-room queueing to avoid cross-room interference and to serialize stateful flows safely.
+3. **Explicit subsystem boundaries**: Startup orchestration, diagnostics, provider adapters, authorization, configuration, and flow/session state each have a dedicated module boundary.
+4. **Fail soft, log hard**: Provider failover, webhook normalization, startup scans, and background maintenance tasks are designed to degrade safely while emitting structured diagnostics.
 
-## Directory Structure & Component Roles
+## Runtime Shape
 
--   **`src/agent/` (The Brain)**:
-    -   Contains the core conversational loop (`agent/index.ts`).
-    -   Receives normalized `MessageContext` objects.
-    -   Determines if a message is a direct command or requires LLM processing.
-    -   Manages conversation history and invokes the LLM client.
--   **`src/ai/` (The Intelligence)**:
-    -   Handles communication with OpenAI-compatible APIs (`ai/client.ts`).
-    -   Implements provider failover logic.
-    -   Translates `MessageContext` history into the specific JSON payload required by the LLM.
--   **`src/core/` (The Glue)**:
-    -   Defines the central `MessageContext` interface.
-    -   Contains utility functions and base classes used across the application.
--   **`src/db/` (The Memory)**:
-    -   Uses Drizzle ORM and SQLite (`db/schema.ts`, `db/index.ts`).
-    -   Responsible for persisting conversation history (crucial for LLM context), user configurations, and scheduled reminders.
--   **`src/providers/` (The Ears and Voice)**:
-    -   Platform-specific adapters.
-    -   **`src/providers/whatsapp.ts`**: Wraps the Baileys library to connect to WhatsApp. Converts Baileys messages into `MessageContext` and vice-versa.
-    -   **`src/providers/discord.ts`**: Wraps discord.js for Discord connectivity.
--   **`src/tools/` (The Hands)**:
-    -   A collection of independent modules implementing the `BaseTool` interface.
-    -   Examples: `WebSearchTool`, `DownloadTool`, `PDFTool`.
-    -   Each tool provides a definition schema to the LLM and an execution function.
--   **`src/webhookServer.ts` (The External Input)**:
-    -   A fastify/express-based HTTP server.
-    -   Allows external services (like GitHub Actions, Grafana alerts) to send messages into ElastraX chat rooms.
+- `src/index.ts` is the thin process entrypoint. It validates env, initializes the database/session layer, constructs the runtime, and wires shutdown.
+- `src/runtime/AppRuntime.ts` owns provider startup, provider-to-queue binding, webhook/scheduler sender registration, background timers, and idempotent shutdown.
+- `src/runtime/startupDiagnostics.ts` owns parser coverage scans and fixture dumping. These helpers are intentionally outside the entrypoint so they can be tested directly and disabled or replaced independently.
 
-## Data Flow: Handling an Incoming Message
+## Directory Structure
 
-1.  **Ingestion**: A message arrives via a provider (e.g., WhatsApp).
-2.  **Normalization**: The provider converts the raw platform message into a `MessageContext`.
-3.  **Routing**: The `MessageContext` is passed to the core `agent/index.ts`.
-4.  **Command Check**: If the message starts with a command prefix (e.g., `/ping`), the agent immediately executes the corresponding tool and returns the result.
-5.  **LLM Processing**: If it's a conversational message:
-    -   The agent retrieves conversation history from the database (`src/db/`).
-    -   It builds a prompt containing the history and the list of available tools.
-    -   It calls the `AIClient` (`src/ai/client.ts`).
-6.  **Tool Invocation (Iterative Loop)**:
-    -   The LLM responds, potentially requesting a tool call (e.g., "I need to search the web for 'latest news'").
-    -   The agent executes the requested tool.
-    -   The tool's result is appended to the context, and the LLM is called again.
-    -   This loop continues until the LLM generates a final text response.
-7.  **Delivery**: The final text (or media) response is passed back to the original provider, which formats and sends it to the user.
-8.  **Persistence**: The exchange is saved to the SQLite database for future context.
+- `src/agent/`
+    The conversational loop. It routes direct commands, manages iterative tool execution, and uses `RoleService.getAccessProfile()` when runtime policy decisions need both roles and merged privileges.
+- `src/ai/`
+    Model client and routing behavior, including provider failover and message sanitization for provider capability differences.
+- `src/core/`
+    Shared runtime contracts, especially `MessageContext`, plus flow handling and other cross-cutting primitives.
+- `src/db/`
+    Drizzle + SQLite schema and access layer. Stores chat-room config overrides, conversation history, reminders, persistent flow sessions, identities, roles, and privilege overrides.
+- `src/providers/`
+    Platform adapters for WhatsApp and Discord. These modules own SDK lifecycle, message normalization, and outbound provider behavior, but they do not own agent orchestration.
+- `src/tools/`
+    User-invokable capabilities exposed both as slash commands and LLM tools. Tool-level authorization depends on resolved roles and privileges rather than provider-specific checks.
+- `src/utils/`
+    Focused services for roles, privileges, configuration, rate limiting, parser coverage, media cleanup, scheduling, and other shared behavior.
+- `src/webhookServer.ts`
+    External ingress for automation and alerting sources. Payloads are normalized into chat messages through typed adapters and bounded body parsing.
+
+## State Ownership
+
+- `src/utils/SessionManager.ts` owns persisted user flow/session state and recovery behavior.
+- `src/core/FlowHandler.ts` consumes `SessionManager.getActiveFlow()` instead of reaching into raw session structure directly.
+- `src/utils/RoleService.ts` is the canonical role-resolution boundary.
+- `src/utils/PrivilegeService.ts` owns per-role privilege defaults, DB overrides, and merged effective quotas.
+- `src/utils/ConfigService.ts` is the single source of truth for resolved per-room configuration.
+- `src/utils/permissions.ts` is the WhatsApp-facing bridge that resolves platform-native admin state before handing control to the set-based role model.
+
+## Message Lifecycle
+
+1. A provider receives a raw platform event.
+2. The provider normalizes it into `MessageContext` and emits it to `AppRuntime`.
+3. `AppRuntime` enqueues the work by room and dispatches it into `handleIncomingMessage()`.
+4. The agent decides whether the message is a direct tool invocation or should enter the LLM loop.
+5. When conversational handling is needed, the agent loads persisted history, resolves the room config, resolves roles/privileges, and calls the model router/client.
+6. If the model requests tools, the agent executes them iteratively with bounded execution paths and feeds results back into the model until a final answer is produced.
+7. The provider sends the resulting text/media response back to the originating platform.
+8. Conversation state, flow state, and other side effects are persisted through their dedicated services.
+
+## Contributor Notes
+
+- New provider behavior should land in provider modules or `AppRuntime`, not in `src/index.ts`.
+- New startup-only checks belong in `src/runtime/startupDiagnostics.ts` if they need direct tests or isolated failure handling.
+- New permission decisions should prefer `RoleService.getAccessProfile()` over ad hoc role-plus-privilege assembly.
+- Tool/config validation should use fixed typed key spaces at the boundary instead of broad `any` argument objects.

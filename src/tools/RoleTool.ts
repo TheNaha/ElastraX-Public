@@ -29,7 +29,7 @@
 import { BaseTool, ToolDefinition, ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { RoleService, BUILTIN_ROLES } from '../utils/RoleService';
-import { PrivilegeService, RolePrivileges } from '../utils/PrivilegeService';
+import { PrivilegeService, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/PrivilegeService';
 import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
@@ -37,9 +37,20 @@ import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'RoleTool' });
 
-const PRIV_FIELDS: (keyof RolePrivileges)[] = [
-  'maxMessagesPerWindow', 'rateLimitWindowSec', 'contextLimit', 'maxDownloadMb',
-];
+type RoleToolArgs = {
+  action?: string;
+  user?: string;
+  role?: string;
+  scope?: string;
+  field?: string;
+  value?: string;
+  __command?: string;
+};
+
+type RoleSummary = {
+  explicitRoles: string;
+  effectiveRoles: string[];
+};
 
 export class RoleTool extends BaseTool {
   readonly name = 'role';
@@ -91,7 +102,7 @@ export class RoleTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<ToolResult> {
+  async execute(args: RoleToolArgs, ctx: MessageContext): Promise<ToolResult> {
     const lang = ctx.language ?? 'en';
     let { action, scope } = args;
     const { user, role, field, value } = args;
@@ -114,36 +125,17 @@ export class RoleTool extends BaseTool {
     if (action === 'check') {
       const resolved = resolveTargetUser(args, ctx, 'user');
       const targetId = resolved?.jid ?? ctx.senderId;
-      const targetPn = targetId === ctx.senderId ? ctx.senderPn : undefined;
 
       log.debug({ targetId, chatId: ctx.chatId }, 'Checking roles for user');
 
-      // getUserRoles now internally uses IdentityService to find all JIDs
-      const allDbRoles = await RoleService.getUserRoles(targetId);
-
-      // Owner check — match against both LID and PN
-      const ownerJid = process.env.BOT_OWNER_JID;
-      const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
-
-      // Build effective role list for display
-      const effectiveRoles = new Set<string>(['user']);
-      if (isEnvOwner) effectiveRoles.add('owner');
-      for (const r of allDbRoles) {
-        if (r.scope === 'global' || r.scope === ctx.chatId) effectiveRoles.add(r.role);
-      }
-
-      const rolesStr = allDbRoles.length > 0
-        ? allDbRoles.map(r => `• *${r.role}* (${r.scope === 'global' ? 'global' : r.scope})`).join('\n')
-        : '_No explicit roles assigned_';
-
-      const effectiveLabel = Array.from(effectiveRoles).join(', ');
-
-      // Also show effective privileges
-      const privs = await PrivilegeService.getEffective(Array.from(effectiveRoles));
-      const privsStr = formatPrivileges(privs);
+      const summary = targetId === ctx.senderId
+        ? await buildSenderRoleSummary(ctx)
+        : await buildTargetRoleSummary(targetId, ctx.chatId);
+      const accessProfile = await RoleService.getAccessProfile(summary.effectiveRoles);
+      const privsStr = formatPrivileges(accessProfile.privileges);
 
       logger.info(
-        { targetId, targetPn, isEnvOwner, effectiveRoles: Array.from(effectiveRoles), dbRolesCount: allDbRoles.length },
+        { targetId, effectiveRoles: summary.effectiveRoles },
         '[RoleTool] check — result',
       );
 
@@ -153,8 +145,8 @@ export class RoleTool extends BaseTool {
 
       const text = t(lang, 'role.check', {
         userTag: tag,
-        effectiveRole: effectiveLabel,
-        roles: rolesStr,
+        effectiveRole: summary.effectiveRoles.join(', '),
+        roles: summary.explicitRoles,
       }) + `\n\n*Effective privileges:*\n${privsStr}`;
 
       return mentions.length > 0 ? { text, mentions } : text;
@@ -189,7 +181,7 @@ export class RoleTool extends BaseTool {
       const current = await PrivilegeService.getForRole(targetRole);
       const defaults = PrivilegeService.getDefaults(targetRole);
       let out = `📊 *Privileges for "${targetRole}":*\n`;
-      for (const f of PRIV_FIELDS) {
+      for (const f of PRIVILEGE_FIELDS) {
         const cur = current[f];
         const def = defaults[f];
         const label = cur === -1 ? 'unlimited' : String(cur);
@@ -202,19 +194,19 @@ export class RoleTool extends BaseTool {
 
     // ── SETPRIV (owner only) ───────────────────────────────────────────────
     if (action === 'setpriv') {
-      const callerRoles = await ctx.resolveRoles();
-      if (!callerRoles.includes('owner')) {
-        return t(lang, 'role.insufficient', { callerRole: callerRoles.join(','), targetRole: 'owner' });
+      const callerAccess = await RoleService.getAccessProfile(await ctx.resolveRoles());
+      if (!callerAccess.roles.includes('owner')) {
+        return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
       if (!role) return '❌ Please specify a role. Example: /role setpriv premium contextLimit 50';
-      if (!field || !PRIV_FIELDS.includes(field as keyof RolePrivileges)) {
-        return `❌ Invalid field. Must be one of: ${PRIV_FIELDS.join(', ')}`;
+      if (!isPrivilegeField(field)) {
+        return `❌ Invalid field. Must be one of: ${PRIVILEGE_FIELDS.join(', ')}`;
       }
       const numValue = value === 'null' || value === undefined ? null : parseInt(String(value), 10);
       if (numValue !== null && Number.isNaN(numValue)) {
         return '❌ Value must be a number or "null" to reset to default.';
       }
-      await PrivilegeService.setOverride(role, field as keyof RolePrivileges, numValue);
+      await PrivilegeService.setOverride(role, field, numValue);
       const label = numValue === null ? 'default' : numValue === -1 ? 'unlimited' : String(numValue);
       log.info({ role, field, value: numValue, setBy: ctx.senderId }, 'Privilege override set');
       return `✅ Set *${field}* for role *${role}* to *${label}*.`;
@@ -222,9 +214,9 @@ export class RoleTool extends BaseTool {
 
     // ── RESETPRIV (owner only) ─────────────────────────────────────────────
     if (action === 'resetpriv') {
-      const callerRoles = await ctx.resolveRoles();
-      if (!callerRoles.includes('owner')) {
-        return t(lang, 'role.insufficient', { callerRole: callerRoles.join(','), targetRole: 'owner' });
+      const callerAccess = await RoleService.getAccessProfile(await ctx.resolveRoles());
+      if (!callerAccess.roles.includes('owner')) {
+        return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
       if (!role) return '❌ Please specify a role. Example: /role resetpriv premium';
       await PrivilegeService.resetToDefaults(role);
@@ -293,7 +285,42 @@ export class RoleTool extends BaseTool {
   }
 }
 
+// ── Role Summary ───────────────────────────────────────────────────────────────
+
+function formatExplicitRoles(
+  roles: Array<{ role: string; scope: string }>,
+): string {
+  return roles.length > 0
+    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
+    : '_No explicit roles assigned_';
+}
+
+async function buildTargetRoleSummary(targetId: string, chatId: string, targetPn?: string): Promise<RoleSummary> {
+  const allDbRoles = await RoleService.getUserRoles(targetId);
+  const effectiveRoles = new Set<string>(['user']);
+  const ownerJid = process.env.BOT_OWNER_JID;
+  const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
+
+  if (isEnvOwner) effectiveRoles.add('owner');
+  for (const row of allDbRoles) {
+    if (row.scope === 'global' || row.scope === chatId) effectiveRoles.add(row.role);
+  }
+
+  return {
+    explicitRoles: formatExplicitRoles(allDbRoles),
+    effectiveRoles: Array.from(effectiveRoles),
+  };
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────────
+
+async function buildSenderRoleSummary(ctx: MessageContext): Promise<RoleSummary> {
+  const allDbRoles = await RoleService.getUserRoles(ctx.senderId);
+  return {
+    explicitRoles: formatExplicitRoles(allDbRoles),
+    effectiveRoles: await ctx.resolveRoles(),
+  };
+}
 
 /**
  * Determine whether a caller with `callerRoles` can assign/revoke `targetRole`.

@@ -10,6 +10,7 @@ let lastInsertedRole: GenericRow | null = null;
 let lastWhereCondition: unknown = null;
 
 import { IdentityService } from '../src/utils/IdentityService';
+import { PrivilegeService } from '../src/utils/PrivilegeService';
 
 /** Creates a chainable thenable mock query that resolves to mockRoleRows. */
 function mockQuery() {
@@ -140,6 +141,23 @@ describe('RoleService', () => {
     const params = extractSqlParamStrings(lastWhereCondition);
     expect(params).toContain('canonical@s.whatsapp.net');
     expect(params).not.toContain('user@lid');
+  });
+
+  test('getAccessProfile returns roles with merged privileges', async () => {
+    const getEffectiveSpy = spyOn(PrivilegeService, 'getEffective').mockResolvedValue({
+      maxMessagesPerWindow: 30,
+      rateLimitWindowSec: 60,
+      contextLimit: 50,
+      maxDownloadMb: 100,
+    });
+
+    const profile = await RoleService.getAccessProfile(['user', 'premium']);
+
+    expect(profile.roles).toEqual(['user', 'premium']);
+    expect(profile.privileges.contextLimit).toBe(50);
+    expect(getEffectiveSpy).toHaveBeenCalledWith(['user', 'premium']);
+
+    getEffectiveSpy.mockRestore();
   });
 
   test('setRole calls insert for new role', async () => {

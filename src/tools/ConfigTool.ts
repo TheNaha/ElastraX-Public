@@ -29,12 +29,70 @@
 import { BaseTool } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
-import { chatRooms } from '../db/schema';
+import { chatRooms, type ChatRoom } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'ConfigTool' });
+const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] as const;
+type ConfigKey = (typeof CONFIG_KEYS)[number];
+type RoomConfigUpdate = Partial<Pick<ChatRoom, ConfigKey>>;
+type ConfigArgs = {
+  action?: string;
+  key?: string;
+  value?: string;
+};
+
+function isConfigKey(value: string | undefined): value is ConfigKey {
+  return value !== undefined && CONFIG_KEYS.includes(value as ConfigKey);
+}
+
+function parseBooleanValue(value: string): boolean {
+  const normalized = value.toLowerCase();
+  if (normalized === 'true' || normalized === '1') return true;
+  if (normalized === 'false' || normalized === '0') return false;
+  throw new Error('Must be true or false.');
+}
+
+function parseIntegerValue(value: string, min: number, max: number): number {
+  const parsed = parseInt(value, 10);
+  if (Number.isNaN(parsed)) throw new Error('Must be an integer.');
+  if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
+  return parsed;
+}
+
+function parseFloatValue(value: string, min: number, max: number): number {
+  const parsed = parseFloat(value);
+  if (Number.isNaN(parsed)) throw new Error('Must be a number.');
+  if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
+  return parsed;
+}
+
+function parseConfigValue(key: ConfigKey, value: string): RoomConfigUpdate[ConfigKey] {
+  switch (key) {
+    case 'systemPrompt':
+      if (value.length > 50000) throw new Error('System prompt too long (max 50000 chars).');
+      return value;
+    case 'contextLimit':
+      return parseIntegerValue(value, 1, 50);
+    case 'temperature':
+      try {
+        return parseFloatValue(value, 0, 2.0);
+      } catch (error) {
+        if (error instanceof Error && error.message === 'Must be between 0 and 2.') {
+          throw new Error('Must be between 0.0 and 2.0.');
+        }
+        throw error;
+      }
+    case 'maxTokens':
+      return parseIntegerValue(value, 64, 8192);
+    case 'allowTools':
+    case 'autoReplyAll':
+    case 'summarize':
+      return parseBooleanValue(value);
+  }
+}
 
 export class ConfigTool extends BaseTool {
   readonly name = 'config';
@@ -71,7 +129,7 @@ export class ConfigTool extends BaseTool {
    * Builds a human-readable listing of the room's current configuration values,
    * indicating whether each field is a custom DB override or the global default.
    */
-  private buildKeyListing(room: any, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
+  private buildKeyListing(room: ChatRoom, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
     return [
       ` • *System Prompt*: ${room.systemPrompt ? '(Custom)' : '(Default: env)'}`,
       ` • *Context Limit*: ${room.contextLimit ?? `(Default: ${resolved.contextLimit})`}`,
@@ -83,7 +141,7 @@ export class ConfigTool extends BaseTool {
     ].join('\n');
   }
 
-  async execute(args: any, ctx: MessageContext): Promise<string> {
+  async execute(args: ConfigArgs, ctx: MessageContext): Promise<string> {
     const { action, key, value } = args;
     log.debug({ action, key, chatId: ctx.chatId, senderId: ctx.senderId }, 'Config tool invoked');
 
@@ -91,7 +149,6 @@ export class ConfigTool extends BaseTool {
     const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
     if (!room) return 'Error: Chat room not found in database.';
 
-    const validKeys = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'];
     const resolved = ConfigService.getResolvedConfig(room);
 
     if (action === 'get') {
@@ -100,61 +157,36 @@ export class ConfigTool extends BaseTool {
     }
 
     if (action === 'reset') {
-      if (!key || !validKeys.includes(key as string)) {
+      if (!isConfigKey(key)) {
         return `Please provide a valid key to reset to global default.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
-      const updateData: any = {};
-      updateData[key] = null;
+      const updateData: RoomConfigUpdate = { [key]: null };
       await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
       log.info({ chatId: ctx.chatId, key, resetBy: ctx.senderId }, 'Config key reset to default');
       return `Configuration \`${key}\` has been reset to its global fallback value.`;
     }
 
     if (action === 'set') {
-      if (!key || !validKeys.includes(key as string)) {
+      if (!isConfigKey(key)) {
         return `Please provide a valid key to set.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
       if (value === undefined || value === '') {
         return `Please provide a value for ${key}.`;
       }
 
-      const updateData: any = {};
+      const updateData: RoomConfigUpdate = {};
       
       try {
-        if (key === 'systemPrompt') {
-          if (value.length > 50000) throw new Error('System prompt too long (max 50000 chars).');
-          updateData[key] = value;
-        } else if (key === 'contextLimit') {
-          const parsed = parseInt(value, 10);
-          if (isNaN(parsed)) throw new Error('Must be an integer.');
-          // Security: Limit context size to prevent DoS (memory exhaustion/token overflow)
-          if (parsed < 1 || parsed > 50) throw new Error('Must be between 1 and 50.');
-          updateData[key] = parsed;
-        } else if (key === 'temperature') {
-          const parsed = parseFloat(value);
-          if (isNaN(parsed)) throw new Error('Must be a number.');
-          // Security: Ensure valid temperature range for AI stability
-          if (parsed < 0 || parsed > 2.0) throw new Error('Must be between 0.0 and 2.0.');
-          updateData[key] = parsed;
-        } else if (key === 'maxTokens') {
-          const parsed = parseInt(value, 10);
-          if (isNaN(parsed)) throw new Error('Must be an integer.');
-          if (parsed < 64 || parsed > 8192) throw new Error('Must be between 64 and 8192.');
-          updateData[key] = parsed;
-        } else if (key === 'allowTools' || key === 'autoReplyAll' || key === 'summarize') {
-          const lower = value.toLowerCase();
-          if (lower === 'true' || lower === '1') updateData[key] = true;
-          else if (lower === 'false' || lower === '0') updateData[key] = false;
-          else throw new Error('Must be true or false.');
-        }
+        updateData[key] = parseConfigValue(key, value);
 
         await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
         log.info({ chatId: ctx.chatId, key, value: updateData[key], setBy: ctx.senderId }, 'Config key updated');
         return `Successfully updated \`${key}\` for this room.`;
 
-      } catch (e: any) {
-        log.warn({ chatId: ctx.chatId, key, value, err: e.message }, 'Invalid config value rejected');
-        return `Invalid value for ${key}: ${e.message}`;
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : 'Unknown validation error.';
+        log.warn({ chatId: ctx.chatId, key, value, err: message }, 'Invalid config value rejected');
+        return `Invalid value for ${key}: ${message}`;
       }
     }
 

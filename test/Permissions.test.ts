@@ -1,16 +1,32 @@
 import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 
+type MockQuery = {
+  from: () => MockQuery;
+  where: () => MockQuery;
+  limit: () => MockQuery;
+  then: (resolve: (value: unknown[]) => unknown) => unknown;
+};
+
+type MockParticipant = {
+  id: string;
+  admin: 'admin' | 'superadmin' | null;
+};
+
+type MockGroupMetadataSock = {
+  groupMetadata: (jid: string) => Promise<{ participants: MockParticipant[] }>;
+};
+
 // Mock DB to return no stored roles (prevents hanging on real SQLite queries).
 // Tests control behaviour entirely through env vars & platform admin detection.
-const mockDbRows: any[] = [];
+const mockDbRows: unknown[] = [];
 
 /** Creates a chainable mock query object that returns mockDbRows. */
-function mockQuery() {
-  const obj: any = {
+function mockQuery(): MockQuery {
+  const obj: MockQuery = {
     from: () => obj,
     where: () => obj,
     limit: () => obj,
-    then: (resolve: any) => resolve(mockDbRows),
+    then: (resolve) => resolve(mockDbRows),
   };
   return obj;
 }
@@ -41,7 +57,7 @@ mock.module('../src/utils/logger', () => ({
 import { checkPermissions } from '../src/utils/permissions';
 
 describe('checkPermissions', () => {
-  let mockSock: any;
+  let mockSock: MockGroupMetadataSock;
   const chatId = '1234567890@g.us';
   const senderId = '0987654321@s.whatsapp.net';
 
@@ -132,9 +148,21 @@ describe('checkPermissions', () => {
     expect(result).toBe(false);
   });
 
+  test('should match admin permissions through senderPn when senderId is a lid jid', async () => {
+    const result = await checkPermissions(
+      mockSock,
+      chatId,
+      'user-lid@lid',
+      true,
+      'admin',
+      senderId,
+    );
+    expect(result).toBe(true);
+  });
+
   test('should return false for an unrecognised required level', async () => {
     // TypeScript prevents this but we test the runtime fallback for full line coverage
-    const result = await checkPermissions(mockSock, chatId, senderId, false, 'superuser' as any);
+    const result = await checkPermissions(mockSock, chatId, senderId, false, 'superuser' as never);
     expect(result).toBe(false);
   });
 });

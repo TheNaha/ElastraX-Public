@@ -1,12 +1,32 @@
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 
+type SafeDbQuery = {
+  where: () => {
+    then: (
+      resolve: (value: unknown[]) => unknown,
+      reject?: (reason: unknown) => unknown,
+    ) => Promise<unknown>;
+    catch: (reject: (reason: unknown) => unknown) => Promise<unknown>;
+    limit: () => Promise<unknown[]>;
+    orderBy: () => { limit: () => Promise<unknown[]> };
+  };
+  limit: () => Promise<unknown[]>;
+};
+
+type SafeDb = {
+  select: () => { from: () => SafeDbQuery };
+  insert: () => { values: () => { onConflictDoNothing: () => Promise<object>; then: (resolve: (value: object) => unknown) => Promise<unknown> } };
+  update: () => { set: () => { where: () => Promise<void> } };
+  delete: () => { where: () => Promise<object> };
+};
+
 // ─── Override the db mock that leaks from agent.test.ts (mock.module is process-scoped) ───
 // agent.test.ts permanently replaces '../src/db' without a `delete` method, which
 // breaks code paths that call db.delete() even when most service methods are spied.
 // This re-registers a safe, complete mock that covers all db operations used by
 // RoleTool's service dependencies (RoleService, IdentityService, PrivilegeService).
 mock.module('../src/db', () => {
-  const safeMock: any = {
+  const safeMock: SafeDb = {
     select: () => ({
       from: () => ({
         where: () => ({
@@ -67,11 +87,19 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
 describe('RoleTool', () => {
   const tool = new RoleTool();
   const spies: Array<ReturnType<typeof spyOn>> = [];
+  let listRolesSpy: ReturnType<typeof spyOn>;
+  let accessProfileSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     // spy on service methods
     spies.push(spyOn(RoleService, 'getUserRoles').mockResolvedValue([]));
-    spies.push(spyOn(RoleService, 'listRoles').mockResolvedValue([]));
+    accessProfileSpy = spyOn(RoleService, 'getAccessProfile').mockResolvedValue({
+      roles: ['user'],
+      privileges: { maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 },
+    });
+    spies.push(accessProfileSpy);
+    listRolesSpy = spyOn(RoleService, 'listRoles').mockResolvedValue([]);
+    spies.push(listRolesSpy);
     spies.push(spyOn(RoleService, 'setRole').mockResolvedValue(undefined));
     spies.push(spyOn(RoleService, 'removeRole').mockResolvedValue(true));
     spies.push(spyOn(PrivilegeService, 'getEffective').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
@@ -103,6 +131,7 @@ describe('RoleTool', () => {
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Role info');
     expect(text).toContain('user');
+    expect(RoleService.getAccessProfile).toHaveBeenCalledWith(['user']);
   });
 
   test('action=list with empty list returns list_empty', async () => {
@@ -113,7 +142,7 @@ describe('RoleTool', () => {
   });
 
   test('action=list with roles returns formatted list', async () => {
-    (RoleService.listRoles as any).mockResolvedValue([
+    listRolesSpy.mockResolvedValue([
       { userId: '628123@s.whatsapp.net', role: 'admin', scope: 'chat-1', grantedBy: 'owner@s.whatsapp.net' },
     ]);
     const ctx = createMockCtx();
@@ -164,5 +193,29 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'setpriv', role: 'premium', field: 'contextLimit', value: '50' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('cannot assign');
+  });
+
+  test('action=setpriv with owner updates privilege override', async () => {
+    accessProfileSpy.mockResolvedValue({
+      roles: ['owner'],
+      privileges: { maxMessagesPerWindow: -1, rateLimitWindowSec: 60, contextLimit: 100, maxDownloadMb: -1 },
+    });
+    const ctx = createMockCtx({ resolveRoles: mock(async () => ['owner']) });
+    const result = await tool.execute({ action: 'setpriv', role: 'premium', field: 'contextLimit', value: '50' }, ctx);
+    const text = typeof result === 'string' ? result : result.text;
+    expect(text).toContain('Set *contextLimit*');
+    expect(PrivilegeService.setOverride).toHaveBeenCalledWith('premium', 'contextLimit', 50);
+  });
+
+  test('action=resetpriv with owner clears privilege overrides', async () => {
+    accessProfileSpy.mockResolvedValue({
+      roles: ['owner'],
+      privileges: { maxMessagesPerWindow: -1, rateLimitWindowSec: 60, contextLimit: 100, maxDownloadMb: -1 },
+    });
+    const ctx = createMockCtx({ resolveRoles: mock(async () => ['owner']) });
+    const result = await tool.execute({ action: 'resetpriv', role: 'premium' }, ctx);
+    const text = typeof result === 'string' ? result : result.text;
+    expect(text).toContain('reset to defaults');
+    expect(PrivilegeService.resetToDefaults).toHaveBeenCalledWith('premium');
   });
 });

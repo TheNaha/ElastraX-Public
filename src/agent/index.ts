@@ -46,7 +46,7 @@ import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
 import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
-import { PrivilegeService } from '../utils/PrivilegeService';
+import { RoleService } from '../utils/RoleService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall } from '../types/ai';
 import type { BaseTool, ToolResult } from '../tools/BaseTool';
@@ -232,8 +232,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   ctx.language = room.language;
 
   // V7.11: Resolve user roles once and compute privilege-based rate limits.
-  const userRoles = await ctx.resolveRoles();
-  const privileges = await PrivilegeService.getEffective(userRoles);
+  const { roles: userRoles, privileges } = await RoleService.getAccessProfile(await ctx.resolveRoles());
 
   logger.info(
     { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },

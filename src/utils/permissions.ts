@@ -23,6 +23,25 @@
 import { logger } from './logger';
 import { RoleService } from './RoleService';
 
+interface WhatsAppGroupParticipant {
+  id?: string;
+  admin?: string | null;
+}
+
+interface WhatsAppGroupMetadata {
+  participants?: WhatsAppGroupParticipant[] | null;
+}
+
+interface WhatsAppGroupMetadataClient {
+  groupMetadata(chatId: string): Promise<WhatsAppGroupMetadata>;
+}
+
+function hasGroupMetadataClient(sock: unknown): sock is WhatsAppGroupMetadataClient {
+  if (typeof sock !== 'object' || sock === null) return false;
+  const candidate = sock as { groupMetadata?: unknown };
+  return typeof candidate.groupMetadata === 'function';
+}
+
 /**
  * Extract the bare number from a JID (e.g. "6281234567890@s.whatsapp.net" → "6281234567890").
  * Returns undefined if the JID has no recognisable number part.
@@ -31,6 +50,37 @@ function bareNumber(jid: string | undefined): string | undefined {
   if (!jid) return undefined;
   const at = jid.indexOf('@');
   return at > 0 ? jid.slice(0, at) : undefined;
+}
+
+function isAdminParticipant(participant: WhatsAppGroupParticipant | undefined): boolean {
+  return participant?.admin === 'admin' || participant?.admin === 'superadmin';
+}
+
+function matchesParticipant(
+  participant: WhatsAppGroupParticipant,
+  senderId: string,
+  senderPn?: string,
+): boolean {
+  if (!participant.id) return false;
+  if (participant.id === senderId) return true;
+  if (senderPn && participant.id === senderPn) return true;
+
+  const participantBare = bareNumber(participant.id);
+  const senderBare = bareNumber(senderId);
+  const pnBare = bareNumber(senderPn);
+
+  return Boolean(participantBare && (participantBare === senderBare || participantBare === pnBare));
+}
+
+async function resolvePlatformAdmin(
+  sock: unknown,
+  chatId: string,
+  senderId: string,
+  isGroup: boolean,
+  senderPn?: string,
+): Promise<boolean> {
+  if (!isGroup) return false;
+  return isWhatsAppGroupAdmin(sock, chatId, senderId, senderPn);
 }
 
 /**
@@ -44,32 +94,17 @@ function bareNumber(jid: string | undefined): string | undefined {
  *  3. Bare-number comparison as final fallback.
  */
 export async function isWhatsAppGroupAdmin(
-  sock: any,
+  sock: unknown,
   chatId: string,
   senderId: string,
   senderPn?: string,
 ): Promise<boolean> {
-  if (!sock) return false;
+  if (!hasGroupMetadataClient(sock)) return false;
   try {
     const metadata = await sock.groupMetadata(chatId);
-    const participants: any[] = metadata.participants ?? [];
-
-    // Build candidate IDs for matching
-    const senderBare = bareNumber(senderId);
-    const pnBare = bareNumber(senderPn);
-
-    const participant = participants.find((p: any) => {
-      if (p.id === senderId) return true;
-      if (senderPn && p.id === senderPn) return true;
-      // Bare-number fallback (strip @lid / @s.whatsapp.net and compare digits)
-      const pBare = bareNumber(p.id);
-      if (pBare && (pBare === senderBare || pBare === pnBare)) return true;
-      return false;
-    });
-
-    const isAdmin = participant
-      ? participant.admin === 'admin' || participant.admin === 'superadmin'
-      : false;
+    const participants = metadata.participants ?? [];
+    const participant = participants.find((entry) => matchesParticipant(entry, senderId, senderPn));
+    const isAdmin = isAdminParticipant(participant);
 
     logger.debug(
       { chatId, senderId, senderPn, matched: !!participant, isAdmin },
@@ -89,7 +124,7 @@ export async function isWhatsAppGroupAdmin(
  * @returns Array of role names (always includes `'user'`).
  */
 export async function resolveUserRoles(
-  sock: any,
+  sock: unknown,
   chatId: string,
   senderId: string,
   isGroup: boolean,
@@ -100,9 +135,7 @@ export async function resolveUserRoles(
     '[Permissions] resolveUserRoles — start',
   );
 
-  const isPlatformAdmin = isGroup
-    ? await isWhatsAppGroupAdmin(sock, chatId, senderId, senderPn)
-    : false;
+  const isPlatformAdmin = await resolvePlatformAdmin(sock, chatId, senderId, isGroup, senderPn);
 
   const roles = await RoleService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn);
 
@@ -126,7 +159,7 @@ export async function resolveUserRoles(
  * @returns        `true` if the sender holds the required role.
  */
 export async function checkPermissions(
-  sock: any,
+  sock: unknown,
   chatId: string,
   senderId: string,
   isGroup: boolean,
