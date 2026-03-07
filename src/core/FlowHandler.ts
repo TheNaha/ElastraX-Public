@@ -52,49 +52,48 @@ export class FlowHandler {
    * Returns true if the message was handled by a flow, false if it should be passed to commands or the LLM.
    */
   static async handle(ctx: MessageContext): Promise<boolean> {
-    const session = SessionManager.get(ctx.senderId, ctx.platform);
+    const activeFlow = SessionManager.getActiveFlow(ctx.senderId, ctx.platform);
 
-    if (!session || !session.activeFlow) {
+    if (!activeFlow) {
       return false; // User is not in an active flow
     }
 
-    const activeFlowData = session.flows[session.activeFlow];
-    if (!activeFlowData) return false;
+    const { flowId, flow } = activeFlow;
 
-    const flowProcessor = this.flows[activeFlowData.flow];
+    const flowProcessor = this.flows[flow.flow];
     if (flowProcessor) {
       // If user types a new slash command while in a flow, let the router handle it
       // unless they explicitly type /cancel
       if (ctx.text.startsWith('/')) {
          if (CANCEL_COMMANDS.includes(ctx.text.trim())) {
-            SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
+            SessionManager.clear(ctx.senderId, flowId, ctx.platform);
             await ctx.react?.('✅');
             await ctx.reply(t(ctx.language, 'flow.cancelled'));
             return true;
          }
 
          // Clear active flow to prevent being stuck if they start a new command
-         SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
+         SessionManager.clear(ctx.senderId, flowId, ctx.platform);
          return false;
       }
 
       try {
-        await flowProcessor(ctx, activeFlowData, session.activeFlow);
+        await flowProcessor(ctx, flow, flowId);
         return true;
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : 'unknown error';
-        logger.error(err, `[FlowHandler] Error in flow: ${activeFlowData.flow}`);
+        logger.error(err, `[FlowHandler] Error in flow: ${flow.flow}`);
         await ctx.reply(t(ctx.language, 'flow.error', { msg: errMsg }));
-        SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
+        SessionManager.clear(ctx.senderId, flowId, ctx.platform);
         return true;
       }
     }
 
     // Flow processor missing (e.g. after deploy where flow code was removed).
     // Clear stale session so user is not stuck with a dangling active flow forever.
-    SessionManager.clear(ctx.senderId, session.activeFlow, ctx.platform);
+    SessionManager.clear(ctx.senderId, flowId, ctx.platform);
     logger.warn(
-      { flow: activeFlowData.flow, senderId: ctx.senderId, platform: ctx.platform },
+      { flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform },
       '[FlowHandler] No processor registered for active flow; session cleared',
     );
     return false;

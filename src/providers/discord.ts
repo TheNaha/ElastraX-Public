@@ -23,13 +23,44 @@
 
 import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, AttachmentBuilder, PermissionsBitField } from 'discord.js';
 import { BotProvider } from './BotProvider';
-import { MessageContext } from '../core/MessageContext';
+import { MessageContext, ReplyOptions } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { RoleService } from '../utils/RoleService';
 import { saveMediaBuffer } from '../utils/MediaStorage';
 
 /** Maximum file size in bytes for Discord attachments that the bot will download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
+
+export const discordProviderDeps = {
+  createClient: () => new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+      GatewayIntentBits.DirectMessages,
+    ],
+    partials: [Partials.Channel, Partials.Message],
+  }),
+};
+
+type DiscordEditableMessage = {
+  edit(payload: { content: string }): Promise<unknown>;
+};
+
+type DiscordTypingChannel = {
+  sendTyping(): Promise<unknown>;
+};
+
+function hasSendTyping(channel: DiscordMessage['channel']): channel is DiscordMessage['channel'] & DiscordTypingChannel {
+  return 'sendTyping' in channel && typeof channel.sendTyping === 'function';
+}
+
+function isEditableMessage(value: unknown): value is DiscordEditableMessage {
+  return typeof value === 'object'
+    && value !== null
+    && 'edit' in value
+    && typeof (value as { edit?: unknown }).edit === 'function';
+}
 
 /**
  * Discord platform provider.  Implements the `BotProvider` interface and manages
@@ -52,15 +83,7 @@ export class DiscordProvider implements BotProvider {
       return;
     }
 
-    this.client = new Client({
-      intents: [
-        GatewayIntentBits.Guilds,
-        GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent,
-        GatewayIntentBits.DirectMessages,
-      ],
-      partials: [Partials.Channel, Partials.Message],
-    });
+    this.client = discordProviderDeps.createClient();
 
     this.client.on('ready', () => {
       logger.info(`[Discord] Logged in as ${this.client?.user?.tag}!`);
@@ -86,8 +109,11 @@ export class DiscordProvider implements BotProvider {
 
   /** Destroys the Discord.js client and closes the WebSocket connection. */
   async stop(): Promise<void> {
-    if (this.client) {
-      this.client.destroy();
+    const client = this.client;
+    this.client = null;
+
+    if (client) {
+      client.destroy();
       logger.info('[Discord] Disconnected.');
     }
   }
@@ -252,7 +278,7 @@ export class DiscordProvider implements BotProvider {
         await msg.reply({ files: [attachment], content: options.caption });
       },
 
-      deleteMessage: async (_key?: any) => {
+      deleteMessage: async (_key?: unknown) => {
         try { await msg.delete(); } catch { /* already deleted or no permission */ }
       },
 
@@ -272,26 +298,26 @@ export class DiscordProvider implements BotProvider {
         }
       },
 
-      reply: async (replyText: string, _options?: any) => {
+      reply: async (replyText: string, _options?: ReplyOptions) => {
         await msg.reply({ content: replyText });
       },
 
       sendTyping: async () => {
         try {
-          if (msg.channel && 'sendTyping' in msg.channel) {
-            await (msg.channel as any).sendTyping();
+          if (msg.channel && hasSendTyping(msg.channel)) {
+            await msg.channel.sendTyping();
           }
         } catch { /* best-effort */ }
       },
 
-      sendMessage: async (text: string, _options?: any) => {
+      sendMessage: async (text: string, _options?: ReplyOptions) => {
         const sent = await msg.reply({ content: text });
         return sent;
       },
 
-      editMessage: async (key: any, text: string) => {
+      editMessage: async (key: unknown, text: string) => {
         try {
-          if (key && typeof key.edit === 'function') {
+          if (isEditableMessage(key)) {
             await key.edit({ content: text });
           }
         } catch (err) {

@@ -44,6 +44,11 @@ export interface UserSession {
   flows: Record<string, FlowSession>;
 }
 
+export interface ActiveFlowEntry {
+  flowId: string;
+  flow: FlowSession;
+}
+
 /** Persistent session store backed by SQLite. Uses in-memory Map as write-through cache. */
 export class SessionManager {
   private static sessions = new Map<string, UserSession>();
@@ -222,6 +227,34 @@ export class SessionManager {
     }
 
     return session;
+  }
+
+  /**
+   * Resolve the currently active flow without exposing the caller to raw session shape.
+   * If the active flow pointer is stale but another flow remains, repair it in-place.
+   */
+  static getActiveFlow(userId: string, platform: string = 'whatsapp'): ActiveFlowEntry | null {
+    const key = `${platform}:${userId}`;
+    const session = this.get(userId, platform);
+
+    if (!session) {
+      return null;
+    }
+
+    if (!session.activeFlow || !session.flows[session.activeFlow]) {
+      this.selectFallbackActiveFlow(session);
+
+      if (!session.activeFlow || !session.flows[session.activeFlow]) {
+        return null;
+      }
+
+      this.persistToDB(key, session);
+    }
+
+    return {
+      flowId: session.activeFlow,
+      flow: session.flows[session.activeFlow],
+    };
   }
 
   /**

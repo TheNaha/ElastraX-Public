@@ -50,13 +50,69 @@ import { RoleService } from '../utils/RoleService';
 /** Maximum file size in bytes that the bot will attempt to download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
+type BaileysSocket = ReturnType<typeof makeWASocket>;
+type SocketLogger = Parameters<typeof makeWASocket>[0]['logger'];
+type MediaDownloadOptions = NonNullable<Parameters<typeof downloadMediaMessage>[3]>;
+type LidMappingStore = {
+  getLIDForPN(targetJid: string): Promise<string | null | undefined>;
+};
+type SocketWithSignalRepository = BaileysSocket & {
+  signalRepository?: {
+    lidMapping?: LidMappingStore;
+  };
+};
+type ExtendedMessageKey = WAMessage['key'] & {
+  participantPn?: string;
+  senderLid?: string;
+  remoteJidAlt?: string;
+};
+type ProviderMessageKey = proto.IMessageKey & {
+  remoteJid?: string | null;
+};
+
+function getLidMapping(sock: BaileysSocket): LidMappingStore | undefined {
+  return (sock as unknown as SocketWithSignalRepository).signalRepository?.lidMapping;
+}
+
+async function resolveLidForPn(sock: BaileysSocket, targetJid: string): Promise<string | null> {
+  const lid = await getLidMapping(sock)?.getLIDForPN(targetJid);
+  return lid ?? null;
+}
+
+function createMediaDownloadOptions(sock: BaileysSocket): MediaDownloadOptions {
+  return {
+    logger: logger as unknown as MediaDownloadOptions['logger'],
+    reuploadRequest: sock.updateMediaMessage,
+  };
+}
+
+function isProviderMessageKey(value: unknown): value is ProviderMessageKey {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  if (!('remoteJid' in value)) {
+    return true;
+  }
+
+  const remoteJid = (value as { remoteJid?: unknown }).remoteJid;
+  return typeof remoteJid === 'string' || remoteJid === null || typeof remoteJid === 'undefined';
+}
+
+export const whatsAppProviderDeps = {
+  useAuthState: useDBAuthState,
+  fetchLatestVersion: fetchLatestBaileysVersion,
+  createSocket: (options: Parameters<typeof makeWASocket>[0]) => makeWASocket(options),
+  renderQr: (qr: string) => qrcode.generate(qr, { small: true }),
+};
+
 /**
  * WhatsApp platform provider.  Implements the `BotProvider` interface and manages
  * the full Baileys WebSocket session from QR-code login to graceful shutdown.
  */
 export class WhatsAppProvider implements BotProvider {
   name = 'whatsapp' as const;
-  private sock: ReturnType<typeof makeWASocket> | null = null;
+  private sock: BaileysSocket | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private starting = false;
@@ -92,8 +148,8 @@ export class WhatsAppProvider implements BotProvider {
     this.starting = true;
 
     try {
-      const { state, saveCreds } = await useDBAuthState();
-      const { version, isLatest } = await fetchLatestBaileysVersion();
+      const { state, saveCreds } = await whatsAppProviderDeps.useAuthState();
+      const { version, isLatest } = await whatsAppProviderDeps.fetchLatestVersion();
 
       const baileysLogger = logger.child({ module: 'baileys' });
       baileysLogger.level = 'warn';
@@ -110,11 +166,11 @@ export class WhatsAppProvider implements BotProvider {
         this.sock = null;
       }
 
-      const sock = makeWASocket({
+      const sock = whatsAppProviderDeps.createSocket({
         version,
         auth: state,
         printQRInTerminal: false,
-        logger: baileysLogger as any,
+        logger: baileysLogger as unknown as SocketLogger,
         // Allows Baileys to decrypt messages whose Signal session key is not in memory
         // by looking them up in the SQLite message store. Fixes "No session to decrypt" errors.
         getMessage: async (key) => {
@@ -139,7 +195,7 @@ export class WhatsAppProvider implements BotProvider {
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         logger.info('[WhatsApp] Scan this QR code to login:');
-        qrcode.generate(qr, { small: true });
+        whatsAppProviderDeps.renderQr(qr);
       }
       if (connection === 'close') {
         const shouldReconnect =
@@ -164,7 +220,7 @@ export class WhatsAppProvider implements BotProvider {
         if (sock.user?.id) {
           const botPn = WhatsAppProvider.botPnJid(sock.user.id);
           try {
-            this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+            this.botLid = await resolveLidForPn(sock, botPn);
             if (this.botLid) {
               logger.info({ botLid: this.botLid }, '[WhatsApp] Resolved bot LID');
             }
@@ -183,7 +239,7 @@ export class WhatsAppProvider implements BotProvider {
             // Try to resolve the owner's LID via Baileys signal store
             let ownerLid: string | undefined;
             try {
-              ownerLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(ownerJid);
+              ownerLid = (await resolveLidForPn(sock, ownerJid)) ?? undefined;
             } catch { /* LID mapping may not exist yet — that's OK */ }
 
             // Seed identity mapping
@@ -308,7 +364,7 @@ export class WhatsAppProvider implements BotProvider {
     if (!this.botLid && sock.user?.id) {
       const botPn = WhatsAppProvider.botPnJid(sock.user.id);
       try {
-        this.botLid = await (sock as any).signalRepository.lidMapping.getLIDForPN(botPn);
+        this.botLid = await resolveLidForPn(sock, botPn);
       } catch { /* best-effort; PN comparison still works for non-LID sessions */ }
     }
 
@@ -318,7 +374,7 @@ export class WhatsAppProvider implements BotProvider {
         return targetJid;
       }
       try {
-        const lid = await (sock as any).signalRepository.lidMapping.getLIDForPN(targetJid);
+        const lid = await resolveLidForPn(sock, targetJid);
         if (lid) return lid;
       } catch { /* ignore */ }
       return targetJid; // fallback to PN
@@ -331,7 +387,7 @@ export class WhatsAppProvider implements BotProvider {
     // ── V7 LID-first sender resolution ──────────────────────────────────────
     // Groups: key.participant   = @lid JID (preferred), key.participantPn = PN fallback
     // DMs:    key.senderLid     = @lid JID (preferred), key.remoteJid     = PN fallback
-    const keyAny = msg.key as any;
+    const keyAny = msg.key as ExtendedMessageKey;
     const rawSender: string = isGroup
       ? (msg.key.participant ?? msg.key.remoteJid ?? jid)
       : (keyAny.senderLid ?? jid);
@@ -394,7 +450,7 @@ export class WhatsAppProvider implements BotProvider {
           logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large media download');
         } else {
           tasks.push(
-            downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+            downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))
               .then(async (buf) => {
                 const buffer = buf as Buffer | null;
                 if (buffer) {
@@ -413,7 +469,7 @@ export class WhatsAppProvider implements BotProvider {
           logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large quoted media download');
         } else {
           tasks.push(
-            downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })
+            downloadMediaMessage(quoted.rawMessage, 'buffer', {}, createMediaDownloadOptions(sock))
               .then(async (buf) => {
                 const buffer = buf as Buffer | null;
                 if (buffer) {
@@ -433,9 +489,9 @@ export class WhatsAppProvider implements BotProvider {
     const downloadMedia = async (): Promise<Buffer | null> => {
       try {
         if (parsed.hasMedia) {
-          return (await downloadMediaMessage(msg, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })) as Buffer;
+          return (await downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
         } else if (quoted?.hasMedia) {
-          return (await downloadMediaMessage(quoted.rawMessage, 'buffer', {}, { logger: logger as any, reuploadRequest: sock.updateMediaMessage })) as Buffer;
+          return (await downloadMediaMessage(quoted.rawMessage, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
         }
         return null;
       } catch (err) {
@@ -542,9 +598,9 @@ export class WhatsAppProvider implements BotProvider {
         return sent?.key;
       },
 
-      editMessage: async (key: any, text: string) => {
+      editMessage: async (key: unknown, text: string) => {
         try {
-          await sock.sendMessage(jid, { text, edit: key });
+          await sock.sendMessage(jid, { text, edit: key as proto.IMessageKey });
         } catch (err) {
           logger.warn({ err }, '[WhatsApp] Failed to edit message');
         }
@@ -558,8 +614,8 @@ export class WhatsAppProvider implements BotProvider {
         await sock.sendMessage(jid, { sticker: buffer }, { quoted: msg });
       },
 
-      deleteMessage: async (key?: any) => {
-        const target = key ?? msg.key;
+      deleteMessage: async (key?: unknown) => {
+        const target: ProviderMessageKey = isProviderMessageKey(key) ? key : msg.key;
         await sock.sendMessage(target.remoteJid ?? jid, { delete: target });
       },
 
@@ -575,7 +631,7 @@ export class WhatsAppProvider implements BotProvider {
 
       updateGroupParticipants: async (action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]) => {
         if (!isGroup) throw new Error('Not inside a group.');
-        await sock.groupParticipantsUpdate(jid, userIds, action as any);
+        await sock.groupParticipantsUpdate(jid, userIds, action);
       },
 
       getGroupInviteLink: async (chatId: string) => {

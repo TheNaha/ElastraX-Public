@@ -15,10 +15,6 @@
  *     any message-type gaps are surfaced in the logs without blocking boot.
  */
 
-import { WhatsAppProvider } from './providers/whatsapp';
-import { DiscordProvider } from './providers/discord';
-import { handleIncomingMessage } from './agent';
-import { MessageContext } from './core/MessageContext';
 import { logger } from './utils/logger';
 import { db, ensureDatabaseSchema } from './db';
 import { messages } from './db/schema';
@@ -27,15 +23,8 @@ import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import { validateEnv } from './config/env';
-import { Scheduler } from './utils/Scheduler';
-import { WebhookServer } from './webhookServer';
-import { RateLimiter } from './utils/RateLimiter';
-import { MediaCleanup } from './utils/MediaCleanup';
-import { MessageQueue } from './utils/MessageQueue';
 import { SessionManager } from './utils/SessionManager';
-
-// Per-room message queue — ensures sequential processing within each chat room.
-const messageQueue = new MessageQueue();
+import { AppRuntime } from './runtime/AppRuntime';
 
 // Directory where one JSON fixture file per WAMessage type will be written.
 const FIXTURE_DIR = process.env.FIXTURE_DUMP_DIR?.trim()
@@ -169,76 +158,10 @@ async function main() {
   // Restore persisted flow sessions from SQLite so multi-step wizards survive restarts.
   await SessionManager.initialize();
 
-  // Initialize providers
-  const waProvider = new WhatsAppProvider();
-  const discordProvider = new DiscordProvider();
-
-  // Register the core conversational agent handler, wrapped in a per-room queue
-  // so messages in the same chat are processed sequentially (avoids race conditions).
-  const queuedHandler = async (ctx: MessageContext): Promise<void> => {
-    messageQueue.enqueue(ctx.chatId, () => handleIncomingMessage(ctx));
-  };
-
-  waProvider.onMessage(queuedHandler);
-  discordProvider.onMessage(queuedHandler);
-
-  // Start providers
-  await waProvider.start();
-  await discordProvider.start();
-
-  // ── Webhook Inbound Server ──────────────────────────────────────────────────
-  const webhookServer = new WebhookServer();
-  // Register provider senders so the webhook can route messages to chats
-  webhookServer.registerSender('whatsapp', async (chatId, text) => {
-    // Access WhatsApp sock via the provider's public send method (implemented below)
-    await waProvider.sendMessage(chatId, text);
+  const runtime = new AppRuntime({
+    runStartupCoverageScan: async () => runStartupCoverageScan(null),
   });
-  webhookServer.registerSender('discord', async (chatId, text) => {
-    await discordProvider.sendMessage(chatId, text);
-  });
-  webhookServer.start();
-
-  // ── Scheduler (reminders) ───────────────────────────────────────────────────
-  Scheduler.registerSender('whatsapp', async (chatId, text) => {
-    await waProvider.sendMessage(chatId, text);
-  });
-  Scheduler.registerSender('discord', async (chatId, text) => {
-    await discordProvider.sendMessage(chatId, text);
-  });
-  Scheduler.start();
-
-  // ── Rate Limiter pruning ────────────────────────────────────────────────────
-  // Clean up stale rate-limit buckets every 10 minutes
-  setInterval(() => RateLimiter.prune(), 10 * 60 * 1000);
-
-  // ── Media cache pruning ─────────────────────────────────────────────────────
-  const defaultMediaCleanupIntervalMs = 6 * 60 * 60 * 1000;
-  const rawMediaCleanupInterval = process.env.MEDIA_CLEANUP_INTERVAL_MS;
-  const parsedMediaCleanupInterval = parseInt(rawMediaCleanupInterval || String(defaultMediaCleanupIntervalMs), 10);
-  const mediaCleanupIntervalMs = Number.isFinite(parsedMediaCleanupInterval) && parsedMediaCleanupInterval >= 60_000
-    ? parsedMediaCleanupInterval
-    : defaultMediaCleanupIntervalMs;
-  if (rawMediaCleanupInterval && mediaCleanupIntervalMs !== parsedMediaCleanupInterval) {
-    logger.warn(
-      { raw: rawMediaCleanupInterval, using: mediaCleanupIntervalMs },
-      '[MediaCleanup] Invalid MEDIA_CLEANUP_INTERVAL_MS; falling back to default',
-    );
-  }
-  setInterval(() => {
-    MediaCleanup.pruneOldFiles().catch((err) => {
-      logger.warn({ err }, '[MediaCleanup] Periodic prune failed');
-    });
-  }, mediaCleanupIntervalMs);
-
-  logger.info('Bot is running. Press Ctrl+C to stop.');
-
-  // Background startup scan — runs after providers are up, never blocks
-  // Use a short delay so the socket user object is populated
-  setTimeout(() => {
-    // WhatsApp provider exposes sock.user via the public getter if needed;
-    // for now we pass null (still catches structural errors and type gaps)
-    runStartupCoverageScan(null);
-  }, 5000);
+  await runtime.start();
 
   let shuttingDown = false;
   const shutdown = async (signal: 'SIGINT' | 'SIGTERM') => {
@@ -251,12 +174,7 @@ async function main() {
       logger.error(err, `[FixtureDumper] Failed during ${signal} — fixtures may be incomplete`);
     });
 
-    Scheduler.stop();
-    webhookServer.stop();
-    messageQueue.stop();
-
-    await waProvider.stop();
-    await discordProvider.stop();
+    await runtime.stop();
     process.exit(0);
   };
 

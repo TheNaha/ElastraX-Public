@@ -1,10 +1,9 @@
-import { expect, test, describe, beforeEach, afterEach, mock, type Mock } from 'bun:test';
+import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 import { FlowHandler } from '../src/core/FlowHandler';
 import { MessageContext } from '../src/core/MessageContext';
 import { CANCEL_COMMANDS } from '../src/core/constants';
 import { SessionManager } from '../src/utils/SessionManager';
 import { logger } from '../src/utils/logger';
-import { t } from '../src/utils/i18n';
 
 // We avoid mock.module to prevent polluting other tests in the same run
 // Instead we spy on/replace methods on the imported objects/classes
@@ -15,37 +14,43 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   senderId: 'user-456',
   senderName: 'Alice',
   text: 'hello',
+  messageId: 'msg-123',
+  messageType: 'conversation',
   isGroup: false,
   isBotMentioned: false,
   hasMedia: false,
+  mediaReady: Promise.resolve(),
   rawMessage: {},
   reply: mock(async () => {}),
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
+  resolveRoles: mock(async () => ['user']),
   language: 'en',
   ...overrides,
 });
 
 describe('FlowHandler', () => {
+  const flowRegistry = FlowHandler as unknown as { flows: Record<string, unknown> };
+
   // Save originals
-  const originalSessionGet = SessionManager.get;
+  const originalSessionGetActiveFlow = SessionManager.getActiveFlow;
   const originalSessionClear = SessionManager.clear;
   const originalLoggerDebug = logger.debug;
   const originalLoggerError = logger.error;
   const originalLoggerWarn = logger.warn;
 
   // Mocks
-  let mockGetSession: Mock<any>;
-  let mockClearSession: Mock<any>;
+  let mockGetActiveFlow: ReturnType<typeof mock>;
+  let mockClearSession: ReturnType<typeof mock>;
 
   beforeEach(() => {
     // Reset FlowHandler flows
-    (FlowHandler as any).flows = {};
+    flowRegistry.flows = {};
 
     // Mock SessionManager methods
-    mockGetSession = mock(() => null);
+    mockGetActiveFlow = mock(() => null);
     mockClearSession = mock(() => {});
-    SessionManager.get = mockGetSession;
+    SessionManager.getActiveFlow = mockGetActiveFlow;
     SessionManager.clear = mockClearSession;
 
     // Mock Logger methods (suppress output)
@@ -56,7 +61,7 @@ describe('FlowHandler', () => {
 
   afterEach(() => {
     // Restore originals
-    SessionManager.get = originalSessionGet;
+    SessionManager.getActiveFlow = originalSessionGetActiveFlow;
     SessionManager.clear = originalSessionClear;
     logger.debug = originalLoggerDebug;
     logger.error = originalLoggerError;
@@ -67,24 +72,21 @@ describe('FlowHandler', () => {
     test('should register a flow processor', () => {
       const processor = mock(async () => {});
       FlowHandler.register('testFlow', processor);
-      expect((FlowHandler as any).flows['testFlow']).toBe(processor);
+      expect(flowRegistry.flows['testFlow']).toBe(processor);
     });
   });
 
   describe('handle', () => {
     test('should return false when user has no active session', async () => {
-      mockGetSession.mockReturnValue(null);
+      mockGetActiveFlow.mockReturnValue(null);
       const ctx = createMockCtx();
       const result = await FlowHandler.handle(ctx);
       expect(result).toBe(false);
-      expect(mockGetSession).toHaveBeenCalledWith('user-456', 'whatsapp');
+      expect(mockGetActiveFlow).toHaveBeenCalledWith('user-456', 'whatsapp');
     });
 
     test('should return false when user session has no activeFlow', async () => {
-      mockGetSession.mockReturnValue({
-        activeFlow: null,
-        flows: {},
-      });
+      mockGetActiveFlow.mockReturnValue(null);
 
       const ctx = createMockCtx();
       const result = await FlowHandler.handle(ctx);
@@ -92,10 +94,7 @@ describe('FlowHandler', () => {
     });
 
     test('should return false when session has activeFlow but flow data is missing', async () => {
-        mockGetSession.mockReturnValue({
-          activeFlow: 'missingFlow',
-          flows: {}, // activeFlow is set, but data is missing here
-        });
+        mockGetActiveFlow.mockReturnValue(null);
 
         const ctx = createMockCtx();
         const result = await FlowHandler.handle(ctx);
@@ -107,11 +106,9 @@ describe('FlowHandler', () => {
       FlowHandler.register('myFlow', processor);
 
       const flowData = { flow: 'myFlow', step: 'step1', data: {} };
-      mockGetSession.mockReturnValue({
-        activeFlow: 'myFlow',
-        flows: {
-            'myFlow': flowData
-        },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'myFlow',
+        flow: flowData,
       });
 
       const ctx = createMockCtx({ text: 'some input' });
@@ -126,9 +123,9 @@ describe('FlowHandler', () => {
       const processor = mock(async () => {});
       FlowHandler.register('myFlow', processor);
 
-      mockGetSession.mockReturnValue({
-        activeFlow: 'myFlow',
-        flows: { 'myFlow': { flow: 'myFlow', step: '1', data: {} } },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'myFlow',
+        flow: { flow: 'myFlow', step: '1', data: {} },
       });
 
       const ctx = createMockCtx({ text: CANCEL_COMMANDS[0] });
@@ -145,9 +142,9 @@ describe('FlowHandler', () => {
 
     test(`should cancel flow on ${CANCEL_COMMANDS[1]} command and return true`, async () => {
       FlowHandler.register('myFlow', mock(async () => {}));
-      mockGetSession.mockReturnValue({
-        activeFlow: 'myFlow',
-        flows: { 'myFlow': { flow: 'myFlow', step: '1', data: {} } },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'myFlow',
+        flow: { flow: 'myFlow', step: '1', data: {} },
       });
 
       const ctx = createMockCtx({ text: CANCEL_COMMANDS[1] });
@@ -159,9 +156,9 @@ describe('FlowHandler', () => {
 
     test('should clear flow and return false when a new slash command is sent (not cancel)', async () => {
       FlowHandler.register('myFlow', mock(async () => {}));
-      mockGetSession.mockReturnValue({
-        activeFlow: 'myFlow',
-        flows: { 'myFlow': { flow: 'myFlow', step: '1', data: {} } },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'myFlow',
+        flow: { flow: 'myFlow', step: '1', data: {} },
       });
 
       const ctx = createMockCtx({ text: '/help' });
@@ -177,9 +174,9 @@ describe('FlowHandler', () => {
       const processor = mock(async () => { throw error; });
       FlowHandler.register('errorFlow', processor);
 
-      mockGetSession.mockReturnValue({
-        activeFlow: 'errorFlow',
-        flows: { 'errorFlow': { flow: 'errorFlow', step: '1', data: {} } },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'errorFlow',
+        flow: { flow: 'errorFlow', step: '1', data: {} },
       });
 
       const ctx = createMockCtx({ text: 'trigger' });
@@ -195,9 +192,9 @@ describe('FlowHandler', () => {
     });
 
     test('should return false if no processor is registered for the active flow', async () => {
-      mockGetSession.mockReturnValue({
-        activeFlow: 'unknownFlow',
-        flows: { 'unknownFlow': { flow: 'unknownFlow', step: '1', data: {} } },
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'unknownFlow',
+        flow: { flow: 'unknownFlow', step: '1', data: {} },
       });
 
       const ctx = createMockCtx({ text: 'hello' });

@@ -13,17 +13,24 @@ const _mockLogger = {
 mock.module("../src/utils/logger", () => ({ logger: _mockLogger }));
 
 describe('SessionManager', () => {
+  const testManager = SessionManager as unknown as {
+    sessions: Map<string, unknown>;
+    persistQueue: Map<string, Promise<void>>;
+    dbDepsPromise: unknown;
+    getDbDeps: () => Promise<unknown>;
+  };
+
   // Clear sessions before each test to ensure isolation
   beforeEach(() => {
     // Access private static sessions map
-    if ((SessionManager as any).sessions) {
-      (SessionManager as any).sessions.clear();
+    if (testManager.sessions) {
+      testManager.sessions.clear();
     }
-    if ((SessionManager as any).persistQueue) {
-      (SessionManager as any).persistQueue.clear();
+    if (testManager.persistQueue) {
+      testManager.persistQueue.clear();
     }
-    if ((SessionManager as any).dbDepsPromise !== undefined) {
-      (SessionManager as any).dbDepsPromise = null;
+    if (testManager.dbDepsPromise !== undefined) {
+      testManager.dbDepsPromise = null;
     }
     setSystemTime(new Date('2024-01-01T00:00:00Z')); // predictable time
   });
@@ -90,7 +97,7 @@ describe('SessionManager', () => {
     });
 
     test('should serialize persistence writes for the same user key', async () => {
-      const manager = SessionManager as any;
+      const manager = testManager;
       const originalGetDbDeps = manager.getDbDeps;
       const persistedStates: string[] = [];
       let releaseFirstWrite!: () => void;
@@ -213,6 +220,26 @@ describe('SessionManager', () => {
        expect(session.flows[flowId]).toBeUndefined();
        expect(session.flows[longFlowId]).toBeDefined();
        expect(session.activeFlow).toBe(longFlowId);
+    });
+  });
+
+  describe('getActiveFlow', () => {
+    test('should repair a stale activeFlow pointer by falling back to a remaining flow', () => {
+      const fallbackFlowId = 'fallback';
+
+      SessionManager.set(userId, fallbackFlowId, { ...flowData, flow: fallbackFlowId }, platform);
+      const session = SessionManager.get(userId, platform);
+      if (!session) throw new Error('Session should not be null');
+
+      session.activeFlow = 'missing';
+
+      const activeFlow = SessionManager.getActiveFlow(userId, platform);
+      expect(activeFlow).not.toBeNull();
+      expect(activeFlow).toEqual({
+        flowId: fallbackFlowId,
+        flow: session.flows[fallbackFlowId],
+      });
+      expect(session.activeFlow).toBe(fallbackFlowId);
     });
   });
 

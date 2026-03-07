@@ -50,7 +50,22 @@ const log = logger.child({ module: 'WebhookServer' });
 
 type SendFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
-type WebhookBody = Record<string, any>;
+type WebhookBody = Record<string, unknown>;
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function asWebhookBody(value: unknown): WebhookBody {
+  return asRecord(value) ?? {};
+}
+
+function toObjectArray(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => item !== null);
+}
 
 function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -163,47 +178,62 @@ export function resolveRoomIds(body: WebhookBody, url: URL): string[] {
 
 // ─── Service Adapters ──────────────────────────────────────────────────────────
 
-function adaptGitHub(event: string, body: any): string {
+function adaptGitHub(event: string, body: WebhookBody): string {
   switch (event) {
     case 'push': {
-      const branch = (body.ref || '').replace('refs/heads/', '');
-      const repo = body.repository?.full_name || 'unknown';
-      const commits = (body.commits || []).slice(0, 3);
-      const commitLines = commits.map((c: any) => `  • ${c.message?.split('\n')[0]} (${c.id?.slice(0, 7)})`).join('\n');
+      const branch = asNonEmptyString(body.ref)?.replace('refs/heads/', '') || '';
+      const repo = asNonEmptyString(asRecord(body.repository)?.full_name) || 'unknown';
+      const commits = toObjectArray(body.commits).slice(0, 3);
+      const commitLines = commits
+        .map((commit) => {
+          const message = asNonEmptyString(commit.message) || '(no message)';
+          const id = asNonEmptyString(commit.id)?.slice(0, 7) || 'unknown';
+          return `  • ${message.split('\n')[0]} (${id})`;
+        })
+        .join('\n');
       return `🔔 *GitHub Push*\n📦 Repo: ${repo}\n🌿 Branch: ${branch}\n📝 Commits:\n${commitLines || '  (no commits)'}`;
     }
     case 'pull_request': {
-      const pr = body.pull_request;
-      const action = body.action;
-      return `🔔 *GitHub PR ${action?.toUpperCase()}*\n📦 ${body.repository?.full_name}\n#${pr?.number} ${pr?.title}\n🔗 ${pr?.html_url}`;
+      const pr = asRecord(body.pull_request);
+      const action = asNonEmptyString(body.action)?.toUpperCase() || 'UNKNOWN';
+      const repo = asNonEmptyString(asRecord(body.repository)?.full_name) || 'unknown';
+      return `🔔 *GitHub PR ${action}*\n📦 ${repo}\n#${String(pr?.number ?? '?')} ${asNonEmptyString(pr?.title) || 'Untitled'}\n🔗 ${asNonEmptyString(pr?.html_url) || ''}`;
     }
     case 'issues': {
-      const issue = body.issue;
-      return `🔔 *GitHub Issue ${body.action?.toUpperCase()}*\n📦 ${body.repository?.full_name}\n#${issue?.number} ${issue?.title}\n🔗 ${issue?.html_url}`;
+      const issue = asRecord(body.issue);
+      const action = asNonEmptyString(body.action)?.toUpperCase() || 'UNKNOWN';
+      const repo = asNonEmptyString(asRecord(body.repository)?.full_name) || 'unknown';
+      return `🔔 *GitHub Issue ${action}*\n📦 ${repo}\n#${String(issue?.number ?? '?')} ${asNonEmptyString(issue?.title) || 'Untitled'}\n🔗 ${asNonEmptyString(issue?.html_url) || ''}`;
     }
     case 'release': {
-      const rel = body.release;
-      return `🎉 *GitHub Release: ${rel?.tag_name}*\n📦 ${body.repository?.full_name}\n${rel?.name || ''}\n🔗 ${rel?.html_url}`;
+      const rel = asRecord(body.release);
+      const repo = asNonEmptyString(asRecord(body.repository)?.full_name) || 'unknown';
+      return `🎉 *GitHub Release: ${asNonEmptyString(rel?.tag_name) || 'unknown'}*\n📦 ${repo}\n${asNonEmptyString(rel?.name) || ''}\n🔗 ${asNonEmptyString(rel?.html_url) || ''}`;
     }
     case 'workflow_run': {
-      const wf = body.workflow_run;
-      const icon = wf?.conclusion === 'success' ? '✅' : wf?.conclusion === 'failure' ? '❌' : '⚙️';
-      return `${icon} *GitHub Workflow: ${wf?.name}*\n📦 ${body.repository?.full_name}\nStatus: ${wf?.status} / ${wf?.conclusion || 'running'}\n🔗 ${wf?.html_url}`;
+      const wf = asRecord(body.workflow_run);
+      const conclusion = asNonEmptyString(wf?.conclusion);
+      const icon = conclusion === 'success' ? '✅' : conclusion === 'failure' ? '❌' : '⚙️';
+      const repo = asNonEmptyString(asRecord(body.repository)?.full_name) || 'unknown';
+      return `${icon} *GitHub Workflow: ${asNonEmptyString(wf?.name) || 'unknown'}*\n📦 ${repo}\nStatus: ${asNonEmptyString(wf?.status) || 'unknown'} / ${conclusion || 'running'}\n🔗 ${asNonEmptyString(wf?.html_url) || ''}`;
     }
     default:
       return `🔔 *GitHub Event: ${event}*\n${JSON.stringify(body).slice(0, 200)}`;
   }
 }
 
-function adaptGrafana(body: any): string {
-  const alerts = body.alerts || [];
+function adaptGrafana(body: WebhookBody): string {
+  const alerts = toObjectArray(body.alerts);
   if (alerts.length === 0) return `🔔 *Grafana Alert*\n${JSON.stringify(body).slice(0, 300)}`;
 
-  return alerts.map((a: any) => {
-    const icon = a.status === 'firing' ? '🔥' : '✅';
-    const name = a.labels?.alertname || 'Unknown Alert';
-    const summary = a.annotations?.summary || a.annotations?.description || '';
-    return `${icon} *${name}* (${a.status?.toUpperCase()})\n${summary}`.trim();
+  return alerts.map((alert) => {
+    const labels = asRecord(alert.labels);
+    const annotations = asRecord(alert.annotations);
+    const status = asNonEmptyString(alert.status) || 'unknown';
+    const icon = status === 'firing' ? '🔥' : '✅';
+    const name = asNonEmptyString(labels?.alertname) || 'Unknown Alert';
+    const summary = asNonEmptyString(annotations?.summary) || asNonEmptyString(annotations?.description) || '';
+    return `${icon} *${name}* (${status.toUpperCase()})\n${summary}`.trim();
   }).join('\n\n');
 }
 
@@ -445,10 +475,10 @@ export class WebhookServer {
         }
 
         let bodyRaw = '';
-        let body: any = {};
+        let body: WebhookBody = {};
         try {
           bodyRaw = await readRequestBodyWithLimit(req, maxBodyBytes);
-          body = bodyRaw ? JSON.parse(bodyRaw) : {};
+          body = bodyRaw ? asWebhookBody(JSON.parse(bodyRaw)) : {};
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Invalid JSON body';
           const status = message.includes('Request body too large') ? 413 : 400;
@@ -532,9 +562,10 @@ export class WebhookServer {
           return new Response(JSON.stringify({ ok: true }), {
             headers: { 'Content-Type': 'application/json' },
           });
-        } catch (err: any) {
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Unknown error';
           log.error({ err, roomIds }, 'Failed to deliver webhook message');
-          return new Response(JSON.stringify({ error: err.message }), {
+          return new Response(JSON.stringify({ error: message }), {
             status: 500, headers: { 'Content-Type': 'application/json' },
           });
         }
