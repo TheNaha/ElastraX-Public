@@ -78,4 +78,145 @@ describe('WebhookServer Security', () => {
       delete process.env.WEBHOOK_PORT;
     }
   });
+
+  test('WebhookServer exposes health and metrics endpoints', async () => {
+    process.env.WEBHOOK_ENABLED = 'true';
+    process.env.WEBHOOK_SECRET = secret;
+    process.env.WEBHOOK_PORT = '0';
+
+    const server = new WebhookServer();
+    server.start();
+
+    try {
+      const internalServer = server as unknown as { server?: { port?: number } };
+      const port = internalServer.server?.port;
+
+      const health = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(health.status).toBe(200);
+
+      const metrics = await fetch(`http://127.0.0.1:${port}/metrics`);
+      expect(metrics.status).toBe(200);
+      expect(await metrics.text()).toContain('elastrax_');
+    } finally {
+      server.stop();
+      delete process.env.WEBHOOK_ENABLED;
+      delete process.env.WEBHOOK_SECRET;
+      delete process.env.WEBHOOK_PORT;
+    }
+  });
+
+  test('WebhookServer returns 503 when secret is not configured', async () => {
+    process.env.WEBHOOK_ENABLED = 'true';
+    process.env.WEBHOOK_PORT = '0';
+
+    const server = new WebhookServer();
+    server.start();
+
+    try {
+      const internalServer = server as unknown as { server?: { port?: number } };
+      const port = internalServer.server?.port;
+      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'hello', room_id: '123456' }),
+      });
+
+      expect(res.status).toBe(503);
+    } finally {
+      server.stop();
+      delete process.env.WEBHOOK_ENABLED;
+      delete process.env.WEBHOOK_PORT;
+    }
+  });
+
+  test('WebhookServer rejects missing room ids', async () => {
+    process.env.WEBHOOK_ENABLED = 'true';
+    process.env.WEBHOOK_SECRET = secret;
+    process.env.WEBHOOK_PORT = '0';
+
+    const server = new WebhookServer();
+    server.registerSender('discord', async () => {});
+    server.start();
+
+    try {
+      const internalServer = server as unknown as { server?: { port?: number } };
+      const port = internalServer.server?.port;
+      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'hello', secret }),
+      });
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toContain('room_id');
+    } finally {
+      server.stop();
+      delete process.env.WEBHOOK_ENABLED;
+      delete process.env.WEBHOOK_SECRET;
+      delete process.env.WEBHOOK_PORT;
+    }
+  });
+
+  test('WebhookServer returns 207 when only some deliveries succeed', async () => {
+    process.env.WEBHOOK_ENABLED = 'true';
+    process.env.WEBHOOK_SECRET = secret;
+    process.env.WEBHOOK_PORT = '0';
+
+    const server = new WebhookServer();
+    server.registerSender('discord', async (roomId) => {
+      if (roomId === '222') throw new Error('blocked');
+    });
+    server.start();
+
+    try {
+      const internalServer = server as unknown as { server?: { port?: number } };
+      const port = internalServer.server?.port;
+      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_ids: ['111', '222'], text: 'hello', secret, platform: 'discord' }),
+      });
+
+      expect(res.status).toBe(207);
+      const body = await res.json();
+      expect(body.ok).toBe(false);
+      expect(body.delivered).toBe(1);
+      expect(body.failed).toHaveLength(1);
+    } finally {
+      server.stop();
+      delete process.env.WEBHOOK_ENABLED;
+      delete process.env.WEBHOOK_SECRET;
+      delete process.env.WEBHOOK_PORT;
+    }
+  });
+
+  test('WebhookServer routes successful webhook deliveries to ok=true', async () => {
+    process.env.WEBHOOK_ENABLED = 'true';
+    process.env.WEBHOOK_SECRET = secret;
+    process.env.WEBHOOK_PORT = '0';
+
+    const sendDiscord = mock(async () => {});
+    const server = new WebhookServer();
+    server.registerSender('discord', sendDiscord);
+    server.start();
+
+    try {
+      const internalServer = server as unknown as { server?: { port?: number } };
+      const port = internalServer.server?.port;
+      const res = await fetch(`http://127.0.0.1:${port}/webhook?room_id=123456&secret=${secret}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'Alert', body: 'Something happened' }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(sendDiscord).toHaveBeenCalledTimes(1);
+    } finally {
+      server.stop();
+      delete process.env.WEBHOOK_ENABLED;
+      delete process.env.WEBHOOK_SECRET;
+      delete process.env.WEBHOOK_PORT;
+    }
+  });
 });

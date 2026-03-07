@@ -62,6 +62,66 @@ describe('WebhookServer helpers', () => {
     expect(msg).toContain('Event: db.replication.lag');
   });
 
+  test('buildWebhookMessage should parse Grafana alert batches', () => {
+    const msg = buildWebhookMessage({ 'x-grafana-origin': 'alertmanager' }, {
+      alerts: [
+        {
+          status: 'firing',
+          labels: { alertname: 'HighCPU' },
+          annotations: { summary: 'CPU above 95%' },
+        },
+        {
+          status: 'resolved',
+          labels: { alertname: 'DiskFull' },
+          annotations: { description: 'Disk usage recovered' },
+        },
+      ],
+    });
+
+    expect(msg).toContain('HighCPU');
+    expect(msg).toContain('CPU above 95%');
+    expect(msg).toContain('DiskFull');
+    expect(msg).toContain('RESOLVED');
+  });
+
+  test('buildWebhookMessage should fall back for Grafana payloads without alerts', () => {
+    const msg = buildWebhookMessage({ 'x-grafana-origin': 'alertmanager' }, { note: 'raw payload' });
+    expect(msg).toContain('Grafana Alert');
+    expect(msg).toContain('raw payload');
+  });
+
+  test('buildWebhookMessage should support GitHub workflow, issues, and fallback events', () => {
+    const workflowMsg = buildWebhookMessage(
+      { 'x-github-event': 'workflow_run' },
+      {
+        repository: { full_name: 'owner/repo' },
+        workflow_run: { name: 'CI', status: 'completed', conclusion: 'success', html_url: 'https://ci.example' },
+      },
+    );
+    expect(workflowMsg).toContain('GitHub Workflow');
+    expect(workflowMsg).toContain('success');
+
+    const issuesMsg = buildWebhookMessage(
+      { 'x-github-event': 'issues' },
+      {
+        action: 'opened',
+        repository: { full_name: 'owner/repo' },
+        issue: { number: 42, title: 'Bug report', html_url: 'https://issues.example/42' },
+      },
+    );
+    expect(issuesMsg).toContain('GitHub Issue OPENED');
+    expect(issuesMsg).toContain('Bug report');
+
+    const fallbackMsg = buildWebhookMessage({ 'x-github-event': 'deployment' }, { ok: true });
+    expect(fallbackMsg).toContain('GitHub Event: deployment');
+  });
+
+  test('buildWebhookMessage should stringify payloads with no generic fields', () => {
+    const msg = buildWebhookMessage({}, { nested: { value: 1 } });
+    expect(msg).toContain('Webhook payload');
+    expect(msg).toContain('nested');
+  });
+
   test('resolveRoomIds should merge room_id and room_ids', () => {
     const url = new URL('http://localhost:3500/webhook?room_id=123456789&room_ids=alpha,beta');
     const roomIds = resolveRoomIds(

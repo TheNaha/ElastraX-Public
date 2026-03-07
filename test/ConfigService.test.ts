@@ -9,8 +9,10 @@ const baseRoom = (): ChatRoom => ({
   systemPrompt: null,
   contextLimit: null,
   temperature: null,
+  maxTokens: null,
   allowTools: null,
   autoReplyAll: null,
+  summarize: null,
   created_at: new Date(),
 });
 
@@ -22,7 +24,9 @@ describe('ConfigService', () => {
     delete process.env.DEFAULT_SYSTEM_PROMPT;
     delete process.env.CONTEXT_MESSAGE_LIMIT;
     delete process.env.AI_TEMPERATURE;
+    delete process.env.AI_MAX_TOKENS;
     delete process.env.AUTO_REPLY_ALL;
+    delete process.env.CONTEXT_SUMMARIZE;
   });
 
   afterEach(() => {
@@ -132,6 +136,26 @@ describe('ConfigService', () => {
     });
   });
 
+  describe('maxTokens', () => {
+    test('should default to 2048 when DB and env are both unset', () => {
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.maxTokens).toBe(2048);
+    });
+
+    test('should use AI_MAX_TOKENS env var when DB field is null', () => {
+      process.env.AI_MAX_TOKENS = '4096';
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.maxTokens).toBe(4096);
+    });
+
+    test('should prefer DB maxTokens over env var', () => {
+      process.env.AI_MAX_TOKENS = '4096';
+      const room = { ...baseRoom(), maxTokens: 1024 };
+      const config = ConfigService.getResolvedConfig(room);
+      expect(config.maxTokens).toBe(1024);
+    });
+  });
+
   describe('autoReplyAll', () => {
     test('should default to false when DB and env are both unset', () => {
       const config = ConfigService.getResolvedConfig(baseRoom());
@@ -164,6 +188,26 @@ describe('ConfigService', () => {
     });
   });
 
+  describe('summarize', () => {
+    test('should default to true when DB and env are both unset', () => {
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.summarize).toBe(true);
+    });
+
+    test('should use CONTEXT_SUMMARIZE env var when DB field is null', () => {
+      process.env.CONTEXT_SUMMARIZE = 'false';
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.summarize).toBe(false);
+    });
+
+    test('should prefer DB summarize over env var', () => {
+      process.env.CONTEXT_SUMMARIZE = 'false';
+      const room = { ...baseRoom(), summarize: true };
+      const config = ConfigService.getResolvedConfig(room);
+      expect(config.summarize).toBe(true);
+    });
+  });
+
   describe('combined override behavior', () => {
     test('should mix DB overrides and env fallbacks independently', () => {
       process.env.CONTEXT_MESSAGE_LIMIT = '30';
@@ -186,8 +230,10 @@ describe('ConfigService', () => {
         systemPrompt: 'You are a Discord bot.',
         contextLimit: 15,
         temperature: 0.8,
+        maxTokens: 4096,
         allowTools: false,
         autoReplyAll: true,
+        summarize: false,
         created_at: new Date(),
       };
       const config = ConfigService.getResolvedConfig(room);
@@ -195,8 +241,10 @@ describe('ConfigService', () => {
       expect(config.systemPrompt).toBe('You are a Discord bot.');
       expect(config.contextLimit).toBe(15);
       expect(config.temperature).toBe(0.8);
+      expect(config.maxTokens).toBe(4096);
       expect(config.allowTools).toBe(false);
       expect(config.autoReplyAll).toBe(true);
+      expect(config.summarize).toBe(false);
     });
   });
 });

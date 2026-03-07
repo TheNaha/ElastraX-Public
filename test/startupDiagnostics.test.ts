@@ -106,6 +106,65 @@ describe('startupDiagnostics', () => {
     );
   });
 
+  test('dumpFixtures returns early when no rows are loaded', async () => {
+    const loadMessages = mock(() => []);
+    const scanCoverage = mock(async () => ({
+      uniqueByType: new Map(),
+      errors: [],
+      unknownSamples: [],
+      total: 0,
+    }));
+
+    await dumpFixtures(null, { loadMessages, scanCoverage });
+
+    expect(loadMessages).toHaveBeenCalledTimes(1);
+    expect(scanCoverage).not.toHaveBeenCalled();
+  });
+
+  test('dumpFixtures swallows unwritable fixture directories', async () => {
+    const loadMessages = mock(() => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
+    const scanCoverage = mock(async () => ({
+      uniqueByType: new Map([['conversation', { raw: { text: 'hello' }, parsed: { messageType: 'conversation' } }]]),
+      errors: [],
+      unknownSamples: [],
+      total: 1,
+    }));
+    const makeDirectory = mock(async () => {
+      const error = new Error('no access') as Error & { code?: string };
+      error.code = 'EACCES';
+      throw error;
+    });
+    const writeTextFile = mock(async () => {});
+
+    await expect(dumpFixtures(null, { loadMessages, scanCoverage, makeDirectory, writeTextFile })).resolves.toBeUndefined();
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
+  test('dumpFixtures stops when writing becomes read-only', async () => {
+    const loadMessages = mock(() => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
+    const scanCoverage = mock(async () => ({
+      uniqueByType: new Map([['conversation', { raw: { text: 'hello' }, parsed: { messageType: 'conversation' } }]]),
+      errors: [{ rowId: 'm1', error: 'bad parse' }],
+      unknownSamples: [],
+      total: 1,
+    }));
+    const writeTextFile = mock(async () => {
+      const error = new Error('read only') as Error & { code?: string };
+      error.code = 'EROFS';
+      throw error;
+    });
+
+    await expect(dumpFixtures(null, {
+      loadMessages,
+      scanCoverage,
+      makeDirectory: mock(async () => {}),
+      writeTextFile,
+      fileExists: mock(() => false),
+    })).resolves.toBeUndefined();
+
+    expect(writeTextFile).toHaveBeenCalledTimes(1);
+  });
+
   test('runStartupCoverageScan limits row loading and logs coverage when rows exist', async () => {
     const loadMessages = mock((_limit?: number) => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
     const scanCoverage = mock(async () => ({
@@ -130,5 +189,20 @@ describe('startupDiagnostics', () => {
     });
 
     await expect(runStartupCoverageScan(null, { loadMessages, scanCoverage })).resolves.toBeUndefined();
+  });
+
+  test('runStartupCoverageScan returns early when no rows exist', async () => {
+    const loadMessages = mock((_limit?: number) => []);
+    const scanCoverage = mock(async () => ({
+      uniqueByType: new Map(),
+      errors: [],
+      unknownSamples: [],
+      total: 0,
+    }));
+
+    await runStartupCoverageScan(null, { loadMessages, scanCoverage });
+
+    expect(loadMessages).toHaveBeenCalledWith(2000);
+    expect(scanCoverage).not.toHaveBeenCalled();
   });
 });
