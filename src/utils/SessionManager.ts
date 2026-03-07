@@ -21,8 +21,6 @@
  */
 
 import { logger } from './logger';
-import { db } from '../db';
-import { flowSessions } from '../db/schema';
 import { eq, inArray } from 'drizzle-orm';
 
 /** State data for a single interactive flow step. */
@@ -65,21 +63,20 @@ export class SessionManager {
    */
   private static async loadFromDB(): Promise<void> {
     if (this.dbLoaded) return;
-    this.dbLoaded = true;
-    try {
-      // Dynamic import to avoid circular dependency with db module
-      const { db } = await import('../db');
-      const { flowSessions } = await import('../db/schema');
-      const { inArray } = await import('drizzle-orm');
-      const rows = db.select().from(flowSessions).all();
-      const now = Date.now();
-      const expiredIds: string[] = [];
+    if (this.dbLoadPromise) return this.dbLoadPromise;
+
+    this.dbLoadPromise = (async () => {
+      try {
+        const { db, flowSessions } = await this.getDbDeps();
+        const rows = db.select().from(flowSessions).all();
+        const now = Date.now();
+        const expiredIds: string[] = [];
 
         for (const row of rows) {
           try {
             const session = JSON.parse(row.data) as UserSession;
-            // Prune expired flows during load
             let hasExpired = false;
+
             for (const [flowId, flow] of Object.entries(session.flows)) {
               if (now > flow.expiresAt) {
                 delete session.flows[flowId];
@@ -87,13 +84,15 @@ export class SessionManager {
                 hasExpired = true;
               }
             }
+
             if (Object.keys(session.flows).length > 0) {
               this.sessions.set(row.id, session);
             } else if (hasExpired) {
-              // Collect ID to clean up fully expired session from DB in bulk
               expiredIds.push(row.id);
             }
-          } catch { /* skip corrupt rows */ }
+          } catch {
+            // Skip corrupt rows instead of failing startup.
+          }
         }
 
         if (expiredIds.length > 0) {
@@ -115,9 +114,7 @@ export class SessionManager {
 
   private static async persistToDBInternal(key: string, session: UserSession | null): Promise<void> {
     try {
-      // Dynamic import to avoid circular dependency
-      const { db } = require('../db');
-      const { flowSessions } = require('../db/schema');
+      const { db, flowSessions } = await this.getDbDeps();
       if (!session || Object.keys(session.flows).length === 0) {
         db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {
