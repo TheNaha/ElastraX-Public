@@ -23,11 +23,18 @@
 import { logger } from './logger';
 import { eq, inArray } from 'drizzle-orm';
 
+type SessionValue = string | number | boolean | null | SessionValue[] | { [key: string]: SessionValue };
+type SessionData = Record<string, SessionValue>;
+type DbDeps = {
+  db: typeof import('../db').db;
+  flowSessions: typeof import('../db/schema').flowSessions;
+};
+
 /** State data for a single interactive flow step. */
 export interface FlowSession {
   flow: string;
   step: string;
-  data: Record<string, any>;
+  data: SessionData;
   expiresAt: number;
 }
 
@@ -42,9 +49,10 @@ export class SessionManager {
   private static sessions = new Map<string, UserSession>();
   private static dbLoaded = false;
   private static dbLoadPromise: Promise<void> | null = null;
-  private static dbDepsPromise: Promise<{ db: any; flowSessions: any }> | null = null;
+  private static dbDepsPromise: Promise<DbDeps> | null = null;
+  private static persistQueue = new Map<string, Promise<void>>();
 
-  private static getDbDeps(): Promise<{ db: any; flowSessions: any }> {
+  private static getDbDeps(): Promise<DbDeps> {
     if (!this.dbDepsPromise) {
       this.dbDepsPromise = Promise.all([
         import('../db'),
@@ -55,6 +63,10 @@ export class SessionManager {
       }));
     }
     return this.dbDepsPromise;
+  }
+
+  private static cloneSession(session: UserSession | null): UserSession | null {
+    return session ? structuredClone(session) : null;
   }
 
   /**
@@ -96,7 +108,7 @@ export class SessionManager {
         }
 
         if (expiredIds.length > 0) {
-          db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
+          await db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
         }
 
         this.dbLoaded = true;
@@ -116,10 +128,10 @@ export class SessionManager {
     try {
       const { db, flowSessions } = await this.getDbDeps();
       if (!session || Object.keys(session.flows).length === 0) {
-        db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
+        await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {
         const data = JSON.stringify(session);
-        db.insert(flowSessions)
+        await db.insert(flowSessions)
           .values({ id: key, data, updated_at: new Date() })
           .onConflictDoUpdate({
             target: flowSessions.id,
@@ -134,7 +146,18 @@ export class SessionManager {
 
   /** Write-through: persist session state to SQLite. */
   private static persistToDB(key: string, session: UserSession | null): void {
-    void this.persistToDBInternal(key, session);
+    const snapshot = this.cloneSession(session);
+    const previous = this.persistQueue.get(key) ?? Promise.resolve();
+    const next = previous
+      .catch(() => undefined)
+      .then(() => this.persistToDBInternal(key, snapshot))
+      .finally(() => {
+        if (this.persistQueue.get(key) === next) {
+          this.persistQueue.delete(key);
+        }
+      });
+
+    this.persistQueue.set(key, next);
   }
 
   /**

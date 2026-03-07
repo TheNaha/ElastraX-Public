@@ -28,5 +28,8 @@ jobs:
       - name: Generate Database Client
         run: bun run db:generate || true
 
-      - name: Run Tests
-        run: bun test
+      - name: Run Lint
+        run: bun run lint
+
+      - name: Run Tests With Coverage
+        run: bun run test:coverage

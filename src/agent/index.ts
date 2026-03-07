@@ -49,6 +49,7 @@ import { RateLimiter } from '../utils/RateLimiter';
 import { PrivilegeService } from '../utils/PrivilegeService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall } from '../types/ai';
+import type { BaseTool, ToolResult } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
 
 const modelRouter = getModelRouter();
@@ -56,6 +57,10 @@ const streamingEnabled = process.env.AI_STREAMING === 'true';
 /** Minimum interval between message edits during streaming (ms). */
 const WA_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_WA || '1500', 10);
 const DC_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_DC || '500', 10);
+
+function getToolTimeoutMs(): number {
+  return parseInt(process.env.AI_TOOL_TIMEOUT_MS || '30000', 10);
+}
 
 /**
  * Strip Qwen3-style `<think>…</think>` reasoning blocks from model output,
@@ -104,6 +109,48 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   }
 
   return '';
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+async function executeToolWithTimeout(
+  tool: BaseTool,
+  args: Record<string, unknown>,
+  ctx: MessageContext,
+): Promise<ToolResult> {
+  const startMs = Date.now();
+  const timeoutMs = getToolTimeoutMs();
+
+  try {
+    const result = await withTimeout(
+      Promise.resolve().then(() => tool.execute(args, ctx)),
+      timeoutMs,
+      `Tool ${tool.name}`,
+    );
+    healthMetrics.recordToolDuration(tool.name, Date.now() - startMs);
+    return result;
+  } catch (err: unknown) {
+    healthMetrics.recordToolError(tool.name);
+    healthMetrics.recordToolDuration(tool.name, Date.now() - startMs);
+    throw err;
+  }
 }
 
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
@@ -265,7 +312,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
         parsedArgs.__command = command;
         log.debug({ command, toolName: tool.name, args: parsedArgs }, 'Executing slash command');
-        const result = await tool.execute(parsedArgs, ctx);
+        const result = await executeToolWithTimeout(tool, parsedArgs, ctx);
         // Support structured ToolResponse with mentions
         if (typeof result === 'object' && result !== null && 'text' in result) {
           await ctx.reply(result.text, { mentions: result.mentions });
@@ -715,17 +762,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
                 await ctx.react?.('🔍');
-                const startMs = Date.now();
-                try {
-                  const rawResult = await tool.execute(args, ctx);
-                  toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                    ? rawResult.text : rawResult;
-                  healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-                } catch (err: unknown) {
-                  healthMetrics.recordToolError(toolName);
-                  healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-                  throw err;
-                }
+                const rawResult = await executeToolWithTimeout(tool, args, ctx);
+                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                  ? rawResult.text : rawResult;
               } else {
                 log.error({ toolName, chatId }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
@@ -790,17 +829,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
               await ctx.react?.('🔍'); // Feedback to user
-              const startMs = Date.now();
-              try {
-                const rawResult = await tool.execute(args, ctx);
-                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                  ? rawResult.text : rawResult;
-                healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-              } catch (err: unknown) {
-                healthMetrics.recordToolError(toolName);
-                healthMetrics.recordToolDuration(toolName, Date.now() - startMs);
-                throw err;
-              }
+              const rawResult = await executeToolWithTimeout(tool, args, ctx);
+              toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
+                ? rawResult.text : rawResult;
             } else {
               log.error({ toolName, chatId }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;

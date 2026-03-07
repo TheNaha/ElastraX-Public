@@ -19,6 +19,12 @@ describe('SessionManager', () => {
     if ((SessionManager as any).sessions) {
       (SessionManager as any).sessions.clear();
     }
+    if ((SessionManager as any).persistQueue) {
+      (SessionManager as any).persistQueue.clear();
+    }
+    if ((SessionManager as any).dbDepsPromise !== undefined) {
+      (SessionManager as any).dbDepsPromise = null;
+    }
     setSystemTime(new Date('2024-01-01T00:00:00Z')); // predictable time
   });
 
@@ -81,6 +87,59 @@ describe('SessionManager', () => {
 
       const flow = session.flows[flowId];
       expect(flow.expiresAt).toBe(new Date('2024-01-01T00:00:00Z').getTime() + ttlSeconds * 1000);
+    });
+
+    test('should serialize persistence writes for the same user key', async () => {
+      const manager = SessionManager as any;
+      const originalGetDbDeps = manager.getDbDeps;
+      const persistedStates: string[] = [];
+      let releaseFirstWrite!: () => void;
+      const firstWriteGate = new Promise<void>((resolve) => {
+        releaseFirstWrite = resolve;
+      });
+      let writeCount = 0;
+
+      manager.dbDepsPromise = null;
+      manager.getDbDeps = async () => ({
+        db: {
+          insert: () => ({
+            values: (vals: { data: string }) => ({
+              onConflictDoUpdate: () => ({
+                run: async () => {
+                  writeCount += 1;
+                  if (writeCount === 1) {
+                    await firstWriteGate;
+                  }
+                  persistedStates.push(vals.data);
+                },
+              }),
+            }),
+          }),
+          delete: () => ({
+            where: () => ({ run: async () => {} }),
+          }),
+        },
+        flowSessions: { id: 'id' },
+      });
+
+      try {
+        SessionManager.set(userId, flowId, { ...flowData, step: 'first' }, platform);
+        SessionManager.set(userId, flowId, { ...flowData, step: 'second' }, platform);
+
+        await Promise.resolve();
+        expect(persistedStates).toEqual([]);
+
+        releaseFirstWrite();
+        await Promise.all(Array.from(manager.persistQueue.values()));
+
+        expect(persistedStates).toHaveLength(2);
+        expect(JSON.parse(persistedStates[0]).flows[flowId].step).toBe('first');
+        expect(JSON.parse(persistedStates[1]).flows[flowId].step).toBe('second');
+      } finally {
+        manager.getDbDeps = originalGetDbDeps;
+        manager.dbDepsPromise = null;
+        manager.persistQueue.clear();
+      }
     });
   });
 

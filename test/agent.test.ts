@@ -208,6 +208,7 @@ describe('handleIncomingMessage', () => {
     delete process.env.AI_API_BASE_URL;
     delete process.env.AI_API_KEY;
     delete process.env.AI_MODEL_NAME;
+    delete process.env.AI_TOOL_TIMEOUT_MS;
   });
 
   // ── Room initialisation ───────────────────────────────────────────────────
@@ -429,6 +430,18 @@ describe('handleIncomingMessage', () => {
       expect(calls).toContain('❌');
     });
 
+    test('should time out a slash command tool instead of hanging forever', async () => {
+      process.env.AI_TOOL_TIMEOUT_MS = '10';
+      mockToolMap.menu.execute = mock(() => new Promise(() => {}));
+
+      const ctx = makeCtx({ text: '/menu', isGroup: false });
+      await handleIncomingMessage(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('timed out'));
+      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
+      expect(calls).toContain('❌');
+    });
+
     test('should reply "Unknown command" for unrecognised slash commands when no close match is found', async () => {
       // Use a completely random string that won't match any real tools (like menu, sticker, etc.)
       const ctx = makeCtx({ text: '/xyzzy_super_random_command_123', isGroup: false });
@@ -568,6 +581,37 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
       expect(dummyTool.execute).toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith('Done');
+    });
+
+    test('should time out AI-requested tools and fall back with an error response', async () => {
+      process.env.AI_TOOL_TIMEOUT_MS = '10';
+
+      const stuckTool = {
+        name: 'web_search',
+        aliases: [],
+        execute: mock(() => new Promise(() => {})),
+      };
+      mockToolMap = { web_search: stuckTool };
+
+      global.fetch = mock(async () => new Response(
+        JSON.stringify({
+          choices: [{
+            message: {
+              role: 'assistant',
+              content: null,
+              tool_calls: [{ id: 'call-timeout', function: { name: 'web_search', arguments: '{"query":"bun"}' } }],
+            },
+          }],
+          usage: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as any;
+
+      const ctx = makeCtx({ isGroup: false, text: 'Search for bun' });
+      await handleIncomingMessage(ctx);
+
+      expect(stuckTool.execute).toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('encountered an error during inference'));
     });
   });
 
