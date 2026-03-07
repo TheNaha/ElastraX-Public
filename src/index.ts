@@ -20,8 +20,7 @@ import { DiscordProvider } from './providers/discord';
 import { handleIncomingMessage } from './agent';
 import { MessageContext } from './core/MessageContext';
 import { logger } from './utils/logger';
-import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
-import { db } from './db';
+import { db, ensureDatabaseSchema } from './db';
 import { messages } from './db/schema';
 import { scanParserCoverage, logCoverageSummary } from './utils/parserCoverage';
 import { writeFile, mkdir } from 'fs/promises';
@@ -160,7 +159,7 @@ async function main() {
 
   try {
     logger.info('Running database migrations...');
-    migrate(db, { migrationsFolder: './drizzle/migrations' });
+    ensureDatabaseSchema();
     logger.info('Database migrations applied successfully.');
   } catch (err: unknown) {
     logger.error(err, 'Failed to run database migrations');

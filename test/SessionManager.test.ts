@@ -193,7 +193,7 @@ describe('SessionManager', () => {
       expect(session.activeFlow).toBe(flowId2);
     });
 
-    test('should clear activeFlow if the active flow expires', () => {
+    test('should promote a remaining flow when the active flow expires', () => {
        const ttl = 60;
 
        // Set a long lived flow
@@ -212,8 +212,7 @@ describe('SessionManager', () => {
 
        expect(session.flows[flowId]).toBeUndefined();
        expect(session.flows[longFlowId]).toBeDefined();
-       // activeFlow should be null because the active one expired
-       expect(session.activeFlow).toBeNull();
+       expect(session.activeFlow).toBe(longFlowId);
     });
   });
 

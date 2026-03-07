@@ -69,6 +69,32 @@ export class SessionManager {
     return session ? structuredClone(session) : null;
   }
 
+  private static selectFallbackActiveFlow(session: UserSession): void {
+    if (session.activeFlow && session.flows[session.activeFlow]) {
+      return;
+    }
+
+    const remainingFlows = Object.keys(session.flows);
+    session.activeFlow = remainingFlows.length > 0 ? remainingFlows[remainingFlows.length - 1] : null;
+  }
+
+  private static pruneExpiredFlows(session: UserSession, now: number = Date.now()): boolean {
+    let hasExpired = false;
+
+    for (const [flowId, flow] of Object.entries(session.flows)) {
+      if (now > flow.expiresAt) {
+        delete session.flows[flowId];
+        if (session.activeFlow === flowId) {
+          session.activeFlow = null;
+        }
+        hasExpired = true;
+      }
+    }
+
+    this.selectFallbackActiveFlow(session);
+    return hasExpired;
+  }
+
   /**
    * Lazily load all persisted sessions from the database on first access.
    * This ensures sessions survive container restarts.
@@ -87,15 +113,7 @@ export class SessionManager {
         for (const row of rows) {
           try {
             const session = JSON.parse(row.data) as UserSession;
-            let hasExpired = false;
-
-            for (const [flowId, flow] of Object.entries(session.flows)) {
-              if (now > flow.expiresAt) {
-                delete session.flows[flowId];
-                if (session.activeFlow === flowId) session.activeFlow = null;
-                hasExpired = true;
-              }
-            }
+            const hasExpired = this.pruneExpiredFlows(session, now);
 
             if (Object.keys(session.flows).length > 0) {
               this.sessions.set(row.id, session);
@@ -191,17 +209,7 @@ export class SessionManager {
     
     if (!session) return null;
 
-    // Cleanup expired flows
-    let hasExpired = false;
-    for (const [flowId, flow] of Object.entries(session.flows)) {
-      if (Date.now() > flow.expiresAt) {
-        delete session.flows[flowId];
-        if (session.activeFlow === flowId) {
-          session.activeFlow = null;
-        }
-        hasExpired = true;
-      }
-    }
+    const hasExpired = this.pruneExpiredFlows(session);
 
     if (hasExpired && Object.keys(session.flows).length === 0) {
       this.sessions.delete(key);

@@ -18,6 +18,7 @@
 
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import * as schema from './schema.js';
@@ -32,7 +33,7 @@ if (!usesInMemoryDb && !existsSync(dir)) {
   mkdirSync(dir, { recursive: true });
 }
 
-const sqlite = new Database(DB_PATH, { create: true });
+export const sqlite = new Database(DB_PATH, { create: true });
 // Enable Write-Ahead Logging (WAL) for better concurrent write performance
 if (!usesInMemoryDb) {
   sqlite.exec('PRAGMA journal_mode = WAL;');
@@ -40,3 +41,11 @@ if (!usesInMemoryDb) {
 sqlite.exec('PRAGMA synchronous = NORMAL;');
 sqlite.exec('PRAGMA foreign_keys = ON;');
 export const db = drizzle({ client: sqlite, schema });
+
+let schemaInitialized = false;
+
+export function ensureDatabaseSchema(): void {
+  if (schemaInitialized) return;
+  migrate(db, { migrationsFolder: './drizzle/migrations' });
+  schemaInitialized = true;
+}
