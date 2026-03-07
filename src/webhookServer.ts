@@ -98,6 +98,47 @@ function isValidPort(value: number): boolean {
   return Number.isInteger(value) && value >= 0 && value <= 65535;
 }
 
+export function resolveWebhookMaxBodyBytes(rawMaxBytes: string | undefined): number {
+  const defaultBytes = 256 * 1024;
+  const parsed = Number.parseInt((rawMaxBytes ?? '').trim(), 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : defaultBytes;
+}
+
+export async function readRequestBodyWithLimit(req: Request, maxBytes: number): Promise<string> {
+  const contentLengthHeader = req.headers.get('content-length');
+  const declaredLength = contentLengthHeader ? Number.parseInt(contentLengthHeader, 10) : Number.NaN;
+  if (Number.isInteger(declaredLength) && declaredLength > maxBytes) {
+    throw new Error(`Request body too large (${declaredLength} bytes). Limit is ${maxBytes} bytes.`);
+  }
+
+  if (!req.body) return '';
+
+  const reader = req.body.getReader();
+  const decoder = new TextDecoder();
+  let totalBytes = 0;
+  let bodyText = '';
+
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+
+      totalBytes += value.byteLength;
+      if (totalBytes > maxBytes) {
+        throw new Error(`Request body too large (${totalBytes} bytes). Limit is ${maxBytes} bytes.`);
+      }
+
+      bodyText += decoder.decode(value, { stream: true });
+    }
+
+    bodyText += decoder.decode();
+    return bodyText;
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export function resolveWebhookPort(rawPort: string | undefined): number {
   const defaultPort = 3500;
   const parsed = Number.parseInt((rawPort ?? '').trim(), 10);
@@ -368,6 +409,7 @@ export class WebhookServer {
     const rawPort = process.env.WEBHOOK_PORT;
     const parsedPort = Number.parseInt((rawPort ?? '').trim(), 10);
     const port = resolveWebhookPort(rawPort);
+    const maxBodyBytes = resolveWebhookMaxBodyBytes(process.env.WEBHOOK_MAX_BODY_BYTES);
     if (rawPort && rawPort.trim() !== '' && !isValidPort(parsedPort)) {
       log.warn({ rawPort, fallbackPort: port }, 'Invalid WEBHOOK_PORT value; falling back to default');
     }
@@ -405,11 +447,14 @@ export class WebhookServer {
         let bodyRaw = '';
         let body: any = {};
         try {
-          bodyRaw = await req.text();
+          bodyRaw = await readRequestBodyWithLimit(req, maxBodyBytes);
           body = bodyRaw ? JSON.parse(bodyRaw) : {};
-        } catch {
-          return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
-            status: 400, headers: { 'Content-Type': 'application/json' },
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : 'Invalid JSON body';
+          const status = message.includes('Request body too large') ? 413 : 400;
+          return new Response(JSON.stringify({ error: message }), {
+            status,
+            headers: { 'Content-Type': 'application/json' },
           });
         }
 

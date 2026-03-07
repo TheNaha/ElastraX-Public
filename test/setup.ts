@@ -17,6 +17,7 @@ import { join } from 'path';
 process.env.AI_API_BASE_URL = 'https://test-ai.example.com/v1';
 process.env.AI_API_KEY = 'test-key';
 process.env.AI_MODEL_NAME = 'test-model';
+process.env.ELASTRAX_DB_PATH = ':memory:';
 
 // ─── libsignal stubs ─────────────────────────────────────────────────────────
 // @whiskeysockets/baileys requires the 'libsignal' native binary package.

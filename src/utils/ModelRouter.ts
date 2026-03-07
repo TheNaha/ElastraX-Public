@@ -105,6 +105,10 @@ function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
   return raw.toLowerCase() === 'true';
 }
 
+function getProviderCooldownMs(): number {
+  return parseInt(process.env.AI_PROVIDER_COOLDOWN_MS || '30000', 10);
+}
+
 /** Loads all provider configs from process.env according to the documented pattern. */
 function loadProviders(): ResolvedProvider[] {
   const providerList = process.env.AI_PROVIDERS;
@@ -189,6 +193,7 @@ export function sanitizeMessagesForProvider(
  */
 export class ModelRouter {
   private providers: ResolvedProvider[];
+  private providerCooldownUntil = new Map<string, number>();
 
   constructor() {
     this.providers = loadProviders();
@@ -218,6 +223,37 @@ export class ModelRouter {
     return [...preferred, ...fallback];
   }
 
+  private getCandidateProviders(tier?: ModelTier): ResolvedProvider[] {
+    const orderedProviders = this.getProvidersByTier(tier);
+    const now = Date.now();
+    const availableProviders = orderedProviders.filter((provider) => {
+      const cooldownUntil = this.providerCooldownUntil.get(provider.name) ?? 0;
+      return cooldownUntil <= now;
+    });
+
+    if (availableProviders.length === 0) {
+      return orderedProviders;
+    }
+
+    if (availableProviders.length !== orderedProviders.length) {
+      logger.debug({
+        skippedProviders: orderedProviders
+          .filter((provider) => !availableProviders.includes(provider))
+          .map((provider) => provider.name),
+      }, '[ModelRouter] Skipping providers in cooldown window');
+    }
+
+    return availableProviders;
+  }
+
+  private clearProviderCooldown(providerName: string): void {
+    this.providerCooldownUntil.delete(providerName);
+  }
+
+  private markProviderFailure(providerName: string): void {
+    this.providerCooldownUntil.set(providerName, Date.now() + getProviderCooldownMs());
+  }
+
   /**
    * Sends a chat completion request, trying each provider in order until one succeeds.
    *
@@ -238,7 +274,7 @@ export class ModelRouter {
   ): Promise<ChatCompletionMessage> {
     let lastError: Error | null = null;
     const verbose = process.env.AI_VERBOSE_LOGS === 'true';
-    const orderedProviders = this.getProvidersByTier(tier);
+    const orderedProviders = this.getCandidateProviders(tier);
 
     for (const provider of orderedProviders) {
       try {
@@ -266,6 +302,7 @@ export class ModelRouter {
         const latency = Date.now() - start;
 
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+  this.clearProviderCooldown(provider.name);
         // V7.13: Usage may be on the message object for some providers (runtime-only field)
         const usage = (result as any)?.usage;
         if (usage) {
@@ -301,6 +338,7 @@ export class ModelRouter {
         return result;
       } catch (err: any) {
         lastError = err;
+        this.markProviderFailure(provider.name);
         healthMetrics.recordLLMRequest(provider.name, 0, false);
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Provider failed, trying next');
       }
@@ -328,7 +366,7 @@ export class ModelRouter {
     tier?: ModelTier,
   ): AsyncGenerator<ChatCompletionChunk> {
     let lastError: Error | null = null;
-    const orderedProviders = this.getProvidersByTier(tier);
+    const orderedProviders = this.getCandidateProviders(tier);
 
     for (const provider of orderedProviders) {
       try {
@@ -347,10 +385,12 @@ export class ModelRouter {
 
         const latency = Date.now() - start;
         healthMetrics.recordLLMRequest(provider.name, latency, true);
+        this.clearProviderCooldown(provider.name);
 
         return; // Successfully streamed from this provider
       } catch (err: any) {
         lastError = err;
+        this.markProviderFailure(provider.name);
         healthMetrics.recordLLMRequest(provider.name, 0, false);
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Streaming provider failed, trying next');
       }

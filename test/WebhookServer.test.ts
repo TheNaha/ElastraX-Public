@@ -11,7 +11,7 @@ const _mockLogger = {
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { buildWebhookMessage, resolveRoomIds, resolveWebhookPort } from '../src/webhookServer';
+import { buildWebhookMessage, readRequestBodyWithLimit, resolveRoomIds, resolveWebhookMaxBodyBytes, resolveWebhookPort } from '../src/webhookServer';
 
 describe('WebhookServer helpers', () => {
   test('buildWebhookMessage should parse Apprise-like payload', () => {
@@ -92,5 +92,43 @@ describe('WebhookServer helpers', () => {
     expect(resolveWebhookPort('not-a-number')).toBe(3500);
     expect(resolveWebhookPort('-1')).toBe(3500);
     expect(resolveWebhookPort('70000')).toBe(3500);
+  });
+
+  test('resolveWebhookMaxBodyBytes should parse configured limit and fall back safely', () => {
+    expect(resolveWebhookMaxBodyBytes('1024')).toBe(1024);
+    expect(resolveWebhookMaxBodyBytes(undefined)).toBe(256 * 1024);
+    expect(resolveWebhookMaxBodyBytes('0')).toBe(256 * 1024);
+    expect(resolveWebhookMaxBodyBytes('invalid')).toBe(256 * 1024);
+  });
+
+  test('readRequestBodyWithLimit should read small request bodies', async () => {
+    const req = new Request('http://localhost/webhook', {
+      method: 'POST',
+      body: JSON.stringify({ ok: true }),
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const body = await readRequestBodyWithLimit(req, 1024);
+    expect(body).toContain('"ok":true');
+  });
+
+  test('readRequestBodyWithLimit should reject oversized bodies from content-length', async () => {
+    const req = new Request('http://localhost/webhook', {
+      method: 'POST',
+      body: 'hello',
+      headers: { 'Content-Length': '9999' },
+    });
+
+    await expect(readRequestBodyWithLimit(req, 100)).rejects.toThrow('Request body too large');
+  });
+
+  test('readRequestBodyWithLimit should reject oversized streamed bodies', async () => {
+    const req = new Request('http://localhost/webhook', {
+      method: 'POST',
+      body: 'x'.repeat(128),
+      headers: { 'Content-Type': 'text/plain' },
+    });
+
+    await expect(readRequestBodyWithLimit(req, 64)).rejects.toThrow('Request body too large');
   });
 });

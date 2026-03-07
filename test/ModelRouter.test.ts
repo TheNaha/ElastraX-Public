@@ -1,10 +1,13 @@
-import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, spyOn, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { ModelRouter, getModelRouter, sanitizeMessagesForProvider } from '../src/utils/ModelRouter';
 import type { AIChatMessage } from '../src/ai/client';
 
 describe('ModelRouter', () => {
   const savedBaseUrl = process.env.AI_API_BASE_URL;
   const savedProviders = process.env.AI_PROVIDERS;
+  const savedApiKey = process.env.AI_API_KEY;
+  const savedModel = process.env.AI_MODEL_NAME;
+  const savedCooldown = process.env.AI_PROVIDER_COOLDOWN_MS;
 
   beforeEach(() => {
     // Force single-provider mode so test isolation is guaranteed even when
@@ -13,9 +16,12 @@ describe('ModelRouter', () => {
     process.env.AI_API_BASE_URL = 'https://test-api.example.com/v1';
     process.env.AI_API_KEY = 'test-key';
     process.env.AI_MODEL_NAME = 'test-model';
+    delete process.env.AI_PROVIDER_COOLDOWN_MS;
+    setSystemTime(new Date('2024-01-01T00:00:00Z'));
   });
 
   afterEach(() => {
+    setSystemTime();
     if (savedBaseUrl) {
       process.env.AI_API_BASE_URL = savedBaseUrl;
     } else {
@@ -25,6 +31,21 @@ describe('ModelRouter', () => {
       process.env.AI_PROVIDERS = savedProviders;
     } else {
       delete process.env.AI_PROVIDERS;
+    }
+    if (savedApiKey) {
+      process.env.AI_API_KEY = savedApiKey;
+    } else {
+      delete process.env.AI_API_KEY;
+    }
+    if (savedModel) {
+      process.env.AI_MODEL_NAME = savedModel;
+    } else {
+      delete process.env.AI_MODEL_NAME;
+    }
+    if (savedCooldown) {
+      process.env.AI_PROVIDER_COOLDOWN_MS = savedCooldown;
+    } else {
+      delete process.env.AI_PROVIDER_COOLDOWN_MS;
     }
   });
 
@@ -64,6 +85,73 @@ describe('ModelRouter', () => {
     expect(Array.isArray(providers)).toBe(true);
     expect(providers.length).toBeGreaterThan(0);
     expect(providers[0].name).toBeDefined();
+  });
+
+  test('skips providers during cooldown after a failure', async () => {
+    process.env.AI_PROVIDERS = 'primary,fallback';
+    process.env.AI_PROVIDER_COOLDOWN_MS = '60000';
+    process.env.AI_PRIMARY_BASE_URL = 'https://primary.example.com/v1';
+    process.env.AI_PRIMARY_API_KEY = 'primary-key';
+    process.env.AI_PRIMARY_MODEL = 'primary-model';
+    process.env.AI_FALLBACK_BASE_URL = 'https://fallback.example.com/v1';
+    process.env.AI_FALLBACK_API_KEY = 'fallback-key';
+    process.env.AI_FALLBACK_MODEL = 'fallback-model';
+
+    const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const primarySpy = spyOn(internalProviders[0].client, 'chatCompletion');
+    const fallbackSpy = spyOn(internalProviders[1].client, 'chatCompletion');
+
+    primarySpy.mockRejectedValue(new Error('primary down'));
+    fallbackSpy.mockResolvedValue({ role: 'assistant', content: 'fallback ok' });
+
+    const first = await router.chatCompletion([{ role: 'user', content: 'hi' }]);
+    expect(first.content).toBe('fallback ok');
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(fallbackSpy).toHaveBeenCalledTimes(1);
+
+    const second = await router.chatCompletion([{ role: 'user', content: 'hi again' }]);
+    expect(second.content).toBe('fallback ok');
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(fallbackSpy).toHaveBeenCalledTimes(2);
+
+    primarySpy.mockRestore();
+    fallbackSpy.mockRestore();
+  });
+
+  test('retries a cooled-down provider after the cooldown window expires', async () => {
+    process.env.AI_PROVIDERS = 'primary,fallback';
+    process.env.AI_PROVIDER_COOLDOWN_MS = '60000';
+    process.env.AI_PRIMARY_BASE_URL = 'https://primary.example.com/v1';
+    process.env.AI_PRIMARY_API_KEY = 'primary-key';
+    process.env.AI_PRIMARY_MODEL = 'primary-model';
+    process.env.AI_FALLBACK_BASE_URL = 'https://fallback.example.com/v1';
+    process.env.AI_FALLBACK_API_KEY = 'fallback-key';
+    process.env.AI_FALLBACK_MODEL = 'fallback-model';
+
+    const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const primarySpy = spyOn(internalProviders[0].client, 'chatCompletion');
+    const fallbackSpy = spyOn(internalProviders[1].client, 'chatCompletion');
+
+    primarySpy
+      .mockRejectedValueOnce(new Error('primary down'))
+      .mockResolvedValue({ role: 'assistant', content: 'primary ok' });
+    fallbackSpy.mockResolvedValue({ role: 'assistant', content: 'fallback ok' });
+
+    const first = await router.chatCompletion([{ role: 'user', content: 'first' }]);
+    expect(first.content).toBe('fallback ok');
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+
+    setSystemTime(new Date('2024-01-01T00:01:01Z'));
+
+    const second = await router.chatCompletion([{ role: 'user', content: 'second' }]);
+    expect(second.content).toBe('primary ok');
+    expect(primarySpy).toHaveBeenCalledTimes(2);
+    expect(fallbackSpy).toHaveBeenCalledTimes(1);
+
+    primarySpy.mockRestore();
+    fallbackSpy.mockRestore();
   });
 });
 

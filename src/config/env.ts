@@ -16,6 +16,32 @@
 
 import { logger } from '../utils/logger';
 
+function validatePositiveInteger(rawValue: string | undefined, envKey: string, errors: string[]): void {
+  if (rawValue === undefined || rawValue.trim() === '') return;
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    errors.push(`${envKey} must be a positive integer when set`);
+  }
+}
+
+function validateUrl(rawValue: string | undefined, envKey: string, errors: string[]): void {
+  if (!rawValue || rawValue.trim() === '') return;
+  try {
+    new URL(rawValue);
+  } catch {
+    errors.push(`${envKey} is not a valid URL: "${rawValue}"`);
+  }
+}
+
+function validatePort(rawValue: string | undefined, envKey: string, errors: string[]): void {
+  if (rawValue === undefined || rawValue.trim() === '') return;
+  const parsed = Number.parseInt(rawValue.trim(), 10);
+  const isValid = Number.isInteger(parsed) && parsed >= 0 && parsed <= 65535;
+  if (!isValid) {
+    errors.push(`${envKey} must be an integer between 0 and 65535 when set`);
+  }
+}
+
 /**
  * Validates that all required environment variables are present and well-formed.
  *
@@ -94,6 +120,12 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
       }
     }
   }
+
+  validatePositiveInteger(env.AI_TOOL_TIMEOUT_MS, 'AI_TOOL_TIMEOUT_MS', errors);
+  validatePositiveInteger(env.AI_PROVIDER_COOLDOWN_MS, 'AI_PROVIDER_COOLDOWN_MS', errors);
+  validatePositiveInteger(env.WEBHOOK_MAX_BODY_BYTES, 'WEBHOOK_MAX_BODY_BYTES', errors);
+  validatePort(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors);
+  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
 
   if (errors.length > 0) {
     for (const error of errors) {

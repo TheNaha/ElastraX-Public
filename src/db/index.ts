@@ -22,17 +22,21 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import * as schema from './schema.js';
 
-// Path to the SQLite database file. Adjust via a future DB_PATH env var if needed.
-const DB_PATH = './data/bot.db';
+const DEFAULT_DB_PATH = './data/bot.db';
+const DB_PATH = process.env.ELASTRAX_DB_PATH?.trim() || DEFAULT_DB_PATH;
+const usesInMemoryDb = DB_PATH === ':memory:';
 
 // Ensure the directory exists
 const dir = dirname(DB_PATH);
-if (!existsSync(dir)) {
+if (!usesInMemoryDb && !existsSync(dir)) {
   mkdirSync(dir, { recursive: true });
 }
 
 const sqlite = new Database(DB_PATH, { create: true });
 // Enable Write-Ahead Logging (WAL) for better concurrent write performance
-sqlite.exec('PRAGMA journal_mode = WAL;');
+if (!usesInMemoryDb) {
+  sqlite.exec('PRAGMA journal_mode = WAL;');
+}
 sqlite.exec('PRAGMA synchronous = NORMAL;');
+sqlite.exec('PRAGMA foreign_keys = ON;');
 export const db = drizzle({ client: sqlite, schema });
