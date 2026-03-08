@@ -13,6 +13,7 @@
 import asyncio
 import json
 import os
+import socket
 import subprocess
 import time
 
@@ -87,6 +88,8 @@ WHISPER_BOX_IMAGE = "onerahmet/openai-whisper-asr-webservice:latest-gpu"
 WHISPER_BOX_PORT = 9000
 WHISPER_BOX_GPU = "L4"
 WHISPER_BOX_MODEL_PATH = "/data/whisper"
+WHISPER_BOX_ENGINE = "whisperx"
+WHISPER_BOX_MODEL = "large-v3"
 
 # ## Helper Functions
 
@@ -155,6 +158,18 @@ def sleep_server(level=1):
 def wake_server():
     """Wake vLLM from sleep mode (restores GPU tensors)."""
     req_lib.post(f"http://127.0.0.1:{VLLM_PORT}/wake_up").raise_for_status()
+
+
+def _wait_for_port(port: int, timeout: int = 5 * MINUTES):
+    """Wait for a local TCP port to accept connections."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=2):
+                return
+        except OSError:
+            time.sleep(1)
+    raise TimeoutError(f"Service on port {port} not ready within {timeout} seconds")
 
 
 # ## vLLM Server with GPU Snapshotting
@@ -555,9 +570,6 @@ class WhisperAPI:
     volumes={
         WHISPER_BOX_MODEL_PATH: hf_cache_vol,
     },
-    env={
-        "ASR_MODEL_PATH": WHISPER_BOX_MODEL_PATH,
-    },
     secrets=[
         modal.Secret.from_name(HF_SECRET_NAME),
     ],
@@ -567,6 +579,21 @@ class WhisperAPI:
 class WhisperASRBox:
     @modal.enter()
     def startup(self):
+        # Prevent /root/app.py (this Modal file) from shadowing upstream `app` package.
+        child_env = os.environ.copy()
+        raw_pythonpath = child_env.get("PYTHONPATH", "")
+        kept_parts = [
+            part
+            for part in raw_pythonpath.split(":")
+            if part and not part.startswith("/root")
+        ]
+        child_env["PYTHONPATH"] = ":".join(["/app", *kept_parts])
+        # Force-set regardless of inherited env (do not use setdefault — @app.cls
+        # env= dict is already in os.environ and would win over setdefault).
+        child_env["ASR_ENGINE"] = WHISPER_BOX_ENGINE
+        child_env["ASR_MODEL"] = WHISPER_BOX_MODEL
+        child_env["ASR_MODEL_PATH"] = WHISPER_BOX_MODEL_PATH
+
         cmd = [
             "whisper-asr-webservice",
             "--host",
@@ -575,17 +602,10 @@ class WhisperASRBox:
             str(WHISPER_BOX_PORT),
         ]
         print(f"🚀 Starting Whisper ASR Box: {' '.join(cmd)}")
-        self.process = subprocess.Popen(cmd)
-        deadline = time.time() + 5 * MINUTES
-        while time.time() < deadline:
-            _check_running(self.process)
-            try:
-                req_lib.get(f"http://127.0.0.1:{WHISPER_BOX_PORT}/docs").raise_for_status()
-                print("✅ Whisper ASR Box is ready")
-                return
-            except Exception:
-                time.sleep(2)
-        raise TimeoutError("Whisper ASR Box did not become ready in time")
+        self.process = subprocess.Popen(cmd, cwd="/app", env=child_env)
+
+        _wait_for_port(WHISPER_BOX_PORT, timeout=8 * MINUTES)
+        print("✅ Whisper ASR Box is ready")
 
     @modal.exit()
     def stop(self):
