@@ -86,6 +86,7 @@ WHISPER_GPU = "L4"
 WHISPER_BOX_IMAGE = "onerahmet/openai-whisper-asr-webservice:latest-gpu"
 WHISPER_BOX_PORT = 9000
 WHISPER_BOX_GPU = "L4"
+WHISPER_BOX_MODEL_PATH = "/data/whisper"
 
 # ## Helper Functions
 
@@ -552,7 +553,10 @@ class WhisperAPI:
     scaledown_window=1 * MINUTES,
     timeout=20 * MINUTES,
     volumes={
-        "/root/.cache": hf_cache_vol,
+        WHISPER_BOX_MODEL_PATH: hf_cache_vol,
+    },
+    env={
+        "ASR_MODEL_PATH": WHISPER_BOX_MODEL_PATH,
     },
     secrets=[
         modal.Secret.from_name(HF_SECRET_NAME),
