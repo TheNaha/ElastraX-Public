@@ -16,15 +16,23 @@
  * Slash command aliases: /remind, /reminder
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { reminders } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'ReminderTool' });
+type ReminderArgs = ToolArgs & {
+  action?: 'set' | 'list' | 'cancel' | string;
+  time?: string;
+  message?: string;
+  number?: string;
+  recurrence?: string;
+};
 
 /**
  * Parses a natural-language time string relative to now.
@@ -101,7 +109,7 @@ function formatTime(date: Date): string {
   });
 }
 
-export class ReminderTool extends BaseTool {
+export class ReminderTool extends BaseTool<ReminderArgs> {
   readonly name = 'reminder';
   readonly description = 'Set, list, or cancel personal reminders. When setting a reminder, parse the time naturally (e.g., "in 30 minutes", "tomorrow at 3pm", "at 18:00"). The message is what to remind the user about. Supports recurring schedules with the recurrence parameter (e.g., "daily", "weekly", "every 2h").';
   readonly aliases = ['remind', 'reminder'];
@@ -145,7 +153,7 @@ export class ReminderTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: ReminderArgs, ctx: MessageContext): Promise<string> {
     let { action, time, message } = args;
     const { number, recurrence } = args;
     const lang = ctx.language ?? 'en';
@@ -208,7 +216,7 @@ export class ReminderTool extends BaseTool {
 
     // ── CANCEL ─────────────────────────────────────────────────────────────────
     if (action === 'cancel') {
-      const n = parseInt(number, 10);
+      const n = parseInt(String(number || ''), 10);
       if (isNaN(n) || n < 1) return t(lang, 'reminder.cancel_invalid');
 
       const active = db.select()
@@ -261,9 +269,10 @@ export class ReminderTool extends BaseTool {
         time: formatTime(fireAt),
         message: String(message),
       });
-    } catch (err: any) {
-      log.error({ err, senderId: ctx.senderId }, 'Failed to insert reminder');
-      return t(lang, 'reminder.error', { msg: err.message });
+    } catch (error: unknown) {
+      log.error({ err: error, senderId: ctx.senderId }, 'Failed to insert reminder');
+      return t(lang, 'reminder.error', { msg: getErrorMessage(error) });
     }
   }
 }
+

@@ -18,17 +18,21 @@
  * Slash command aliases: /convert, /cv
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FFmpegConverter } from '../utils/FFmpegConverter';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
 const log = logger.child({ module: 'MediaConvertTool' });
 
 type ConvertFormat = 'mp3' | 'mp4' | 'ogg' | 'aac' | 'opus' | 'm4a' | 'wav' | 'webm' | 'mkv' | 'gif' | 'png' | 'jpg' | 'webp';
+type MediaConvertArgs = ToolArgs & {
+  format?: string;
+};
 
 const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
   mp3: ['-vn', '-acodec', 'libmp3lame', '-q:a', '2'],
@@ -82,7 +86,7 @@ function getExtension(mimeType: string): string {
   return map[mimeType] || mimeType.split('/')[1] || 'bin';
 }
 
-export class MediaConvertTool extends BaseTool {
+export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly name = 'convert_media';
   readonly description = 'Convert an attached or quoted media file to a different format using FFmpeg. The user must attach or reply to a media file. Supported formats: mp3, mp4, ogg, aac, opus, m4a, wav, webm, mkv, gif, png, jpg, webp.';
   readonly aliases = ['convert', 'cv'];
@@ -110,7 +114,7 @@ export class MediaConvertTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: MediaConvertArgs, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
     const targetFmt = (args.format || '').toLowerCase() as ConvertFormat;
 
@@ -163,9 +167,9 @@ export class MediaConvertTool extends BaseTool {
       });
 
       return t(lang, 'convert.success');
-    } catch (err: any) {
-      log.error({ err, targetFmt, chatId: ctx.chatId }, 'Media conversion failed');
-      return t(lang, 'convert.error', { msg: err.message.slice(0, 200) });
+    } catch (error: unknown) {
+      log.error({ err: error, targetFmt, chatId: ctx.chatId }, 'Media conversion failed');
+      return t(lang, 'convert.error', { msg: getErrorMessage(error).slice(0, 200) });
     }
   }
 }

@@ -14,7 +14,7 @@
  * Slash command aliases: /owner, /broadcast, /leave, /botleave
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms } from '../db/schema';
@@ -22,8 +22,13 @@ import { eq } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import type { ModelTier } from '../types/ai';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'OwnerTool' });
+type OwnerArgs = ToolArgs & {
+  action?: 'broadcast' | 'leave' | 'system_info' | string;
+  message?: string;
+};
 
 function formatUptime(seconds: number): string {
   const d = Math.floor(seconds / 86400);
@@ -38,7 +43,7 @@ function formatUptime(seconds: number): string {
   return parts.join(' ');
 }
 
-export class OwnerTool extends BaseTool {
+export class OwnerTool extends BaseTool<OwnerArgs> {
   readonly name = 'owner_admin';
   readonly description = 'Owner-only bot administration: broadcast messages to all rooms, leave a group, or get system info.';
   readonly aliases = ['owner', 'broadcast', 'leave', 'botleave'];
@@ -71,7 +76,7 @@ export class OwnerTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: OwnerArgs, ctx: MessageContext): Promise<string> {
     const { action, message } = args;
     const lang = ctx.language ?? 'en';
     const cmd = String(args.__command || '').toLowerCase();
@@ -83,7 +88,7 @@ export class OwnerTool extends BaseTool {
       const broadcastMsg = [action, message].filter(Boolean).join(' ').trim();
       return this.handleBroadcast(broadcastMsg || undefined, ctx, lang);
     }
-    if ((cmd === 'leave' || cmd === 'botleave') && !['broadcast', 'system_info'].includes(action)) {
+    if ((cmd === 'leave' || cmd === 'botleave') && !['broadcast', 'system_info'].includes(String(action))) {
       return this.handleLeave(ctx, lang);
     }
 
@@ -153,9 +158,9 @@ export class OwnerTool extends BaseTool {
         return t(lang, 'owner.leave_not_supported');
       }
       return '';
-    } catch (err: any) {
-      log.error({ err, chatId: ctx.chatId }, 'Failed to leave group');
-      return t(lang, 'owner.leave_error', { msg: err.message });
+    } catch (error: unknown) {
+      log.error({ err: error, chatId: ctx.chatId }, 'Failed to leave group');
+      return t(lang, 'owner.leave_error', { msg: getErrorMessage(error) });
     }
   }
 
@@ -172,3 +177,4 @@ export class OwnerTool extends BaseTool {
     ].join('\n');
   }
 }
+

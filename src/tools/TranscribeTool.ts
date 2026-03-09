@@ -1,20 +1,19 @@
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
 const log = logger.child({ module: 'TranscribeTool' });
 
-/**
- * @file src/tools/TranscribeTool.ts
- * @description Explicit voice-note transcription tool.
- *
- * Converts attached/replied audio into text through a configured transcription endpoint.
- * Works for slash command (/transcribe) and conversational requests ("transcribe this voice note").
- */
-export class TranscribeTool extends BaseTool {
+type TranscribeResponse = {
+  text?: string;
+  transcript?: string;
+};
+
+export class TranscribeTool extends BaseTool<ToolArgs> {
   readonly name = 'transcribe_audio';
   readonly description = 'Transcribe an attached or quoted audio/voice note to text. Use when users ask to transcribe voice notes, convert audio to text, or read what someone said in a voice message.';
   readonly aliases = ['transcribe', 'stt'];
@@ -36,14 +35,14 @@ export class TranscribeTool extends BaseTool {
     };
   }
 
-  async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(_args: ToolArgs, ctx: MessageContext): Promise<string> {
     const endpoint = process.env.TRANSCRIBE_ENDPOINT;
     if (!endpoint) {
       return t(ctx.language, 'transcribe.not_supported');
     }
 
     try {
-      await ctx.react?.('🎤');
+      await ctx.react?.('??');
       await ctx.reply(t(ctx.language, 'transcribe.starting'));
 
       log.debug({ chatId: ctx.chatId, mimeType: ctx.mimeType }, 'Transcription started');
@@ -66,7 +65,7 @@ export class TranscribeTool extends BaseTool {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': process.env.TRANSCRIBE_API_KEY ? `Bearer ${process.env.TRANSCRIBE_API_KEY}` : '',
+          Authorization: process.env.TRANSCRIBE_API_KEY ? `Bearer ${process.env.TRANSCRIBE_API_KEY}` : '',
         },
         body: JSON.stringify({
           audio_base64: buffer.toString('base64'),
@@ -80,18 +79,17 @@ export class TranscribeTool extends BaseTool {
         throw new Error(`HTTP ${response.status}`);
       }
 
-      const data: any = await response.json();
+      const data = await response.json() as TranscribeResponse;
       const transcript = String(data.text || data.transcript || '').trim();
       if (!transcript) {
         throw new Error('Empty transcript');
       }
 
       log.info({ chatId: ctx.chatId, transcriptLength: transcript.length }, 'Transcription completed');
-
       return t(ctx.language, 'transcribe.result', { text: transcript });
-    } catch (err: any) {
-      log.error({ err, chatId: ctx.chatId }, 'Transcription failed');
-      return t(ctx.language, 'transcribe.error', { msg: err.message });
+    } catch (error: unknown) {
+      log.error({ err: error, chatId: ctx.chatId }, 'Transcription failed');
+      return t(ctx.language, 'transcribe.error', { msg: getErrorMessage(error) });
     }
   }
 }

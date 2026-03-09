@@ -1,32 +1,18 @@
-/**
- * @file src/tools/PDFTool.ts
- * @description PDF utility tool for basic PDF operations.
- *
- * Provides information about a PDF and basic operations via pdf-lib.
- *
- * Actions:
- *   info     — Show page count and file size of an attached PDF.
- *   compress — Compress a PDF by re-encoding it (lossy; good for large scanned PDFs).
- *   to_images— Convert PDF pages to images via FFmpeg/Ghostscript (requires Ghostscript).
- *
- * Works conversationally ("how many pages is this PDF?", "compress this PDF")
- * and via slash command: /pdf [action]   — attach or reply to a PDF file.
- *
- * Slash command aliases: /pdf
- *
- * Dependencies: pdf-lib (install: bun add pdf-lib)
- */
-
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
 const log = logger.child({ module: 'PDFTool' });
 
-export class PDFTool extends BaseTool {
+type PDFArgs = ToolArgs & {
+  action?: 'info' | 'compress' | string;
+};
+
+export class PDFTool extends BaseTool<PDFArgs> {
   readonly name = 'pdf_tool';
   readonly description = 'Perform operations on a PDF file attached to the current or quoted message. Actions: "info" (show page count and size), "compress" (reduce file size). The user must attach or reply to a PDF file.';
   readonly aliases = ['pdf'];
@@ -54,11 +40,10 @@ export class PDFTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: PDFArgs, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
     const action = String(args.action || 'info');
 
-    // Resolve media source
     let mediaPath = ctx.mediaPath;
     let mimeType = ctx.mimeType || '';
 
@@ -77,19 +62,16 @@ export class PDFTool extends BaseTool {
       return t(lang, 'pdf.no_file');
     }
 
-    // Validate it's actually a PDF
     if (!mimeType.includes('pdf') && !mediaPath.toLowerCase().endsWith('.pdf')) {
       return t(lang, 'pdf.not_pdf');
     }
 
     try {
-      // Lazy-import pdf-lib to avoid crashing if not installed
-      let PDFDocument: any;
+      let PDFDocument: typeof import('pdf-lib').PDFDocument;
       try {
-        const pdfLib: any = await import('pdf-lib');
-        PDFDocument = pdfLib.PDFDocument;
+        ({ PDFDocument } = await import('pdf-lib'));
       } catch {
-        return '❌ pdf-lib is not installed. Run `bun add pdf-lib` to enable PDF features.';
+        return 'pdf-lib is not installed. Run `bun add pdf-lib` to enable PDF features.';
       }
 
       const pdfBytes = await readFile(mediaPath);
@@ -109,14 +91,13 @@ export class PDFTool extends BaseTool {
       if (action === 'compress') {
         if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
 
-        await ctx.react?.('⚙️');
-        // Re-serialize the document — pdf-lib removes unused objects on save
+        await ctx.react?.('??');
         const compressedBytes = await pdfDoc.save({ useObjectStreams: true });
         const savedKb = Math.round(compressedBytes.length / 1024);
         const savingPercent = Math.round((1 - compressedBytes.length / pdfBytes.length) * 100);
 
         if (compressedBytes.length >= pdfBytes.length) {
-          return '📄 This PDF is already well-optimized; no significant compression was possible.';
+          return 'This PDF is already well-optimized; no significant compression was possible.';
         }
 
         await ctx.sendMedia(Buffer.from(compressedBytes), {
@@ -124,13 +105,14 @@ export class PDFTool extends BaseTool {
           filename: 'compressed.pdf',
         });
 
-        return `✅ PDF compressed! ${sizeKb}KB → ${savedKb}KB (saved ~${savingPercent}%)`;
+        return `PDF compressed: ${sizeKb}KB -> ${savedKb}KB (saved ~${savingPercent}%)`;
       }
 
       return t(lang, 'pdf.error', { msg: `Unknown action: ${action}` });
-    } catch (err: any) {
-      log.error({ err, action, chatId: ctx.chatId }, 'PDF operation failed');
-      return t(lang, 'pdf.error', { msg: err.message.slice(0, 200) });
+    } catch (error: unknown) {
+      log.error({ err: error, action, chatId: ctx.chatId }, 'PDF operation failed');
+      return t(lang, 'pdf.error', { msg: getErrorMessage(error).slice(0, 200) });
     }
   }
 }
+

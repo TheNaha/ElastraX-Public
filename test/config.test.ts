@@ -108,6 +108,42 @@ describe("Config Validation", () => {
     expect(mockLoggerError).toHaveBeenCalledWith("AI_PROVIDER_COOLDOWN_MS must be a positive integer when set");
   });
 
+  test("should throw if AI_MAX_TOKENS is not a positive integer", () => {
+    const invalidEnv = {
+      AI_API_KEY: "secret-key",
+      AI_MODEL_NAME: "model-name",
+      AI_API_BASE_URL: "https://api.example.com",
+      AI_MAX_TOKENS: "zero",
+    };
+
+    expect(() => validateEnv(invalidEnv)).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("AI_MAX_TOKENS must be a positive integer when set");
+  });
+
+  test("should throw if AI_TEMPERATURE is outside the valid range", () => {
+    const invalidEnv = {
+      AI_API_KEY: "secret-key",
+      AI_MODEL_NAME: "model-name",
+      AI_API_BASE_URL: "https://api.example.com",
+      AI_TEMPERATURE: "2.5",
+    };
+
+    expect(() => validateEnv(invalidEnv)).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("AI_TEMPERATURE must be a number between 0 and 2 when set");
+  });
+
+  test("should throw if AUTO_REPLY_ALL is not a boolean string", () => {
+    const invalidEnv = {
+      AI_API_KEY: "secret-key",
+      AI_MODEL_NAME: "model-name",
+      AI_API_BASE_URL: "https://api.example.com",
+      AUTO_REPLY_ALL: "1",
+    };
+
+    expect(() => validateEnv(invalidEnv)).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith('AUTO_REPLY_ALL must be either "true" or "false" when set');
+  });
+
   test("should throw if WEBHOOK_PORT is outside the valid range", () => {
     const invalidEnv = {
       AI_API_KEY: "secret-key",

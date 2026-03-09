@@ -15,7 +15,7 @@
  * via `drizzle-kit` in `src/index.ts`.
  */
 
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
@@ -158,8 +158,8 @@ export const userIdentities = sqliteTable('user_identities', {
   updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
   /** Both lid and pn should be unique (one identity per JID). */
-  lidIdx: index('user_identities_lid_idx').on(table.lid),
-  pnIdx: index('user_identities_pn_idx').on(table.pn),
+  lidIdx: uniqueIndex('user_identities_lid_idx').on(table.lid),
+  pnIdx: uniqueIndex('user_identities_pn_idx').on(table.pn),
 }));
 
 export type UserIdentity = typeof userIdentities.$inferSelect;

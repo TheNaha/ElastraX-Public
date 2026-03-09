@@ -550,11 +550,11 @@ describe('handleIncomingMessage', () => {
 
     test('should handle malformed tool arguments from AI gracefully', async () => {
       const dummyTool = {
-        name: 'dummy',
+        name: 'web_search',
         aliases: [],
         execute: mock(async () => 'ok'),
       };
-      mockToolMap = { dummy: dummyTool };
+      mockToolMap = { web_search: dummyTool };
 
       let callCount = 0;
       global.fetch = mock(async () => {
@@ -566,7 +566,7 @@ describe('handleIncomingMessage', () => {
                 message: {
                   role: 'assistant',
                   content: null,
-                  tool_calls: [{ id: 'call-bad', function: { name: 'dummy', arguments: 'NOT_JSON' } }],
+                  tool_calls: [{ id: 'call-bad', function: { name: 'web_search', arguments: 'NOT_JSON' } }],
                 },
               }],
               usage: {},
@@ -581,6 +581,48 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
       expect(dummyTool.execute).toHaveBeenCalled();
       expect(ctx.reply).toHaveBeenCalledWith('Done');
+    });
+
+    test('should refuse unauthorized AI-requested tools instead of executing them', async () => {
+      const ownerTool = {
+        name: 'owner_admin',
+        aliases: [],
+        execute: mock(async () => 'should not run'),
+      };
+      mockToolMap = { owner_admin: ownerTool };
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response(
+            JSON.stringify({
+              choices: [{
+                message: {
+                  role: 'assistant',
+                  content: null,
+                  tool_calls: [{ id: 'call-owner', function: { name: 'owner_admin', arguments: '{}' } }],
+                },
+              }],
+              usage: {},
+            }),
+            { status: 200, headers: { 'Content-Type': 'application/json' } },
+          );
+        }
+        return makeFetchResponse('Denied');
+      }) as any;
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'do owner stuff',
+        checkPermissions: mock(async (required: string) => required !== 'owner'),
+        resolveRoles: mock(async () => ['user']),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(ownerTool.execute).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith('Denied');
     });
 
     test('should time out AI-requested tools and fall back with an error response', async () => {

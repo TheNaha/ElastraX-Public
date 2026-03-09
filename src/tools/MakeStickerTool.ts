@@ -1,33 +1,36 @@
-/**
- * @file src/tools/MakeStickerTool.ts
- * @description Converts images or short videos into WhatsApp-compatible animated/static WebP stickers.
- *
- * Processing pipeline:
- *  1. Verify that the message (or its quoted message) contains a downloadable image or video.
- *  2. Await the background media download (`ctx.mediaReady`) — falls back to a direct
- *     `ctx.downloadMedia()` call if the cached file is missing (e.g., expired CDN link).
- *  3. Convert the buffer to WebP via FFmpeg (`StickerUtils.imageToWebp` / `videoToWebp`).
- *  4. Write WhatsApp-required EXIF metadata (pack name, author) using `StickerUtils.writeExif`.
- *  5. Send the final WebP buffer as a native WhatsApp sticker via `ctx.sendSticker()`.
- *
- * Requirements:
- *  - FFmpeg must be installed on the host system (used internally by `FFmpegConverter`).
- *  - The provider must implement `ctx.sendSticker()` (currently only WhatsApp does).
- *
- * Slash command aliases: `/s`, `/makesticker`, `/createsticker`
- */
-
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { StickerUtils } from '../utils/StickerUtils';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
+import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
 const log = logger.child({ module: 'MakeStickerTool' });
 
-export class MakeStickerTool extends BaseTool {
+type StickerArgs = ToolArgs & {
+  packname?: string;
+  author?: string;
+};
+
+type RawMediaMessage = {
+  message?: {
+    imageMessage?: { mimetype?: string };
+    videoMessage?: { mimetype?: string };
+    documentMessage?: { mimetype?: string };
+  };
+};
+
+function getRawMimeType(targetMessage: MessageContext | NonNullable<MessageContext['quoted']>): string {
+  const rawMessage = targetMessage.rawMessage as RawMediaMessage | undefined;
+  return rawMessage?.message?.imageMessage?.mimetype
+    || rawMessage?.message?.videoMessage?.mimetype
+    || rawMessage?.message?.documentMessage?.mimetype
+    || '';
+}
+
+export class MakeStickerTool extends BaseTool<StickerArgs> {
   readonly name = 'sticker';
   readonly description = 'Converts an image or short video into a WhatsApp sticker.';
   readonly aliases = ['s', 'makesticker', 'createsticker'];
@@ -44,29 +47,25 @@ export class MakeStickerTool extends BaseTool {
           type: 'object',
           properties: {
             packname: { type: 'string', description: 'Optional name of the sticker pack' },
-            author: { type: 'string', description: 'Optional author of the sticker' }
+            author: { type: 'string', description: 'Optional author of the sticker' },
           },
-          required: []
-        }
-      }
+          required: [],
+        },
+      },
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
-    // 1. Verify media exists
+  async execute(args: StickerArgs, ctx: MessageContext): Promise<string> {
     if (!ctx.hasMedia && !ctx.quoted?.hasMedia) {
       return t(ctx.language, 'sticker.no_media');
     }
-    try {
-      // 2. Await background media download (started immediately when the message was received).
-      //    If the download is already done this resolves instantly; otherwise we wait.
-      //    We show 📥 to let the user know we're fetching their media.
-      const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
 
+    try {
+      const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
       log.debug({ chatId: ctx.chatId, mime: targetMessage.mimeType }, 'Sticker creation started');
 
       if (!targetMessage.mediaPath) {
-        await ctx.react?.('📥');
+        await ctx.react?.('\u{1F4E5}');
         await ctx.mediaReady;
       }
 
@@ -76,59 +75,50 @@ export class MakeStickerTool extends BaseTool {
       if (targetMessage.mediaPath && existsSync(targetMessage.mediaPath)) {
         buffer = await readFile(targetMessage.mediaPath);
       } else if (ctx.downloadMedia) {
-        // Fallback: download hasn't completed (e.g. expired CDN link) — try again directly.
-        await ctx.react?.('⏳');
+        await ctx.react?.('\u23F3');
         buffer = await ctx.downloadMedia();
         if (!mime) {
-          const msg = (targetMessage as any).rawMessage?.message;
-          mime = msg?.imageMessage?.mimetype || msg?.videoMessage?.mimetype || msg?.documentMessage?.mimetype || '';
+          mime = getRawMimeType(targetMessage);
         }
       } else {
         return t(ctx.language, 'sticker.download_not_supported');
       }
 
       if (!buffer) {
-         return t(ctx.language, 'sticker.download_failed');
+        return t(ctx.language, 'sticker.download_failed');
       }
 
-      // 3. Determine type and convert to WebP
-
       let webpBuffer: Buffer;
-
       if (mime.includes('image')) {
         webpBuffer = await StickerUtils.imageToWebp(buffer);
       } else if (mime.includes('video')) {
         webpBuffer = await StickerUtils.videoToWebp(buffer);
       } else {
-        // Fallback: guess from buffer or reject
-        // We will try to blindly convert as image if we are not sure
         try {
-           webpBuffer = await StickerUtils.imageToWebp(buffer);
-        } catch (e) {
-           return t(ctx.language, 'sticker.unsupported_type', { mime });
+          webpBuffer = await StickerUtils.imageToWebp(buffer);
+        } catch {
+          return t(ctx.language, 'sticker.unsupported_type', { mime });
         }
       }
 
-      // 4. Write EXIF
       const packname = args.packname || 'Generated by';
       const author = args.author || 'ElastraX v7';
-
       const stickerBuffer = await StickerUtils.writeExif(webpBuffer, { packname, author });
       log.debug({ chatId: ctx.chatId, stickerSize: stickerBuffer.length }, 'Sticker WebP created');
 
-      // 5. Send using provider's specific ability
       if (typeof ctx.sendSticker === 'function') {
-         await ctx.sendSticker(stickerBuffer);
+        await ctx.sendSticker(stickerBuffer);
       } else {
-         // Fallback if provider doesn't implement sendSticker
-         await ctx.reply(t(ctx.language, 'sticker.send_not_supported'));
+        await ctx.reply(t(ctx.language, 'sticker.send_not_supported'));
       }
 
       return t(ctx.language, 'sticker.success');
-
-    } catch (e: any) {
-      log.error({ err: e, chatId: ctx.chatId }, 'Sticker creation failed');
-      return t(ctx.language, 'sticker.error', { msg: e.message || 'Unknown error' });
+    } catch (error: unknown) {
+      log.error({ err: error, chatId: ctx.chatId }, 'Sticker creation failed');
+      return t(ctx.language, 'sticker.error', { msg: getErrorMessage(error) });
     }
   }
 }
+
+
+

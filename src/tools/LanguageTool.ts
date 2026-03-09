@@ -16,17 +16,21 @@
  * Slash command aliases: `/lang`, `/setlanguage`, `/setlang`
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'LanguageTool' });
+type LanguageToolArgs = ToolArgs & {
+  lang_code?: 'en' | 'id';
+};
 
-export class LanguageTool extends BaseTool {
+export class LanguageTool extends BaseTool<LanguageToolArgs> {
   readonly name = 'language';
   readonly description = 'Change the bot language for the current chat room (supports "en" for English, "id" for Indonesian).';
   readonly aliases = ['lang', 'setlanguage', 'setlang'];
@@ -54,7 +58,7 @@ export class LanguageTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: LanguageToolArgs, ctx: MessageContext): Promise<string> {
     const { lang_code } = args;
 
     if (!lang_code || (lang_code !== 'en' && lang_code !== 'id')) {
@@ -72,9 +76,9 @@ export class LanguageTool extends BaseTool {
 
       const key = lang_code === 'id' ? 'language.success_id' : 'language.success_en';
       return t(lang_code, key);
-    } catch (e: any) {
-      log.error({ err: e, chatId: ctx.chatId, lang_code }, 'Failed to update language');
-      return t(ctx.language, 'language.error', { msg: e.message });
+    } catch (error: unknown) {
+      log.error({ err: error, chatId: ctx.chatId, lang_code }, 'Failed to update language');
+      return t(ctx.language, 'language.error', { msg: getErrorMessage(error) });
     }
   }
 }

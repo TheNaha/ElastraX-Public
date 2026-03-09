@@ -24,6 +24,28 @@ function validatePositiveInteger(rawValue: string | undefined, envKey: string, e
   }
 }
 
+function validateBoolean(rawValue: string | undefined, envKey: string, errors: string[]): void {
+  if (rawValue === undefined || rawValue.trim() === '') return;
+  const normalized = rawValue.trim().toLowerCase();
+  if (normalized !== 'true' && normalized !== 'false') {
+    errors.push(`${envKey} must be either "true" or "false" when set`);
+  }
+}
+
+function validateNumberInRange(
+  rawValue: string | undefined,
+  envKey: string,
+  min: number,
+  max: number,
+  errors: string[],
+): void {
+  if (rawValue === undefined || rawValue.trim() === '') return;
+  const parsed = Number.parseFloat(rawValue.trim());
+  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
+    errors.push(`${envKey} must be a number between ${min} and ${max} when set`);
+  }
+}
+
 function validateUrl(rawValue: string | undefined, envKey: string, errors: string[]): void {
   if (!rawValue || rawValue.trim() === '') return;
   try {
@@ -122,8 +144,16 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   }
 
   validatePositiveInteger(env.AI_TOOL_TIMEOUT_MS, 'AI_TOOL_TIMEOUT_MS', errors);
+  validatePositiveInteger(env.AI_TIMEOUT_MS, 'AI_TIMEOUT_MS', errors);
+  validatePositiveInteger(env.AI_MAX_TOKENS, 'AI_MAX_TOKENS', errors);
+  validatePositiveInteger(env.AI_MAX_TOOL_ITERATIONS, 'AI_MAX_TOOL_ITERATIONS', errors);
   validatePositiveInteger(env.AI_PROVIDER_COOLDOWN_MS, 'AI_PROVIDER_COOLDOWN_MS', errors);
+  validatePositiveInteger(env.CONTEXT_MESSAGE_LIMIT, 'CONTEXT_MESSAGE_LIMIT', errors);
+  validatePositiveInteger(env.TRANSCRIBE_TIMEOUT_MS, 'TRANSCRIBE_TIMEOUT_MS', errors);
   validatePositiveInteger(env.WEBHOOK_MAX_BODY_BYTES, 'WEBHOOK_MAX_BODY_BYTES', errors);
+  validateNumberInRange(env.AI_TEMPERATURE, 'AI_TEMPERATURE', 0, 2, errors);
+  validateBoolean(env.AUTO_REPLY_ALL, 'AUTO_REPLY_ALL', errors);
+  validateBoolean(env.CONTEXT_SUMMARIZE, 'CONTEXT_SUMMARIZE', errors);
   validatePort(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors);
   validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
 

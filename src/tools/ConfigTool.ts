@@ -38,6 +38,7 @@ const log = logger.child({ module: 'ConfigTool' });
 const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 type RoomConfigUpdate = Partial<Pick<ChatRoom, ConfigKey>>;
+type ConfigValue = Exclude<ChatRoom[ConfigKey], null | undefined>;
 type ConfigArgs = {
   action?: string;
   key?: string;
@@ -69,7 +70,7 @@ function parseFloatValue(value: string, min: number, max: number): number {
   return parsed;
 }
 
-function parseConfigValue(key: ConfigKey, value: string): RoomConfigUpdate[ConfigKey] {
+function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
   switch (key) {
     case 'systemPrompt':
       if (value.length > 50000) throw new Error('System prompt too long (max 50000 chars).');
@@ -92,6 +93,10 @@ function parseConfigValue(key: ConfigKey, value: string): RoomConfigUpdate[Confi
     case 'summarize':
       return parseBooleanValue(value);
   }
+}
+
+function buildConfigUpdate<K extends ConfigKey>(key: K, value: Exclude<ChatRoom[K], null | undefined>): Pick<ChatRoom, K> {
+  return { [key]: value } as unknown as Pick<ChatRoom, K>;
 }
 
 export class ConfigTool extends BaseTool {
@@ -174,13 +179,12 @@ export class ConfigTool extends BaseTool {
         return `Please provide a value for ${key}.`;
       }
 
-      const updateData: RoomConfigUpdate = {};
-      
       try {
-        updateData[key] = parseConfigValue(key, value);
+        const parsedValue = parseConfigValue(key, value);
+        const updateData = buildConfigUpdate(key, parsedValue);
 
         await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
-        log.info({ chatId: ctx.chatId, key, value: updateData[key], setBy: ctx.senderId }, 'Config key updated');
+        log.info({ chatId: ctx.chatId, key, value: parsedValue, setBy: ctx.senderId }, 'Config key updated');
         return `Successfully updated \`${key}\` for this room.`;
 
       } catch (error: unknown) {

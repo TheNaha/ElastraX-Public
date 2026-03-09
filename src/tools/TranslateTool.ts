@@ -16,12 +16,13 @@
  * Slash command aliases: /translate, /tr
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getModelRouter } from '../utils/ModelRouter';
 import { ParameterValidator } from '../utils/ParameterValidator';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'TranslateTool' });
 
@@ -67,8 +68,11 @@ const LANGUAGE_MAP: Record<string, string> = {
   'malay': 'Malay',
   'my': 'Malay',
 };
+type TranslateArgs = ToolArgs & {
+  query?: string;
+};
 
-export class TranslateTool extends BaseTool {
+export class TranslateTool extends BaseTool<TranslateArgs> {
   readonly name = 'translate';
   readonly description = 'Translate text. If the first word is a language (e.g., "id", "Spanish"), translates to that language. Otherwise, translates to the room\'s default language (English or Indonesian). If no text is provided, translates the quoted message.';
   readonly aliases = ['translate', 'tr'];
@@ -95,7 +99,7 @@ export class TranslateTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: TranslateArgs, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
     const query = args.query ? String(args.query).trim() : '';
 
@@ -153,9 +157,9 @@ export class TranslateTool extends BaseTool {
         to: targetLang,
         result: translated,
       });
-    } catch (err: any) {
-      log.error({ err, targetLang, chatId: ctx.chatId }, 'Translation failed');
-      return t(lang, 'translate.error', { msg: err.message });
+    } catch (error: unknown) {
+      log.error({ err: error, targetLang, chatId: ctx.chatId }, 'Translation failed');
+      return t(lang, 'translate.error', { msg: getErrorMessage(error) });
     }
   }
 }

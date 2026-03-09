@@ -15,13 +15,25 @@
  * Slash command aliases: `/search`, `/google`, `/duckduckgo`
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'WebSearchTool' });
+type WebSearchArgs = ToolArgs & {
+  query?: string;
+};
+type SearchResult = {
+  title?: string;
+  url?: string;
+  content?: string;
+  snippet?: string;
+};
+type SearchResponse = {
+  results?: SearchResult[];
+};
 
-export class WebSearchTool extends BaseTool {
+export class WebSearchTool extends BaseTool<WebSearchArgs> {
   readonly name = 'web_search';
   readonly description = 'Searches the web for up-to-date information. Use this whenever you need to look up facts, news, or answer questions that require recent knowledge.';
   readonly aliases = ['search', 'google', 'duckduckgo'];
@@ -56,7 +68,7 @@ export class WebSearchTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, _ctx: MessageContext): Promise<string> {
+  async execute(args: WebSearchArgs, _ctx: MessageContext): Promise<string> {
     const query = args.query;
     if (!query) return 'Error: query parameter is missing.';
 
@@ -87,7 +99,7 @@ export class WebSearchTool extends BaseTool {
         throw new Error(`SearXNG returned HTTP ${response.status}`);
       }
 
-      const data = await response.json();
+      const data = await response.json() as SearchResponse;
       
       if (!data.results || data.results.length === 0) {
         log.debug({ query }, 'No search results found');
@@ -97,8 +109,8 @@ export class WebSearchTool extends BaseTool {
       log.debug({ query, resultCount: data.results.length }, 'Search results received');
 
       // Format the top 5 results for the LLM context
-      const textResults = data.results.slice(0, 5).map((item: any, idx: number) => {
-        return `[${idx+1}] Title: ${item.title}\nURL: ${item.url}\nExcerpt: ${item.content || item.snippet || ''}\n`;
+      const textResults = data.results.slice(0, 5).map((item, idx) => {
+        return `[${idx + 1}] Title: ${item.title || ''}\nURL: ${item.url || ''}\nExcerpt: ${item.content || item.snippet || ''}\n`;
       }).join('\n');
 
       return `Search results for "${query}":\n\n${textResults}`;

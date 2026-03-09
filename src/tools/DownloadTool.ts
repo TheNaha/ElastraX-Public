@@ -16,10 +16,11 @@
  * Slash command aliases: /download, /dl
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { spawn } from 'child_process';
 import { promises as fs } from 'fs';
 import * as path from 'path';
@@ -31,6 +32,10 @@ const log = logger.child({ module: 'DownloadTool' });
 type AudioFormat = 'mp3' | 'aac' | 'm4a' | 'ogg' | 'opus';
 type VideoFormat = 'mp4' | 'mkv' | 'webm';
 type DownloadFormat = AudioFormat | VideoFormat;
+type DownloadArgs = ToolArgs & {
+  url?: string;
+  format?: DownloadFormat;
+};
 
 const MIME_MAP: Record<DownloadFormat, string> = {
   mp3: 'audio/mpeg',
@@ -123,7 +128,7 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
   }
 }
 
-export class DownloadTool extends BaseTool {
+export class DownloadTool extends BaseTool<DownloadArgs> {
   readonly name = 'download_media';
   readonly description = 'Download audio or video from a URL (YouTube, Instagram, TikTok, Twitter/X, SoundCloud, and 1000+ sites) and send it to the chat. Infer the best format from context. Default to mp3 for music/audio requests and mp4 for video.';
   readonly aliases = ['download', 'dl'];
@@ -155,7 +160,7 @@ export class DownloadTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: DownloadArgs, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
     const url = String(args.url || '').trim();
     const format: DownloadFormat = (args.format || 'mp4') as DownloadFormat;
@@ -207,12 +212,13 @@ export class DownloadTool extends BaseTool {
       });
 
       return t(lang, 'download.success');
-    } catch (err: any) {
+    } catch (err: unknown) {
       log.error({ err, url, format }, 'Download failed');
-      if (err.message.includes('not found') || err.message.includes('YTDLP_PATH')) {
+      const errorMessage = getErrorMessage(err);
+      if (errorMessage.includes('not found') || errorMessage.includes('YTDLP_PATH')) {
         return t(lang, 'download.ytdlp_missing');
       }
-      return t(lang, 'download.error', { msg: err.message.slice(0, 200) });
+      return t(lang, 'download.error', { msg: errorMessage.slice(0, 200) });
     }
   }
 }

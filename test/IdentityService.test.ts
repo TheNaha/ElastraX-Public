@@ -6,6 +6,7 @@ mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 let mockIdentityRows: any[] = [];
 let lastInsertedIdentity: any = null;
 let lastUpdatedIdentity: any = null;
+let deleteCalled = false;
 
 /** Creates a chainable thenable mock query that resolves to mockIdentityRows. */
 function mockQuery() {
@@ -35,6 +36,12 @@ mock.module('../src/db', () => ({
         };
       },
     }),
+    delete: () => ({
+      where: () => {
+        deleteCalled = true;
+        return Promise.resolve();
+      },
+    }),
   },
 }));
 
@@ -45,6 +52,7 @@ describe('IdentityService', () => {
     mockIdentityRows = [];
     lastInsertedIdentity = null;
     lastUpdatedIdentity = null;
+    deleteCalled = false;
   });
 
   test('upsert with no lid and no pn does nothing', async () => {
@@ -62,10 +70,25 @@ describe('IdentityService', () => {
   });
 
   test('upsert with existing identity updates', async () => {
-    mockIdentityRows = [{ lid: 'abc@lid', pn: null }];
+    mockIdentityRows = [{ rowId: 1, lid: 'abc@lid', pn: null }];
     await IdentityService.upsert('abc@lid', '123@s.whatsapp.net', 'Test');
     expect(lastUpdatedIdentity).toBeDefined();
     expect(lastUpdatedIdentity.pn).toBe('123@s.whatsapp.net');
+  });
+
+  test('upsert merges duplicate partial rows before updating canonical identity', async () => {
+    mockIdentityRows = [
+      { rowId: 1, lid: 'abc@lid', pn: null, displayName: null },
+      { rowId: 2, lid: null, pn: '123@s.whatsapp.net', displayName: 'Test' },
+    ];
+
+    await IdentityService.upsert('abc@lid', '123@s.whatsapp.net', 'Merged');
+
+    expect(deleteCalled).toBe(true);
+    expect(lastUpdatedIdentity).toBeDefined();
+    expect(lastUpdatedIdentity.lid).toBe('abc@lid');
+    expect(lastUpdatedIdentity.pn).toBe('123@s.whatsapp.net');
+    expect(lastUpdatedIdentity.displayName).toBe('Merged');
   });
 
   test('getAllJids with no mapping returns [jid]', async () => {

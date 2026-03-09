@@ -34,7 +34,7 @@ import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
-import { getToolDefinitions, getToolByName, getToolByAliasOrName, tools } from '../tools';
+import { getToolByName, getToolByAliasOrName, tools } from '../tools';
 
 const log = logger.child({ module: 'Agent' });
 import { ParameterValidator } from '../utils/ParameterValidator';
@@ -48,7 +48,7 @@ import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
 import { RoleService } from '../utils/RoleService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
-import type { ChatCompletionMessage, ToolCall } from '../types/ai';
+import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
 import type { BaseTool, ToolResult } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
 
@@ -60,6 +60,19 @@ const DC_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_DC || '500
 
 function getToolTimeoutMs(): number {
   return parseInt(process.env.AI_TOOL_TIMEOUT_MS || '30000', 10);
+}
+
+function getAllowedTools(roles: string[], isGroup: boolean): BaseTool[] {
+  return tools.filter((tool) => {
+    if (tool.groupOnly && !isGroup) return false;
+    return RoleService.hasPermission(roles, tool.permissions);
+  });
+}
+
+function resolveToolResultText(result: ToolResult): string {
+  return typeof result === 'object' && result !== null && 'text' in result
+    ? result.text
+    : result;
 }
 
 /**
@@ -662,9 +675,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let finalAiResponseText = '';
     let streamedResponseSent = false;
     const internalErrorText = t(ctx.language, 'agent.internal_error');
-    const availableTools = config.allowTools ? getToolDefinitions() : undefined;
+    const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup) : [];
+    const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
+    const availableTools = allowedTools.length > 0
+      ? allowedTools.map((tool) => tool.definition)
+      : undefined;
     const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
     const editInterval = platform === 'whatsapp' ? WA_EDIT_INTERVAL : DC_EDIT_INTERVAL;
+    let preferredTier: ModelTier | undefined;
 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
@@ -694,6 +712,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             streamTools,
             config.temperature,
             config.maxTokens,
+            preferredTier,
           )) {
             const delta = chunk.choices?.[0]?.delta;
             if (!delta) continue;
@@ -754,16 +773,18 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               const toolName = tc.function.name;
               let args: Record<string, unknown> = {};
               try { args = JSON.parse(tc.function.arguments); } catch { /* ignore parse error */ }
-
               const tool = getToolByName(toolName);
               let toolResultStr = '';
-              if (tool) {
+              if (tool && allowedToolNames.has(tool.name)) {
                 log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
-                await ctx.react?.('🔍');
+                await ctx.react?.('??');
                 const rawResult = await executeToolWithTimeout(tool, args, ctx);
-                toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                  ? rawResult.text : rawResult;
+                toolResultStr = resolveToolResultText(rawResult);
+                preferredTier = tool.modelTier;
+              } else if (tool) {
+                log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
+                toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
               } else {
                 log.error({ toolName, chatId }, 'LLM requested unknown tool');
                 toolResultStr = `Error: Tool ${toolName} not found.`;
@@ -789,7 +810,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
         // ── Non-streaming (original) path ───────────────────────────────────
         const aiMsgObj: ChatCompletionMessage = await modelRouter.chatCompletion(
-          messagesForAI, availableTools, config.temperature, config.maxTokens,
+          messagesForAI, availableTools, config.temperature, config.maxTokens, preferredTier,
         );
 
         if (verboseAiLogs) {
@@ -820,17 +841,19 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             } catch {
               log.warn({ raw: tc.function.arguments, toolName }, 'Failed to parse tool arguments');
             }
-
             const tool = getToolByName(toolName);
             let toolResultStr = '';
             
-            if (tool) {
+            if (tool && allowedToolNames.has(tool.name)) {
               log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
-              await ctx.react?.('🔍'); // Feedback to user
+              await ctx.react?.('??'); // Feedback to user
               const rawResult = await executeToolWithTimeout(tool, args, ctx);
-              toolResultStr = typeof rawResult === 'object' && rawResult !== null && 'text' in rawResult
-                ? rawResult.text : rawResult;
+              toolResultStr = resolveToolResultText(rawResult);
+              preferredTier = tool.modelTier;
+            } else if (tool) {
+              log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
+              toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
             } else {
               log.error({ toolName, chatId }, 'LLM requested unknown tool');
               toolResultStr = `Error: Tool ${toolName} not found.`;

@@ -1,42 +1,19 @@
-/**
- * parserCoverage.ts
- *
- * Scans a list of raw WAMessage JSON strings from the database and runs each
- * through `parseWhatsAppMessage()`, reporting:
- *  - OK messages grouped by messageType
- *  - Errors (parser threw) with the raw message attached
- *  - Messages that parsed as 'unknown' (unrecognised structure)
- *
- * This module has NO side effects — it is pure scanning logic. Both the bot
- * startup check and the SIGINT fixture dumper import from here.
- */
-
+import type { WAMessage } from '@whiskeysockets/baileys';
 import { parseWhatsAppMessage, ParsedWAMessage } from '../providers/whatsappParser';
 import { logger } from './logger';
 
-// ─────────────────────────────────────────────────────────────────────────────
-
 export interface CoverageResult {
-  /** One representative raw WAMessage per unique canonical messageType */
-  uniqueByType: Map<string, { raw: any; parsed: ParsedWAMessage }>;
-  /** Messages that threw during parsing, keyed by index */
-  errors: Array<{ index: number; raw: any; error: Error }>;
-  /** messageTypes that came back as 'unknown' (parser gap) */
-  unknownSamples: Array<{ index: number; raw: any }>;
+  uniqueByType: Map<string, { raw: unknown; parsed: ParsedWAMessage }>;
+  errors: Array<{ index: number; raw: unknown; error: Error }>;
+  unknownSamples: Array<{ index: number; raw: unknown }>;
   total: number;
 }
 
-/**
- * Run the parser against every rawMessage row from the `messages` table.
- *
- * @param rows       Array of { rawMessage: string | null, providerMessageId: string | null }
- * @param botUserId  The bot's own JID (sock.user?.id). Pass null during offline scanning.
- */
 export async function scanParserCoverage(
   rows: Array<{ rawMessage: string | null; providerMessageId: string | null }>,
   botUserId: string | null,
 ): Promise<CoverageResult> {
-  const uniqueByType = new Map<string, { raw: any; parsed: ParsedWAMessage }>();
+  const uniqueByType = new Map<string, { raw: unknown; parsed: ParsedWAMessage }>();
   const errors: CoverageResult['errors'] = [];
   const unknownSamples: CoverageResult['unknownSamples'] = [];
   let total = 0;
@@ -45,20 +22,17 @@ export async function scanParserCoverage(
     const row = rows[i];
     if (!row.rawMessage) continue;
 
-    let raw: any;
+    let raw: unknown;
     try {
       raw = JSON.parse(row.rawMessage);
     } catch {
-      // Not valid JSON — skip silently (shouldn't happen with our serialiser)
       continue;
     }
 
     total++;
 
     try {
-      const parsed = await parseWhatsAppMessage(raw, botUserId);
-
-      // Track one sample per unique type (prefer messages without large blobs)
+      const parsed = await parseWhatsAppMessage(raw as WAMessage, botUserId);
       if (!uniqueByType.has(parsed.messageType)) {
         uniqueByType.set(parsed.messageType, { raw, parsed });
       }
@@ -66,18 +40,18 @@ export async function scanParserCoverage(
       if (parsed.messageType === 'unknown') {
         unknownSamples.push({ index: i, raw });
       }
-    } catch (err: any) {
-      errors.push({ index: i, raw, error: err });
+    } catch (error: unknown) {
+      errors.push({
+        index: i,
+        raw,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   }
 
   return { uniqueByType, errors, unknownSamples, total };
 }
 
-/**
- * Log a human-readable summary of a coverage scan to the logger.
- * Safe to call at any point — produces no side effects other than log output.
- */
 export function logCoverageSummary(result: CoverageResult): void {
   const { uniqueByType, errors, unknownSamples, total } = result;
   const types = [...uniqueByType.keys()].sort().join(', ');
@@ -95,7 +69,7 @@ export function logCoverageSummary(result: CoverageResult): void {
 
   if (errors.length > 0) {
     logger.warn(
-      `[ParserCoverage] ⚠  ${errors.length} message(s) threw during parsing — run "bun run fixtures:dump" to investigate.`,
+      `[ParserCoverage] ${errors.length} message(s) threw during parsing - run "bun run fixtures:dump" to investigate.`,
     );
     for (const { index, error } of errors.slice(0, 5)) {
       logger.warn({ index, err: error.message }, '[ParserCoverage] Parse error');
@@ -104,7 +78,7 @@ export function logCoverageSummary(result: CoverageResult): void {
 
   if (unknownSamples.length > 0) {
     logger.warn(
-      `[ParserCoverage] ⚠  ${unknownSamples.length} message(s) parsed as "unknown" type — parser may have a gap.`,
+      `[ParserCoverage] ${unknownSamples.length} message(s) parsed as "unknown" type - parser may have a gap.`,
     );
   }
 }

@@ -77,6 +77,12 @@ describe('ConfigService', () => {
       expect(config.contextLimit).toBe(25);
     });
 
+    test('should fall back to default contextLimit when env value is invalid', () => {
+      process.env.CONTEXT_MESSAGE_LIMIT = 'NaN';
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.contextLimit).toBe(10);
+    });
+
     test('should prefer DB contextLimit over env var', () => {
       process.env.CONTEXT_MESSAGE_LIMIT = '25';
       const room = { ...baseRoom(), contextLimit: 5 };
@@ -101,6 +107,12 @@ describe('ConfigService', () => {
       process.env.AI_TEMPERATURE = '0.5';
       const config = ConfigService.getResolvedConfig(baseRoom());
       expect(config.temperature).toBe(0.5);
+    });
+
+    test('should fall back to default temperature when env value is invalid', () => {
+      process.env.AI_TEMPERATURE = 'hot';
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.temperature).toBe(0.7);
     });
 
     test('should prefer DB temperature over env var', () => {
@@ -146,6 +158,12 @@ describe('ConfigService', () => {
       process.env.AI_MAX_TOKENS = '4096';
       const config = ConfigService.getResolvedConfig(baseRoom());
       expect(config.maxTokens).toBe(4096);
+    });
+
+    test('should fall back to default maxTokens when env value is invalid', () => {
+      process.env.AI_MAX_TOKENS = 'a lot';
+      const config = ConfigService.getResolvedConfig(baseRoom());
+      expect(config.maxTokens).toBe(2048);
     });
 
     test('should prefer DB maxTokens over env var', () => {

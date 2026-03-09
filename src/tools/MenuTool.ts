@@ -13,7 +13,7 @@
  * Slash command aliases: `/help`, `/h`, `/?`
  */
 
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
@@ -22,9 +22,12 @@ const log = logger.child({ module: 'MenuTool' });
 
 /** A function that returns the current list of all registered tools (injected to avoid circular imports). */
 type ToolGetter = () => BaseTool[];
+type MenuArgs = ToolArgs & {
+  command_name?: string;
+};
 
 /** Interactive help and command-discovery tool. */
-export class MenuTool extends BaseTool {
+export class MenuTool extends BaseTool<MenuArgs> {
   /** Injected supplier for the live tool list — avoids a circular import with `tools/index.ts`. */
   private getTools: ToolGetter;
 
@@ -58,7 +61,7 @@ export class MenuTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: MenuArgs, ctx: MessageContext): Promise<string> {
     const { command_name } = args;
     const lang = ctx.language;
     const tools = this.getTools();

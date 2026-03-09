@@ -15,16 +15,19 @@
  *   3. Hardcoded defaults (Meta-Llama-3-8B-Instruct)
  */
 
+/** A single multi-modal content block within a chat message. */
+export interface AIContentPart {
+  type: 'text' | 'image_url' | 'video_url' | 'audio_url';
+  text?: string;
+  image_url?: { url: string };
+  video_url?: { url: string };
+  audio_url?: { url: string };
+}
+
 /** A single chat participant message supporting text, image, video, and audio content types. */
 export interface AIChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | Array<{
-    type: 'text' | 'image_url' | 'video_url' | 'audio_url';
-    text?: string;
-    image_url?: { url: string };
-    video_url?: { url: string };
-    audio_url?: { url: string };
-  }>;
+  content: string | AIContentPart[];
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;

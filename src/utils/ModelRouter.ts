@@ -39,10 +39,11 @@
 
 import { logger } from './logger';
 import { AIClient } from '../ai/client';
-import type { AIChatMessage } from '../ai/client';
+import type { AIChatMessage, AIContentPart } from '../ai/client';
 import type { ToolDefinition } from '../tools/BaseTool';
-import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier } from '../types/ai';
+import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier, TokenUsage } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
+import { getErrorMessage } from './errorUtils';
 
 export interface ProviderConfig {
   name: string;
@@ -67,6 +68,10 @@ export interface ProviderConfig {
 interface ResolvedProvider extends ProviderConfig {
   client: AIClient;
 }
+
+type MessageWithUsage = ChatCompletionMessage & {
+  usage?: Partial<TokenUsage>;
+};
 
 /**
  * Provider name prefixes that support video and audio by default (vLLM multimodal deployments).
@@ -172,7 +177,7 @@ export function sanitizeMessagesForProvider(
   return messages.map(msg => {
     if (!Array.isArray(msg.content)) return msg;
 
-    const sanitized = msg.content.flatMap((part: any) => {
+    const sanitized = msg.content.flatMap((part): AIContentPart[] => {
       if (part?.type === 'video_url' && !provider.supportsVideo) {
         return [{ type: 'text', text: '[Video attached — not supported by this provider]' }];
       }
@@ -254,6 +259,10 @@ export class ModelRouter {
     this.providerCooldownUntil.set(providerName, Date.now() + getProviderCooldownMs());
   }
 
+  private getUsage(result: ChatCompletionMessage): Partial<TokenUsage> | undefined {
+    return (result as MessageWithUsage).usage;
+  }
+
   /**
    * Sends a chat completion request, trying each provider in order until one succeeds.
    *
@@ -302,9 +311,9 @@ export class ModelRouter {
         const latency = Date.now() - start;
 
         healthMetrics.recordLLMRequest(provider.name, latency, true);
-  this.clearProviderCooldown(provider.name);
+        this.clearProviderCooldown(provider.name);
         // V7.13: Usage may be on the message object for some providers (runtime-only field)
-        const usage = (result as any)?.usage;
+        const usage = this.getUsage(result);
         if (usage) {
           healthMetrics.recordTokenUsage(
             provider.modelName,
@@ -336,7 +345,8 @@ export class ModelRouter {
 
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
         return result;
-      } catch (err: any) {
+      } catch (error: unknown) {
+        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
         this.markProviderFailure(provider.name);
         healthMetrics.recordLLMRequest(provider.name, 0, false);
@@ -388,7 +398,8 @@ export class ModelRouter {
         this.clearProviderCooldown(provider.name);
 
         return; // Successfully streamed from this provider
-      } catch (err: any) {
+      } catch (error: unknown) {
+        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
         this.markProviderFailure(provider.name);
         healthMetrics.recordLLMRequest(provider.name, 0, false);
@@ -413,3 +424,4 @@ export function getModelRouter(): ModelRouter {
   }
   return singletonRouter;
 }
+

@@ -30,6 +30,7 @@ import { BaseTool, ToolDefinition, ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { RoleService, BUILTIN_ROLES } from '../utils/RoleService';
 import { PrivilegeService, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/PrivilegeService';
+import type { RolePrivileges } from '../utils/PrivilegeService';
 import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';

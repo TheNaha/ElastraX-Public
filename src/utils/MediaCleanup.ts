@@ -4,6 +4,10 @@ import { logger } from './logger';
 
 const MEDIA_DIR = './data/media';
 
+function asErrnoException(error: unknown): NodeJS.ErrnoException {
+  return error as NodeJS.ErrnoException;
+}
+
 export class MediaCleanup {
   static async pruneOldFiles(): Promise<void> {
     const maxAgeHours = parseInt(process.env.MEDIA_RETENTION_HOURS || '72', 10);
@@ -24,16 +28,17 @@ export class MediaCleanup {
             deleted++;
           }
         } catch {
-          // skip files that disappear during traversal
+          continue;
         }
       }
 
       if (deleted > 0) {
         logger.info({ deleted, maxAgeHours }, '[MediaCleanup] Pruned old media files');
       }
-    } catch (err: any) {
-      if (err?.code !== 'ENOENT') {
-        logger.warn({ err }, '[MediaCleanup] Failed to prune media directory');
+    } catch (error: unknown) {
+      const err = asErrnoException(error);
+      if (err.code !== 'ENOENT') {
+        logger.warn({ err: error }, '[MediaCleanup] Failed to prune media directory');
       }
     }
   }

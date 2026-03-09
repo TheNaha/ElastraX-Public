@@ -1,23 +1,9 @@
-/**
- * @file src/tools/PingTool.ts
- * @description Simple latency and uptime health-check tool.
- *
- * Measures the round-trip time from when the message arrives to when the bot
- * generates this response, and reports the process uptime.
- * 
- * Works both as a slash command (/ping) and conversationally
- * ("are you online?", "what's your latency?").
- *
- * Slash command aliases: /ping, /status
- */
-
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'PingTool' });
-
 const PROCESS_START = Date.now();
 
 function formatUptime(ms: number): string {
@@ -32,7 +18,7 @@ function formatUptime(ms: number): string {
   return `${s}s`;
 }
 
-export class PingTool extends BaseTool {
+export class PingTool extends BaseTool<ToolArgs> {
   readonly name = 'ping';
   readonly description = 'Check if the bot is responsive and display latency and uptime. Use this when the user asks if the bot is online, what the latency is, or for a health check.';
   readonly aliases = ['status', 'uptime'];
@@ -54,7 +40,7 @@ export class PingTool extends BaseTool {
     };
   }
 
-  async execute(_args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(_args: ToolArgs, ctx: MessageContext): Promise<string> {
     const receivedAt = ctx.receivedAt ?? Date.now();
     const latency = Date.now() - receivedAt;
     const uptime = formatUptime(Date.now() - PROCESS_START);
