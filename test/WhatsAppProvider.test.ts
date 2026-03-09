@@ -10,28 +10,13 @@ const _mockLogger = {
   child: () => _mockLogger,
 };
 
+import { IdentityService } from '../src/utils/IdentityService';
+import { RoleService } from '../src/utils/RoleService';
+
 const mockIdentityUpsert = mock(async () => {});
 const mockSetRole = mock(async () => {});
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-mock.module('../src/utils/IdentityService', () => ({
-  IdentityService: { upsert: mockIdentityUpsert },
-}));
-mock.module('../src/utils/RoleService', () => ({
-  RoleService: { setRole: mockSetRole },
-}));
-mock.module('../src/db', () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          limit: async () => [],
-        }),
-      }),
-    }),
-  },
-}));
-
 import { WhatsAppProvider, whatsAppProviderDeps } from '../src/providers/whatsapp';
 
 type FakeWhatsAppListener = (payload: unknown) => unknown;
@@ -124,6 +109,8 @@ describe('WhatsAppProvider', () => {
     delete process.env.BOT_OWNER_JID;
     mockIdentityUpsert.mockClear();
     mockSetRole.mockClear();
+    spyOn(IdentityService, 'upsert').mockImplementation(mockIdentityUpsert);
+    spyOn(RoleService, 'setRole').mockImplementation(mockSetRole);
   });
 
   afterEach(() => {
