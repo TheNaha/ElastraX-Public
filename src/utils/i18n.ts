@@ -45,6 +45,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'menu.greeting': 'Hello {name}!',
     'menu.hint': 'Use */help <command>* to see detailed usage of a command.\n\n',
     'menu.footer': '_Powered by ElastraX v7 with Native AI_',
+    'menu.not_found_suggestion': '❌ Command or tool "*{name}*" not found. Did you mean "*{suggestion}*"?',
 
     // Group Admin
     'group.not_in_group': '❌ This command can only be used in a group.',
@@ -210,6 +211,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'menu.greeting': 'Halo {name}!',
     'menu.hint': 'Gunakan */help <command>* untuk melihat detail cara menggunakan sebuah command.\n\n',
     'menu.footer': '_Powered by ElastraX v7 with Native AI_',
+    'menu.not_found_suggestion': '❌ Perintah atau alat "*{name}*" tidak ditemukan. Maksud Anda "*{suggestion}*"?',
 
     // Group Admin
     'group.not_in_group': '❌ Perintah ini hanya dapat digunakan di dalam grup.',

@@ -120,4 +120,28 @@ describe('MenuTool', () => {
     expect(result).toContain('/admin_tool');
     expect(result).toContain('/admin_tool2');
   });
+
+  test('should suggest nearest command if tool not found', async () => {
+    const mockTools = [new MockTool()];
+    const menuTool = new MenuTool(() => mockTools);
+
+    const ctx = { senderName: 'User' } as MessageContext;
+
+    // "mock_tool" is the actual command name. "moock_tool" is a close typo.
+    const result = await menuTool.execute({ command_name: 'moock_tool' }, ctx);
+
+    expect(result).toContain('Did you mean "*mock_tool*"?');
+  });
+
+  test('should suggest nearest alias if tool not found', async () => {
+    const mockTools = [new MockTool()];
+    const menuTool = new MenuTool(() => mockTools);
+
+    const ctx = { senderName: 'User' } as MessageContext;
+
+    // "mt" is the alias. "mtt" is a close typo.
+    const result = await menuTool.execute({ command_name: 'mtt' }, ctx);
+
+    expect(result).toContain('Did you mean "*mt*"?');
+  });
 });
