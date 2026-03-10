@@ -17,6 +17,7 @@ import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { levenshtein } from '../utils/similarity';
 
 const log = logger.child({ module: 'MenuTool' });
 
@@ -74,6 +75,28 @@ export class MenuTool extends BaseTool<MenuArgs> {
       );
 
       if (!tool) {
+        let bestDistance = Infinity;
+        let suggestion = '';
+
+        for (const tCmd of tools) {
+          const dist = levenshtein(command_name.toLowerCase(), tCmd.name.toLowerCase());
+          if (dist <= 3 && dist < bestDistance) {
+            bestDistance = dist;
+            suggestion = tCmd.name;
+          }
+          for (const alias of tCmd.aliases) {
+            const aliasDist = levenshtein(command_name.toLowerCase(), alias.toLowerCase());
+            if (aliasDist <= 3 && aliasDist < bestDistance) {
+              bestDistance = aliasDist;
+              suggestion = alias;
+            }
+          }
+        }
+
+        if (suggestion) {
+          return t(lang, 'menu.not_found_suggestion', { name: command_name, suggestion });
+        }
+
         return t(lang, 'menu.not_found', { name: command_name });
       }
 
