@@ -1,20 +1,6 @@
 /**
  * @file src/utils/IdentityService.ts
  * @description Persistent LID <-> PN identity mapping for Baileys V7.
- *
- * Baileys V7 uses "LID" JIDs (Linked IDs) as the primary identifier for
- * WhatsApp users. Phone-number JIDs (`@s.whatsapp.net`) are a secondary
- * fallback and are NOT always available, especially in group contexts.
- *
- * This service maintains a `user_identities` table that maps LID <-> PN so
- * that:
- *  - `RoleService` can look up all JIDs for a user when checking DB roles.
- *  - `/role check` can display the correct identity regardless of JID format.
- *  - `BOT_OWNER_JID` (a PN) can be matched against a LID-based senderId.
- *
- * The mapping is populated:
- *  - On every incoming message (upsert with latest pushName).
- *  - At startup for the bot owner (seeded from `BOT_OWNER_JID` env var).
  */
 
 import { db } from '../db';
@@ -29,12 +15,24 @@ type IdentityRow = {
   displayName: string | null;
 };
 
+type IdentityDeps = {
+  db: typeof import('../db').db;
+  userIdentities: typeof import('../db/schema').userIdentities;
+};
+
 function buildRowIdFilter(rowIds: number[]) {
   return sql`rowid in (${sql.join(rowIds.map((rowId) => sql`${rowId}`), sql`, `)})`;
 }
 
 export class IdentityService {
+  private static deps: IdentityDeps = { db, userIdentities };
+
+  static setDepsForTesting(deps: IdentityDeps | null): void {
+    this.deps = deps ?? { db, userIdentities };
+  }
+
   private static async findMatchingRows(lid?: string, pn?: string): Promise<IdentityRow[]> {
+    const { db, userIdentities } = this.deps;
     const conditions = [];
     if (lid) conditions.push(eq(userIdentities.lid, lid));
     if (pn) conditions.push(eq(userIdentities.pn, pn));
@@ -51,12 +49,6 @@ export class IdentityService {
       .where(conditions.length === 1 ? conditions[0] : or(...conditions));
   }
 
-  /**
-   * Store or update the LID <-> PN mapping for a user.
-   *
-   * Called on every incoming message (cheap upsert). If only one of lid/pn
-   * is known the other column stays NULL until a future message fills it in.
-   */
   static async upsert(
     lid: string | undefined,
     pn: string | undefined,
@@ -66,6 +58,7 @@ export class IdentityService {
     if (!lid && !pn) return;
 
     try {
+      const { db, userIdentities } = this.deps;
       const existing = await this.findMatchingRows(lid, pn);
 
       if (existing.length > 0) {
@@ -81,7 +74,8 @@ export class IdentityService {
           await db.delete(userIdentities).where(buildRowIdFilter(duplicateRowIds));
         }
 
-        await db.update(userIdentities)
+        await db
+          .update(userIdentities)
           .set({
             lid: mergedLid,
             pn: mergedPn,
@@ -108,30 +102,20 @@ export class IdentityService {
           updated_at: new Date(),
         });
 
-        logger.info(
-          { lid, pn, displayName },
-          '[IdentityService] Stored new identity mapping',
-        );
+        logger.info({ lid, pn, displayName }, '[IdentityService] Stored new identity mapping');
       }
     } catch (err) {
       logger.error({ err, lid, pn }, '[IdentityService] Failed to upsert identity');
     }
   }
 
-  /**
-   * Given any single JID (LID or PN), return all known JIDs for that user.
-   *
-   * @returns Array of unique JID strings (may contain 1 or 2 entries).
-   *          Returns `[jid]` if no mapping is found (passthrough).
-   */
   static async getAllJids(jid: string): Promise<string[]> {
     if (!jid) return [];
 
     try {
+      const { db, userIdentities } = this.deps;
       const isLid = jid.includes('@lid');
-      const condition = isLid
-        ? eq(userIdentities.lid, jid)
-        : eq(userIdentities.pn, jid);
+      const condition = isLid ? eq(userIdentities.lid, jid) : eq(userIdentities.pn, jid);
 
       const rows = await db
         .select({ lid: userIdentities.lid, pn: userIdentities.pn })
@@ -153,9 +137,9 @@ export class IdentityService {
     }
   }
 
-  /** Get the PN (phone-number JID) for a given LID, or undefined. */
   static async getPnForLid(lid: string): Promise<string | undefined> {
     try {
+      const { db, userIdentities } = this.deps;
       const rows = await db
         .select({ pn: userIdentities.pn })
         .from(userIdentities)
@@ -169,9 +153,9 @@ export class IdentityService {
     }
   }
 
-  /** Get the LID for a given phone-number JID, or undefined. */
   static async getLidForPn(pn: string): Promise<string | undefined> {
     try {
+      const { db, userIdentities } = this.deps;
       const rows = await db
         .select({ lid: userIdentities.lid })
         .from(userIdentities)
@@ -185,7 +169,6 @@ export class IdentityService {
     }
   }
 
-  /** Get the full identity record for a user by any JID. */
   static async getIdentity(jid: string): Promise<{
     lid: string | null;
     pn: string | null;
@@ -193,16 +176,11 @@ export class IdentityService {
     platform: string;
   } | null> {
     try {
+      const { db, userIdentities } = this.deps;
       const isLid = jid.includes('@lid');
-      const condition = isLid
-        ? eq(userIdentities.lid, jid)
-        : eq(userIdentities.pn, jid);
+      const condition = isLid ? eq(userIdentities.lid, jid) : eq(userIdentities.pn, jid);
 
-      const rows = await db
-        .select()
-        .from(userIdentities)
-        .where(condition)
-        .limit(1);
+      const rows = await db.select().from(userIdentities).where(condition).limit(1);
 
       if (rows.length === 0) return null;
       return {

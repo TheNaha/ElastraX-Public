@@ -1,4 +1,7 @@
 import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
+import { IdentityService } from '../src/utils/IdentityService';
+import { RoleService } from '../src/utils/RoleService';
+import { userIdentities, userRoles } from '../src/db/schema';
 
 type MockQuery = {
   from: () => MockQuery;
@@ -31,12 +34,6 @@ function mockQuery(): MockQuery {
   return obj;
 }
 
-mock.module('../src/db', () => ({
-  db: {
-    select: () => mockQuery(),
-  },
-}));
-
 mock.module('../src/utils/logger', () => ({
   logger: {
     trace: () => {},
@@ -60,8 +57,13 @@ describe('checkPermissions', () => {
   let mockSock: MockGroupMetadataSock;
   const chatId = '1234567890@g.us';
   const senderId = '0987654321@s.whatsapp.net';
+  const mockDb = {
+    select: () => mockQuery(),
+  } as unknown as typeof import('../src/db').db;
 
   beforeEach(() => {
+    IdentityService.setDepsForTesting({ db: mockDb, userIdentities });
+    RoleService.setDepsForTesting({ db: mockDb, userRoles });
     mockSock = {
       groupMetadata: async (jid: string) => {
         if (jid === chatId) {
@@ -80,6 +82,8 @@ describe('checkPermissions', () => {
   });
 
   afterEach(() => {
+    IdentityService.setDepsForTesting(null);
+    RoleService.setDepsForTesting(null);
     delete process.env.BOT_OWNER_JID;
   });
 

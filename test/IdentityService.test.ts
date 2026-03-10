@@ -1,104 +1,117 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { drizzle } from 'drizzle-orm/bun-sqlite';
+import { userIdentities } from '../src/db/schema';
+import { IdentityService } from '../src/utils/IdentityService';
 
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-let mockIdentityRows: any[] = [];
-let lastInsertedIdentity: any = null;
-let lastUpdatedIdentity: any = null;
-let deleteCalled = false;
-
-/** Creates a chainable thenable mock query that resolves to mockIdentityRows. */
-function mockQuery() {
-  const obj: any = {
-    from: () => obj,
-    where: () => obj,
-    limit: () => obj,
-    then: (resolve: any) => resolve(mockIdentityRows),
-  };
-  return obj;
-}
-
-mock.module('../src/db', () => ({
-  db: {
-    select: () => mockQuery(),
-    insert: () => ({
-      values: (vals: any) => {
-        lastInsertedIdentity = vals;
-        return Promise.resolve();
-      },
-    }),
-    update: () => ({
-      set: (data: any) => {
-        lastUpdatedIdentity = data;
-        return {
-          where: () => Promise.resolve(),
-        };
-      },
-    }),
-    delete: () => ({
-      where: () => {
-        deleteCalled = true;
-        return Promise.resolve();
-      },
-    }),
-  },
-}));
-
-import { IdentityService } from '../src/utils/IdentityService';
-
 describe('IdentityService', () => {
-  beforeEach(() => {
-    mockIdentityRows = [];
-    lastInsertedIdentity = null;
-    lastUpdatedIdentity = null;
-    deleteCalled = false;
+  let sqlite: Database;
+  let db: ReturnType<typeof drizzle>;
+
+  beforeEach(async () => {
+    sqlite = new Database(':memory:');
+    db = drizzle(sqlite);
+    IdentityService.setDepsForTesting({ db: db as typeof import('../src/db').db, userIdentities });
+
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS user_identities (
+        lid TEXT,
+        pn TEXT,
+        platform TEXT NOT NULL DEFAULT 'whatsapp',
+        display_name TEXT,
+        updated_at INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_idx ON user_identities (lid);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_idx ON user_identities (pn);
+    `);
+
+    await db.delete(userIdentities).run();
+  });
+
+  afterEach(() => {
+    IdentityService.setDepsForTesting(null);
+    sqlite.close();
   });
 
   test('upsert with no lid and no pn does nothing', async () => {
     await IdentityService.upsert(undefined, undefined);
-    expect(lastInsertedIdentity).toBeNull();
-    expect(lastUpdatedIdentity).toBeNull();
+
+    const rows = await db.select().from(userIdentities);
+    expect(rows).toHaveLength(0);
   });
 
   test('upsert with new identity inserts', async () => {
-    mockIdentityRows = [];
     await IdentityService.upsert('abc@lid', '123@s.whatsapp.net', 'Test');
-    expect(lastInsertedIdentity).toBeDefined();
-    expect(lastInsertedIdentity.lid).toBe('abc@lid');
-    expect(lastInsertedIdentity.pn).toBe('123@s.whatsapp.net');
+
+    const rows = await db.select().from(userIdentities);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.lid).toBe('abc@lid');
+    expect(rows[0]?.pn).toBe('123@s.whatsapp.net');
+    expect(rows[0]?.displayName).toBe('Test');
   });
 
   test('upsert with existing identity updates', async () => {
-    mockIdentityRows = [{ rowId: 1, lid: 'abc@lid', pn: null }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: null,
+      platform: 'whatsapp',
+      displayName: null,
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     await IdentityService.upsert('abc@lid', '123@s.whatsapp.net', 'Test');
-    expect(lastUpdatedIdentity).toBeDefined();
-    expect(lastUpdatedIdentity.pn).toBe('123@s.whatsapp.net');
+
+    const rows = await db.select().from(userIdentities);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.lid).toBe('abc@lid');
+    expect(rows[0]?.pn).toBe('123@s.whatsapp.net');
+    expect(rows[0]?.displayName).toBe('Test');
   });
 
   test('upsert merges duplicate partial rows before updating canonical identity', async () => {
-    mockIdentityRows = [
-      { rowId: 1, lid: 'abc@lid', pn: null, displayName: null },
-      { rowId: 2, lid: null, pn: '123@s.whatsapp.net', displayName: 'Test' },
-    ];
+    await db.insert(userIdentities).values([
+      {
+        lid: 'abc@lid',
+        pn: null,
+        platform: 'whatsapp',
+        displayName: null,
+        updated_at: new Date('2024-01-01T00:00:00Z'),
+      },
+      {
+        lid: null,
+        pn: '123@s.whatsapp.net',
+        platform: 'whatsapp',
+        displayName: 'Test',
+        updated_at: new Date('2024-01-01T00:00:00Z'),
+      },
+    ]);
 
     await IdentityService.upsert('abc@lid', '123@s.whatsapp.net', 'Merged');
 
-    expect(deleteCalled).toBe(true);
-    expect(lastUpdatedIdentity).toBeDefined();
-    expect(lastUpdatedIdentity.lid).toBe('abc@lid');
-    expect(lastUpdatedIdentity.pn).toBe('123@s.whatsapp.net');
-    expect(lastUpdatedIdentity.displayName).toBe('Merged');
+    const rows = await db.select().from(userIdentities);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.lid).toBe('abc@lid');
+    expect(rows[0]?.pn).toBe('123@s.whatsapp.net');
+    expect(rows[0]?.displayName).toBe('Merged');
   });
 
   test('getAllJids with no mapping returns [jid]', async () => {
-    mockIdentityRows = [];
     const jids = await IdentityService.getAllJids('unknown@s.whatsapp.net');
     expect(jids).toEqual(['unknown@s.whatsapp.net']);
   });
 
   test('getAllJids with mapping returns all known JIDs', async () => {
-    mockIdentityRows = [{ lid: 'abc@lid', pn: '123@s.whatsapp.net' }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: '123@s.whatsapp.net',
+      platform: 'whatsapp',
+      displayName: 'Test',
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     const jids = await IdentityService.getAllJids('abc@lid');
     expect(jids).toContain('abc@lid');
     expect(jids).toContain('123@s.whatsapp.net');
@@ -110,31 +123,50 @@ describe('IdentityService', () => {
   });
 
   test('getPnForLid returns pn when found', async () => {
-    mockIdentityRows = [{ pn: '123@s.whatsapp.net' }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: '123@s.whatsapp.net',
+      platform: 'whatsapp',
+      displayName: 'Test',
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     const pn = await IdentityService.getPnForLid('abc@lid');
     expect(pn).toBe('123@s.whatsapp.net');
   });
 
   test('getPnForLid returns undefined when not found', async () => {
-    mockIdentityRows = [];
     const pn = await IdentityService.getPnForLid('unknown@lid');
     expect(pn).toBeUndefined();
   });
 
   test('getLidForPn returns lid when found', async () => {
-    mockIdentityRows = [{ lid: 'abc@lid' }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: '123@s.whatsapp.net',
+      platform: 'whatsapp',
+      displayName: 'Test',
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     const lid = await IdentityService.getLidForPn('123@s.whatsapp.net');
     expect(lid).toBe('abc@lid');
   });
 
   test('getLidForPn returns undefined when not found', async () => {
-    mockIdentityRows = [];
     const lid = await IdentityService.getLidForPn('unknown@s.whatsapp.net');
     expect(lid).toBeUndefined();
   });
 
   test('getIdentity returns identity record when found', async () => {
-    mockIdentityRows = [{ lid: 'abc@lid', pn: '123@s.whatsapp.net', displayName: 'Test', platform: 'whatsapp' }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: '123@s.whatsapp.net',
+      platform: 'whatsapp',
+      displayName: 'Test',
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     const identity = await IdentityService.getIdentity('abc@lid');
     expect(identity).not.toBeNull();
     expect(identity!.lid).toBe('abc@lid');
@@ -144,13 +176,19 @@ describe('IdentityService', () => {
   });
 
   test('getIdentity returns null when not found', async () => {
-    mockIdentityRows = [];
     const identity = await IdentityService.getIdentity('unknown@s.whatsapp.net');
     expect(identity).toBeNull();
   });
 
   test('getIdentity with LID JID queries correctly', async () => {
-    mockIdentityRows = [{ lid: 'abc@lid', pn: '123@s.whatsapp.net', displayName: 'LID User', platform: 'whatsapp' }];
+    await db.insert(userIdentities).values({
+      lid: 'abc@lid',
+      pn: '123@s.whatsapp.net',
+      platform: 'whatsapp',
+      displayName: 'LID User',
+      updated_at: new Date('2024-01-01T00:00:00Z'),
+    });
+
     const identity = await IdentityService.getIdentity('abc@lid');
     expect(identity).not.toBeNull();
     expect(identity!.lid).toBe('abc@lid');

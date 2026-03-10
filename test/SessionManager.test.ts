@@ -17,11 +17,39 @@ describe('SessionManager', () => {
     sessions: Map<string, unknown>;
     persistQueue: Map<string, Promise<void>>;
     dbDepsPromise: unknown;
+    dbLoaded: boolean;
+    dbLoadPromise: Promise<void> | null;
     getDbDeps: () => Promise<unknown>;
   };
+  const originalGetDbDeps = testManager.getDbDeps;
+
+  async function flushPersistenceQueue(): Promise<void> {
+    const pending = Array.from(testManager.persistQueue.values());
+    if (pending.length > 0) {
+      await Promise.all(pending);
+    }
+  }
 
   // Clear sessions before each test to ensure isolation
   beforeEach(() => {
+    testManager.getDbDeps = async () => ({
+      db: {
+        insert: () => ({
+          values: () => ({
+            onConflictDoUpdate: () => ({
+              run: async () => {},
+            }),
+          }),
+        }),
+        delete: () => ({
+          where: () => ({
+            run: async () => {},
+          }),
+        }),
+      },
+      flowSessions: { id: 'id' },
+    });
+
     // Access private static sessions map
     if (testManager.sessions) {
       testManager.sessions.clear();
@@ -32,10 +60,19 @@ describe('SessionManager', () => {
     if (testManager.dbDepsPromise !== undefined) {
       testManager.dbDepsPromise = null;
     }
+    testManager.dbLoaded = false;
+    testManager.dbLoadPromise = null;
     setSystemTime(new Date('2024-01-01T00:00:00Z')); // predictable time
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await flushPersistenceQueue();
+    testManager.getDbDeps = originalGetDbDeps;
+    testManager.dbDepsPromise = null;
+    testManager.dbLoaded = false;
+    testManager.dbLoadPromise = null;
+    testManager.persistQueue.clear();
+    testManager.sessions.clear();
     setSystemTime(); // restore system time
   });
 
