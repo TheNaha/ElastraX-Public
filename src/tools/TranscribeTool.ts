@@ -15,10 +15,11 @@ type TranscribeResponse = {
 
 export class TranscribeTool extends BaseTool<ToolArgs> {
   readonly name = 'transcribe_audio';
-  readonly description = 'Transcribe an attached or quoted audio/voice note to text. Use when users ask to transcribe voice notes, convert audio to text, or read what someone said in a voice message.';
+  readonly description = 'Transcribe an attached or quoted audio/voice note to text.';
   readonly aliases = ['transcribe', 'stt'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/^audio\//i];
 
   get definition(): ToolDefinition {
     return {

@@ -74,7 +74,7 @@ type TranslateArgs = ToolArgs & {
 
 export class TranslateTool extends BaseTool<TranslateArgs> {
   readonly name = 'translate';
-  readonly description = 'Translate text. If the first word is a language (e.g., "id", "Spanish"), translates to that language. Otherwise, translates to the room\'s default language (English or Indonesian). If no text is provided, translates the quoted message.';
+  readonly description = 'Translate text to a specified language or the room default. Translates quoted message if no text given.';
   readonly aliases = ['translate', 'tr'];
   readonly category = 'utility';
   readonly permissions = 'user';

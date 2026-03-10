@@ -41,6 +41,20 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs> {
   readonly groupOnly?: boolean = false;
   readonly modelTier?: ModelTier = 'standard';
 
+  /**
+   * When true, this tool's definition is always included in the LLM context
+   * (not deferred behind the find_tools search). Keep this set for only
+   * the 3-5 most universally needed tools to stay under ~600 tokens baseline.
+   */
+  readonly alwaysLoad?: boolean = false;
+
+  /**
+   * Regex patterns that, when matched against the incoming user message or
+   * attachment metadata, cause this tool to be pre-loaded alongside the
+   * always-loaded set — skipping the extra `find_tools` round-trip.
+   */
+  readonly triggerPatterns?: RegExp[];
+
   abstract get definition(): ToolDefinition;
   abstract execute(args: TArgs, ctx: MessageContext): Promise<ToolResult>;
 }

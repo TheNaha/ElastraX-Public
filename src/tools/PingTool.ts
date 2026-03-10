@@ -20,7 +20,7 @@ function formatUptime(ms: number): string {
 
 export class PingTool extends BaseTool<ToolArgs> {
   readonly name = 'ping';
-  readonly description = 'Check if the bot is responsive and display latency and uptime. Use this when the user asks if the bot is online, what the latency is, or for a health check.';
+  readonly description = 'Check bot responsiveness, latency, and uptime.';
   readonly aliases = ['status', 'uptime'];
   readonly category = 'utility';
   readonly permissions = 'user';

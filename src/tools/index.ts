@@ -6,19 +6,28 @@
  * tools via the exported helper functions rather than importing each tool directly,
  * keeping them decoupled from individual implementations.
  *
+ * V7.14: Tools are split into "always-loaded" (sent in every LLM call) and
+ * "discoverable" (loaded on-demand via `find_tools`).  This keeps the per-request
+ * tool-definition overhead constant (~600 tokens) regardless of total tool count.
+ *
  * To add a new tool:
  *  1. Create a class that extends `BaseTool` in a new file under `src/tools/`.
  *  2. Import it here and push an instance onto `toolsList`.
- *  3. The tool will automatically appear in:
+ *  3. Set `alwaysLoad = true` only if the tool is universally needed (keep ≤5).
+ *  4. Optionally set `triggerPatterns` for content-based pre-loading.
+ *  5. The tool will automatically appear in:
  *     - `/menu` (help output)
- *     - LLM function-calling payload (if `allowTools` is enabled for the room)
+ *     - LLM function-calling payload (always-loaded, or after `find_tools` discovery)
  *     - The slash-command router (via the tool's `name` and `aliases`)
  *
  * Exported helpers:
- *  - `getToolByName(name)`         — Look up a tool by its exact LLM function name.
- *  - `getToolByAliasOrName(cmd)`   — Look up a tool by slash-command alias OR name.
- *  - `getToolDefinitions()`        — Return OpenAI-compatible tool definitions for all tools.
- *  - `tools`                       — The raw ordered list of all registered `BaseTool` instances.
+ *  - `getToolByName(name)`             — Look up a tool by its exact LLM function name.
+ *  - `getToolByAliasOrName(cmd)`       — Look up a tool by slash-command alias OR name.
+ *  - `getToolDefinitions()`            — Return OpenAI-compatible definitions for ALL tools.
+ *  - `getAlwaysLoadedDefinitions()`    — Definitions for always-loaded tools only.
+ *  - `getTriggeredTools(text, mime)`   — Tools whose triggerPatterns match the message.
+ *  - `toolSearchIndex`                 — The shared ToolSearchIndex for `find_tools`.
+ *  - `tools`                           — The raw ordered list of all registered `BaseTool` instances.
  */
 
 import { BaseTool } from './BaseTool';
@@ -41,6 +50,8 @@ import { MenfessTool } from './MenfessTool';
 import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
 import { OwnerTool } from './OwnerTool';
+import { FindToolsTool, setToolSearchIndex } from './FindToolsTool';
+import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'ToolRegistry' });
@@ -78,6 +89,9 @@ toolsList.push(new RoleTool());
 toolsList.push(new MenfessTool());
 // ── Owner ───────────────────────────────────────────────────────────────────────
 toolsList.push(new OwnerTool());
+// ── Meta (always-loaded) ────────────────────────────────────────────────────────
+toolsList.push(new FindToolsTool());
+
 // Build fast lookup maps for O(1) dispatch —
 // toolsMap   : exact function name (as exposed to the LLM)
 // aliasMap   : function name + all slash-command aliases
@@ -92,10 +106,25 @@ for (const tool of toolsList) {
   }
 }
 
-log.info({ toolCount: toolsList.length, tools: toolsList.map(t => t.name) }, 'Tool registry initialized');
+// ── Tool Search Index (V7.14) ─────────────────────────────────────────────────
+// Build an in-memory search index over all non-always-loaded tools so the
+// `find_tools` meta-tool can discover them on demand.
+const discoverableTools = toolsList.filter((t) => !t.alwaysLoad);
+export const toolSearchIndex = new ToolSearchIndex();
+toolSearchIndex.build(discoverableTools);
+setToolSearchIndex(toolSearchIndex);
 
-// Pre-compute tool definitions once at module load time to avoid mapping on every request
-const cachedToolDefinitions = toolsList.map(t => t.definition);
+// Pre-computed definition sets
+const cachedAllDefinitions = toolsList.map((t) => t.definition);
+const cachedAlwaysLoadedDefinitions = toolsList
+  .filter((t) => t.alwaysLoad)
+  .map((t) => t.definition);
+
+log.info({
+  toolCount: toolsList.length,
+  alwaysLoaded: toolsList.filter((t) => t.alwaysLoad).map((t) => t.name),
+  discoverable: discoverableTools.length,
+}, 'Tool registry initialized');
 
 /**
  * Look up a tool by its exact LLM function name (e.g., `'web_search'`).
@@ -107,10 +136,35 @@ export function getToolByName(name: string): BaseTool | undefined {
 
 /**
  * Returns an array of OpenAI-compatible `ToolDefinition` objects for every registered tool.
- * This array is passed directly to the LLM when function-calling is enabled for a room.
+ * Used as the fallback when `toolLoadingMode` is `'all'`.
  */
 export function getToolDefinitions() {
-  return cachedToolDefinitions;
+  return cachedAllDefinitions;
+}
+
+/**
+ * Returns definitions for only the always-loaded tools (those with `alwaysLoad = true`).
+ * The agent sends these plus any trigger-matched tools in the initial LLM call.
+ */
+export function getAlwaysLoadedDefinitions() {
+  return cachedAlwaysLoadedDefinitions;
+}
+
+/**
+ * Returns tools whose `triggerPatterns` match the given message text or MIME type.
+ * Used to pre-load obvious tools (e.g., URL → download, image → sticker) without
+ * requiring the model to call `find_tools` first.
+ */
+export function getTriggeredTools(text: string, mimeType?: string): BaseTool[] {
+  const matched: BaseTool[] = [];
+  const testString = mimeType ? `${text}\n${mimeType}` : text;
+  for (const tool of discoverableTools) {
+    if (!tool.triggerPatterns) continue;
+    if (tool.triggerPatterns.some((p) => p.test(testString))) {
+      matched.push(tool);
+    }
+  }
+  return matched;
 }
 
 /**

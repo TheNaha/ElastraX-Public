@@ -34,7 +34,7 @@ import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
-import { getToolByName, getToolByAliasOrName, tools } from '../tools';
+import { getToolByName, getToolByAliasOrName, getAlwaysLoadedDefinitions, getTriggeredTools, tools, toolSearchIndex } from '../tools';
 
 const log = logger.child({ module: 'Agent' });
 import { ParameterValidator } from '../utils/ParameterValidator';
@@ -49,7 +49,7 @@ import { RateLimiter } from '../utils/RateLimiter';
 import { RoleService } from '../utils/RoleService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
-import type { BaseTool, ToolResult } from '../tools/BaseTool';
+import type { BaseTool, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
 
 const modelRouter = getModelRouter();
@@ -677,9 +677,54 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup) : [];
     const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
-    const availableTools = allowedTools.length > 0
-      ? allowedTools.map((tool) => tool.definition)
-      : undefined;
+
+    // ── V7.14: Smart Tool Loading ──────────────────────────────────────────
+    // Instead of sending ALL tool definitions to the LLM, we send only:
+    //   1. Always-loaded tools (web_search, menu, find_tools) — ~600 tokens
+    //   2. Trigger-matched tools (URL → download, image → sticker, etc.)
+    // The model can discover additional tools via `find_tools` at runtime.
+    // Fallback: toolLoadingMode='all' sends everything (legacy behaviour).
+    const toolLoadingMode = (process.env.TOOL_LOADING_MODE || 'search') as 'all' | 'search';
+
+    let availableTools: ToolDefinition[] | undefined;
+    // Track dynamically discovered tool names for authorization
+    const dynamicToolNames = new Set<string>();
+
+    if (allowedTools.length === 0) {
+      availableTools = undefined;
+    } else if (toolLoadingMode === 'all') {
+      // Legacy: send all permitted tool definitions
+      availableTools = allowedTools.map((tool) => tool.definition);
+    } else {
+      // Smart mode: always-loaded + trigger-matched tools only
+      const alwaysDefs = getAlwaysLoadedDefinitions().filter((d) =>
+        allowedToolNames.has(d.function.name),
+      );
+
+      // Detect trigger patterns against message text + MIME type
+      const mimeHint = ctx.mimeType || ctx.quoted?.mimeType || '';
+      const triggered = getTriggeredTools(userContent, mimeHint).filter((t) =>
+        allowedToolNames.has(t.name),
+      );
+      const triggeredDefs = triggered.map((t) => t.definition);
+
+      // Deduplicate (always-loaded tools shouldn't appear twice)
+      const seenNames = new Set(alwaysDefs.map((d) => d.function.name));
+      const uniqueTriggered = triggeredDefs.filter(
+        (d) => !seenNames.has(d.function.name),
+      );
+
+      availableTools = [...alwaysDefs, ...uniqueTriggered];
+
+      log.info({
+        chatId,
+        alwaysLoaded: alwaysDefs.map((d) => d.function.name),
+        triggered: uniqueTriggered.map((d) => d.function.name),
+        totalPermitted: allowedTools.length,
+        mode: 'search',
+      }, '[Agent] Smart tool loading');
+    }
+
     const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
     const editInterval = platform === 'whatsapp' ? WA_EDIT_INTERVAL : DC_EDIT_INTERVAL;
     let preferredTier: ModelTier | undefined;
@@ -775,13 +820,28 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               try { args = JSON.parse(tc.function.arguments); } catch { /* ignore parse error */ }
               const tool = getToolByName(toolName);
               let toolResultStr = '';
-              if (tool && allowedToolNames.has(tool.name)) {
+              if (tool && (allowedToolNames.has(tool.name) || dynamicToolNames.has(tool.name))) {
                 log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
                 healthMetrics.recordToolInvocation(toolName);
-                await ctx.react?.('??');
+                await ctx.react?.('🔧');
                 const rawResult = await executeToolWithTimeout(tool, args, ctx);
                 toolResultStr = resolveToolResultText(rawResult);
                 preferredTier = tool.modelTier;
+
+                // V7.14: When find_tools is called, inject discovered tool definitions
+                if (toolName === 'find_tools' && toolLoadingMode === 'search') {
+                  const query = typeof args.query === 'string' ? args.query : '';
+                  const discovered = toolSearchIndex.search(query, 7);
+                  for (const entry of discovered) {
+                    if (allowedToolNames.has(entry.name) && !dynamicToolNames.has(entry.name)) {
+                      dynamicToolNames.add(entry.name);
+                      if (availableTools && !availableTools.some((d) => d.function.name === entry.name)) {
+                        availableTools.push(entry.tool.definition);
+                      }
+                    }
+                  }
+                  log.info({ chatId, discovered: discovered.map((d) => d.name) }, '[Agent] Tools discovered via find_tools');
+                }
               } else if (tool) {
                 log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
                 toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
@@ -844,13 +904,28 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             const tool = getToolByName(toolName);
             let toolResultStr = '';
             
-            if (tool && allowedToolNames.has(tool.name)) {
+            if (tool && (allowedToolNames.has(tool.name) || dynamicToolNames.has(tool.name))) {
               log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
               healthMetrics.recordToolInvocation(toolName);
-              await ctx.react?.('??'); // Feedback to user
+              await ctx.react?.('🔧'); // Feedback to user
               const rawResult = await executeToolWithTimeout(tool, args, ctx);
               toolResultStr = resolveToolResultText(rawResult);
               preferredTier = tool.modelTier;
+
+              // V7.14: When find_tools is called, inject discovered tool definitions
+              if (toolName === 'find_tools' && toolLoadingMode === 'search') {
+                const query = typeof args.query === 'string' ? args.query : '';
+                const discovered = toolSearchIndex.search(query, 7);
+                for (const entry of discovered) {
+                  if (allowedToolNames.has(entry.name) && !dynamicToolNames.has(entry.name)) {
+                    dynamicToolNames.add(entry.name);
+                    if (availableTools && !availableTools.some((d) => d.function.name === entry.name)) {
+                      availableTools.push(entry.tool.definition);
+                    }
+                  }
+                }
+                log.info({ chatId, discovered: discovered.map((d) => d.name) }, '[Agent] Tools discovered via find_tools');
+              }
             } else if (tool) {
               log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
               toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;

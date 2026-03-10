@@ -111,7 +111,7 @@ function formatTime(date: Date): string {
 
 export class ReminderTool extends BaseTool<ReminderArgs> {
   readonly name = 'reminder';
-  readonly description = 'Set, list, or cancel personal reminders. When setting a reminder, parse the time naturally (e.g., "in 30 minutes", "tomorrow at 3pm", "at 18:00"). The message is what to remind the user about. Supports recurring schedules with the recurrence parameter (e.g., "daily", "weekly", "every 2h").';
+  readonly description = 'Set, list, or cancel reminders. Supports natural time parsing and recurring schedules.';
   readonly aliases = ['remind', 'reminder'];
   readonly category = 'utility';
   readonly permissions = 'user';

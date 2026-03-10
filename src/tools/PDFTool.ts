@@ -14,8 +14,9 @@ type PDFArgs = ToolArgs & {
 
 export class PDFTool extends BaseTool<PDFArgs> {
   readonly name = 'pdf_tool';
-  readonly description = 'Perform operations on a PDF file attached to the current or quoted message. Actions: "info" (show page count and size), "compress" (reduce file size). The user must attach or reply to a PDF file.';
+  readonly description = 'PDF operations on an attached/quoted file: info (metadata) or compress (reduce size).';
   readonly aliases = ['pdf'];
+  override readonly triggerPatterns = [/application\/pdf/i];
   readonly category = 'utility';
   readonly permissions = 'user';
 

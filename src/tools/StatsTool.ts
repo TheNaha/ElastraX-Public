@@ -11,7 +11,7 @@ const log = logger.child({ module: 'StatsTool' });
 
 export class StatsTool extends BaseTool<ToolArgs> {
   readonly name = 'room_stats';
-  readonly description = 'Show usage statistics for the current chat room: total messages, bot replies, most active user, and room age. Use when the user asks about room stats, message counts, or activity.';
+  readonly description = 'Show chat room usage statistics: message counts, most active user, room age.';
   readonly aliases = ['stats', 'statistics'];
   readonly category = 'utility';
   readonly permissions = 'user';

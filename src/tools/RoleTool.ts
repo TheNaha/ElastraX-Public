@@ -55,7 +55,7 @@ type RoleSummary = {
 
 export class RoleTool extends BaseTool {
   readonly name = 'role';
-  readonly description = 'Manage user roles and per-role privileges. Grant, revoke, check, or list roles. View/modify privilege quotas.';
+  readonly description = 'Manage user roles and privileges: grant, revoke, check, list, or modify quotas.';
   readonly aliases = ['roles', 'permission', 'perm'];
   readonly category = 'admin';
   readonly permissions = 'user'; // check/list available to everyone; grant/revoke enforced internally

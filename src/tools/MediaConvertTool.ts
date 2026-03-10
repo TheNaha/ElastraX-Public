@@ -88,10 +88,11 @@ function getExtension(mimeType: string): string {
 
 export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly name = 'convert_media';
-  readonly description = 'Convert an attached or quoted media file to a different format using FFmpeg. The user must attach or reply to a media file. Supported formats: mp3, mp4, ogg, aac, opus, m4a, wav, webm, mkv, gif, png, jpg, webp.';
+  readonly description = 'Convert attached/quoted media to a different format (audio, video, image).';
   readonly aliases = ['convert', 'cv'];
   readonly category = 'media';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/^image\//i, /^video\//i, /^audio\//i];
 
   get definition(): ToolDefinition {
     return {

@@ -32,7 +32,7 @@ type LanguageToolArgs = ToolArgs & {
 
 export class LanguageTool extends BaseTool<LanguageToolArgs> {
   readonly name = 'language';
-  readonly description = 'Change the bot language for the current chat room (supports "en" for English, "id" for Indonesian).';
+  readonly description = 'Change the bot language for this chat room (en/id).';
   readonly aliases = ['lang', 'setlanguage', 'setlang'];
   readonly category = 'settings';
   readonly permissions = 'user'; // Any user can change language for now

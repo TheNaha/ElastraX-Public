@@ -126,7 +126,7 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
 
 export class MenfessTool extends BaseTool {
   readonly name = 'menfess';
-  readonly description = 'Send an anonymous (menfess) message to a target group or chat. The actual sender is hidden. Requires the target chat ID or a configured alias. A confirmation step is shown before sending.';
+  readonly description = 'Send an anonymous message to a target group/chat. Sender identity is hidden.';
   readonly aliases = ['menfess', 'anon'];
   readonly category = 'fun';
   readonly permissions = 'user';

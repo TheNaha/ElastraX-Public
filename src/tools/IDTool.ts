@@ -7,7 +7,7 @@ const log = logger.child({ module: 'IDTool' });
 
 export class IDTool extends BaseTool<ToolArgs> {
   readonly name = 'get_id';
-  readonly description = 'Show the current user\'s ID, the chat room ID, and platform info. Use this when the user asks "what is my ID", "what is the group ID", or "who am I".';
+  readonly description = 'Show user ID, chat room ID, and platform info.';
   readonly aliases = ['id', 'whoami'];
   readonly category = 'utility';
   readonly permissions = 'user';

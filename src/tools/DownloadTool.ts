@@ -130,10 +130,11 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
 
 export class DownloadTool extends BaseTool<DownloadArgs> {
   readonly name = 'download_media';
-  readonly description = 'Download audio or video from a URL (YouTube, Instagram, TikTok, Twitter/X, SoundCloud, and 1000+ sites) and send it to the chat. Infer the best format from context. Default to mp3 for music/audio requests and mp4 for video.';
+  readonly description = 'Download audio/video from a URL (YouTube, TikTok, Instagram, etc). Default: mp4 for video, mp3 for audio.';
   readonly aliases = ['download', 'dl'];
   readonly category = 'media';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/https?:\/\//i];
 
   get definition(): ToolDefinition {
     return {

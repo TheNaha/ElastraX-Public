@@ -41,6 +41,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
   readonly aliases = ['help', 'h', '?'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly alwaysLoad = true;
 
   get definition(): ToolDefinition {
     return {

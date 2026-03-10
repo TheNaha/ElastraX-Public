@@ -30,7 +30,7 @@ function isParticipantAction(action: string): action is GroupParticipantAction {
 
 export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
   readonly name = 'groupadmin';
-  readonly description = 'Manage a WhatsApp group: add or remove participants, promote/demote admins, mute/unmute the group, or get the invite link. Only works in groups and requires the bot to be a group admin.';
+  readonly description = 'Manage group: add/remove members, promote/demote admins, mute/unmute, get invite link. Requires bot admin.';
   readonly aliases = ['group_admin', 'group-admin', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   readonly category = 'admin';
   readonly permissions = 'admin';

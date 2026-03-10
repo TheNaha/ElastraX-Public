@@ -35,10 +35,11 @@ type SearchResponse = {
 
 export class WebSearchTool extends BaseTool<WebSearchArgs> {
   readonly name = 'web_search';
-  readonly description = 'Searches the web for up-to-date information. Use this whenever you need to look up facts, news, or answer questions that require recent knowledge.';
+  readonly description = 'Search the web for current information, facts, or news.';
   readonly aliases = ['search', 'google', 'duckduckgo'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly alwaysLoad = true;
 
   private readonly searxngUrl: string;
 

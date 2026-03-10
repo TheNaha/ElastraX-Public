@@ -11,7 +11,7 @@ type DeleteTarget = { key?: DeleteMessageKey };
 
 export class DeleteMessageTool extends BaseTool<ToolArgs> {
   readonly name = 'delete_message';
-  readonly description = 'Delete one of the bot\'s own previously sent messages. The user must reply to the bot message they want deleted, or explicitly ask to delete the last bot message.';
+  readonly description = 'Delete a bot message. User must reply to the target message or ask to delete the last one.';
   readonly aliases = ['delete', 'del', 'unsend'];
   readonly category = 'utility';
   readonly permissions = 'user';
