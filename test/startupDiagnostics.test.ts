@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import * as path from 'path';
 
 const _mockLogger = {
   trace: () => {},
@@ -43,10 +44,10 @@ describe('startupDiagnostics', () => {
 
   test('resolveFixtureDir switches between development and production defaults', () => {
     process.env.NODE_ENV = 'development';
-    expect(resolveFixtureDir()).toContain('test\\fixtures\\wa_messages');
+    expect(resolveFixtureDir()).toContain(path.join('test', 'fixtures', 'wa_messages'));
 
     process.env.NODE_ENV = 'production';
-    expect(resolveFixtureDir()).toContain('data\\fixtures\\wa_messages');
+    expect(resolveFixtureDir()).toContain(path.join('data', 'fixtures', 'wa_messages'));
   });
 
   test('stripFixtureBlobs removes large binary blob fields recursively', () => {
