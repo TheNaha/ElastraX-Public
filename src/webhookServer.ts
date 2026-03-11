@@ -314,8 +314,12 @@ export function adaptSeerr(body: WebhookBody): string {
   }
 }
 
-export function adaptJellyfin(body: WebhookBody): string {
+export function adaptJellyfin(body: WebhookBody): string | null {
   const notifType = asNonEmptyString(body.NotificationType) ?? 'Unknown';
+
+  // Jellyfin sends "Unknown" for internal system events that don't map to a
+  // real notification type. Silently drop them — they have no useful content.
+  if (notifType === 'Unknown' || notifType === 'UNKNOWN') return null;
   const name = asNonEmptyString(body.Name) ?? 'Unknown';
   const overview = asNonEmptyString(body.Overview) ?? '';
   const year = asNonEmptyString(body.Year) ?? '';
@@ -565,7 +569,14 @@ export class WebhookServer {
     }
 
     // Format the notification message
-    const text = truncateText(isSeerr ? adaptSeerr(body) : adaptJellyfin(body));
+    const formatted = isSeerr ? adaptSeerr(body) : adaptJellyfin(body);
+    if (formatted === null) {
+      log.debug({ serviceType, notificationType }, 'Dropping unactionable notification type (Unknown)');
+      return new Response(JSON.stringify({ ok: true, delivered: 0, note: 'Dropped: unactionable notification type' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    const text = truncateText(formatted);
 
     // Resolve which users/rooms to notify
     const targets: { chatRoomId: string; platform: string }[] = [];
