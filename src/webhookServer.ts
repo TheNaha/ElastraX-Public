@@ -511,9 +511,16 @@ export class WebhookServer {
     body: WebhookBody,
     url: URL,
     req: Request,
+    ip: string,
   ): Promise<Response> {
     const isSeerr = pathname === '/webhook/seerr';
     const serviceType = isSeerr ? 'seerr' : 'jellyfin';
+
+    // Log every inbound media webhook so auth/routing issues are easy to diagnose.
+    const notificationType = asNonEmptyString(body.notification_type as string)   // Seerr
+      ?? asNonEmptyString(body.NotificationType as string)                         // Jellyfin
+      ?? 'unknown';
+    log.info({ serviceType, ip, notificationType, pathname }, 'Media webhook received');
 
     // Per-service auth, independent of the global WEBHOOK_SECRET.
     // If the service secret is not configured the endpoint is unauthenticated —
@@ -536,12 +543,25 @@ export class WebhookServer {
         || asNonEmptyString(body.secret as string)
         || '';
       if (!safeSecretCompare(providedSecret, serviceSecret)) {
+        log.warn({
+          serviceType,
+          ip,
+          notificationType,
+          // Show which auth methods were attempted (values are NOT logged for security)
+          tried: {
+            bearerHeader: bearerToken !== null,
+            xWebhookSecretHeader: req.headers.get('x-webhook-secret') !== null,
+            queryParam: url.searchParams.has('secret'),
+            bodyField: body.secret !== undefined,
+          },
+        }, 'Media webhook rejected — invalid or missing secret');
         return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
           status: 401, headers: { 'Content-Type': 'application/json' },
         });
       }
+      log.debug({ serviceType, ip, authMethod: bearerToken ? 'bearer' : 'other' }, 'Media webhook auth passed');
     } else {
-      log.warn({ serviceType }, `No webhook secret configured for ${serviceType} — accepting unauthenticated requests on this endpoint`);
+      log.debug({ serviceType, ip }, `No webhook secret configured for ${serviceType} — accepting request without auth`);
     }
 
     // Format the notification message
@@ -599,7 +619,7 @@ export class WebhookServer {
     for (const room of adminRooms) addTarget(room.chatRoomId, room.platform);
 
     if (targets.length === 0) {
-      log.info({ serviceType, pathname }, 'Media webhook received but no subscribers found');
+      log.info({ serviceType, ip, notificationType, pathname }, 'Media webhook received but no subscribers found — link an account with /connect and enable notifications');
       return new Response(JSON.stringify({ ok: true, delivered: 0, note: 'No subscribers' }), {
         headers: { 'Content-Type': 'application/json' },
       });
@@ -622,7 +642,7 @@ export class WebhookServer {
     }
 
     const delivered = targets.length - failed.length;
-    log.info({ serviceType, delivered, failed: failed.length, targets: targets.length }, 'Media webhook delivery completed');
+    log.info({ serviceType, ip, notificationType, delivered, failed: failed.length, targets: targets.length }, 'Media webhook delivery completed');
 
     if (failed.length > 0) {
       return new Response(JSON.stringify({ ok: false, delivered, failed }), {
@@ -657,10 +677,13 @@ export class WebhookServer {
 
     this.server = Bun.serve({
       port,
-      fetch: async (req) => {
-        // Only accept POST /webhook
+      fetch: async (req, server) => {
         const url = new URL(req.url);
-        log.trace({ method: req.method, pathname: url.pathname }, 'HTTP request received');
+        // Prefer X-Forwarded-For (reverse proxy) then fall back to the direct socket address
+        const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+          ?? server.requestIP(req)?.address
+          ?? 'unknown';
+        log.debug({ method: req.method, pathname: url.pathname, ip }, 'HTTP request received');
         if (req.method !== 'POST' || !url.pathname.startsWith('/webhook')) {
           // Health check endpoint
           if (req.method === 'GET' && url.pathname === '/health') {
@@ -696,6 +719,7 @@ export class WebhookServer {
         } catch (err: unknown) {
           const message = err instanceof Error ? err.message : 'Invalid JSON body';
           const status = message.includes('Request body too large') ? 413 : 400;
+          log.warn({ ip, pathname: url.pathname, status, message }, 'Webhook body parse error');
           return new Response(JSON.stringify({ error: message }), {
             status,
             headers: { 'Content-Type': 'application/json' },
@@ -704,7 +728,7 @@ export class WebhookServer {
 
         // ── Media Service Webhooks (V7.15) ──────────────────────────────────
         if (isMediaWebhook) {
-          return this.handleMediaWebhook(url.pathname, body, url, req);
+          return this.handleMediaWebhook(url.pathname, body, url, req, ip);
         }
 
         // From here on, isMediaWebhook is false, so secret is guaranteed defined
