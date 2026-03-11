@@ -21,6 +21,7 @@ import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
+import { logger } from '../utils/logger.js';
 import * as schema from './schema.js';
 
 const DEFAULT_DB_PATH = './data/bot.db';
@@ -46,6 +47,32 @@ let schemaInitialized = false;
 
 export function ensureDatabaseSchema(): void {
   if (schemaInitialized) return;
+
+  // Count already-applied migrations so we can log how many new ones ran.
+  // The __drizzle_migrations table may not exist yet on a brand-new database;
+  // if so, the query will throw and we treat the count as 0.
+  let before = 0;
+  try {
+    before = sqlite
+      .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM __drizzle_migrations')
+      .get()?.n ?? 0;
+  } catch {
+    // Table doesn't exist yet — that's fine, migrate() will create it.
+  }
+
   migrate(db, { migrationsFolder: './drizzle/migrations' });
+
+  const after = sqlite
+    .query<{ n: number }, []>('SELECT COUNT(*) AS n FROM __drizzle_migrations')
+    .get()?.n ?? 0;
+
+  const applied = after - before;
+  const log = logger.child({ module: 'DB' });
+  if (applied > 0) {
+    log.info({ applied, total: after }, `Applied ${applied} new database migration(s)`);
+  } else {
+    log.info({ total: after }, 'Database schema is up to date — no new migrations');
+  }
+
   schemaInitialized = true;
 }
