@@ -511,21 +511,38 @@ export class WebhookServer {
     body: WebhookBody,
     url: URL,
     req: Request,
-    secret: string,
   ): Promise<Response> {
-    // Auth: shared secret via query param, header, or body field
-    const providedSecret = asNonEmptyString(body.secret)
-      || asNonEmptyString(url.searchParams.get('secret'))
-      || asNonEmptyString(req.headers.get('x-webhook-secret'))
-      || '';
-    if (!safeSecretCompare(providedSecret, secret)) {
-      return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
-        status: 401, headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
     const isSeerr = pathname === '/webhook/seerr';
     const serviceType = isSeerr ? 'seerr' : 'jellyfin';
+
+    // Per-service auth, independent of the global WEBHOOK_SECRET.
+    // If the service secret is not configured the endpoint is unauthenticated —
+    // rely on network-level security in that case.
+    // Jellyfin's webhook plugin has no native secret field, so leave
+    // JELLYFIN_WEBHOOK_SECRET unset to allow it through without a secret.
+    // Seerr: set a token in Jellyseerr webhook settings → Authorization: Bearer
+    const serviceSecret = isSeerr
+      ? process.env.SEERR_WEBHOOK_SECRET
+      : process.env.JELLYFIN_WEBHOOK_SECRET;
+
+    if (serviceSecret) {
+      // Seerr sends Authorization: Bearer <token> when configured in its webhook settings.
+      // Also accept x-webhook-secret header, ?secret= query param, or body.secret as fallbacks.
+      const authHeader = req.headers.get('authorization');
+      const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : null;
+      const providedSecret = bearerToken
+        || asNonEmptyString(req.headers.get('x-webhook-secret'))
+        || asNonEmptyString(url.searchParams.get('secret'))
+        || asNonEmptyString(body.secret as string)
+        || '';
+      if (!safeSecretCompare(providedSecret, serviceSecret)) {
+        return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
+          status: 401, headers: { 'Content-Type': 'application/json' },
+        });
+      }
+    } else {
+      log.warn({ serviceType }, `No webhook secret configured for ${serviceType} — accepting unauthenticated requests on this endpoint`);
+    }
 
     // Format the notification message
     const text = truncateText(isSeerr ? adaptSeerr(body) : adaptJellyfin(body));
@@ -627,7 +644,7 @@ export class WebhookServer {
 
     const secret = process.env.WEBHOOK_SECRET;
     if (!secret) {
-      log.warn('WEBHOOK_SECRET not set — /webhook endpoint will be disabled, /health remains available');
+      log.warn('WEBHOOK_SECRET not set — generic /webhook endpoint will be disabled; /webhook/seerr and /webhook/jellyfin remain available with their own per-service secrets (SEERR_WEBHOOK_SECRET / JELLYFIN_WEBHOOK_SECRET)');
     }
 
     const rawPort = process.env.WEBHOOK_PORT;
@@ -661,7 +678,10 @@ export class WebhookServer {
           return new Response('Not Found', { status: 404 });
         }
 
-        if (!secret) {
+        // Media webhooks have their own per-service secrets — allow them even without global WEBHOOK_SECRET
+        const isMediaWebhook = url.pathname === '/webhook/seerr' || url.pathname === '/webhook/jellyfin';
+
+        if (!secret && !isMediaWebhook) {
           return new Response(JSON.stringify({ error: 'Webhook is disabled because WEBHOOK_SECRET is not configured.' }), {
             status: 503,
             headers: { 'Content-Type': 'application/json' },
@@ -683,14 +703,18 @@ export class WebhookServer {
         }
 
         // ── Media Service Webhooks (V7.15) ──────────────────────────────────
-        if (url.pathname === '/webhook/seerr' || url.pathname === '/webhook/jellyfin') {
-          return this.handleMediaWebhook(url.pathname, body, url, req, secret);
+        if (isMediaWebhook) {
+          return this.handleMediaWebhook(url.pathname, body, url, req);
         }
+
+        // From here on, isMediaWebhook is false, so secret is guaranteed defined
+        // (the !secret && !isMediaWebhook guard above would have returned 503 otherwise).
+        const resolvedSecret = secret as string;
 
         const githubEvent = req.headers.get('x-github-event');
         if (githubEvent) {
           const sigHeader = req.headers.get('x-hub-signature-256');
-          if (!verifyGitHubSignature(bodyRaw, secret, sigHeader)) {
+          if (!verifyGitHubSignature(bodyRaw, resolvedSecret, sigHeader)) {
             return new Response(JSON.stringify({ error: 'Invalid GitHub signature' }), {
               status: 401, headers: { 'Content-Type': 'application/json' },
             });
@@ -703,7 +727,7 @@ export class WebhookServer {
             || asNonEmptyString(url.searchParams.get('secret'))
             || asNonEmptyString(req.headers.get('x-webhook-secret'))
             || '';
-          if (!safeSecretCompare(providedSecret, secret)) {
+          if (!safeSecretCompare(providedSecret, resolvedSecret)) {
             return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
               status: 401, headers: { 'Content-Type': 'application/json' },
             });
