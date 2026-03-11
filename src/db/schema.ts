@@ -163,3 +163,51 @@ export const userIdentities = sqliteTable('user_identities', {
 }));
 
 export type UserIdentity = typeof userIdentities.$inferSelect;
+
+// V7.15: Extensible external service account bindings (Jellyfin, Seerr, etc.)
+export const serviceBindings = sqliteTable('service_bindings', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Bot user ID (WA JID or Discord ID). */
+  userId: text('user_id').notNull(),
+  /** 'whatsapp' | 'discord' */
+  platform: text('platform').notNull(),
+  /** 'jellyfin' | 'seerr' | extensible */
+  serviceType: text('service_type').notNull(),
+  /** External service user ID (e.g. Jellyfin userId, Seerr userId). */
+  externalUserId: text('external_user_id').notNull(),
+  /** External username (for webhook matching). */
+  externalUsername: text('external_username').notNull(),
+  /** External email (for webhook matching by email). */
+  externalEmail: text('external_email'),
+  /** JSON blob for extra data (isAdmin flag, avatar, tokens, etc.). */
+  metadata: text('metadata'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  userServiceIdx: uniqueIndex('service_bindings_user_service_idx').on(table.userId, table.platform, table.serviceType),
+  externalIdx: index('service_bindings_external_idx').on(table.serviceType, table.externalUserId),
+  emailIdx: index('service_bindings_email_idx').on(table.serviceType, table.externalEmail),
+  usernameIdx: index('service_bindings_username_idx').on(table.serviceType, table.externalUsername),
+}));
+
+export type ServiceBinding = typeof serviceBindings.$inferSelect;
+
+// V7.15: Notification routing — which rooms receive which service notifications
+export const notificationSubscriptions = sqliteTable('notification_subscriptions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  /** Bot user ID. */
+  userId: text('user_id').notNull(),
+  /** 'whatsapp' | 'discord' */
+  platform: text('platform').notNull(),
+  /** 'jellyfin' | 'seerr' | 'all' */
+  serviceType: text('service_type').notNull(),
+  /** Target chat room for notifications. */
+  chatRoomId: text('chat_room_id').notNull(),
+  /** JSON array of notification types to receive, null = all. */
+  notifyTypes: text('notify_types'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  userRoomIdx: uniqueIndex('notification_subs_user_room_idx').on(table.userId, table.platform, table.serviceType, table.chatRoomId),
+  serviceIdx: index('notification_subs_service_idx').on(table.serviceType),
+}));
+
+export type NotificationSubscription = typeof notificationSubscriptions.$inferSelect;

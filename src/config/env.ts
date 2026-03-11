@@ -157,6 +157,11 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   validatePort(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors);
   validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
 
+  // V7.15: Media integration (optional — only validate format when set)
+  validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors);
+  validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors);
+  validateUrl(env.JELLYFIN_EXTERNAL_URL, 'JELLYFIN_EXTERNAL_URL', errors);
+
   if (errors.length > 0) {
     for (const error of errors) {
       logger.error(error);

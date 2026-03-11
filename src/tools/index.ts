@@ -51,6 +51,10 @@ import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
 import { OwnerTool } from './OwnerTool';
 import { FindToolsTool, setToolSearchIndex } from './FindToolsTool';
+import { MediaBindTool } from './MediaBindTool';
+import { MediaSearchTool } from './MediaSearchTool';
+import { MediaRequestTool } from './MediaRequestTool';
+import { MediaLibraryTool } from './MediaLibraryTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
 
@@ -87,6 +91,11 @@ toolsList.push(new RoleTool());
 
 // ── Fun / Social ──────────────────────────────────────────────────────────────
 toolsList.push(new MenfessTool());
+// ── Media Services (V7.15) ────────────────────────────────────────────────────
+toolsList.push(new MediaBindTool());
+toolsList.push(new MediaSearchTool());
+toolsList.push(new MediaRequestTool());
+toolsList.push(new MediaLibraryTool());
 // ── Owner ───────────────────────────────────────────────────────────────────────
 toolsList.push(new OwnerTool());
 // ── Meta (always-loaded) ────────────────────────────────────────────────────────

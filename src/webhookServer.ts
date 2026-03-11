@@ -45,6 +45,8 @@
 import { logger } from './utils/logger';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { healthMetrics } from './utils/HealthMetrics';
+import { ServiceBindingService } from './utils/ServiceBindingService';
+import { NotificationSubscriptionService } from './utils/NotificationSubscriptionService';
 
 const log = logger.child({ module: 'WebhookServer' });
 
@@ -278,6 +280,85 @@ function adaptApprise(body: WebhookBody): string {
   return lines.join('\n');
 }
 
+// ─── Media Service Adapters (V7.15) ────────────────────────────────────────────
+
+export function adaptSeerr(body: WebhookBody): string {
+  const notifType = asNonEmptyString(body.notification_type) ?? 'UNKNOWN';
+  const subject = asNonEmptyString(body.subject) ?? '';
+  const message = asNonEmptyString(body.message) ?? '';
+  switch (notifType) {
+    case 'MEDIA_PENDING':
+      return `🎬 *New Request* — ${subject}\n${message}`.trim();
+    case 'MEDIA_APPROVED':
+      return `✅ *Request Approved* — ${subject}\n${message}`.trim();
+    case 'MEDIA_AUTO_APPROVED':
+      return `✅ *Auto-Approved* — ${subject}\n${message}`.trim();
+    case 'MEDIA_AVAILABLE':
+      return `🎉 *Now Available!* — ${subject}\n${message}`.trim();
+    case 'MEDIA_DECLINED':
+      return `❌ *Request Declined* — ${subject}\n${message}`.trim();
+    case 'MEDIA_FAILED':
+      return `⚠️ *Request Failed* — ${subject}\n${message}`.trim();
+    case 'ISSUE_CREATED':
+      return `🐛 *Issue Reported* — ${subject}\n${message}`.trim();
+    case 'ISSUE_RESOLVED':
+      return `✅ *Issue Resolved* — ${subject}`.trim();
+    case 'ISSUE_COMMENT': {
+      const comment = asNonEmptyString(body.comment_message) ?? message;
+      return `💬 *New Comment* on ${subject}\n${comment}`.trim();
+    }
+    case 'TEST_NOTIFICATION':
+      return '🔔 Request service notification test successful!';
+    default:
+      return `🔔 *Media Update (${notifType})* — ${subject}\n${message}`.trim();
+  }
+}
+
+export function adaptJellyfin(body: WebhookBody): string {
+  const notifType = asNonEmptyString(body.NotificationType) ?? 'Unknown';
+  const name = asNonEmptyString(body.Name) ?? 'Unknown';
+  const overview = asNonEmptyString(body.Overview) ?? '';
+  const year = asNonEmptyString(body.Year) ?? '';
+  const seriesName = asNonEmptyString(body.SeriesName);
+  const seasonNum = asNonEmptyString(body.SeasonNumber00);
+  const episodeNum = asNonEmptyString(body.EpisodeNumber00);
+  const username = asNonEmptyString(body.NotificationUsername) ?? '';
+  const deviceName = asNonEmptyString(body.DeviceName) ?? '';
+  // Build display title
+  let displayName = name;
+  if (seriesName) {
+    displayName = `${seriesName}`;
+    if (seasonNum && episodeNum) displayName += ` S${seasonNum}E${episodeNum}`;
+    displayName += ` — ${name}`;
+  }
+  const yearStr = year ? ` (${year})` : '';
+
+  switch (notifType) {
+    case 'ItemAdded':
+      return `📥 *New Media Added* — ${displayName}${yearStr}\n${overview}`.trim();
+    case 'ItemDeleted':
+      return `🗑️ *Media Removed* — ${displayName}${yearStr}`;
+    case 'PlaybackStart':
+      return `▶️ *Now Playing* — ${displayName}\nUser: ${username}\nDevice: ${deviceName}`;
+    case 'PlaybackStop':
+      return `⏹️ *Stopped Playing* — ${displayName}\nUser: ${username}`;
+    case 'UserCreated':
+      return `👤 *New User Created* — ${username}`;
+    case 'AuthenticationFailure':
+      return `🔒 *Auth Failure* — User: ${username}`;
+    case 'PendingRestart':
+      return '🔄 *Server Pending Restart*';
+    case 'TaskCompleted': {
+      const taskName = asNonEmptyString(body.TaskName) ?? 'Unknown Task';
+      return `✅ *Task Completed* — ${taskName}`;
+    }
+    case 'PluginInstalled':
+      return `🔌 *Plugin Installed* — ${name}`;
+    default:
+      return `🔔 *Streaming Service (${notifType})* — ${displayName}${yearStr}`;
+  }
+}
+
 function buildGenericMessage(body: WebhookBody): string {
   const title = asNonEmptyString(body.title);
   const text = asNonEmptyString(body.text)
@@ -424,6 +505,119 @@ export class WebhookServer {
     throw new Error(`No sender available for room_id: ${roomId}`);
   }
 
+  /** Handle Seerr/Jellyfin webhook: authenticate, format, route to subscribers. */
+  private async handleMediaWebhook(
+    pathname: string,
+    body: WebhookBody,
+    url: URL,
+    req: Request,
+    secret: string,
+  ): Promise<Response> {
+    // Auth: shared secret via query param, header, or body field
+    const providedSecret = asNonEmptyString(body.secret)
+      || asNonEmptyString(url.searchParams.get('secret'))
+      || asNonEmptyString(req.headers.get('x-webhook-secret'))
+      || '';
+    if (!safeSecretCompare(providedSecret, secret)) {
+      return new Response(JSON.stringify({ error: 'Invalid or missing secret' }), {
+        status: 401, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const isSeerr = pathname === '/webhook/seerr';
+    const serviceType = isSeerr ? 'seerr' : 'jellyfin';
+
+    // Format the notification message
+    const text = truncateText(isSeerr ? adaptSeerr(body) : adaptJellyfin(body));
+
+    // Resolve which users/rooms to notify
+    const targets: { chatRoomId: string; platform: string }[] = [];
+    const seen = new Set<string>();
+
+    const addTarget = (chatRoomId: string, platform: string) => {
+      const key = `${chatRoomId}:${platform}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        targets.push({ chatRoomId, platform });
+      }
+    };
+
+    // 1. Route to the specific user who triggered the event
+    if (isSeerr) {
+      const extra = asRecord(body.extra) ?? {};
+      const username = asNonEmptyString(body.requestedBy_username)
+        ?? asNonEmptyString(extra.requestedBy_username as string);
+      const email = asNonEmptyString(body.requestedBy_email)
+        ?? asNonEmptyString(extra.requestedBy_email as string);
+
+      const bindings = username
+        ? await ServiceBindingService.findByExternalUsername('seerr', username)
+        : email
+          ? await ServiceBindingService.findByExternalEmail('seerr', email)
+          : [];
+
+      for (const binding of bindings) {
+        const rooms = await NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType);
+        for (const room of rooms) addTarget(room.chatRoomId, room.platform);
+      }
+    } else {
+      // Jellyfin: lookup by UserId or NotificationUsername
+      const jellyfinUserId = asNonEmptyString(body.UserId);
+      const jellyfinUsername = asNonEmptyString(body.NotificationUsername);
+
+      const bindings = jellyfinUserId
+        ? await ServiceBindingService.findByExternalUser('jellyfin', jellyfinUserId)
+        : jellyfinUsername
+          ? await ServiceBindingService.findByExternalUsername('jellyfin', jellyfinUsername)
+          : [];
+
+      for (const binding of bindings) {
+        const rooms = await NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType);
+        for (const room of rooms) addTarget(room.chatRoomId, room.platform);
+      }
+    }
+
+    // 2. Admin routing: Jellyfin admins get ALL notifications
+    const adminRooms = await NotificationSubscriptionService.getAdminNotificationRooms(serviceType);
+    for (const room of adminRooms) addTarget(room.chatRoomId, room.platform);
+
+    if (targets.length === 0) {
+      log.info({ serviceType, pathname }, 'Media webhook received but no subscribers found');
+      return new Response(JSON.stringify({ ok: true, delivered: 0, note: 'No subscribers' }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // Deliver to all target rooms
+    const deliveryResults = await Promise.allSettled(
+      targets.map(({ chatRoomId, platform }) => this.send(chatRoomId, text, platform)),
+    );
+
+    const failed: Array<{ roomId: string; error: string }> = [];
+    for (let i = 0; i < deliveryResults.length; i++) {
+      const result = deliveryResults[i];
+      if (result.status === 'rejected') {
+        const errorMessage = result.reason instanceof Error
+          ? result.reason.message
+          : String(result.reason || 'Unknown error');
+        failed.push({ roomId: targets[i].chatRoomId, error: errorMessage });
+      }
+    }
+
+    const delivered = targets.length - failed.length;
+    log.info({ serviceType, delivered, failed: failed.length, targets: targets.length }, 'Media webhook delivery completed');
+
+    if (failed.length > 0) {
+      return new Response(JSON.stringify({ ok: false, delivered, failed }), {
+        status: 207, headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    return new Response(JSON.stringify({ ok: true, delivered }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   start(): void {
     const enabled = process.env.WEBHOOK_ENABLED !== 'false';
     if (!enabled) {
@@ -486,6 +680,11 @@ export class WebhookServer {
             status,
             headers: { 'Content-Type': 'application/json' },
           });
+        }
+
+        // ── Media Service Webhooks (V7.15) ──────────────────────────────────
+        if (url.pathname === '/webhook/seerr' || url.pathname === '/webhook/jellyfin') {
+          return this.handleMediaWebhook(url.pathname, body, url, req, secret);
         }
 
         const githubEvent = req.headers.get('x-github-event');
