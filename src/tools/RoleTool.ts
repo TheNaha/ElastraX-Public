@@ -187,8 +187,8 @@ export class RoleTool extends BaseTool {
         const def = defaults[f];
         const label = cur === -1 ? 'unlimited' : String(cur);
         const defLabel = def === -1 ? 'unlimited' : String(def);
-        const overridden = cur !== def ? ' _(overridden)_' : '';
-        out += `• *${f}:* ${label} (default: ${defLabel})${overridden}\n`;
+        const overridden = cur !== def ? ' (Overridden)' : '';
+        out += `• *${f}:* ${label} (Default: ${defLabel})${overridden}\n`;
       }
       return out;
     }
