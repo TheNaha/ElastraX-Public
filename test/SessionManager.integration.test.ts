@@ -45,7 +45,7 @@ describe('SessionManager integration', () => {
       CREATE INDEX IF NOT EXISTS flow_sessions_updated_idx ON flow_sessions (updated_at);
     `);
     manager.getDbDeps = async () => ({ db, flowSessions });
-    await db.delete(flowSessions).run();
+    await db.delete(flowSessions);
     manager.sessions.clear();
     manager.persistQueue.clear();
     manager.dbLoaded = false;
@@ -55,7 +55,7 @@ describe('SessionManager integration', () => {
 
   afterEach(async () => {
     await flushPersistenceQueue();
-    await db.delete(flowSessions).run();
+    await db.delete(flowSessions);
     manager.sessions.clear();
     manager.persistQueue.clear();
     manager.dbLoaded = false;
