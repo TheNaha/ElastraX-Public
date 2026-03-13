@@ -69,7 +69,7 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
       // We don't historically mass-download media right now as that would hammer the network
       // We just leave mediaPath null for historical messages until natively requested
       // We can record the mime type though.
-      mimeType: Array.from(ctx.text).length > 0 ? undefined : 'application/octet-stream', // heuristic
+      mimeType: ctx.text.length > 0 ? undefined : 'application/octet-stream', // heuristic
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       created_at: new Date(((ctx.rawMessage as any)?.messageTimestamp || Date.now() / 1000) * 1000),
     });

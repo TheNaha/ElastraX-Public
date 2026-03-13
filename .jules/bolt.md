@@ -25,3 +25,7 @@
 ## 2026-03-10 - [O(N) History Context Sorting]
 **Learning:** Re-sorting the historical message array (`historyDesc`) using `.sort(...)` by `created_at` timestamp is an unnecessary O(N log N) operation when the database query already returns the results ordered by `created_at` in descending order (`desc(messages.created_at)`).
 **Action:** Replace the `.sort()` call with `.reverse()` to reorder the context window chronologically in O(N) time and reduce CPU overhead.
+
+## 2026-03-13 - [O(N) Array Allocation for Emptiness Checks]
+**Learning:** Checking if a string is empty using `Array.from(str).length > 0` forces an unnecessary O(N) iteration and heap allocation of a new array. This becomes a severe memory bottleneck during operations that process large batches of text strings (like history ingestion).
+**Action:** Always use the native O(1) `str.length > 0` property for simple string length or emptiness checks.
