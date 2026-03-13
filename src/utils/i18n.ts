@@ -89,7 +89,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'id.response': '🪪 *Your Info*\n👤 Name: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Is Group: *{isGroup}*\n🔐 Permissions: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Room Stats*\n💬 Total Messages: *{total}*\n🤖 Bot Replies: *{botReplies}*\n👤 Human Messages: *{humanMessages}*\n📅 Active Since: *{since}*\n🏆 Top User: *{topUser}* ({topCount} messages)',
+    'stats.response': '📊 *Room Stats*\n • 💬 Total Messages: *{total}*\n • 🤖 Bot Replies: *{botReplies}*\n • 👤 Human Messages: *{humanMessages}*\n • 📅 Active Since: *{since}*\n • 🏆 Top User: *{topUser}* ({topCount} messages)',
     'stats.no_data': '📊 No messages recorded for this room yet.',
 
     // Delete
@@ -284,7 +284,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'id.response': '🪪 *Info Kamu*\n👤 Nama: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Grup: *{isGroup}*\n🔐 Izin: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Statistik Ruangan*\n💬 Total Pesan: *{total}*\n🤖 Balasan Bot: *{botReplies}*\n👤 Pesan Manusia: *{humanMessages}*\n📅 Aktif Sejak: *{since}*\n🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
+    'stats.response': '📊 *Statistik Ruangan*\n • 💬 Total Pesan: *{total}*\n • 🤖 Balasan Bot: *{botReplies}*\n • 👤 Pesan Manusia: *{humanMessages}*\n • 📅 Aktif Sejak: *{since}*\n • 🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
     'stats.no_data': '📊 Belum ada pesan yang tercatat untuk ruangan ini.',
 
     // Delete

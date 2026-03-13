@@ -185,8 +185,8 @@ export class RoleTool extends BaseTool {
       for (const f of PRIVILEGE_FIELDS) {
         const cur = current[f];
         const def = defaults[f];
-        const label = cur === -1 ? 'unlimited' : String(cur);
-        const defLabel = def === -1 ? 'unlimited' : String(def);
+        const label = cur === -1 ? 'Unlimited' : String(cur);
+        const defLabel = def === -1 ? 'Unlimited' : String(def);
         const overridden = cur !== def ? ' (Overridden)' : '';
         out += `• *${f}:* ${label} (Default: ${defLabel})${overridden}\n`;
       }
@@ -292,7 +292,7 @@ function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
 ): string {
   return roles.length > 0
-    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
+    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'Global' : entry.scope})`).join('\n')
     : '_No explicit roles assigned_';
 }
 
@@ -336,12 +336,12 @@ function canAssign(callerRoles: string[], targetRole: string): boolean {
 }
 
 function formatPrivileges(p: RolePrivileges): string {
-  const fmt = (v: number) => v === -1 ? 'unlimited' : String(v);
+  const fmt = (v: number) => v === -1 ? 'Unlimited' : String(v);
   return [
-    `  Messages/window: *${fmt(p.maxMessagesPerWindow)}*`,
-    `  Window (sec): *${fmt(p.rateLimitWindowSec)}*`,
-    `  Context limit: *${fmt(p.contextLimit)}*`,
-    `  Max download (MB): *${fmt(p.maxDownloadMb)}*`,
+    ` • Messages/window: *${fmt(p.maxMessagesPerWindow)}*`,
+    ` • Window (sec): *${fmt(p.rateLimitWindowSec)}*`,
+    ` • Context limit: *${fmt(p.contextLimit)}*`,
+    ` • Max download (MB): *${fmt(p.maxDownloadMb)}*`,
   ].join('\n');
 }
 
