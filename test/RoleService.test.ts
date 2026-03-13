@@ -44,8 +44,8 @@ describe('RoleService', () => {
       CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_idx ON user_identities (pn);
     `);
 
-    await db.delete(userRoles);
-    await db.delete(userIdentities);
+    await db.delete(userRoles).run();
+    await db.delete(userIdentities).run();
     process.env.BOT_OWNER_JID = '';
   });
 

@@ -292,7 +292,7 @@ function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
 ): string {
   return roles.length > 0
-    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'Global' : entry.scope})`).join('\n')
+    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
     : '_No explicit roles assigned_';
 }
 
