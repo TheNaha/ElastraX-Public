@@ -30,7 +30,7 @@ describe('db/index', () => {
     } else {
       delete process.env.ELASTRAX_DB_PATH;
     }
-    try { rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
   });
 
   test('creates the data directory, enables pragmas, and migrates once for file databases', async () => {
