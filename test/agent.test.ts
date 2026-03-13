@@ -81,29 +81,24 @@ mock.module('../src/db', () => ({
   },
 }));
 
-mock.module('fs/promises', () => ({
-  readFile: async () => Buffer.from('media-content'),
-}));
-
-mock.module('fs', () => ({
-  existsSync: (_path: string) => shouldFileExist,
-}));
-
 process.env.AI_STREAMING = 'true';
 
-// Import AFTER all mocks are registered
 import { handleIncomingMessage } from '../src/agent/index';
 
-// Use spyOn for tools and FlowHandler AFTER importing agent.
+// Use spyOn for tools, FlowHandler, and fs modules AFTER importing agent.
 // spyOn replaces the live binding in the module namespace so the agent sees it,
 // but unlike mock.module() it does NOT bleed into other test files.
 import * as toolsModule from '../src/tools';
 import * as flowModule from '../src/core/FlowHandler';
+import * as fsModule from 'fs';
+import * as fsPromisesModule from 'fs/promises';
 
 const getToolDefinitionsSpy = spyOn(toolsModule, 'getToolDefinitions');
 const getToolByNameSpy = spyOn(toolsModule, 'getToolByName');
 const getToolByAliasOrNameSpy = spyOn(toolsModule, 'getToolByAliasOrName');
 const flowHandleSpy = spyOn(flowModule.FlowHandler, 'handle');
+const existsSyncSpy = spyOn(fsModule, 'existsSync');
+const readFileSpy = spyOn(fsPromisesModule, 'readFile');
 
 // ─── Fetch helper: build a realistic OpenAI chat/completions response ─────────
 
@@ -188,6 +183,8 @@ describe('handleIncomingMessage', () => {
     // Configure spies using current mockToolMap / mockFlowResult state.
     // These are re-applied every test so the closures see the latest values.
     flowHandleSpy.mockImplementation(async () => mockFlowResult);
+    existsSyncSpy.mockImplementation((_path: string) => shouldFileExist);
+    readFileSpy.mockImplementation(async () => Buffer.from('media-content') as any);
     getToolByNameSpy.mockImplementation((name: string) => mockToolMap[name]);
     getToolByAliasOrNameSpy.mockImplementation((alias: string) =>
       Object.values(mockToolMap).find((t: any) =>
@@ -204,6 +201,8 @@ describe('handleIncomingMessage', () => {
   });
 
   afterEach(() => {
+    existsSyncSpy.mockRestore();
+    readFileSpy.mockRestore();
     global.fetch = originalFetch;
     delete process.env.AI_API_BASE_URL;
     delete process.env.AI_API_KEY;

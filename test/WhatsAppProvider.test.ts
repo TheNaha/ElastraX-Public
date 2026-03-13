@@ -105,15 +105,20 @@ describe('WhatsAppProvider', () => {
   const originalCreateSocket = whatsAppProviderDeps.createSocket;
   const originalRenderQr = whatsAppProviderDeps.renderQr;
 
+  let identitySpy: ReturnType<typeof spyOn>;
+  let roleSpy: ReturnType<typeof spyOn>;
+
   beforeEach(() => {
     delete process.env.BOT_OWNER_JID;
     mockIdentityUpsert.mockClear();
     mockSetRole.mockClear();
-    spyOn(IdentityService, 'upsert').mockImplementation(mockIdentityUpsert);
-    spyOn(RoleService, 'setRole').mockImplementation(mockSetRole);
+    identitySpy = spyOn(IdentityService, 'upsert').mockImplementation(mockIdentityUpsert);
+    roleSpy = spyOn(RoleService, 'setRole').mockImplementation(mockSetRole);
   });
 
   afterEach(() => {
+    identitySpy?.mockRestore();
+    roleSpy?.mockRestore();
     whatsAppProviderDeps.useAuthState = originalUseAuthState;
     whatsAppProviderDeps.fetchLatestVersion = originalFetchLatestVersion;
     whatsAppProviderDeps.createSocket = originalCreateSocket;
