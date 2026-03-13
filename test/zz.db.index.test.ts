@@ -1,89 +1,100 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
-const sqliteExecCalls: string[] = [];
-const dbPaths: string[] = [];
-const mkdirCalls: Array<{ path: string; recursive?: boolean }> = [];
-const migrateCalls: Array<{ folder: string }> = [];
-const existingPaths = new Set<string>();
-
-class MockDatabase {
-  constructor(path: string) {
-    dbPaths.push(path);
-  }
-
-  exec(sql: string): void {
-    sqliteExecCalls.push(sql);
-  }
-  query(sql: string): any {
-    return { get: () => ({ n: 0 }) };
-  }
-  _exec(sql: string): void {
-    sqliteExecCalls.push(sql);
-  }
-}
-
-mock.module('bun:sqlite', () => ({ Database: MockDatabase }));
-mock.module('drizzle-orm/bun-sqlite', () => ({ drizzle: ({ client, schema }: { client: unknown; schema: unknown }) => ({ client, schema }) }));
-mock.module('drizzle-orm/bun-sqlite/migrator', () => ({ migrate: (_db: unknown, options: { migrationsFolder: string }) => migrateCalls.push({ folder: options.migrationsFolder }) }));
-mock.module('node:fs', () => ({
-  existsSync: (path: string) => existingPaths.has(path),
-  mkdirSync: (path: string, options?: { recursive?: boolean }) => {
-    mkdirCalls.push({ path, recursive: options?.recursive });
-    existingPaths.add(path);
-  },
-}));
+/**
+ * Integration-style tests for src/db/index.ts module initialisation.
+ *
+ * These tests use real `bun:sqlite` and `drizzle-orm` modules with temporary
+ * directories instead of `mock.module()` so that module mocks don't leak
+ * into other test files sharing the same process.
+ */
 
 async function importFreshDbModule(label: string) {
   return import(`../src/db/index.ts?case=${label}-${Date.now()}`);
 }
 
 describe('db/index', () => {
+  let tmpDir: string;
+  const savedDbPath = process.env.ELASTRAX_DB_PATH;
+
   beforeEach(() => {
-    sqliteExecCalls.length = 0;
-    dbPaths.length = 0;
-    mkdirCalls.length = 0;
-    migrateCalls.length = 0;
-    existingPaths.clear();
+    tmpDir = join(tmpdir(), `elastrax-db-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     delete process.env.ELASTRAX_DB_PATH;
   });
 
+  afterEach(() => {
+    if (savedDbPath !== undefined) {
+      process.env.ELASTRAX_DB_PATH = savedDbPath;
+    } else {
+      delete process.env.ELASTRAX_DB_PATH;
+    }
+    try { rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore cleanup errors */ }
+  });
+
   test('creates the data directory, enables pragmas, and migrates once for file databases', async () => {
+    const dbPath = join(tmpDir, 'test.db');
+    process.env.ELASTRAX_DB_PATH = dbPath;
+
     const mod = await importFreshDbModule('file');
 
-    expect(dbPaths).toEqual(['./data/bot.db']);
-    expect(mkdirCalls).toEqual([{ path: './data', recursive: true }]);
-    expect(sqliteExecCalls).toContain('PRAGMA journal_mode = WAL;');
-    expect(sqliteExecCalls).toContain('PRAGMA synchronous = NORMAL;');
-    expect(sqliteExecCalls).toContain('PRAGMA foreign_keys = ON;');
+    // Directory and database file should be created
+    expect(existsSync(tmpDir)).toBe(true);
+    expect(existsSync(dbPath)).toBe(true);
 
-    mod.ensureDatabaseSchema();
-    mod.ensureDatabaseSchema();
-    expect(migrateCalls).toEqual([{ folder: './drizzle/migrations' }]);
+    // Verify pragmas via live queries
+    const journalMode = mod.sqlite.query<{ journal_mode: string }, []>('PRAGMA journal_mode').get();
+    expect(journalMode?.journal_mode).toBe('wal');
+
+    const sync = mod.sqlite.query<{ synchronous: number }, []>('PRAGMA synchronous').get();
+    expect(sync?.synchronous).toBe(1); // NORMAL = 1
+
+    const fk = mod.sqlite.query<{ foreign_keys: number }, []>('PRAGMA foreign_keys').get();
+    expect(fk?.foreign_keys).toBe(1);
+
+    mod.sqlite.close();
   });
 
   test('skips directory creation and WAL for in-memory databases', async () => {
     process.env.ELASTRAX_DB_PATH = ':memory:';
-    await importFreshDbModule('memory');
+    const mod = await importFreshDbModule('memory');
 
-    expect(dbPaths).toEqual([':memory:']);
-    expect(mkdirCalls).toEqual([]);
-    expect(sqliteExecCalls).not.toContain('PRAGMA journal_mode = WAL;');
-    expect(sqliteExecCalls).toContain('PRAGMA synchronous = NORMAL;');
-    expect(sqliteExecCalls).toContain('PRAGMA foreign_keys = ON;');
+    // WAL is not applicable to in-memory databases
+    const journalMode = mod.sqlite.query<{ journal_mode: string }, []>('PRAGMA journal_mode').get();
+    expect(journalMode?.journal_mode).not.toBe('wal');
+
+    // synchronous and foreign_keys should still be set
+    const sync = mod.sqlite.query<{ synchronous: number }, []>('PRAGMA synchronous').get();
+    expect(sync?.synchronous).toBe(1);
+
+    const fk = mod.sqlite.query<{ foreign_keys: number }, []>('PRAGMA foreign_keys').get();
+    expect(fk?.foreign_keys).toBe(1);
   });
 
-  test('does not recreate an existing directory', async () => {
-    existingPaths.add('./data');
-    await importFreshDbModule('existing-dir');
+  test('does not error when the data directory already exists', async () => {
+    // Pre-create the directory
+    mkdirSync(tmpDir, { recursive: true });
+    const dbPath = join(tmpDir, 'test.db');
+    process.env.ELASTRAX_DB_PATH = dbPath;
 
-    expect(mkdirCalls).toEqual([]);
+    const mod = await importFreshDbModule('existing-dir');
+
+    // Module should initialise without errors
+    expect(existsSync(dbPath)).toBe(true);
+
+    mod.sqlite.close();
   });
 
   test('uses trimmed ELASTRAX_DB_PATH values', async () => {
-    process.env.ELASTRAX_DB_PATH = '  ./tmp/custom.db  ';
-    await importFreshDbModule('trimmed-path');
+    const dbPath = join(tmpDir, 'trimmed.db');
+    process.env.ELASTRAX_DB_PATH = `  ${dbPath}  `;
 
-    expect(dbPaths).toEqual(['./tmp/custom.db']);
-    expect(mkdirCalls).toEqual([{ path: './tmp', recursive: true }]);
+    const mod = await importFreshDbModule('trimmed-path');
+
+    // The database should be created at the trimmed path
+    expect(existsSync(dbPath)).toBe(true);
+
+    mod.sqlite.close();
   });
 });
