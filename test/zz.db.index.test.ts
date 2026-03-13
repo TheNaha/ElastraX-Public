@@ -14,6 +14,12 @@ class MockDatabase {
   exec(sql: string): void {
     sqliteExecCalls.push(sql);
   }
+  query(sql: string): any {
+    return { get: () => ({ n: 0 }) };
+  }
+  _exec(sql: string): void {
+    sqliteExecCalls.push(sql);
+  }
 }
 
 mock.module('bun:sqlite', () => ({ Database: MockDatabase }));
