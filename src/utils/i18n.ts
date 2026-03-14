@@ -83,13 +83,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.rate_limited': '⏳ Slow down! You can send a message every {seconds} seconds. Please wait.',
 
     // Ping
-    'ping.response': '🏓 Pong!\n⏱ Latency: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
+    'ping.response': '🏓 Pong!\n • ⏱ Latency: *{latency}ms*\n • ⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Your Info*\n👤 Name: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Is Group: *{isGroup}*\n🔐 Permissions: *{permissions}*',
+    'id.response': '🪪 *Your Info*\n • 👤 Name: *{name}*\n • 🆔 User ID: `{userId}`\n • 💬 Chat ID: `{chatId}`\n • 📡 Platform: *{platform}*\n • 🔑 Is Group: *{isGroup}*\n • 🔐 Permissions: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Room Stats*\n💬 Total Messages: *{total}*\n🤖 Bot Replies: *{botReplies}*\n👤 Human Messages: *{humanMessages}*\n📅 Active Since: *{since}*\n🏆 Top User: *{topUser}* ({topCount} messages)',
+    'stats.response': '📊 *Room Statistics*\n • 💬 Total Messages: *{total}*\n • 🤖 Bot Replies: *{botReplies}*\n • 👤 Human Messages: *{humanMessages}*\n • 📅 Active Since: *{since}*\n • 🏆 Top User: *{topUser}* ({topCount} msgs)',
     'stats.no_data': '📊 No messages recorded for this room yet.',
 
     // Delete
@@ -278,13 +278,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.rate_limited': '⏳ Pelan-pelan ya! Kamu bisa kirim pesan setiap {seconds} detik. Tunggu dulu.',
 
     // Ping
-    'ping.response': '🏓 Pong!\n⏱ Latensi: *{latency}ms*\n⬆️ Uptime: *{uptime}*',
+    'ping.response': '🏓 Pong!\n • ⏱ Latensi: *{latency}ms*\n • ⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Info Kamu*\n👤 Nama: *{name}*\n🆔 User ID: `{userId}`\n💬 Chat ID: `{chatId}`\n📡 Platform: *{platform}*\n🔑 Grup: *{isGroup}*\n🔐 Izin: *{permissions}*',
+    'id.response': '🪪 *Info Kamu*\n • 👤 Nama: *{name}*\n • 🆔 User ID: `{userId}`\n • 💬 Chat ID: `{chatId}`\n • 📡 Platform: *{platform}*\n • 🔑 Grup: *{isGroup}*\n • 🔐 Izin: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Statistik Ruangan*\n💬 Total Pesan: *{total}*\n🤖 Balasan Bot: *{botReplies}*\n👤 Pesan Manusia: *{humanMessages}*\n📅 Aktif Sejak: *{since}*\n🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
+    'stats.response': '📊 *Statistik Ruangan*\n • 💬 Total Pesan: *{total}*\n • 🤖 Balasan Bot: *{botReplies}*\n • 👤 Pesan Manusia: *{humanMessages}*\n • 📅 Aktif Sejak: *{since}*\n • 🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
     'stats.no_data': '📊 Belum ada pesan yang tercatat untuk ruangan ini.',
 
     // Delete
