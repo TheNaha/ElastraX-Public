@@ -25,6 +25,12 @@ import { logger } from './logger';
 
 const log = logger.child({ module: 'FFmpegConverter' });
 
+const ALLOWED_FLAGS = new Set([
+  '-vcodec', '-acodec', '-vn', '-an', '-q:a', '-movflags',
+  '-vf', '-loop', '-ss', '-t', '-preset', '-vsync',
+  '-vframes', '-lossless', '-quality', '-y', '-i'
+]);
+
 /** Utility class that wraps FFmpeg for buffer-to-buffer media conversion. */
 export class FFmpegConverter {
   /**
@@ -46,6 +52,13 @@ export class FFmpegConverter {
   static async convert(inputBuffer: Buffer, args: string[], extIn: string, extOut: string): Promise<Buffer> {
     if (!/^[a-zA-Z0-9]+$/.test(extIn) || !/^[a-zA-Z0-9]+$/.test(extOut)) {
       throw new Error('Invalid extension provided');
+    }
+
+    // Security: Validate all caller-supplied args against the allowlist to prevent argument injection.
+    for (const arg of args) {
+      if (arg.startsWith('-') && !ALLOWED_FLAGS.has(arg) && !/^-\d+$/.test(arg)) {
+        throw new Error(`Unsafe or unsupported FFmpeg argument detected: ${arg}`);
+      }
     }
 
     log.debug({ extIn, extOut, inputSize: inputBuffer.length }, 'FFmpeg conversion starting');
