@@ -19,3 +19,7 @@
 ## 2025-03-14 - [Consistent Bulleted Lists for Metadata]
 **Learning:** Text-based bots often output metadata (e.g. system stats, command help) as raw multiline strings. Relying purely on newlines makes the text dense and harder to scan. Introducing a simple bullet prefix (` • `) for each key-value pair creates a clear, aligned list format that significantly improves visual scanning and readability.
 **Action:** Always format consecutive key-value metadata lines (like those in `MenuTool` help, `StatsTool`, and `OwnerTool` system info) as proper bulleted lists using ` • ` instead of plain text on newlines.
+
+## 2025-03-16 - [List Formatting Optimization]
+**Learning:** In chat-based text interfaces, placing a leading space before list bullets (e.g., ` • ` instead of `• `) improves readability by providing subtle visual padding from the edge of the chat bubble.
+**Action:** Always format text-based lists with a leading space before the bullet point (` • `) to enhance the visual scanning experience for the user.
