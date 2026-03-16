@@ -16,3 +16,8 @@
 **Vulnerability:** Object dictionary lookup via user-provided keys like `targetFmt` or `firstTokenLower` allowed prototype pollution vulnerabilities (e.g., bypassing validation using `__proto__`).
 **Learning:** Direct object indexing for user input validation (e.g., `if (!FORMAT_ARGS[userInput])`) is insecure and can be bypassed or abused if the input matches inherited properties like `__proto__` or `constructor`.
 **Prevention:** Use `Object.prototype.hasOwnProperty.call(obj, key)` instead of direct indexing to validate if a key exists safely on a plain object dictionary without triggering prototype chain lookups.
+
+## 2026-03-08 - Argument Injection in FFmpegConverter
+**Vulnerability:** `FFmpegConverter` passed user-provided arguments directly to `child_process.spawn()` without checking if they were allowed flags. This allowed Argument Injection vulnerabilities where an attacker could pass arbitrary FFmpeg flags (e.g., to read arbitrary files, overwrite files, or execute commands).
+**Learning:** Any user-provided input that is passed as arguments to an external command (like FFmpeg) should be strictly validated against an allowlist of permitted flags and patterns to prevent Argument Injection.
+**Prevention:** Implemented an `ALLOWED_FLAGS` set in `FFmpegConverter` and strictly validated that any argument starting with `-` matches either a permitted flag or a valid numeric value before passing it to `spawn`.

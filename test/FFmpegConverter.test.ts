@@ -154,6 +154,28 @@ describe('FFmpegConverter', () => {
     ).rejects.toThrow('Invalid extension provided');
   });
 
+  test('should throw for unallowed FFmpeg flags', async () => {
+    await expect(
+      FFmpegConverter.convert(Buffer.from('data'), ['-unallowed'], 'mp4', 'webp')
+    ).rejects.toThrow('Unsafe or unsupported FFmpeg argument detected: -unallowed');
+  });
+
+  test('should allow numeric flags', async () => {
+    const inputBuffer = Buffer.from('input');
+    const args = ['-1', '-200'];
+
+    // Setup spawn to succeed
+    mockSpawn.mockImplementationOnce(() => {
+        const child = new EventEmitter() as any;
+        child.stderr = new EventEmitter();
+        setTimeout(() => child.emit('close', 0), 10);
+        return child;
+    });
+
+    const result = await FFmpegConverter.convert(inputBuffer, args, 'img', 'webp');
+    expect(result).toBeDefined();
+  });
+
   test('should handle exception during success flow in close event', async () => {
     const inputBuffer = Buffer.from('input');
 
