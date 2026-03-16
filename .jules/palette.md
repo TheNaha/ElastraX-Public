@@ -15,3 +15,7 @@
 ## 2024-05-24 - [Consistent Conversational UI Menus]
 **Learning:** In text-based conversational interfaces (like WhatsApp bots), using consistent title-cased labels in parentheses (e.g., `(Default: x)`, `(Custom)`) and standardized bullet points (`•`) across all tool menus significantly improves scannability and accessibility for screen readers compared to mixed conventions (lowercase, hyphens, ASCII symbols).
 **Action:** Standardize parameter and status lists across all tools (e.g. `RoleTool`, `MenuTool`) to use `•` bullets and Title Case parentheticals.
+
+## 2025-03-14 - [Consistent Bulleted Lists for Metadata]
+**Learning:** Text-based bots often output metadata (e.g. system stats, command help) as raw multiline strings. Relying purely on newlines makes the text dense and harder to scan. Introducing a simple bullet prefix (` • `) for each key-value pair creates a clear, aligned list format that significantly improves visual scanning and readability.
+**Action:** Always format consecutive key-value metadata lines (like those in `MenuTool` help, `StatsTool`, and `OwnerTool` system info) as proper bulleted lists using ` • ` instead of plain text on newlines.

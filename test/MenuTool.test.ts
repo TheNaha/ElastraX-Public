@@ -46,9 +46,9 @@ describe('MenuTool', () => {
     const result = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
 
     expect(result).toContain('*Help for: /mock_tool*');
-    expect(result).toContain('*Description:* A mock tool');
-    expect(result).toContain('*Aliases:* mt');
-    expect(result).toContain('*Category:* Mock');
+    expect(result).toContain('• *Description:* A mock tool');
+    expect(result).toContain('• *Aliases:* mt');
+    expect(result).toContain('• *Category:* Mock');
   });
 
   test('should display detailed help for mock tool in Indonesian', async () => {
@@ -60,9 +60,9 @@ describe('MenuTool', () => {
     const result = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
 
     expect(result).toContain('*Bantuan untuk: /mock_tool*');
-    expect(result).toContain('*Deskripsi:* A mock tool');
-    expect(result).toContain('*Alias:* mt');
-    expect(result).toContain('*Kategori:* Mock');
+    expect(result).toContain('• *Deskripsi:* A mock tool');
+    expect(result).toContain('• *Alias:* mt');
+    expect(result).toContain('• *Kategori:* Mock');
   });
 
   test('should display menu greeting in Indonesian', async () => {
