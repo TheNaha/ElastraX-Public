@@ -163,13 +163,18 @@ export function getAlwaysLoadedDefinitions() {
  * Returns tools whose `triggerPatterns` match the given message text or MIME type.
  * Used to pre-load obvious tools (e.g., URL → download, image → sticker) without
  * requiring the model to call `find_tools` first.
+ *
+ * Patterns are tested against text AND mimeType separately to allow anchored
+ * patterns (e.g., /^image\// for MIME matching) to work correctly.
  */
 export function getTriggeredTools(text: string, mimeType?: string): BaseTool[] {
   const matched: BaseTool[] = [];
-  const testString = mimeType ? `${text}\n${mimeType}` : text;
   for (const tool of discoverableTools) {
     if (!tool.triggerPatterns) continue;
-    if (tool.triggerPatterns.some((p) => p.test(testString))) {
+    const isTriggered = tool.triggerPatterns.some((p) =>
+      p.test(text) || (mimeType && p.test(mimeType))
+    );
+    if (isTriggered) {
       matched.push(tool);
     }
   }
