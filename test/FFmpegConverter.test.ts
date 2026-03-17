@@ -1,6 +1,7 @@
-import { expect, test, describe, mock, beforeEach } from 'bun:test';
+import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:test';
 import { FFmpegConverter } from '../src/utils/FFmpegConverter';
 import { EventEmitter } from 'events';
+import * as fsModule from 'fs';
 
 // Mock child_process
 const mockSpawn = mock(() => {
@@ -14,20 +15,16 @@ mock.module('child_process', () => ({
   spawn: mockSpawn
 }));
 
-// Mock fs
+// fs.promises spies — initialised in beforeEach, restored in afterEach
 const mockWriteFile = mock(async () => {});
 const mockReadFile = mock(async () => Buffer.from('output'));
 const mockUnlink = mock(async () => {});
 const mockMkdir = mock(async () => {});
 
-mock.module('fs', () => ({
-  promises: {
-    writeFile: mockWriteFile,
-    readFile: mockReadFile,
-    unlink: mockUnlink,
-    mkdir: mockMkdir,
-  }
-}));
+let writeFileSpy: ReturnType<typeof spyOn>;
+let readFileSpy: ReturnType<typeof spyOn>;
+let unlinkSpy: ReturnType<typeof spyOn>;
+let mkdirSpy: ReturnType<typeof spyOn>;
 
 describe('FFmpegConverter', () => {
     beforeEach(() => {
@@ -36,6 +33,18 @@ describe('FFmpegConverter', () => {
         mockReadFile.mockClear();
         mockUnlink.mockClear();
         mockMkdir.mockClear();
+
+        writeFileSpy = spyOn(fsModule.promises, 'writeFile').mockImplementation(mockWriteFile as any);
+        readFileSpy = spyOn(fsModule.promises, 'readFile').mockImplementation(mockReadFile as any);
+        unlinkSpy = spyOn(fsModule.promises, 'unlink').mockImplementation(mockUnlink as any);
+        mkdirSpy = spyOn(fsModule.promises, 'mkdir').mockImplementation(mockMkdir as any);
+    });
+
+    afterEach(() => {
+        writeFileSpy?.mockRestore();
+        readFileSpy?.mockRestore();
+        unlinkSpy?.mockRestore();
+        mkdirSpy?.mockRestore();
     });
 
   test('should convert buffer successfully', async () => {
@@ -143,6 +152,28 @@ describe('FFmpegConverter', () => {
     await expect(
       FFmpegConverter.convert(Buffer.from('data'), [], 'mp4', 'out.put')
     ).rejects.toThrow('Invalid extension provided');
+  });
+
+  test('should throw for unallowed FFmpeg flags', async () => {
+    await expect(
+      FFmpegConverter.convert(Buffer.from('data'), ['-unallowed'], 'mp4', 'webp')
+    ).rejects.toThrow('Unsafe or unsupported FFmpeg argument detected: -unallowed');
+  });
+
+  test('should allow numeric flags', async () => {
+    const inputBuffer = Buffer.from('input');
+    const args = ['-1', '-200'];
+
+    // Setup spawn to succeed
+    mockSpawn.mockImplementationOnce(() => {
+        const child = new EventEmitter() as any;
+        child.stderr = new EventEmitter();
+        setTimeout(() => child.emit('close', 0), 10);
+        return child;
+    });
+
+    const result = await FFmpegConverter.convert(inputBuffer, args, 'img', 'webp');
+    expect(result).toBeDefined();
   });
 
   test('should handle exception during success flow in close event', async () => {

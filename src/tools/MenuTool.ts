@@ -102,16 +102,16 @@ export class MenuTool extends BaseTool<MenuArgs> {
       }
 
       let help = t(lang, 'menu.help_for', { name: tool.name });
-      help += `${t(lang, 'menu.description')} ${tool.description}\n`;
+      help += ` • ${t(lang, 'menu.description')} ${tool.description}\n`;
 
       if (tool.aliases.length > 0) {
-        help += `${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n`;
+        help += ` • ${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n`;
       }
 
       const catCap = tool.category.charAt(0).toUpperCase() + tool.category.slice(1);
       const permCap = tool.permissions.charAt(0).toUpperCase() + tool.permissions.slice(1);
-      help += `${t(lang, 'menu.category')} ${catCap}\n`;
-      help += `${t(lang, 'menu.permissions')} ${permCap}\n\n`;
+      help += ` • ${t(lang, 'menu.category')} ${catCap}\n`;
+      help += ` • ${t(lang, 'menu.permissions')} ${permCap}\n\n`;
 
       const props = tool.definition.function.parameters.properties;
       const required = tool.definition.function.parameters.required || [];
@@ -128,7 +128,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
         for (const [key, prop] of Object.entries(props)) {
           const isReq = required.includes(key);
           const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
-          help += `  - *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
+          help += `  • *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
           if (prop.enum && prop.enum.length > 0) {
             help += `\n    *${t(lang, 'menu.options')}* ${prop.enum.join(' | ')}`;
           }

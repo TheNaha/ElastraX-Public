@@ -22,6 +22,7 @@ type Task = () => Promise<void>;
 
 interface RoomQueue {
   tasks: Task[];
+  head: number;
   running: number;
   lastActivity: number;
 }
@@ -52,7 +53,7 @@ export class MessageQueue {
   enqueue(roomId: string, task: Task): void {
     let queue = this.queues.get(roomId);
     if (!queue) {
-      queue = { tasks: [], running: 0, lastActivity: Date.now() };
+      queue = { tasks: [], head: 0, running: 0, lastActivity: Date.now() };
       this.queues.set(roomId, queue);
     }
 
@@ -65,12 +66,20 @@ export class MessageQueue {
     const queue = this.queues.get(roomId);
     if (!queue) return;
 
-    if (queue.running >= this.concurrency || queue.tasks.length === 0) {
+    const pendingCount = queue.tasks.length - queue.head;
+    if (queue.running >= this.concurrency || pendingCount === 0) {
       return;
     }
 
-    const task = queue.tasks.shift()!;
+    const task = queue.tasks[queue.head]!;
+    queue.head++;
     queue.running++;
+
+    // Compact array to prevent unbounded memory growth if it gets too large
+    if (queue.head >= 100) {
+      queue.tasks = queue.tasks.slice(queue.head);
+      queue.head = 0;
+    }
 
     task()
       .catch((err) => {
@@ -87,7 +96,8 @@ export class MessageQueue {
   private prune(): void {
     const cutoff = Date.now() - this.idleTimeoutMs;
     for (const [roomId, queue] of this.queues) {
-      if (queue.running === 0 && queue.tasks.length === 0 && queue.lastActivity < cutoff) {
+      const pendingCount = queue.tasks.length - queue.head;
+      if (queue.running === 0 && pendingCount === 0 && queue.lastActivity < cutoff) {
         this.queues.delete(roomId);
       }
     }
@@ -98,7 +108,7 @@ export class MessageQueue {
     let totalPending = 0;
     let totalRunning = 0;
     for (const queue of this.queues.values()) {
-      totalPending += queue.tasks.length;
+      totalPending += (queue.tasks.length - queue.head);
       totalRunning += queue.running;
     }
     return { totalRooms: this.queues.size, totalPending, totalRunning };
