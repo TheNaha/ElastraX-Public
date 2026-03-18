@@ -14,24 +14,7 @@
 
 import { ChatRoom } from '../db/schema';
 import { DEFAULT_SYSTEM_PROMPT } from '../core/prompts';
-
-function parseIntegerEnv(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt((rawValue ?? '').trim(), 10);
-  return Number.isInteger(parsed) ? parsed : fallback;
-}
-
-function parseFloatEnv(rawValue: string | undefined, fallback: number): number {
-  const parsed = Number.parseFloat((rawValue ?? '').trim());
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-function parseBooleanEnv(rawValue: string | undefined, fallback: boolean): boolean {
-  if (rawValue === undefined) return fallback;
-  const normalized = rawValue.trim().toLowerCase();
-  if (normalized === 'true') return true;
-  if (normalized === 'false') return false;
-  return fallback;
-}
+import { getAIRequestConfig, readBooleanEnv, readFloatEnv, readIntegerEnv, readStringEnv } from '../config/runtime';
 
 /**
  * Service to manage the dynamic merging of hardcoded/ENV defaults
@@ -43,15 +26,16 @@ export class ConfigService {
    * If a field in the DB is null, it falls back to the .env variable or hardcoded default.
    */
   static getResolvedConfig(room: ChatRoom) {
-    const defaultSystemPrompt = process.env.DEFAULT_SYSTEM_PROMPT || DEFAULT_SYSTEM_PROMPT;
+    const defaultSystemPrompt = readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT);
+    const aiRequestConfig = getAIRequestConfig();
 
-    const envContextLimit = parseIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10);
-    const envTemperature = parseFloatEnv(process.env.AI_TEMPERATURE, 0.7);
-    const envMaxTokens = parseIntegerEnv(process.env.AI_MAX_TOKENS, 2048);
-    const envAutoReplyAll = parseBooleanEnv(process.env.AUTO_REPLY_ALL, false);
+    const envContextLimit = readIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10, { min: 1 });
+    const envTemperature = readFloatEnv(process.env.AI_TEMPERATURE, 0.7, { min: 0, max: 2 });
+    const envMaxTokens = aiRequestConfig.maxTokens;
+    const envAutoReplyAll = readBooleanEnv(process.env.AUTO_REPLY_ALL, false);
     // V7.13: Global summarization toggle. When false, no LLM summarization call is made
     // and only the most recent contextLimit messages are sent to the LLM.
-    const envSummarize = parseBooleanEnv(process.env.CONTEXT_SUMMARIZE, true);
+    const envSummarize = readBooleanEnv(process.env.CONTEXT_SUMMARIZE, true);
 
     return {
       systemPrompt: room.systemPrompt || defaultSystemPrompt,

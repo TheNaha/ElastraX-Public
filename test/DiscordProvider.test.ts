@@ -131,4 +131,44 @@ describe('DiscordProvider', () => {
     expect(client.destroy).toHaveBeenCalled();
     await expect(provider.sendMessage('channel-123', 'hello')).rejects.toThrow('Discord client is not initialized.');
   });
+
+  test('forwardMessage sends the current message content when no custom text is provided', async () => {
+    const send = mock(async () => {});
+    const client = createFakeClient();
+    client.channels.fetch = mock(async () => ({
+      isTextBased: () => true,
+      send,
+    }));
+
+    const provider = new DiscordProvider();
+    (provider as unknown as { client: unknown }).client = asDiscordClient(client);
+
+    const mentions = new Map<string, { id: string }>();
+    const attachments = new Map<string, { url: string; size: number }>() as Map<string, { url: string; size: number }> & { first(): undefined };
+    attachments.first = () => undefined;
+
+    const ctx = await (provider as unknown as {
+      createContext(message: unknown): Promise<MessageContext>;
+    }).createContext({
+      id: 'msg-1',
+      author: { id: 'user-1', username: 'alice', bot: false },
+      channelId: 'source-1',
+      content: 'hello world',
+      attachments,
+      mentions: { users: mentions },
+      reference: null,
+      channel: {
+        isDMBased: () => false,
+        messages: { fetch: mock(async () => null) },
+      },
+      guild: null,
+      reply: mock(async () => ({})),
+      react: mock(async () => {}),
+      delete: mock(async () => {}),
+    });
+
+    await ctx.forwardMessage?.('target-1');
+
+    expect(send).toHaveBeenCalledWith({ content: 'hello world' });
+  });
 });

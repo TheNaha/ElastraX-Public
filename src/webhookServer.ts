@@ -47,6 +47,7 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { healthMetrics } from './utils/HealthMetrics';
 import { ServiceBindingService } from './utils/ServiceBindingService';
 import { NotificationSubscriptionService } from './utils/NotificationSubscriptionService';
+import { getWebhookMaxTextLength } from './config/runtime';
 
 const log = logger.child({ module: 'WebhookServer' });
 
@@ -106,9 +107,24 @@ function normalizePriority(value: string | null): string | null {
 }
 
 function truncateText(text: string): string {
-  const maxLength = Math.max(200, parseInt(process.env.WEBHOOK_MAX_TEXT_LENGTH || '3500', 10) || 3500);
+  const maxLength = Math.max(200, getWebhookMaxTextLength());
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength - 1)}…`;
+}
+
+function mergeBindings<T extends { id: number }>(...bindingGroups: T[][]): T[] {
+  const merged: T[] = [];
+  const seen = new Set<number>();
+
+  for (const group of bindingGroups) {
+    for (const binding of group) {
+      if (seen.has(binding.id)) continue;
+      seen.add(binding.id);
+      merged.push(binding);
+    }
+  }
+
+  return merged;
 }
 
 function isValidPort(value: number): boolean {
@@ -590,6 +606,20 @@ export class WebhookServer {
       }
     };
 
+    const addBindingTargets = async (bindings: Array<{ userId: string; platform: string }>) => {
+      const roomGroups = await Promise.all(
+        bindings.map((binding) =>
+          NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType),
+        ),
+      );
+
+      for (const rooms of roomGroups) {
+        for (const room of rooms) {
+          addTarget(room.chatRoomId, room.platform);
+        }
+      }
+    };
+
     // 1. Route to the specific user who triggered the event
     if (isSeerr) {
       const extra = asRecord(body.extra) ?? {};
@@ -598,31 +628,23 @@ export class WebhookServer {
       const email = asNonEmptyString(body.requestedBy_email)
         ?? asNonEmptyString(extra.requestedBy_email as string);
 
-      const bindings = username
-        ? await ServiceBindingService.findByExternalUsername('seerr', username)
-        : email
-          ? await ServiceBindingService.findByExternalEmail('seerr', email)
-          : [];
+      const [usernameBindings, emailBindings] = await Promise.all([
+        username ? ServiceBindingService.findByExternalUsername('seerr', username) : Promise.resolve([]),
+        email ? ServiceBindingService.findByExternalEmail('seerr', email) : Promise.resolve([]),
+      ]);
 
-      for (const binding of bindings) {
-        const rooms = await NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType);
-        for (const room of rooms) addTarget(room.chatRoomId, room.platform);
-      }
+      await addBindingTargets(mergeBindings(usernameBindings, emailBindings));
     } else {
       // Jellyfin: lookup by UserId or NotificationUsername
       const jellyfinUserId = asNonEmptyString(body.UserId);
       const jellyfinUsername = asNonEmptyString(body.NotificationUsername);
 
-      const bindings = jellyfinUserId
-        ? await ServiceBindingService.findByExternalUser('jellyfin', jellyfinUserId)
-        : jellyfinUsername
-          ? await ServiceBindingService.findByExternalUsername('jellyfin', jellyfinUsername)
-          : [];
+      const [userBindings, usernameBindings] = await Promise.all([
+        jellyfinUserId ? ServiceBindingService.findByExternalUser('jellyfin', jellyfinUserId) : Promise.resolve([]),
+        jellyfinUsername ? ServiceBindingService.findByExternalUsername('jellyfin', jellyfinUsername) : Promise.resolve([]),
+      ]);
 
-      for (const binding of bindings) {
-        const rooms = await NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType);
-        for (const room of rooms) addTarget(room.chatRoomId, room.platform);
-      }
+      await addBindingTargets(mergeBindings(userBindings, usernameBindings));
     }
 
     // 2. Admin routing: Jellyfin admins get ALL notifications

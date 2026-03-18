@@ -51,15 +51,13 @@ import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
 import type { BaseTool, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
+import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs } from '../config/runtime';
+import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
 
 const modelRouter = getModelRouter();
-const streamingEnabled = process.env.AI_STREAMING === 'true';
-/** Minimum interval between message edits during streaming (ms). */
-const WA_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_WA || '1500', 10);
-const DC_EDIT_INTERVAL = parseInt(process.env.STREAMING_EDIT_INTERVAL_DC || '500', 10);
 
 function getToolTimeoutMs(): number {
-  return parseInt(process.env.AI_TOOL_TIMEOUT_MS || '30000', 10);
+  return getConfiguredToolTimeoutMs();
 }
 
 function getAllowedTools(roles: string[], isGroup: boolean): BaseTool[] {
@@ -73,6 +71,106 @@ function resolveToolResultText(result: ToolResult): string {
   return typeof result === 'object' && result !== null && 'text' in result
     ? result.text
     : result;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function parseToolArgs(rawArgs: string, toolName: string, logMalformed: boolean): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawArgs);
+    return isRecord(parsed) ? parsed : {};
+  } catch {
+    if (logMalformed) {
+      log.warn({ raw: rawArgs, toolName }, 'Failed to parse tool arguments');
+    }
+    return {};
+  }
+}
+
+function discoverMatchingTools(
+  query: string,
+  allowedToolNames: Set<string>,
+  dynamicToolNames: Set<string>,
+  availableTools: ToolDefinition[] | undefined,
+): string[] {
+  const discovered = toolSearchIndex.search(query, 7);
+  const added: string[] = [];
+
+  for (const entry of discovered) {
+    if (!allowedToolNames.has(entry.name) || dynamicToolNames.has(entry.name)) {
+      continue;
+    }
+
+    dynamicToolNames.add(entry.name);
+    added.push(entry.name);
+    if (availableTools && !availableTools.some((definition) => definition.function.name === entry.name)) {
+      availableTools.push(entry.tool.definition);
+    }
+  }
+
+  return added;
+}
+
+async function executeRequestedToolCalls(
+  toolCalls: ToolCall[],
+  options: {
+    ctx: MessageContext;
+    chatId: string;
+    iteration: number;
+    allowedToolNames: Set<string>;
+    dynamicToolNames: Set<string>;
+    availableTools: ToolDefinition[] | undefined;
+    toolLoadingMode: 'all' | 'search';
+    preferredTier?: ModelTier;
+    logMalformedArgs: boolean;
+    mode?: 'stream';
+  },
+): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
+  let preferredTier = options.preferredTier;
+
+  const toolResults = await Promise.all(toolCalls.map(async (tc: ToolCall) => {
+    const toolName = tc.function.name;
+    const args = parseToolArgs(tc.function.arguments, toolName, options.logMalformedArgs);
+    const tool = getToolByName(toolName);
+    let toolResultStr = '';
+
+    if (tool && (options.allowedToolNames.has(tool.name) || options.dynamicToolNames.has(tool.name))) {
+      log.info({ toolName, args, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) }, 'Tool call invoked');
+      healthMetrics.recordToolInvocation(toolName);
+      await options.ctx.react?.('🔧');
+      const rawResult = await executeToolWithTimeout(tool, args, options.ctx);
+      toolResultStr = resolveToolResultText(rawResult);
+      preferredTier = tool.modelTier;
+
+      if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
+        const query = typeof args.query === 'string' ? args.query : '';
+        const discovered = discoverMatchingTools(
+          query,
+          options.allowedToolNames,
+          options.dynamicToolNames,
+          options.availableTools,
+        );
+        log.info({ chatId: options.chatId, discovered }, '[Agent] Tools discovered via find_tools');
+      }
+    } else if (tool) {
+      log.warn({ toolName, chatId: options.chatId, senderId: options.ctx.senderId }, 'LLM requested unauthorized tool');
+      toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
+    } else {
+      log.error({ toolName, chatId: options.chatId }, 'LLM requested unknown tool');
+      toolResultStr = `Error: Tool ${toolName} not found.`;
+    }
+
+    return {
+      role: 'tool' as const,
+      tool_call_id: tc.id,
+      name: toolName,
+      content: toolResultStr,
+    };
+  }));
+
+  return { toolResults, preferredTier };
 }
 
 /**
@@ -167,38 +265,12 @@ async function executeToolWithTimeout(
 }
 
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
-  const endpoint = process.env.TRANSCRIBE_ENDPOINT;
-  if (!endpoint) return null;
-
-  const isAudio = ctx.mimeType?.startsWith('audio/');
-  if (!isAudio) return null;
+  if (!isTranscriptionConfigured() || !isAudioMimeType(ctx.mimeType)) return null;
 
   try {
-    await ctx.mediaReady;
-    if (!ctx.mediaPath || !existsSync(ctx.mediaPath)) return null;
-
-    const buffer = await readFile(ctx.mediaPath);
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': process.env.TRANSCRIBE_API_KEY ? `Bearer ${process.env.TRANSCRIBE_API_KEY}` : '',
-      },
-      body: JSON.stringify({
-        audio_base64: buffer.toString('base64'),
-        mime_type: ctx.mimeType || 'audio/ogg',
-        language: ctx.language || 'en',
-      }),
-      signal: AbortSignal.timeout(parseInt(process.env.TRANSCRIBE_TIMEOUT_MS || '45000', 10)),
-    });
-
-    if (!response.ok) {
-      throw new Error(`Transcription HTTP ${response.status}`);
-    }
-
-    const data = (await response.json()) as { text?: string; transcript?: string };
-    const text = (data.text || data.transcript || '').trim();
-    return text || null;
+    const source = await resolveTranscriptionSource(ctx, false);
+    if (!source) return null;
+    return await transcribeSource(source, ctx.language || 'en');
   } catch (err: unknown) {
     log.warn({ err }, '[Transcription] Failed to transcribe voice note');
     return null;
@@ -684,7 +756,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     //   2. Trigger-matched tools (URL → download, image → sticker, etc.)
     // The model can discover additional tools via `find_tools` at runtime.
     // Fallback: toolLoadingMode='all' sends everything (legacy behaviour).
-    const toolLoadingMode = (process.env.TOOL_LOADING_MODE || 'search') as 'all' | 'search';
+    const toolLoadingMode = getToolLoadingMode();
 
     let availableTools: ToolDefinition[] | undefined;
     // Track dynamically discovered tool names for authorization
@@ -725,8 +797,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }, '[Agent] Smart tool loading');
     }
 
-    const maxToolIterations = parseInt(process.env.AI_MAX_TOOL_ITERATIONS || '8', 10);
-    const editInterval = platform === 'whatsapp' ? WA_EDIT_INTERVAL : DC_EDIT_INTERVAL;
+    const streamingConfig = getStreamingConfig();
+    const maxToolIterations = getMaxToolIterations();
+    const editInterval = platform === 'whatsapp' ? streamingConfig.waEditIntervalMs : streamingConfig.dcEditIntervalMs;
     let preferredTier: ModelTier | undefined;
 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
@@ -739,7 +812,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         // or when the model has exhausted tool iterations and we expect text.
         const isLastChance = iteration === maxToolIterations - 1;
         const useStreaming =
-          streamingEnabled &&
+          streamingConfig.enabled &&
           (typeof ctx.sendMessage === 'function') &&
           (typeof ctx.editMessage === 'function') &&
           (!availableTools || isLastChance);
@@ -814,46 +887,20 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             });
 
             // Execute tools
-            const toolPromises = toolCalls.map(async (tc: ToolCall) => {
-              const toolName = tc.function.name;
-              let args: Record<string, unknown> = {};
-              try { args = JSON.parse(tc.function.arguments); } catch { /* ignore parse error */ }
-              const tool = getToolByName(toolName);
-              let toolResultStr = '';
-              if (tool && (allowedToolNames.has(tool.name) || dynamicToolNames.has(tool.name))) {
-                log.info({ toolName, args, chatId, iteration, mode: 'stream' }, 'Tool call invoked');
-                healthMetrics.recordToolInvocation(toolName);
-                await ctx.react?.('🔧');
-                const rawResult = await executeToolWithTimeout(tool, args, ctx);
-                toolResultStr = resolveToolResultText(rawResult);
-                preferredTier = tool.modelTier;
-
-                // V7.14: When find_tools is called, inject discovered tool definitions
-                if (toolName === 'find_tools' && toolLoadingMode === 'search') {
-                  const query = typeof args.query === 'string' ? args.query : '';
-                  const discovered = toolSearchIndex.search(query, 7);
-                  for (const entry of discovered) {
-                    if (allowedToolNames.has(entry.name) && !dynamicToolNames.has(entry.name)) {
-                      dynamicToolNames.add(entry.name);
-                      if (availableTools && !availableTools.some((d) => d.function.name === entry.name)) {
-                        availableTools.push(entry.tool.definition);
-                      }
-                    }
-                  }
-                  log.info({ chatId, discovered: discovered.map((d) => d.name) }, '[Agent] Tools discovered via find_tools');
-                }
-              } else if (tool) {
-                log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
-                toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
-              } else {
-                log.error({ toolName, chatId }, 'LLM requested unknown tool');
-                toolResultStr = `Error: Tool ${toolName} not found.`;
-              }
-              return { role: 'tool' as const, tool_call_id: tc.id, name: toolName, content: toolResultStr };
+            const execution = await executeRequestedToolCalls(toolCalls, {
+              ctx,
+              chatId,
+              iteration,
+              allowedToolNames,
+              dynamicToolNames,
+              availableTools,
+              toolLoadingMode,
+              preferredTier,
+              logMalformedArgs: false,
+              mode: 'stream',
             });
-
-            const toolResults = await Promise.all(toolPromises);
-            messagesForAI.push(...toolResults);
+            preferredTier = execution.preferredTier;
+            messagesForAI.push(...execution.toolResults);
             continue; // Loop again for the next LLM call
           }
 
@@ -893,57 +940,19 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
           log.info({ chatId, toolCount: aiMsgObj.tool_calls.length, iteration }, 'LLM requested tool calls');
           // Tool Call Requested - Parallel Execution
-          const toolPromises = aiMsgObj.tool_calls.map(async (tc: ToolCall) => {
-            const toolName = tc.function.name;
-            let args: Record<string, unknown> = {};
-            try {
-              args = JSON.parse(tc.function.arguments);
-            } catch {
-              log.warn({ raw: tc.function.arguments, toolName }, 'Failed to parse tool arguments');
-            }
-            const tool = getToolByName(toolName);
-            let toolResultStr = '';
-            
-            if (tool && (allowedToolNames.has(tool.name) || dynamicToolNames.has(tool.name))) {
-              log.info({ toolName, args, chatId, iteration }, 'Tool call invoked');
-              healthMetrics.recordToolInvocation(toolName);
-              await ctx.react?.('🔧'); // Feedback to user
-              const rawResult = await executeToolWithTimeout(tool, args, ctx);
-              toolResultStr = resolveToolResultText(rawResult);
-              preferredTier = tool.modelTier;
-
-              // V7.14: When find_tools is called, inject discovered tool definitions
-              if (toolName === 'find_tools' && toolLoadingMode === 'search') {
-                const query = typeof args.query === 'string' ? args.query : '';
-                const discovered = toolSearchIndex.search(query, 7);
-                for (const entry of discovered) {
-                  if (allowedToolNames.has(entry.name) && !dynamicToolNames.has(entry.name)) {
-                    dynamicToolNames.add(entry.name);
-                    if (availableTools && !availableTools.some((d) => d.function.name === entry.name)) {
-                      availableTools.push(entry.tool.definition);
-                    }
-                  }
-                }
-                log.info({ chatId, discovered: discovered.map((d) => d.name) }, '[Agent] Tools discovered via find_tools');
-              }
-            } else if (tool) {
-              log.warn({ toolName, chatId, senderId: ctx.senderId }, 'LLM requested unauthorized tool');
-              toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
-            } else {
-              log.error({ toolName, chatId }, 'LLM requested unknown tool');
-              toolResultStr = `Error: Tool ${toolName} not found.`;
-            }
-
-            return {
-              role: 'tool' as const,
-              tool_call_id: tc.id,
-              name: toolName,
-              content: toolResultStr,
-            };
+          const execution = await executeRequestedToolCalls(aiMsgObj.tool_calls, {
+            ctx,
+            chatId,
+            iteration,
+            allowedToolNames,
+            dynamicToolNames,
+            availableTools,
+            toolLoadingMode,
+            preferredTier,
+            logMalformedArgs: true,
           });
-
-          const toolResults = await Promise.all(toolPromises);
-          messagesForAI.push(...toolResults);
+          preferredTier = execution.preferredTier;
+          messagesForAI.push(...execution.toolResults);
         } else {
           // Standard text response (terminal state)
           isDone = true;

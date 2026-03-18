@@ -1,9 +1,8 @@
-import { describe, test, expect, mock, afterEach } from 'bun:test';
-import { DownloadTool } from '../src/tools/DownloadTool';
-import { MessageContext } from '../src/core/MessageContext';
+import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { EventEmitter } from 'events';
+import type { MessageContext } from '../src/core/MessageContext';
+import { DownloadTool, downloadToolDeps } from '../src/tools/DownloadTool';
 
-// Mock logger
 const _mockLogger = {
   trace: () => {},
   debug: () => {},
@@ -12,28 +11,37 @@ const _mockLogger = {
   error: () => {},
   child: () => _mockLogger,
 };
+
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-// Mock child_process
-let spawnedProcesses: any[] = [];
-mock.module('child_process', () => ({
-  spawn: (command: string, args: string[]) => {
-    const cp: any = new EventEmitter();
-    cp.stderr = new EventEmitter();
-    cp.stdout = new EventEmitter();
-    cp.pid = 123;
-    cp.command = command;
-    cp.args = args;
+const originalSpawn = downloadToolDeps.spawn;
+const originalMkdir = downloadToolDeps.fs.mkdir;
+const originalReaddir = downloadToolDeps.fs.readdir;
+const originalReadFile = downloadToolDeps.fs.readFile;
+const originalRm = downloadToolDeps.fs.rm;
+const originalCrypto = downloadToolDeps.crypto;
 
-    // Simulate immediate exit
-    setTimeout(() => {
-        cp.emit('close', 0);
-    }, 10);
+let spawnedProcesses: Array<{ args: string[] }> = [];
 
-    spawnedProcesses.push(cp);
-    return cp;
-  },
-}));
+const mockSpawn = mock((_command: string, args: string[]) => {
+  const cp = new EventEmitter() as EventEmitter & {
+    stderr: EventEmitter;
+    stdout: EventEmitter;
+    pid: number;
+    args: string[];
+  };
+  cp.stderr = new EventEmitter();
+  cp.stdout = new EventEmitter();
+  cp.pid = 123;
+  cp.args = args;
+
+  setTimeout(() => {
+    cp.emit('close', 0);
+  }, 10);
+
+  spawnedProcesses.push({ args });
+  return cp as never;
+});
 
 const createMockCtx = (): MessageContext => ({
   platform: 'whatsapp',
@@ -41,6 +49,7 @@ const createMockCtx = (): MessageContext => ({
   senderId: 'user-1',
   senderName: 'Alice',
   text: '',
+  messageType: 'conversation',
   isGroup: false,
   isBotMentioned: false,
   hasMedia: false,
@@ -48,6 +57,7 @@ const createMockCtx = (): MessageContext => ({
   reply: mock(async () => {}),
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
+  resolveRoles: mock(async () => ['user']),
   messageId: 'msg-1',
   mediaReady: Promise.resolve(),
   sendMedia: mock(async () => {}),
@@ -55,8 +65,31 @@ const createMockCtx = (): MessageContext => ({
 });
 
 describe('DownloadTool Security', () => {
-  afterEach(() => {
+  beforeEach(() => {
     spawnedProcesses = [];
+    mockSpawn.mockClear();
+
+    downloadToolDeps.spawn = mockSpawn as typeof downloadToolDeps.spawn;
+    downloadToolDeps.fs.mkdir = mock(async () => {}) as typeof downloadToolDeps.fs.mkdir;
+    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as typeof downloadToolDeps.fs.readdir;
+    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as typeof downloadToolDeps.fs.readFile;
+    downloadToolDeps.fs.rm = mock(async () => {}) as typeof downloadToolDeps.fs.rm;
+    downloadToolDeps.crypto = {
+      ...originalCrypto,
+      randomBytes: mock((size: number) => {
+        if (size === 8) return Buffer.from('feedfacecafebeef', 'hex');
+        return Buffer.from('ab'.repeat(size), 'hex');
+      }),
+    } as typeof downloadToolDeps.crypto;
+  });
+
+  afterEach(() => {
+    downloadToolDeps.spawn = originalSpawn;
+    downloadToolDeps.fs.mkdir = originalMkdir;
+    downloadToolDeps.fs.readdir = originalReaddir;
+    downloadToolDeps.fs.readFile = originalReadFile;
+    downloadToolDeps.fs.rm = originalRm;
+    downloadToolDeps.crypto = originalCrypto;
   });
 
   test('should reject argument injection vectors (starting with -) due to URL validation', async () => {
@@ -65,7 +98,6 @@ describe('DownloadTool Security', () => {
 
     const result = await tool.execute({ url: maliciousUrl, format: 'mp4' }, createMockCtx());
 
-    // Should return error message about invalid URL
     expect(result).toContain('Invalid URL format');
     expect(spawnedProcesses.length).toBe(0);
   });
@@ -76,7 +108,6 @@ describe('DownloadTool Security', () => {
 
     const result = await tool.execute({ url: localFileUrl, format: 'mp4' }, createMockCtx());
 
-    // Should return error message about protocol
     expect(result).toContain('Only HTTP/HTTPS URLs are allowed');
     expect(spawnedProcesses.length).toBe(0);
   });
@@ -85,77 +116,41 @@ describe('DownloadTool Security', () => {
     const tool = new DownloadTool();
     const validUrl = 'https://example.com/video';
 
-    try {
-        await tool.execute({ url: validUrl, format: 'mp4' }, createMockCtx());
-    } catch { /* ignore expected failure due to mock fs */ }
+    await tool.execute({ url: validUrl, format: 'mp4' }, createMockCtx());
 
     const cp = spawnedProcesses[0];
     expect(cp).toBeDefined();
 
-    // Verify arguments structure
     const args = cp.args;
-    const lastArg = args[args.length - 1];
-    const secondLastArg = args[args.length - 2];
-
-    expect(lastArg).toBe(validUrl);
-    expect(secondLastArg).toBe('--');
+    expect(args[args.length - 2]).toBe('--');
+    expect(args[args.length - 1]).toBe(validUrl);
   });
 
   test('should detect and block path traversal in output filename', async () => {
     const tool = new DownloadTool();
-    const validUrl = 'https://example.com/video';
 
-    // Mock readdir to return a filename that would match ANY 16-char hex prefix
-    // We can use a spy or mock that returns what we want.
-    // However, the test file uses mock.module which is global.
-    // Let's use a more flexible mock for fs.promises.
+    downloadToolDeps.crypto = {
+      ...originalCrypto,
+      randomBytes: mock((size: number) => {
+        if (size === 8) return Buffer.from('deadbeefdeadbeef', 'hex');
+        return Buffer.from('cd'.repeat(size), 'hex');
+      }),
+    } as typeof downloadToolDeps.crypto;
+    downloadToolDeps.fs.readdir = mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']) as typeof downloadToolDeps.fs.readdir;
 
-    mock.module('fs', () => ({
-      promises: {
-        mkdir: mock(async () => {}),
-        readdir: mock(async (_p: string) => {
-            // In DownloadTool.ts, it calls readdir(workDir)
-            // We want it to return a file that starts with the 'id' (8 bytes hex = 16 chars)
-            // But we don't know the id. So we return a file that is mostly traversal.
-            // Wait, the code does: const match = files.find(f => f.startsWith(id));
-            // If we return a list where every entry matches, it will pick the first one.
-            return ['0123456789abcdefghijklmnopqrstuvwxyz']; // This DOES NOT start with the random id
-        }),
-        readFile: mock(async () => Buffer.from('')),
-        rm: mock(async () => {}),
-      },
-    }));
-
-    // To make it match, we'd need to control crypto.randomBytes too.
-    mock.module('crypto', () => ({
-      randomBytes: (n: number) => {
-          if (n === 8) return Buffer.from('deadbeefdeadbeef', 'hex');
-          return Buffer.alloc(n, 0);
-      }
-    }));
-
-    mock.module('fs', () => ({
-      promises: {
-        mkdir: mock(async () => {}),
-        readdir: mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']),
-        readFile: mock(async () => Buffer.from('')),
-        rm: mock(async () => {}),
-      },
-    }));
-
-    const result = await tool.execute({ url: validUrl, format: 'mp4' }, createMockCtx());
+    const result = await tool.execute({ url: 'https://example.com/video', format: 'mp4' }, createMockCtx());
 
     expect(result).toContain('Invalid output filename');
   });
 
   test('should reject prototype pollution vectors in format parameter', async () => {
     const tool = new DownloadTool();
-    const validUrl = 'https://example.com/video';
-    const maliciousFormat = '__proto__';
 
-    const result = await tool.execute({ url: validUrl, format: maliciousFormat }, createMockCtx());
+    const result = await tool.execute(
+      { url: 'https://example.com/video', format: '__proto__' as never },
+      createMockCtx(),
+    );
 
-    // Should return error message about invalid format
     expect(result).toContain('Invalid format requested');
     expect(spawnedProcesses.length).toBe(0);
   });

@@ -36,6 +36,7 @@ export interface AIChatMessage {
 import { logger } from '../utils/logger';
 import { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ChatCompletionResponse, ChatCompletionChunk, ToolCall } from '../types/ai';
+import { getAIRequestConfig } from '../config/runtime';
 
 const log = logger.child({ module: 'AIClient' });
 
@@ -110,11 +111,12 @@ export class AIClient {
     maxTokens?: number,
     stream: boolean = false,
   ): Record<string, unknown> {
+    const aiRequestConfig = getAIRequestConfig(process.env, stream);
     const payload: Record<string, unknown> = {
       model: this.modelName,
       messages,
       temperature,
-      max_tokens: maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10),
+      max_tokens: maxTokens ?? aiRequestConfig.maxTokens,
     };
     if (tools && tools.length > 0) {
       payload.tools = tools;
@@ -140,7 +142,7 @@ export class AIClient {
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
-    maxTokens: number = parseInt(process.env.AI_MAX_TOKENS || '2048', 10)
+    maxTokens: number = getAIRequestConfig().maxTokens,
   ): Promise<ChatCompletionMessage> {
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
@@ -163,7 +165,7 @@ export class AIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(parseInt(process.env.AI_TIMEOUT_MS || '60000', 10)),
+      signal: AbortSignal.timeout(getAIRequestConfig().timeoutMs),
     });
 
     const elapsed = Date.now() - startTime;
@@ -197,7 +199,7 @@ export class AIClient {
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
-    maxTokens: number = parseInt(process.env.AI_MAX_TOKENS || '2048', 10)
+    maxTokens: number = getAIRequestConfig(process.env, true).maxTokens,
   ): AsyncGenerator<ChatCompletionChunk> {
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
@@ -217,7 +219,7 @@ export class AIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(parseInt(process.env.AI_TIMEOUT_MS || '120000', 10)),
+      signal: AbortSignal.timeout(getAIRequestConfig(process.env, true).timeoutMs),
     });
 
     if (!response.ok) {

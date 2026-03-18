@@ -9,6 +9,7 @@ import { RateLimiter } from '../utils/RateLimiter';
 import { Scheduler } from '../utils/Scheduler';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
+import { getMediaCleanupIntervalMs } from '../config/runtime';
 
 type SenderFn = (chatId: string, text: string) => Promise<void>;
 
@@ -41,11 +42,7 @@ export type AppRuntimeDeps = {
 };
 
 export function resolveMediaCleanupIntervalMs(rawMediaCleanupInterval: string | undefined): number {
-  const defaultMediaCleanupIntervalMs = 6 * 60 * 60 * 1000;
-  const parsedMediaCleanupInterval = parseInt(rawMediaCleanupInterval || String(defaultMediaCleanupIntervalMs), 10);
-  return Number.isFinite(parsedMediaCleanupInterval) && parsedMediaCleanupInterval >= 60_000
-    ? parsedMediaCleanupInterval
-    : defaultMediaCleanupIntervalMs;
+  return getMediaCleanupIntervalMs({ MEDIA_CLEANUP_INTERVAL_MS: rawMediaCleanupInterval });
 }
 
 export class AppRuntime {

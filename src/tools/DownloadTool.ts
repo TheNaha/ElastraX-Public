@@ -26,6 +26,7 @@ import { promises as fs } from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import { getDownloadMaxMb } from '../config/runtime';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -50,6 +51,14 @@ const MIME_MAP: Record<DownloadFormat, string> = {
 
 const AUDIO_FORMATS = new Set<string>(['mp3', 'aac', 'm4a', 'ogg', 'opus']);
 
+export const downloadToolDeps = {
+  spawn,
+  fs,
+  path,
+  os,
+  crypto,
+};
+
 function isAudioFormat(fmt: string): fmt is AudioFormat {
   return AUDIO_FORMATS.has(fmt);
 }
@@ -59,21 +68,21 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
 
   // Security: Use a unique subdirectory for each job to prevent interference
   // and simplify cleanup of potential multiple output files.
-  const baseTmpDir = path.join(os.tmpdir(), 'elastrax-dl');
-  const jobId = crypto.randomBytes(16).toString('hex');
-  const workDir = path.join(baseTmpDir, jobId);
+  const baseTmpDir = downloadToolDeps.path.join(downloadToolDeps.os.tmpdir(), 'elastrax-dl');
+  const jobId = downloadToolDeps.crypto.randomBytes(16).toString('hex');
+  const workDir = downloadToolDeps.path.join(baseTmpDir, jobId);
 
-  await fs.mkdir(workDir, { recursive: true });
+  await downloadToolDeps.fs.mkdir(workDir, { recursive: true });
 
   try {
-    const id = crypto.randomBytes(8).toString('hex');
-    const outTemplate = path.join(workDir, `${id}.%(ext)s`);
+    const id = downloadToolDeps.crypto.randomBytes(8).toString('hex');
+    const outTemplate = downloadToolDeps.path.join(workDir, `${id}.%(ext)s`);
 
     // Security: Place URL last after '--' to prevent argument injection
     const args: string[] = [
       '-o', outTemplate,
       '--no-playlist',
-      '--max-filesize', `${(parseInt(process.env.DOWNLOAD_MAX_MB || '50', 10)) + 5}m`,
+      '--max-filesize', `${getDownloadMaxMb() + 5}m`,
     ];
 
     if (isAudioFormat(format)) {
@@ -89,7 +98,7 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
     args.push('--', url);
 
     await new Promise<void>((resolve, reject) => {
-      const child = spawn(ytdlpBin, args);
+      const child = downloadToolDeps.spawn(ytdlpBin, args);
       let stderr = '';
       child.stderr.on('data', d => { stderr += d.toString(); });
       child.on('error', err => reject(new Error(`yt-dlp not found. Install it or set YTDLP_PATH. Details: ${err.message}`)));
@@ -103,7 +112,7 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
     });
 
     // Find the output file (extension may differ from requested format)
-    const files = await fs.readdir(workDir);
+    const files = await downloadToolDeps.fs.readdir(workDir);
     const match = files.find(f => f.startsWith(id));
     if (!match) throw new Error('yt-dlp produced no output file.');
 
@@ -113,18 +122,18 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
       throw new Error('Invalid output filename produced by downloader.');
     }
 
-    const outPath = path.join(workDir, match);
+    const outPath = downloadToolDeps.path.join(workDir, match);
 
     // Security: Double-check that the resolved path is still within workDir
-    const resolvedPath = path.resolve(outPath);
-    if (!resolvedPath.startsWith(path.resolve(workDir))) {
+    const resolvedPath = downloadToolDeps.path.resolve(outPath);
+    if (!resolvedPath.startsWith(downloadToolDeps.path.resolve(workDir))) {
       throw new Error('Path traversal detected in downloader output.');
     }
 
-    return await fs.readFile(outPath);
+    return await downloadToolDeps.fs.readFile(outPath);
   } finally {
     // Security: Cleanup the entire unique directory
-    await fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
+    await downloadToolDeps.fs.rm(workDir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -165,7 +174,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     const lang = ctx.language ?? 'en';
     const url = String(args.url || '').trim();
     const format: DownloadFormat = (args.format || 'mp4') as DownloadFormat;
-    const maxMb = parseInt(process.env.DOWNLOAD_MAX_MB || '50', 10);
+    const maxMb = getDownloadMaxMb();
 
     if (!url) return t(lang, 'download.no_url');
     if (!ctx.sendMedia) return t(lang, 'download.not_supported');

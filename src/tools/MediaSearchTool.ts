@@ -9,7 +9,10 @@ import { SeerrClient, type SeerrSearchResult, type SeerrMediaStatus } from '../p
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaSearchTool' });
-const seerr = new SeerrClient();
+
+export const mediaSearchToolDeps = {
+  createSeerrClient: () => new SeerrClient(),
+};
 
 function statusLabel(status?: SeerrMediaStatus): string {
   switch (status) {
@@ -89,6 +92,8 @@ export class MediaSearchTool extends BaseTool {
   }
 
   async execute(args: MediaSearchArgs, _ctx: MessageContext): Promise<ToolResult> {
+    const seerr = mediaSearchToolDeps.createSeerrClient();
+
     if (!seerr.isConfigured) {
       return '❌ Media search service is not configured.';
     }

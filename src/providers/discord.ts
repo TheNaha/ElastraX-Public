@@ -282,19 +282,26 @@ export class DiscordProvider implements BotProvider {
         try { await msg.delete(); } catch { /* already deleted or no permission */ }
       },
 
-      forwardMessage: async (_targetJid: string, text?: string) => {
-        // For Discord, we route to a channel by ID if the text is provided
-        if (text && this.client) {
-          try {
-            const targetChannel = await this.client.channels.fetch(_targetJid);
-            if (targetChannel && targetChannel.isTextBased()) {
-              if ('send' in targetChannel && typeof targetChannel.send === 'function') {
-                await targetChannel.send(text);
-              }
-            }
-          } catch (err) {
-            logger.warn({ _targetJid, err }, '[Discord] forwardMessage to channel failed');
+      forwardMessage: async (targetJid: string, text?: string) => {
+        if (!this.client) return;
+
+        try {
+          const targetChannel = await this.client.channels.fetch(targetJid);
+          if (!targetChannel || !targetChannel.isTextBased()) return;
+          if (!('send' in targetChannel) || typeof targetChannel.send !== 'function') return;
+
+          if (text) {
+            await targetChannel.send(text);
+            return;
           }
+
+          const files = Array.from(msg.attachments.values()).map((attachment) => attachment.url);
+          await targetChannel.send({
+            content: msg.content || undefined,
+            ...(files.length > 0 ? { files } : {}),
+          });
+        } catch (err) {
+          logger.warn({ targetJid, err }, '[Discord] forwardMessage to channel failed');
         }
       },
 

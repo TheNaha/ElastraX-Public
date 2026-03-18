@@ -44,6 +44,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier, TokenUsage } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
+import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
 
 export interface ProviderConfig {
   name: string;
@@ -108,10 +109,6 @@ function parseTier(raw?: string): ModelTier {
 function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
   if (raw === undefined) return defaultVal;
   return raw.toLowerCase() === 'true';
-}
-
-function getProviderCooldownMs(): number {
-  return parseInt(process.env.AI_PROVIDER_COOLDOWN_MS || '30000', 10);
 }
 
 /** Loads all provider configs from process.env according to the documented pattern. */
@@ -289,7 +286,7 @@ export class ModelRouter {
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
-        const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+        const resolvedMaxTokens = maxTokens ?? getAIRequestConfig().maxTokens;
         // V7.13: Strip unsupported video_url/audio_url blocks for this provider
         const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
 
@@ -382,7 +379,7 @@ export class ModelRouter {
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
-        const resolvedMaxTokens = maxTokens ?? parseInt(process.env.AI_MAX_TOKENS || '2048', 10);
+        const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, true).maxTokens;
         // V7.13: Strip unsupported video_url/audio_url blocks for this provider
         const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
         const start = Date.now();

@@ -10,7 +10,11 @@ import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaRequestTool' });
-const seerr = new SeerrClient();
+
+export const mediaRequestToolDeps = {
+  createSeerrClient: () => new SeerrClient(),
+  bindingService: ServiceBindingService,
+};
 
 function requestStatusLabel(status: number): string {
   switch (status) {
@@ -83,6 +87,8 @@ export class MediaRequestTool extends BaseTool {
   }
 
   async execute(args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
+    const seerr = mediaRequestToolDeps.createSeerrClient();
+
     if (!seerr.isConfigured) {
       return '❌ Media request service is not configured.';
     }
@@ -93,11 +99,11 @@ export class MediaRequestTool extends BaseTool {
     try {
       switch (action) {
         case 'request':
-          return this.handleRequest(args, ctx);
+          return this.handleRequest(seerr, args, ctx);
         case 'status':
-          return this.handleStatus(args);
+          return this.handleStatus(seerr, args);
         case 'my-requests':
-          return this.handleMyRequests(ctx);
+          return this.handleMyRequests(seerr, ctx);
         default:
           return 'Available actions: request, status, my-requests';
       }
@@ -108,12 +114,12 @@ export class MediaRequestTool extends BaseTool {
     }
   }
 
-  private async handleRequest(args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
+  private async handleRequest(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
     if (!args.media_type) return 'Please specify media_type: movie or tv.';
     if (!args.media_id) return 'Please specify media_id (TMDB ID).';
 
     // Check user has a binding
-    const binding = await ServiceBindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
+    const binding = await mediaRequestToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
     if (!binding) {
       return '❌ You need to link your account first. Use the connect command.';
     }
@@ -137,7 +143,7 @@ export class MediaRequestTool extends BaseTool {
     return `✅ *Request Submitted!*\n${type} (TMDB: ${args.media_id})\nRequest #${request.id} — ${requestStatusLabel(request.status)}`;
   }
 
-  private async handleStatus(args: MediaRequestArgs): Promise<ToolResult> {
+  private async handleStatus(seerr: SeerrClient, args: MediaRequestArgs): Promise<ToolResult> {
     if (!args.request_id) return 'Please specify a request_id.';
 
     const request = await seerr.getRequestById(args.request_id);
@@ -145,8 +151,8 @@ export class MediaRequestTool extends BaseTool {
     return `${type} *Request #${request.id}*\nTMDB: ${request.media.tmdbId}\nStatus: ${requestStatusLabel(request.status)}\nRequested by: ${request.requestedBy.displayName}\nCreated: ${new Date(request.createdAt).toLocaleDateString()}`;
   }
 
-  private async handleMyRequests(ctx: MessageContext): Promise<ToolResult> {
-    const binding = await ServiceBindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
+  private async handleMyRequests(seerr: SeerrClient, ctx: MessageContext): Promise<ToolResult> {
+    const binding = await mediaRequestToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
     if (!binding) {
       return '❌ You need to link your account first. Use the connect command.';
     }

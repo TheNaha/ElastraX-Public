@@ -10,7 +10,11 @@ import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaLibraryTool' });
-const jellyfin = new JellyfinClient();
+
+export const mediaLibraryToolDeps = {
+  createJellyfinClient: () => new JellyfinClient(),
+  bindingService: ServiceBindingService,
+};
 
 function formatItem(item: JellyfinItem, index: number, watchLink: string): string {
   const type = item.Type === 'Series' ? '📺' : item.Type === 'Episode' ? '📺' : '🎬';
@@ -75,6 +79,8 @@ export class MediaLibraryTool extends BaseTool {
   }
 
   async execute(args: MediaLibraryArgs, ctx: MessageContext): Promise<ToolResult> {
+    const jellyfin = mediaLibraryToolDeps.createJellyfinClient();
+
     if (!jellyfin.isConfigured) {
       return '❌ Streaming library service is not configured.';
     }
@@ -86,7 +92,7 @@ export class MediaLibraryTool extends BaseTool {
 
     try {
       // Get user's Jellyfin userId for personalized results (optional)
-      const binding = await ServiceBindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
+      const binding = await mediaLibraryToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
       const jellyfinUserId = binding?.externalUserId;
 
       switch (action) {
