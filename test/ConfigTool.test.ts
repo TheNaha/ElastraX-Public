@@ -253,9 +253,27 @@ describe('ConfigTool', () => {
       expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
+    test('should return suggestion for mistyped key in set action', async () => {
+      const result = await tool.execute(
+        { action: 'set', key: 'contextLimt', value: '20' },
+        createCtx(),
+      );
+      expect(result).toContain('Did you mean `contextLimit`?');
+      expect(mockUpdateWhere).not.toHaveBeenCalled();
+    });
+
     test('should return error when key is missing', async () => {
       const result = await tool.execute({ action: 'set', value: 'something' }, createCtx());
       expect(result).toContain('valid key');
+      expect(mockUpdateWhere).not.toHaveBeenCalled();
+    });
+
+    test('should return suggestion for mistyped key in reset action', async () => {
+      const result = await tool.execute(
+        { action: 'reset', key: 'sytemPrompt' },
+        createCtx(),
+      );
+      expect(result).toContain('Did you mean `systemPrompt`?');
       expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 

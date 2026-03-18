@@ -33,6 +33,7 @@ import { chatRooms, type ChatRoom } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
 import { logger } from '../utils/logger';
+import { levenshtein } from '../utils/similarity';
 
 const log = logger.child({ module: 'ConfigTool' });
 const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] as const;
@@ -156,6 +157,20 @@ export class ConfigTool extends BaseTool {
 
     const resolved = ConfigService.getResolvedConfig(room);
 
+    const getSuggestionMessage = (inputKey?: string): string => {
+      if (!inputKey) return '\n';
+      let bestMatch = '';
+      let bestDist = Infinity;
+      for (const validKey of CONFIG_KEYS) {
+        const dist = levenshtein(inputKey.toLowerCase(), validKey.toLowerCase());
+        if (dist <= 3 && dist < bestDist) {
+          bestDist = dist;
+          bestMatch = validKey;
+        }
+      }
+      return bestMatch ? `\n\nDid you mean \`${bestMatch}\`?\n` : '\n';
+    };
+
     if (action === 'get') {
       log.debug({ chatId: ctx.chatId }, 'Retrieving config for room');
       return `*Current Configuration for ${ctx.chatId}*\n\n${this.buildKeyListing(room, resolved)}`;
@@ -163,7 +178,8 @@ export class ConfigTool extends BaseTool {
 
     if (action === 'reset') {
       if (!isConfigKey(key)) {
-        return `Please provide a valid key to reset to global default.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
+        const suggestionStr = getSuggestionMessage(key);
+        return `Please provide a valid key to reset to global default.${suggestionStr}\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
       const updateData: RoomConfigUpdate = { [key]: null };
       await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
@@ -173,7 +189,8 @@ export class ConfigTool extends BaseTool {
 
     if (action === 'set') {
       if (!isConfigKey(key)) {
-        return `Please provide a valid key to set.\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
+        const suggestionStr = getSuggestionMessage(key);
+        return `Please provide a valid key to set.${suggestionStr}\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
       }
       if (value === undefined || value === '') {
         return `Please provide a value for ${key}.`;
