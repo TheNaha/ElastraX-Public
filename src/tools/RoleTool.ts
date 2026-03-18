@@ -188,7 +188,7 @@ export class RoleTool extends BaseTool {
         const label = cur === -1 ? 'Unlimited' : String(cur);
         const defLabel = def === -1 ? 'Unlimited' : String(def);
         const overridden = cur !== def ? ' (Overridden)' : '';
-        out += `• *${f}:* ${label} (Default: ${defLabel})${overridden}\n`;
+        out += ` • *${f}:* ${label} (Default: ${defLabel})${overridden}\n`;
       }
       return out;
     }
@@ -292,7 +292,7 @@ function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
 ): string {
   return roles.length > 0
-    ? roles.map((entry) => `• *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
+    ? roles.map((entry) => ` • *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
     : '_No explicit roles assigned_';
 }
 
