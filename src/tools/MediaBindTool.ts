@@ -328,7 +328,7 @@ export class MediaBindTool extends BaseTool {
           if (m.isAdmin) meta = ' 👑 Admin';
         } catch { /* ignore */ }
       }
-      return `• ${b.serviceType}: ${b.externalUsername}${meta}`;
+      return ` • ${b.serviceType}: ${b.externalUsername}${meta}`;
     });
 
     const subs = await mediaBindToolDeps.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
