@@ -74,6 +74,11 @@ export class SessionManager {
     return session ? structuredClone(session) : null;
   }
 
+  private static hasFlows(flows: Record<string, FlowSession>): boolean {
+    for (const _ in flows) return true;
+    return false;
+  }
+
   private static selectFallbackActiveFlow(session: UserSession): void {
     if (session.activeFlow && session.flows[session.activeFlow]) {
       return;
@@ -120,7 +125,7 @@ export class SessionManager {
             const session = JSON.parse(row.data) as UserSession;
             const hasExpired = this.pruneExpiredFlows(session, now);
 
-            if (Object.keys(session.flows).length > 0) {
+            if (this.hasFlows(session.flows)) {
               this.sessions.set(row.id, session);
             } else if (hasExpired) {
               expiredIds.push(row.id);
@@ -150,7 +155,7 @@ export class SessionManager {
   private static async persistToDBInternal(key: string, session: UserSession | null): Promise<void> {
     try {
       const { db, flowSessions } = await this.getDbDeps();
-      if (!session || Object.keys(session.flows).length === 0) {
+      if (!session || !this.hasFlows(session.flows)) {
         await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       } else {
         const data = JSON.stringify(session);
@@ -216,7 +221,7 @@ export class SessionManager {
 
     const hasExpired = this.pruneExpiredFlows(session);
 
-    if (hasExpired && Object.keys(session.flows).length === 0) {
+    if (hasExpired && !this.hasFlows(session.flows)) {
       this.sessions.delete(key);
       this.persistToDB(key, null);
       return null;
@@ -271,7 +276,7 @@ export class SessionManager {
          session.activeFlow = remainingFlows.length > 0 ? remainingFlows[remainingFlows.length - 1] : null;
       }
       
-      if (Object.keys(session.flows).length === 0) {
+      if (!this.hasFlows(session.flows)) {
         this.sessions.delete(key);
         this.persistToDB(key, null);
       } else {
