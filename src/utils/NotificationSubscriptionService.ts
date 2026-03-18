@@ -141,17 +141,22 @@ export class NotificationSubscriptionService {
    * Admins receive ALL notifications for a service type.
    */
   static async getAdminNotificationRooms(serviceType: string): Promise<{ chatRoomId: string; platform: string; userId: string }[]> {
-    const adminBindings = await ServiceBindingService.getAdminBindings(serviceType === 'seerr' ? 'jellyfin' : serviceType);
+    const adminBindings = await ServiceBindingService.getAdminBindings(serviceType);
+    const roomGroups = await Promise.all(
+      adminBindings.map(async (binding) => ({
+        userId: binding.userId,
+        rooms: await this.getNotificationRooms(binding.userId, binding.platform, serviceType),
+      })),
+    );
     const rooms: { chatRoomId: string; platform: string; userId: string }[] = [];
     const seen = new Set<string>();
 
-    for (const binding of adminBindings) {
-      const subs = await this.getSubscriptions(binding.userId, binding.platform);
-      for (const sub of subs) {
-        const key = `${sub.chatRoomId}:${sub.platform}`;
+    for (const group of roomGroups) {
+      for (const room of group.rooms) {
+        const key = `${room.chatRoomId}:${room.platform}`;
         if (!seen.has(key)) {
           seen.add(key);
-          rooms.push({ chatRoomId: sub.chatRoomId, platform: sub.platform, userId: binding.userId });
+          rooms.push({ chatRoomId: room.chatRoomId, platform: room.platform, userId: group.userId });
         }
       }
     }

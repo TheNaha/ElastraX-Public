@@ -62,6 +62,16 @@ describe('HealthMetrics', () => {
     expect(after.providers['fail-provider'].failures).toBeGreaterThanOrEqual(1);
   });
 
+  test('failed llm requests do not skew latency percentiles', () => {
+    const isolated = new HealthMetricsCollector();
+    isolated.recordLLMRequest('ok-provider', 200, true);
+    isolated.recordLLMRequest('fail-provider', 0, false);
+
+    const metrics = isolated.getMetrics();
+    expect(metrics.llm.latencyP50).toBe(200);
+    expect(metrics.llm.latencyP95).toBe(200);
+  });
+
   test('recordToolInvocation increments tool counter', () => {
     healthMetrics.recordToolInvocation('test_tool');
     const m = healthMetrics.getMetrics();

@@ -153,6 +153,75 @@ describe('ModelRouter', () => {
     primarySpy.mockRestore();
     fallbackSpy.mockRestore();
   });
+
+  test('empty content responses put a provider into cooldown', async () => {
+    process.env.AI_PROVIDERS = 'primary,fallback';
+    process.env.AI_PROVIDER_COOLDOWN_MS = '60000';
+    process.env.AI_PRIMARY_BASE_URL = 'https://primary.example.com/v1';
+    process.env.AI_PRIMARY_API_KEY = 'primary-key';
+    process.env.AI_PRIMARY_MODEL = 'primary-model';
+    process.env.AI_FALLBACK_BASE_URL = 'https://fallback.example.com/v1';
+    process.env.AI_FALLBACK_API_KEY = 'fallback-key';
+    process.env.AI_FALLBACK_MODEL = 'fallback-model';
+
+    const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const primarySpy = spyOn(internalProviders[0].client, 'chatCompletion')
+      .mockResolvedValue({ role: 'assistant', content: '' });
+    const fallbackSpy = spyOn(internalProviders[1].client, 'chatCompletion')
+      .mockResolvedValue({ role: 'assistant', content: 'fallback ok' });
+
+    const first = await router.chatCompletion([{ role: 'user', content: 'hi' }]);
+    expect(first.content).toBe('fallback ok');
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+
+    const second = await router.chatCompletion([{ role: 'user', content: 'hi again' }]);
+    expect(second.content).toBe('fallback ok');
+    expect(primarySpy).toHaveBeenCalledTimes(1);
+    expect(fallbackSpy).toHaveBeenCalledTimes(2);
+
+    primarySpy.mockRestore();
+    fallbackSpy.mockRestore();
+  });
+
+  test('streaming does not fall back after partial output has already been yielded', async () => {
+    process.env.AI_PROVIDERS = 'primary,fallback';
+    process.env.AI_PROVIDER_COOLDOWN_MS = '60000';
+    process.env.AI_PRIMARY_BASE_URL = 'https://primary.example.com/v1';
+    process.env.AI_PRIMARY_API_KEY = 'primary-key';
+    process.env.AI_PRIMARY_MODEL = 'primary-model';
+    process.env.AI_FALLBACK_BASE_URL = 'https://fallback.example.com/v1';
+    process.env.AI_FALLBACK_API_KEY = 'fallback-key';
+    process.env.AI_FALLBACK_MODEL = 'fallback-model';
+
+    const router = new ModelRouter();
+    const internalProviders = (router as any).providers;
+    const primarySpy = spyOn(internalProviders[0].client, 'chatCompletionStream').mockImplementation(
+      async function* () {
+        yield { choices: [{ delta: { content: 'partial' } }] } as any;
+        throw new Error('stream broke');
+      },
+    );
+    const fallbackSpy = spyOn(internalProviders[1].client, 'chatCompletionStream').mockImplementation(
+      async function* () {
+        yield { choices: [{ delta: { content: 'fallback' } }] } as any;
+      },
+    );
+
+    const chunks: unknown[] = [];
+    const collect = async () => {
+      for await (const chunk of router.chatCompletionStream([{ role: 'user', content: 'hi' }])) {
+        chunks.push(chunk);
+      }
+    };
+
+    await expect(collect()).rejects.toThrow('stream broke');
+    expect(chunks).toHaveLength(1);
+    expect(fallbackSpy).not.toHaveBeenCalled();
+
+    primarySpy.mockRestore();
+    fallbackSpy.mockRestore();
+  });
 });
 
 // ─── sanitizeMessagesForProvider unit tests ───────────────────────────────────

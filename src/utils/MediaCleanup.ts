@@ -1,6 +1,7 @@
 import { readdir, stat, unlink } from 'fs/promises';
 import { join } from 'path';
 import { logger } from './logger';
+import { getMediaRetentionHours } from '../config/runtime';
 
 const MEDIA_DIR = './data/media';
 
@@ -10,7 +11,7 @@ function asErrnoException(error: unknown): NodeJS.ErrnoException {
 
 export class MediaCleanup {
   static async pruneOldFiles(): Promise<void> {
-    const maxAgeHours = parseInt(process.env.MEDIA_RETENTION_HOURS || '72', 10);
+    const maxAgeHours = getMediaRetentionHours();
     const maxAgeMs = maxAgeHours * 60 * 60 * 1000;
     const cutoff = Date.now() - maxAgeMs;
 

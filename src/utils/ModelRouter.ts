@@ -307,18 +307,6 @@ export class ModelRouter {
         const result = await provider.client.chatCompletion(sanitizedMessages, tools, temperature, resolvedMaxTokens);
         const latency = Date.now() - start;
 
-        healthMetrics.recordLLMRequest(provider.name, latency, true);
-        this.clearProviderCooldown(provider.name);
-        // V7.13: Usage may be on the message object for some providers (runtime-only field)
-        const usage = this.getUsage(result);
-        if (usage) {
-          healthMetrics.recordTokenUsage(
-            provider.modelName,
-            usage.prompt_tokens ?? 0,
-            usage.completion_tokens ?? 0
-          );
-        }
-
         if (verbose) {
           logger.info({
             provider: provider.name,
@@ -336,8 +324,22 @@ export class ModelRouter {
         const strippedContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
         if (!hasToolCalls && !strippedContent) {
           logger.warn({ provider: provider.name, latency }, '[ModelRouter] Provider returned empty content, trying next');
+          this.markProviderFailure(provider.name);
+          healthMetrics.recordLLMRequest(provider.name, latency, false);
           lastError = new Error(`Provider "${provider.name}" returned empty content`);
           continue;
+        }
+
+        healthMetrics.recordLLMRequest(provider.name, latency, true);
+        this.clearProviderCooldown(provider.name);
+        // V7.13: Usage may be on the message object for some providers (runtime-only field)
+        const usage = this.getUsage(result);
+        if (usage) {
+          healthMetrics.recordTokenUsage(
+            provider.modelName,
+            usage.prompt_tokens ?? 0,
+            usage.completion_tokens ?? 0
+          );
         }
 
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
@@ -376,17 +378,19 @@ export class ModelRouter {
     const orderedProviders = this.getCandidateProviders(tier);
 
     for (const provider of orderedProviders) {
+      let yieldedAny = false;
+      const start = Date.now();
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
         const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, true).maxTokens;
         // V7.13: Strip unsupported video_url/audio_url blocks for this provider
         const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
-        const start = Date.now();
 
         const stream = provider.client.chatCompletionStream(sanitizedMessages, tools, temperature, resolvedMaxTokens);
 
         for await (const chunk of stream) {
+          yieldedAny = true;
           yield chunk;
         }
 
@@ -399,7 +403,14 @@ export class ModelRouter {
         const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
         this.markProviderFailure(provider.name);
-        healthMetrics.recordLLMRequest(provider.name, 0, false);
+        healthMetrics.recordLLMRequest(provider.name, Date.now() - start, false);
+        if (yieldedAny) {
+          logger.warn(
+            { provider: provider.name, err: err.message },
+            '[ModelRouter] Streaming provider failed after yielding chunks; aborting without cross-provider fallback',
+          );
+          throw err;
+        }
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Streaming provider failed, trying next');
       }
     }

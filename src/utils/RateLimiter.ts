@@ -18,6 +18,7 @@
  */
 
 import { logger } from './logger';
+import { getRateLimitConfig } from '../config/runtime';
 
 interface Bucket {
   tokens: number;
@@ -29,15 +30,13 @@ interface Bucket {
 export class RateLimiter {
   private static buckets = new Map<string, Bucket>();
 
-  private static readonly DEFAULT_MAX_TOKENS = parseInt(process.env.RATE_LIMIT_MESSAGES || '10', 10);
-  private static readonly DEFAULT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_SEC || '60', 10) * 1000;
-
   /**
    * Checks whether a user is within their rate limit using global env defaults.
    * Consumes one token if allowed.
    */
   static check(userId: string, platform: string): { allowed: boolean; waitSeconds?: number } {
-    return this.checkWithLimits(userId, platform, this.DEFAULT_MAX_TOKENS, this.DEFAULT_WINDOW_MS / 1000);
+    const defaults = getRateLimitConfig();
+    return this.checkWithLimits(userId, platform, defaults.maxMessages, defaults.windowSec);
   }
 
   /**
@@ -114,8 +113,9 @@ export class RateLimiter {
    * Call periodically to prevent unbounded memory growth.
    */
   static prune(): void {
-    const cutoff = Date.now() - this.DEFAULT_WINDOW_MS * 2;
+    const now = Date.now();
     for (const [key, bucket] of this.buckets) {
+      const cutoff = now - bucket.windowMs * 2;
       if (bucket.lastRefill < cutoff) {
         this.buckets.delete(key);
       }

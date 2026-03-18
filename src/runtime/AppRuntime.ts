@@ -7,6 +7,7 @@ import { MessageQueue } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
 import { RateLimiter } from '../utils/RateLimiter';
 import { Scheduler } from '../utils/Scheduler';
+import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
@@ -19,7 +20,7 @@ type SenderRegistry = {
   stop(): void;
 };
 
-type QueueController = Pick<MessageQueue, 'enqueue' | 'stop'>;
+type QueueController = Pick<MessageQueue, 'enqueue' | 'stop'> & Partial<Pick<MessageQueue, 'getStats'>>;
 
 type TimerApi = {
   setInterval: typeof globalThis.setInterval;
@@ -73,6 +74,10 @@ export class AppRuntime {
     this.timers = deps.timers ?? globalThis;
     this.runStartupCoverageScan = deps.runStartupCoverageScan;
     this.startupCoverageDelayMs = deps.startupCoverageDelayMs ?? 5000;
+
+    if (typeof this.messageQueue.getStats === 'function') {
+      healthMetrics.registerQueueStats(() => this.messageQueue.getStats!());
+    }
   }
 
   async start(): Promise<void> {

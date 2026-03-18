@@ -89,6 +89,17 @@ export function getDownloadMaxMb(env: RuntimeEnv = process.env): number {
   return readIntegerEnv(env.DOWNLOAD_MAX_MB, 50, { min: 1 });
 }
 
+export function getRateLimitConfig(env: RuntimeEnv = process.env) {
+  return {
+    maxMessages: readIntegerEnv(env.RATE_LIMIT_MESSAGES, 10, { min: 1 }),
+    windowSec: readIntegerEnv(env.RATE_LIMIT_WINDOW_SEC, 60, { min: 1 }),
+  };
+}
+
 export function getMediaCleanupIntervalMs(env: RuntimeEnv = process.env): number {
   return readIntegerEnv(env.MEDIA_CLEANUP_INTERVAL_MS, 6 * 60 * 60 * 1000, { min: 60_000 });
+}
+
+export function getMediaRetentionHours(env: RuntimeEnv = process.env): number {
+  return readIntegerEnv(env.MEDIA_RETENTION_HOURS, 72, { min: 1 });
 }

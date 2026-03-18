@@ -136,24 +136,24 @@ describe('NotificationSubscriptionService', () => {
     ]);
   });
 
-  test('getAdminNotificationRooms deduplicates rooms across admin users', async () => {
+  test('getAdminNotificationRooms uses the requested service and deduplicates rooms across admin users', async () => {
     const adminSpy = spyOn(ServiceBindingService, 'getAdminBindings').mockResolvedValue([
       { userId: 'admin-1', platform: 'discord' } as any,
       { userId: 'admin-2', platform: 'discord' } as any,
     ]);
-    const fake = createFakeDb([
-      [
-        { chatRoomId: 'room-a', platform: 'discord', serviceType: 'all' },
-        { chatRoomId: 'shared', platform: 'discord', serviceType: 'all' },
-      ],
-      [
-        { chatRoomId: 'shared', platform: 'discord', serviceType: 'all' },
-        { chatRoomId: 'room-b', platform: 'discord', serviceType: 'all' },
-      ],
-    ]);
-    NotificationSubscriptionService.setDepsForTesting({
-      db: fake.db as any,
-      notificationSubscriptions: subscriptionsTable,
+    const roomsSpy = spyOn(NotificationSubscriptionService, 'getNotificationRooms').mockImplementation(async (userId, _platform, serviceType) => {
+      expect(serviceType).toBe('seerr');
+      if (userId === 'admin-1') {
+        return [
+          { chatRoomId: 'room-a', platform: 'discord' },
+          { chatRoomId: 'shared', platform: 'discord' },
+        ];
+      }
+
+      return [
+        { chatRoomId: 'shared', platform: 'discord' },
+        { chatRoomId: 'room-b', platform: 'discord' },
+      ];
     });
 
     const rooms = await NotificationSubscriptionService.getAdminNotificationRooms('seerr');
@@ -162,7 +162,10 @@ describe('NotificationSubscriptionService', () => {
       { chatRoomId: 'shared', platform: 'discord', userId: 'admin-1' },
       { chatRoomId: 'room-b', platform: 'discord', userId: 'admin-2' },
     ]);
+    expect(adminSpy).toHaveBeenCalledWith('seerr');
+    expect(roomsSpy).toHaveBeenCalledTimes(2);
 
     adminSpy.mockRestore();
+    roomsSpy.mockRestore();
   });
 });

@@ -1,9 +1,10 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 
 import type { MessageContext } from '../src/core/MessageContext';
 import type { BotProvider } from '../src/providers/BotProvider';
 import type { AppRuntimeDeps } from '../src/runtime/AppRuntime';
 import { AppRuntime, resolveMediaCleanupIntervalMs } from '../src/runtime/AppRuntime';
+import { healthMetrics } from '../src/utils/HealthMetrics';
 
 const _mockLogger = {
   trace: () => {},
@@ -214,5 +215,44 @@ describe('AppRuntime', () => {
     expect(resolveMediaCleanupIntervalMs('invalid')).toBe(6 * 60 * 60 * 1000);
     expect(resolveMediaCleanupIntervalMs('59000')).toBe(6 * 60 * 60 * 1000);
     expect(resolveMediaCleanupIntervalMs('120000')).toBe(120000);
+  });
+
+  test('registers queue metrics when the queue exposes stats', async () => {
+    const registerSpy = spyOn(healthMetrics, 'registerQueueStats');
+    const provider = createProvider('whatsapp');
+    const messageQueue = {
+      enqueue: mock(() => {}),
+      stop: mock(() => {}),
+      getStats: mock(() => ({ totalRooms: 3, totalPending: 4, totalRunning: 1 })),
+    };
+    const webhookServer = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const scheduler = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+
+    try {
+      const runtime = new AppRuntime({
+        providers: [provider],
+        messageQueue,
+        webhookServer,
+        scheduler,
+      });
+
+      await runtime.start();
+
+      expect(registerSpy).toHaveBeenCalledTimes(1);
+      const getter = registerSpy.mock.calls[0]?.[0];
+      expect(getter?.()).toEqual({ totalRooms: 3, totalPending: 4, totalRunning: 1 });
+
+      await runtime.stop();
+    } finally {
+      registerSpy.mockRestore();
+    }
   });
 });

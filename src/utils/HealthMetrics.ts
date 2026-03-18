@@ -132,12 +132,14 @@ export class HealthMetricsCollector {
     this.llmRequests++;
     if (!success) this.llmFailures++;
 
-    const win = this.llmLatency;
-    if (win.values.length < win.maxSize) {
-      win.values.push(latencyMs);
-    } else {
-      win.values[win.cursor] = latencyMs;
-      win.cursor = (win.cursor + 1) % win.maxSize;
+    if (success) {
+      const win = this.llmLatency;
+      if (win.values.length < win.maxSize) {
+        win.values.push(latencyMs);
+      } else {
+        win.values[win.cursor] = latencyMs;
+        win.cursor = (win.cursor + 1) % win.maxSize;
+      }
     }
 
     if (!this.providerStats.has(providerName)) {

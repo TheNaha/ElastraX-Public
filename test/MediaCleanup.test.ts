@@ -3,6 +3,7 @@ import { MediaCleanup } from '../src/utils/MediaCleanup';
 import * as fsPromises from 'fs/promises';
 
 describe('MediaCleanup', () => {
+  const originalRetentionHours = process.env.MEDIA_RETENTION_HOURS;
   let readdirSpy: ReturnType<typeof spyOn>;
   let statSpy: ReturnType<typeof spyOn>;
   let unlinkSpy: ReturnType<typeof spyOn>;
@@ -23,6 +24,11 @@ describe('MediaCleanup', () => {
     readdirSpy.mockRestore();
     statSpy.mockRestore();
     unlinkSpy.mockRestore();
+    if (originalRetentionHours === undefined) {
+      delete process.env.MEDIA_RETENTION_HOURS;
+    } else {
+      process.env.MEDIA_RETENTION_HOURS = originalRetentionHours;
+    }
   });
 
   test('pruneOldFiles deletes files older than cutoff', async () => {
@@ -49,5 +55,13 @@ describe('MediaCleanup', () => {
 
     // Should not throw
     await MediaCleanup.pruneOldFiles();
+  });
+
+  test('invalid MEDIA_RETENTION_HOURS falls back to the default retention window', async () => {
+    process.env.MEDIA_RETENTION_HOURS = 'invalid';
+
+    await MediaCleanup.pruneOldFiles();
+
+    expect(unlinkSpy).toHaveBeenCalled();
   });
 });
