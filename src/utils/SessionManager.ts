@@ -84,15 +84,19 @@ export class SessionManager {
       return;
     }
 
-    const remainingFlows = Object.keys(session.flows);
-    session.activeFlow = remainingFlows.length > 0 ? remainingFlows[remainingFlows.length - 1] : null;
+    let lastFlow: string | null = null;
+    for (const flowId in session.flows) {
+      lastFlow = flowId;
+    }
+    session.activeFlow = lastFlow;
   }
 
   private static pruneExpiredFlows(session: UserSession, now: number = Date.now()): boolean {
     let hasExpired = false;
 
-    for (const [flowId, flow] of Object.entries(session.flows)) {
-      if (now > flow.expiresAt) {
+    for (const flowId in session.flows) {
+      const flow = session.flows[flowId];
+      if (flow && now > flow.expiresAt) {
         delete session.flows[flowId];
         if (session.activeFlow === flowId) {
           session.activeFlow = null;
@@ -272,8 +276,11 @@ export class SessionManager {
     if (session && session.flows[flowId]) {
       delete session.flows[flowId];
       if (session.activeFlow === flowId) {
-         const remainingFlows = Object.keys(session.flows);
-         session.activeFlow = remainingFlows.length > 0 ? remainingFlows[remainingFlows.length - 1] : null;
+         let lastFlow: string | null = null;
+         for (const id in session.flows) {
+           lastFlow = id;
+         }
+         session.activeFlow = lastFlow;
       }
       
       if (!this.hasFlows(session.flows)) {
