@@ -23,3 +23,7 @@
 ## 2025-03-16 - [List Formatting Optimization]
 **Learning:** In chat-based text interfaces, placing a leading space before list bullets (e.g., ` • ` instead of `• `) improves readability by providing subtle visual padding from the edge of the chat bubble.
 **Action:** Always format text-based lists with a leading space before the bullet point (` • `) to enhance the visual scanning experience for the user.
+
+## 2024-03-21 - Format Technical Parameters as Code in Text-Based UIs
+**Learning:** In purely text-based interfaces like WhatsApp or Telegram, technical strings (like command usages, IDs, or exact parameter options) can blend into normal text, making them hard to scan or tap-to-copy.
+**Action:** Always wrap exact commands (e.g. `/menu get`), identifiers, or parameter enum values (e.g. `get` | `set`) in backticks. This applies standard Markdown code formatting, which text-based clients usually render as monospaced text, visually isolating it from prose and improving copyability.
