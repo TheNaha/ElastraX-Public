@@ -33,3 +33,7 @@
 ## 2026-03-14 - [O(1) Task Dequeueing in MessageQueue]
 **Learning:** Using an array and calling `Array.prototype.shift()` to dequeue tasks in `MessageQueue` creates an O(N) operation per task processed. This can cause significant CPU and memory overhead during high-throughput message bursts or history sync operations.
 **Action:** Replaced `shift()` with a `head` cursor index and periodic array compaction (`slice` when `head >= 100`). This ensures O(1) dequeueing time while preventing unbounded memory growth.
+
+## 2026-03-15 - [Avoid O(N) Object Arrays in High-Frequency Paths]
+**Learning:** Checking for the last item in an object or iterating through it using `Object.keys()` and `Object.entries()` allocates an unnecessary O(N) array on the heap. In high-frequency operations like session pruning on every incoming message (`SessionManager.ts`), this causes significant memory allocations and garbage collection pressure.
+**Action:** Replaced `Object.keys()` and `Object.entries()` with O(1) `for...in` loops to iterate over object properties without allocating an intermediate array, retaining the same functionality by utilizing the insertion-order guarantee of `for...in` loops on string keys to find the last active flow.
