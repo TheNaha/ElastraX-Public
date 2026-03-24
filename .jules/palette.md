@@ -27,3 +27,7 @@
 ## 2024-03-21 - Format Technical Parameters as Code in Text-Based UIs
 **Learning:** In purely text-based interfaces like WhatsApp or Telegram, technical strings (like command usages, IDs, or exact parameter options) can blend into normal text, making them hard to scan or tap-to-copy.
 **Action:** Always wrap exact commands (e.g. `/menu get`), identifiers, or parameter enum values (e.g. `get` | `set`) in backticks. This applies standard Markdown code formatting, which text-based clients usually render as monospaced text, visually isolating it from prose and improving copyability.
+
+## 2025-03-18 - [Double Newlines for Visual Separation in Lists]
+**Learning:** In conversational UI outputs, formatting text-based lists with single newlines can still appear cluttered and difficult to read, especially when list items contain multiple details or wrap on mobile screens.
+**Action:** Always use double newlines (`\n\n`) alongside leading space bullets (` • `) to provide clear visual separation between distinct list items or sections, significantly enhancing visual scanning and readability.

@@ -144,7 +144,7 @@ export class ConfigTool extends BaseTool {
       ` • *Allow Tools*: ${room.allowTools ?? `(Default: ${resolved.allowTools})`}`,
       ` • *Auto Reply All*: ${room.autoReplyAll ?? `(Default: ${resolved.autoReplyAll})`}`,
       ` • *Summarize History*: ${room.summarize ?? `(Default: ${resolved.summarize})`}`,
-    ].join('\n');
+    ].join('\n\n');
   }
 
   async execute(args: ConfigArgs, ctx: MessageContext): Promise<string> {
@@ -179,7 +179,7 @@ export class ConfigTool extends BaseTool {
     if (action === 'reset') {
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `Please provide a valid key to reset to global default.${suggestionStr}\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
+        return `Please provide a valid key to reset to global default.${suggestionStr}\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
       }
       const updateData: RoomConfigUpdate = { [key]: null };
       await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
@@ -190,7 +190,7 @@ export class ConfigTool extends BaseTool {
     if (action === 'set') {
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `Please provide a valid key to set.${suggestionStr}\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
+        return `Please provide a valid key to set.${suggestionStr}\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
       }
       if (value === undefined || value === '') {
         return `Please provide a value for ${key}.`;
@@ -211,6 +211,6 @@ export class ConfigTool extends BaseTool {
       }
     }
 
-    return `*Config Usage:* /config <get|set|reset> [key] [value]\n\n*Available Keys (current values for this room):*\n${this.buildKeyListing(room, resolved)}`;
+    return `*Config Usage:* \`/config <get|set|reset> [key] [value]\`\n\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
   }
 }

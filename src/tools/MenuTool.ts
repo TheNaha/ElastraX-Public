@@ -124,16 +124,16 @@ export class MenuTool extends BaseTool<MenuArgs> {
       help += `${t(lang, 'menu.usage')} \`${usage}\`\n\n`;
 
       if (Object.keys(props).length > 0) {
-        help += `${t(lang, 'menu.parameters')}\n`;
+        help += `${t(lang, 'menu.parameters')}\n\n`;
         for (const [key, prop] of Object.entries(props)) {
           const isReq = required.includes(key);
           const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
-          help += `  • *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
+          help += ` • *${key}* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
           if (prop.enum && prop.enum.length > 0) {
             const enumFmt = prop.enum.map((e) => `\`${e}\``).join(' | ');
-            help += `\n    *${t(lang, 'menu.options')}* ${enumFmt}`;
+            help += `\n   *${t(lang, 'menu.options')}* ${enumFmt}`;
           }
-          help += '\n';
+          help += '\n\n';
         }
       }
 
