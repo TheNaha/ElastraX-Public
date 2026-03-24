@@ -114,11 +114,13 @@ export class RateLimiter {
    */
   static prune(): void {
     const now = Date.now();
-    for (const [key, bucket] of this.buckets) {
+    // ⚡ Bolt: Iterate using .forEach() instead of `for (const [key, bucket] of this.buckets)`
+    // to avoid allocating a new O(N) tuple array for every entry in the map, reducing GC pressure.
+    this.buckets.forEach((bucket, key) => {
       const cutoff = now - bucket.windowMs * 2;
       if (bucket.lastRefill < cutoff) {
         this.buckets.delete(key);
       }
-    }
+    });
   }
 }

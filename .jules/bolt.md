@@ -41,3 +41,7 @@
 ## 2026-03-23 - [O(N) Array Allocation during object iteration]
 **Learning:** Iterating over object entries with `Object.entries()` or using `Array.prototype.reduce()` creates unnecessary temporary arrays and function call overhead, impacting performance and memory during high-frequency metric generation (`/health` and Prometheus scrapes).
 **Action:** Use `for...in` loops to iterate over object keys without creating intermediate tuple arrays, and use standard `for` loops instead of `.reduce()` to eliminate callback overhead in hot paths.
+
+## 2026-03-24 - [Map Iteration Array Allocation]
+**Learning:** Iterating over maps using `for (const [key, value] of map)` allocates a new 2-element array tuple for *every* entry in the map. During frequent periodic tasks (like `RateLimiter.prune()`), this creates O(N) intermediate allocations, causing unnecessary garbage collection (GC) pressure.
+**Action:** Use `map.forEach((value, key) => { ... })` instead. It avoids allocating intermediate arrays, providing O(1) memory overhead during iteration.
