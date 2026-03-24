@@ -37,3 +37,7 @@
 ## 2026-03-15 - [Avoid O(N) Object Arrays in High-Frequency Paths]
 **Learning:** Checking for the last item in an object or iterating through it using `Object.keys()` and `Object.entries()` allocates an unnecessary O(N) array on the heap. In high-frequency operations like session pruning on every incoming message (`SessionManager.ts`), this causes significant memory allocations and garbage collection pressure.
 **Action:** Replaced `Object.keys()` and `Object.entries()` with O(1) `for...in` loops to iterate over object properties without allocating an intermediate array, retaining the same functionality by utilizing the insertion-order guarantee of `for...in` loops on string keys to find the last active flow.
+
+## 2026-03-23 - [O(N) Array Allocation during object iteration]
+**Learning:** Iterating over object entries with `Object.entries()` or using `Array.prototype.reduce()` creates unnecessary temporary arrays and function call overhead, impacting performance and memory during high-frequency metric generation (`/health` and Prometheus scrapes).
+**Action:** Use `for...in` loops to iterate over object keys without creating intermediate tuple arrays, and use standard `for` loops instead of `.reduce()` to eliminate callback overhead in hot paths.

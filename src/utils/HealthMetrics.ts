@@ -184,9 +184,14 @@ export class HealthMetricsCollector {
 
   getMetrics(): MetricsSnapshot {
     const sortedLLM = [...this.llmLatency.values].sort((a, b) => a - b);
-    const avgLLM = sortedLLM.length > 0
-      ? Math.round(sortedLLM.reduce((a, b) => a + b, 0) / sortedLLM.length)
-      : 0;
+    let avgLLM = 0;
+    if (sortedLLM.length > 0) {
+      let sum = 0;
+      for (let i = 0; i < sortedLLM.length; i++) {
+        sum += sortedLLM[i]!;
+      }
+      avgLLM = Math.round(sum / sortedLLM.length);
+    }
 
     const sortedMsg = [...this.messageDuration.values].sort((a, b) => a - b);
 
@@ -278,7 +283,8 @@ export class HealthMetricsCollector {
 
     lines.push('# HELP elastrax_provider_requests_total Provider requests by status');
     lines.push('# TYPE elastrax_provider_requests_total counter');
-    for (const [name, stats] of Object.entries(m.providers)) {
+    for (const name in m.providers) {
+      const stats = m.providers[name]!;
       lines.push(`elastrax_provider_requests_total{provider="${name}",status="success"} ${stats.success}`);
       lines.push(`elastrax_provider_requests_total{provider="${name}",status="failure"} ${stats.failures}`);
     }
@@ -297,19 +303,22 @@ export class HealthMetricsCollector {
 
     lines.push('# HELP elastrax_tool_invocations_total Tool invocations');
     lines.push('# TYPE elastrax_tool_invocations_total counter');
-    for (const [name, stats] of Object.entries(m.tools)) {
+    for (const name in m.tools) {
+      const stats = m.tools[name]!;
       lines.push(`elastrax_tool_invocations_total{tool="${name}"} ${stats.invocations}`);
     }
 
     lines.push('# HELP elastrax_tool_errors_total Tool execution errors');
     lines.push('# TYPE elastrax_tool_errors_total counter');
-    for (const [name, stats] of Object.entries(m.tools)) {
+    for (const name in m.tools) {
+      const stats = m.tools[name]!;
       lines.push(`elastrax_tool_errors_total{tool="${name}"} ${stats.errors}`);
     }
 
     lines.push('# HELP elastrax_tool_duration_ms Tool execution duration percentiles');
     lines.push('# TYPE elastrax_tool_duration_ms gauge');
-    for (const [name, stats] of Object.entries(m.tools)) {
+    for (const name in m.tools) {
+      const stats = m.tools[name]!;
       lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.5"} ${stats.durationP50}`);
       lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.95"} ${stats.durationP95}`);
       lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.99"} ${stats.durationP99}`);
@@ -317,7 +326,8 @@ export class HealthMetricsCollector {
 
     lines.push('# HELP elastrax_tokens_total Token usage by model and type');
     lines.push('# TYPE elastrax_tokens_total counter');
-    for (const [model, stats] of Object.entries(m.tokens)) {
+    for (const model in m.tokens) {
+      const stats = m.tokens[model]!;
       lines.push(`elastrax_tokens_total{model="${model}",type="prompt"} ${stats.prompt}`);
       lines.push(`elastrax_tokens_total{model="${model}",type="completion"} ${stats.completion}`);
     }
