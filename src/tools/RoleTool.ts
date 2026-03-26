@@ -181,16 +181,16 @@ export class RoleTool extends BaseTool {
       const targetRole = role || 'user';
       const current = await PrivilegeService.getForRole(targetRole);
       const defaults = PrivilegeService.getDefaults(targetRole);
-      let out = `📊 *Privileges for "${targetRole}":*\n`;
+      let out = `📊 *Privileges for "${targetRole}":*\n\n`;
       for (const f of PRIVILEGE_FIELDS) {
         const cur = current[f];
         const def = defaults[f];
         const label = cur === -1 ? 'Unlimited' : String(cur);
         const defLabel = def === -1 ? 'Unlimited' : String(def);
         const overridden = cur !== def ? ' (Overridden)' : '';
-        out += ` • *${f}:* ${label} (Default: ${defLabel})${overridden}\n`;
+        out += ` • *${f}:* ${label} (Default: ${defLabel})${overridden}\n\n`;
       }
-      return out;
+      return out.trimEnd();
     }
 
     // ── SETPRIV (owner only) ───────────────────────────────────────────────
@@ -292,7 +292,7 @@ function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
 ): string {
   return roles.length > 0
-    ? roles.map((entry) => ` • *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n')
+    ? roles.map((entry) => ` • *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n\n')
     : '_No explicit roles assigned_';
 }
 
@@ -342,7 +342,7 @@ function formatPrivileges(p: RolePrivileges): string {
     ` • Window (sec): *${fmt(p.rateLimitWindowSec)}*`,
     ` • Context limit: *${fmt(p.contextLimit)}*`,
     ` • Max download (MB): *${fmt(p.maxDownloadMb)}*`,
-  ].join('\n');
+  ].join('\n\n');
 }
 
 /** Strip `@domain` and `:device` suffixes for display. */

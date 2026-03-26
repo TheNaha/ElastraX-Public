@@ -73,6 +73,6 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
     }
 
     const lines = results.map((r) => ` • *${r.name}* — ${r.description}`);
-    return `Found ${results.length} tool(s):\n${lines.join('\n')}\n\nYou can now call any of these tools directly.`;
+    return `Found ${results.length} tool(s):\n\n${lines.join('\n\n')}\n\nYou can now call any of these tools directly.`;
   }
 }
