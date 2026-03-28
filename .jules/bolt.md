@@ -45,3 +45,7 @@
 ## 2026-03-24 - [Map Iteration Array Allocation]
 **Learning:** Iterating over maps using `for (const [key, value] of map)` allocates a new 2-element array tuple for *every* entry in the map. During frequent periodic tasks (like `RateLimiter.prune()`), this creates O(N) intermediate allocations, causing unnecessary garbage collection (GC) pressure.
 **Action:** Use `map.forEach((value, key) => { ... })` instead. It avoids allocating intermediate arrays, providing O(1) memory overhead during iteration.
+
+## 2026-03-25 - [Concurrent Auth State DB Updates]
+**Learning:** In Baileys `useDBAuthState` custom implementation, iterating through nested signal key objects using `Object.keys()` allocated unnecessary arrays per category and id on every auth state update. Furthermore, pushing async DB operations to a tasks array and sequentially awaiting them using `for (const task of tasks)` introduced significant I/O latency bottlenecks during high-frequency sync events.
+**Action:** Replaced `Object.keys()` iterations with `for...in` loops to prevent O(N) intermediate array allocations. Refactored the task array to collect the Promises and use `await Promise.all(tasks)` to execute the SQLite DB inserts/deletes concurrently.
