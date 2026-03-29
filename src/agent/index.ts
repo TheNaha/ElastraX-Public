@@ -874,7 +874,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
           // If the stream produced tool calls, we need to process them
           if (toolCallDeltas.size > 0) {
-            const toolCalls: ToolCall[] = Array.from(toolCallDeltas.values()).map((tc) => ({
+            // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
+            const toolCalls: ToolCall[] = Array.from(toolCallDeltas.values(), (tc) => ({
               id: tc.id,
               type: 'function' as const,
               function: { name: tc.name, arguments: tc.args },
