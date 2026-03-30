@@ -163,8 +163,8 @@ export class MenuTool extends BaseTool<MenuArgs> {
       // Sort tools within category alphabetically
       const sortedTools = catTools.sort((a, b) => a.name.localeCompare(b.name));
       for (const tool of sortedTools) {
-        const aliasesStr = tool.aliases.length > 0 ? ` (${tool.aliases.join(', ')})` : '';
-        menu += ` • /${tool.name}${aliasesStr}\n`;
+        const aliasesStr = tool.aliases.length > 0 ? ` (\`${tool.aliases.join('`, `')}\`)` : '';
+        menu += ` • \`/${tool.name}\`${aliasesStr}\n`;
       }
       menu += `\n`;
     }
