@@ -43,8 +43,8 @@ const log = logger.child({ module: 'AIClient' });
 /** Checks whether a string is a syntactically valid URL. */
 function isValidUrl(url: string): boolean {
   try {
-    new URL(url);
-    return true;
+    const parsed = new URL(url);
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
   } catch {
     return false;
   }

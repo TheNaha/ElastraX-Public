@@ -21,3 +21,8 @@
 **Vulnerability:** `FFmpegConverter` passed user-provided arguments directly to `child_process.spawn()` without checking if they were allowed flags. This allowed Argument Injection vulnerabilities where an attacker could pass arbitrary FFmpeg flags (e.g., to read arbitrary files, overwrite files, or execute commands).
 **Learning:** Any user-provided input that is passed as arguments to an external command (like FFmpeg) should be strictly validated against an allowlist of permitted flags and patterns to prevent Argument Injection.
 **Prevention:** Implemented an `ALLOWED_FLAGS` set in `FFmpegConverter` and strictly validated that any argument starting with `-` matches either a permitted flag or a valid numeric value before passing it to `spawn`.
+
+## 2025-05-18 - SSRF/LFI Prevention in AIClient via AI_API_BASE_URL
+**Vulnerability:** `AIClient` fetched data from the URL defined in `process.env.AI_API_BASE_URL` without validating its protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
+**Learning:** Similar to `WebSearchTool`, URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations.
+**Prevention:** Updated `isValidUrl` in `src/ai/client.ts` to enforce `http:` or `https:` protocol checks.
