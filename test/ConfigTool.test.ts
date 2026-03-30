@@ -104,8 +104,8 @@ describe('ConfigTool', () => {
     test('should return current config for the chat room', async () => {
       const result = await tool.execute({ action: 'get' }, createCtx());
       expect(result).toContain('chat-abc');
-      expect(result).toContain('Context Limit');
-      expect(result).toContain('Temperature');
+      expect(result).toContain('`contextLimit`');
+      expect(result).toContain('`temperature`');
     });
 
     test('should show (Default) labels when DB fields are null', async () => {
