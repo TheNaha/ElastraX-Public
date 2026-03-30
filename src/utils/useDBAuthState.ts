@@ -69,19 +69,17 @@ export const useDBAuthState = async (): Promise<{
           return data;
         },
         set: async (data: SignalDataSet) => {
-          const tasks: Array<() => Promise<void>> = [];
-          for (const category of Object.keys(data) as Array<keyof SignalDataSet>) {
-            const catData = data[category];
+          const tasks: Array<Promise<void>> = [];
+          for (const category in data) {
+            const catData = data[category as keyof SignalDataSet];
             if (!catData) continue;
-            for (const id of Object.keys(catData)) {
+            for (const id in catData) {
               const value = catData[id];
               const fileId = `${String(category)}-${id}`;
-              tasks.push(() => (value ? writeData(value as SerializableAuthValue, fileId) : removeData(fileId)));
+              tasks.push(value ? writeData(value as SerializableAuthValue, fileId) : removeData(fileId));
             }
           }
-          for (const task of tasks) {
-            await task();
-          }
+          await Promise.all(tasks);
         },
       },
     },

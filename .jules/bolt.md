@@ -46,6 +46,9 @@
 **Learning:** Iterating over maps using `for (const [key, value] of map)` allocates a new 2-element array tuple for *every* entry in the map. During frequent periodic tasks (like `RateLimiter.prune()`), this creates O(N) intermediate allocations, causing unnecessary garbage collection (GC) pressure.
 **Action:** Use `map.forEach((value, key) => { ... })` instead. It avoids allocating intermediate arrays, providing O(1) memory overhead during iteration.
 
+## 2026-03-25 - [Concurrent Auth State DB Updates]
+**Learning:** In Baileys `useDBAuthState` custom implementation, iterating through nested signal key objects using `Object.keys()` allocated unnecessary arrays per category and id on every auth state update. Furthermore, pushing async DB operations to a tasks array and sequentially awaiting them using `for (const task of tasks)` introduced significant I/O latency bottlenecks during high-frequency sync events.
+**Action:** Replaced `Object.keys()` iterations with `for...in` loops to prevent O(N) intermediate array allocations. Refactored the task array to collect the Promises and use `await Promise.all(tasks)` to execute the SQLite DB inserts/deletes concurrently.
 ## 2026-03-26 - [Array Copying Optimization]
 **Learning:** Using the spread operator (`[...array]`) to copy arrays creates an iterator and consumes it, which adds unnecessary overhead. The `array.slice()` method delegates to a highly optimized native engine method, making array cloning significantly faster and allocating less memory.
 **Action:** Replace `[...array]` with `array.slice()` for shallow cloning in high-frequency execution paths to minimize Garbage Collection (GC) pressure.
