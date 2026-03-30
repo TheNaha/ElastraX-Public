@@ -102,15 +102,15 @@ export class MenuTool extends BaseTool<MenuArgs> {
       }
 
       let help = t(lang, 'menu.help_for', { name: tool.name });
-      help += ` • ${t(lang, 'menu.description')} ${tool.description}\n`;
+      help += ` • ${t(lang, 'menu.description')} ${tool.description}\n\n`;
 
       if (tool.aliases.length > 0) {
-        help += ` • ${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n`;
+        help += ` • ${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n\n`;
       }
 
       const catCap = tool.category.charAt(0).toUpperCase() + tool.category.slice(1);
       const permCap = tool.permissions.charAt(0).toUpperCase() + tool.permissions.slice(1);
-      help += ` • ${t(lang, 'menu.category')} ${catCap}\n`;
+      help += ` • ${t(lang, 'menu.category')} ${catCap}\n\n`;
       help += ` • ${t(lang, 'menu.permissions')} ${permCap}\n\n`;
 
       const props = tool.definition.function.parameters.properties;
@@ -159,14 +159,13 @@ export class MenuTool extends BaseTool<MenuArgs> {
     const sortedCategories = Object.entries(categories).sort((a, b) => a[0].localeCompare(b[0]));
 
     for (const [cat, catTools] of sortedCategories) {
-      menu += `*=== ${cat.toUpperCase()} ===*\n`;
+      menu += `*=== ${cat.toUpperCase()} ===*\n\n`;
       // Sort tools within category alphabetically
       const sortedTools = catTools.sort((a, b) => a.name.localeCompare(b.name));
       for (const tool of sortedTools) {
-        const aliasesStr = tool.aliases.length > 0 ? ` (\`${tool.aliases.join('`, `')}\`)` : '';
-        menu += ` • \`/${tool.name}\`${aliasesStr}\n`;
+        const aliasesStr = tool.aliases.length > 0 ? ` (${tool.aliases.join(', ')})` : '';
+        menu += ` • /${tool.name}${aliasesStr}\n\n`;
       }
-      menu += `\n`;
     }
 
     menu += t(lang, 'menu.footer');

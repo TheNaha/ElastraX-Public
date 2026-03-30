@@ -169,12 +169,11 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
     const memUsage = process.memoryUsage();
     return [
       '🤖 *ElastraX System Info*',
-      '',
       ` • ⬆️ Uptime: *${formatUptime(process.uptime())}*`,
       ` • 💬 Total Rooms: *${roomCount}*`,
       ` • 🧠 Memory: *${Math.round(memUsage.heapUsed / 1024 / 1024)}MB* / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
       ` • 🏗️ Runtime: *Bun ${process.versions.bun || 'unknown'}*`,
-    ].join('\n');
+    ].join('\n\n');
   }
 }
 

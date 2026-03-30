@@ -83,13 +83,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.rate_limited': '⏳ Slow down! You can send a message every {seconds} seconds. Please wait.',
 
     // Ping
-    'ping.response': '🏓 Pong!\n\n • ⏱ Latency: *{latency}ms*\n • ⬆️ Uptime: *{uptime}*',
+    'ping.response': '🏓 Pong!\n\n • ⏱ Latency: *{latency}ms*\n\n • ⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Your Info*\n\n • 👤 Name: *{name}*\n • 🆔 User ID: `{userId}`\n • 💬 Chat ID: `{chatId}`\n • 📡 Platform: *{platform}*\n • 🔑 Is Group: *{isGroup}*\n • 🔐 Permissions: *{permissions}*',
+    'id.response': '🪪 *Your Info*\n\n • 👤 Name: *{name}*\n\n • 🆔 User ID: `{userId}`\n\n • 💬 Chat ID: `{chatId}`\n\n • 📡 Platform: *{platform}*\n\n • 🔑 Is Group: *{isGroup}*\n\n • 🔐 Permissions: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Room Statistics*\n\n • 💬 Total Messages: *{total}*\n • 🤖 Bot Replies: *{botReplies}*\n • 👤 Human Messages: *{humanMessages}*\n • 📅 Active Since: *{since}*\n • 🏆 Top User: *{topUser}* ({topCount} msgs)',
+    'stats.response': '📊 *Room Statistics*\n\n • 💬 Total Messages: *{total}*\n\n • 🤖 Bot Replies: *{botReplies}*\n\n • 👤 Human Messages: *{humanMessages}*\n\n • 📅 Active Since: *{since}*\n\n • 🏆 Top User: *{topUser}* ({topCount} msgs)',
     'stats.no_data': '📊 No messages recorded for this room yet.',
 
     // Delete
@@ -207,7 +207,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.no_user': '❌ Please specify a user. Example: `/role grant 628xxx admin`',
     'role.invalid_role': "❌ Invalid role. Must be `user`, `premium`, `admin`, or `owner`.",
     'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
-    'role.usage': '❓ *Usage:*\n\n • `/role check [user]` — Check roles & privileges\n • `/role grant <user> <role> [global]` — Assign role\n • `/role revoke <user> <role> [global]` — Remove role\n • `/role list [global]` — List assigned roles\n • `/role privs <role>` — View privileges\n • `/role setpriv <role> <field> <value>` — Override privilege (owner)\n • `/role resetpriv <role>` — Reset to defaults (owner)',
+    'role.usage': '❓ *Usage:*\n\n • `/role check [user]` — Check roles & privileges\n\n • `/role grant <user> <role> [global]` — Assign role\n\n • `/role revoke <user> <role> [global]` — Remove role\n\n • `/role list [global]` — List assigned roles\n\n • `/role privs <role>` — View privileges\n\n • `/role setpriv <role> <field> <value>` — Override privilege (owner)\n\n • `/role resetpriv <role>` — Reset to defaults (owner)',
 
     // Owner Admin
     'owner.broadcast_no_message': '❌ Please provide a broadcast message.',
@@ -217,7 +217,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'owner.leave_goodbye': '👋 Goodbye! ElastraX is leaving this group.',
     'owner.leave_not_supported': '❌ Leaving groups is not supported on this platform.',
     'owner.leave_error': '❌ Failed to leave group: {msg}',
-    'owner.usage': '❓ *Owner Commands:*\n\n • `/broadcast <message>` — Send to all rooms\n • `/leave` — Leave current group\n • `/owner system_info` — Bot stats',
+    'owner.usage': '❓ *Owner Commands:*\n\n • `/broadcast <message>` — Send to all rooms\n\n • `/leave` — Leave current group\n\n • `/owner system_info` — Bot stats',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
@@ -278,13 +278,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'agent.rate_limited': '⏳ Pelan-pelan ya! Kamu bisa kirim pesan setiap {seconds} detik. Tunggu dulu.',
 
     // Ping
-    'ping.response': '🏓 Pong!\n\n • ⏱ Latensi: *{latency}ms*\n • ⬆️ Uptime: *{uptime}*',
+    'ping.response': '🏓 Pong!\n\n • ⏱ Latensi: *{latency}ms*\n\n • ⬆️ Uptime: *{uptime}*',
 
     // ID
-    'id.response': '🪪 *Info Kamu*\n\n • 👤 Nama: *{name}*\n • 🆔 User ID: `{userId}`\n • 💬 Chat ID: `{chatId}`\n • 📡 Platform: *{platform}*\n • 🔑 Grup: *{isGroup}*\n • 🔐 Izin: *{permissions}*',
+    'id.response': '🪪 *Info Kamu*\n\n • 👤 Nama: *{name}*\n\n • 🆔 User ID: `{userId}`\n\n • 💬 Chat ID: `{chatId}`\n\n • 📡 Platform: *{platform}*\n\n • 🔑 Grup: *{isGroup}*\n\n • 🔐 Izin: *{permissions}*',
 
     // Stats
-    'stats.response': '📊 *Statistik Ruangan*\n\n • 💬 Total Pesan: *{total}*\n • 🤖 Balasan Bot: *{botReplies}*\n • 👤 Pesan Manusia: *{humanMessages}*\n • 📅 Aktif Sejak: *{since}*\n • 🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
+    'stats.response': '📊 *Statistik Ruangan*\n\n • 💬 Total Pesan: *{total}*\n\n • 🤖 Balasan Bot: *{botReplies}*\n\n • 👤 Pesan Manusia: *{humanMessages}*\n\n • 📅 Aktif Sejak: *{since}*\n\n • 🏆 Pengguna Aktif: *{topUser}* ({topCount} pesan)',
     'stats.no_data': '📊 Belum ada pesan yang tercatat untuk ruangan ini.',
 
     // Delete
@@ -402,7 +402,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.no_user': '❌ Harap tentukan pengguna. Contoh: `/role grant 628xxx admin`',
     'role.invalid_role': "❌ Role tidak valid. Harus `user`, `premium`, `admin`, atau `owner`.",
     'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',
-    'role.usage': '❓ *Cara pakai:*\n\n • `/role check [user]` — Cek role & hak akses\n • `/role grant <user> <role> [global]` — Tetapkan role\n • `/role revoke <user> <role> [global]` — Cabut role\n • `/role list [global]` — Daftar role\n • `/role privs <role>` — Lihat hak akses\n • `/role setpriv <role> <field> <value>` — Ubah hak akses (owner)\n • `/role resetpriv <role>` — Reset ke default (owner)',
+    'role.usage': '❓ *Cara pakai:*\n\n • `/role check [user]` — Cek role & hak akses\n\n • `/role grant <user> <role> [global]` — Tetapkan role\n\n • `/role revoke <user> <role> [global]` — Cabut role\n\n • `/role list [global]` — Daftar role\n\n • `/role privs <role>` — Lihat hak akses\n\n • `/role setpriv <role> <field> <value>` — Ubah hak akses (owner)\n\n • `/role resetpriv <role>` — Reset ke default (owner)',
 
     // Owner Admin
     'owner.broadcast_no_message': '❌ Harap berikan pesan untuk disiarkan.',
@@ -412,7 +412,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'owner.leave_goodbye': '👋 Selamat tinggal! ElastraX meninggalkan grup ini.',
     'owner.leave_not_supported': '❌ Keluar dari grup tidak didukung di platform ini.',
     'owner.leave_error': '❌ Gagal meninggalkan grup: {msg}',
-    'owner.usage': '❓ *Perintah Owner:*\n\n • `/broadcast <pesan>` — Kirim ke semua ruangan\n • `/leave` — Keluar dari grup\n • `/owner system_info` — Info bot',
+    'owner.usage': '❓ *Perintah Owner:*\n\n • `/broadcast <pesan>` — Kirim ke semua ruangan\n\n • `/leave` — Keluar dari grup\n\n • `/owner system_info` — Info bot',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',
