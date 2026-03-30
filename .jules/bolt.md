@@ -45,3 +45,7 @@
 ## 2026-03-24 - [Map Iteration Array Allocation]
 **Learning:** Iterating over maps using `for (const [key, value] of map)` allocates a new 2-element array tuple for *every* entry in the map. During frequent periodic tasks (like `RateLimiter.prune()`), this creates O(N) intermediate allocations, causing unnecessary garbage collection (GC) pressure.
 **Action:** Use `map.forEach((value, key) => { ... })` instead. It avoids allocating intermediate arrays, providing O(1) memory overhead during iteration.
+
+## 2026-03-26 - [Array Copying Optimization]
+**Learning:** Using the spread operator (`[...array]`) to copy arrays creates an iterator and consumes it, which adds unnecessary overhead. The `array.slice()` method delegates to a highly optimized native engine method, making array cloning significantly faster and allocating less memory.
+**Action:** Replace `[...array]` with `array.slice()` for shallow cloning in high-frequency execution paths to minimize Garbage Collection (GC) pressure.

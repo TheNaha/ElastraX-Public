@@ -183,7 +183,7 @@ export class HealthMetricsCollector {
   }
 
   getMetrics(): MetricsSnapshot {
-    const sortedLLM = [...this.llmLatency.values].sort((a, b) => a - b);
+    const sortedLLM = this.llmLatency.values.slice().sort((a, b) => a - b);
     let avgLLM = 0;
     if (sortedLLM.length > 0) {
       let sum = 0;
@@ -193,16 +193,16 @@ export class HealthMetricsCollector {
       avgLLM = Math.round(sum / sortedLLM.length);
     }
 
-    const sortedMsg = [...this.messageDuration.values].sort((a, b) => a - b);
+    const sortedMsg = this.messageDuration.values.slice().sort((a, b) => a - b);
 
     const providers: Record<string, { success: number; failures: number }> = {};
-    for (const [name, stats] of this.providerStats) {
+    this.providerStats.forEach((stats, name) => {
       providers[name] = { ...stats };
-    }
+    });
 
     const tools: Record<string, { invocations: number; errors: number; durationP50: number; durationP95: number; durationP99: number }> = {};
-    for (const [name, stats] of this.toolStats) {
-      const sortedDuration = [...stats.duration.values].sort((a, b) => a - b);
+    this.toolStats.forEach((stats, name) => {
+      const sortedDuration = stats.duration.values.slice().sort((a, b) => a - b);
       tools[name] = {
         invocations: stats.invocations,
         errors: stats.errors,
@@ -210,12 +210,12 @@ export class HealthMetricsCollector {
         durationP95: this.percentile(sortedDuration, 95),
         durationP99: this.percentile(sortedDuration, 99),
       };
-    }
+    });
 
     const tokens: Record<string, { prompt: number; completion: number }> = {};
-    for (const [name, stats] of this.tokenStats) {
+    this.tokenStats.forEach((stats, name) => {
       tokens[name] = { ...stats };
-    }
+    });
 
     const queueStats = this.queueStatsGetter?.() ?? { totalRooms: 0, totalPending: 0, totalRunning: 0 };
     const memUsage = process.memoryUsage();
