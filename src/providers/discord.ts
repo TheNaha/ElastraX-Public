@@ -295,7 +295,8 @@ export class DiscordProvider implements BotProvider {
             return;
           }
 
-          const files = Array.from(msg.attachments.values()).map((attachment) => attachment.url);
+          // ⚡ Bolt: Combine Array.from() and .map() to avoid allocating an intermediate array, reducing GC pressure
+          const files = Array.from(msg.attachments.values(), (attachment) => attachment.url);
           await targetChannel.send({
             content: msg.content || undefined,
             ...(files.length > 0 ? { files } : {}),
