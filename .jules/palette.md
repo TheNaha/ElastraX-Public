@@ -31,3 +31,6 @@
 ## 2025-03-18 - [Double Newlines for Visual Separation in Lists]
 **Learning:** In conversational UI outputs, formatting text-based lists with single newlines can still appear cluttered and difficult to read, especially when list items contain multiple details or wrap on mobile screens.
 **Action:** Always use double newlines (`\n\n`) alongside leading space bullets (` • `) to provide clear visual separation between distinct list items or sections, significantly enhancing visual scanning and readability.
+## 2024-05-18 - [Markdown code formatting in bot responses]
+**Learning:** Formatting parameter string aliases using markdown code blocks inside WhatsApp bots allows the options to be visually separated from standard text, increasing tap-to-copy functionality and overall legibility of commands in list items.
+**Action:** Use backticks (\` \`) to wrap inline aliases and commands in bot conversational tool responses such as the `MenuTool.ts` main menu listing.

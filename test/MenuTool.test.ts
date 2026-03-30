@@ -33,7 +33,7 @@ describe('MenuTool', () => {
     const result = await menuTool.execute({}, ctx);
 
     expect(result).toContain('MOCK');
-    expect(result).toContain('/mock_tool (mt)');
+    expect(result).toContain('`/mock_tool` (`mt`)');
     expect(result).toContain('Hello User!');
   });
 
