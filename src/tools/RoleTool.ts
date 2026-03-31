@@ -188,7 +188,7 @@ export class RoleTool extends BaseTool {
         const label = cur === -1 ? 'Unlimited' : String(cur);
         const defLabel = def === -1 ? 'Unlimited' : String(def);
         const overridden = cur !== def ? ' (Overridden)' : '';
-        out += ` • *${f}:* ${label} (Default: ${defLabel})${overridden}\n\n`;
+        out += ` • *\`${f}\`:* ${label} (Default: ${defLabel})${overridden}\n\n`;
       }
       return out.trimEnd();
     }
