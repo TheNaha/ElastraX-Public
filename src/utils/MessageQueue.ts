@@ -95,12 +95,13 @@ export class MessageQueue {
   /** Remove queues that have been idle beyond the timeout. */
   private prune(): void {
     const cutoff = Date.now() - this.idleTimeoutMs;
-    for (const [roomId, queue] of this.queues) {
+    // ⚡ Bolt: Iterate using .forEach() instead of `for (const [roomId, queue] of this.queues)` to prevent O(N) array tuple allocations
+    this.queues.forEach((queue, roomId) => {
       const pendingCount = queue.tasks.length - queue.head;
       if (queue.running === 0 && pendingCount === 0 && queue.lastActivity < cutoff) {
         this.queues.delete(roomId);
       }
-    }
+    });
   }
 
   /** Get current queue stats (for health metrics). */
