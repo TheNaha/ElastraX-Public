@@ -34,3 +34,7 @@
 ## 2024-05-18 - [Markdown code formatting in bot responses]
 **Learning:** Formatting parameter string aliases using markdown code blocks inside WhatsApp bots allows the options to be visually separated from standard text, increasing tap-to-copy functionality and overall legibility of commands in list items.
 **Action:** Use backticks (\` \`) to wrap inline aliases and commands in bot conversational tool responses such as the `MenuTool.ts` main menu listing.
+
+## 2025-03-30 - [Copyable Technical Keywords in Bot Outputs]
+**Learning:** We noticed that `/config` (ConfigTool) presented config key properties in Title Case inside its bullet list (e.g. `*System Prompt*`). While this looks nice, it breaks UX because the actual key needed for the `/config set` command is exact (`systemPrompt`). Users must type the exact case-sensitive programmatic string, and failing to provide it easily tappable/copyable creates a poor experience. Additionally, metadata like `platform` and `permissions` in `IDTool` lacked title casing, reducing visual polish.
+**Action:** When displaying exact programmatic strings that users must type (like config keys), format them using markdown backticks (e.g., `*\`systemPrompt\`*`) to render them as copyable code snippets in the chat client. Conversely, when displaying human-readable metadata values (like roles or platform names), apply Title Casing at the presentation layer for polish.

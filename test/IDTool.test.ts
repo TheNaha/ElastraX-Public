@@ -47,7 +47,7 @@ describe('IDTool', () => {
     expect(result).toBeString();
     expect(result).toContain('user-1');
     expect(result).toContain('chat-1');
-    expect(result).toContain('whatsapp');
+    expect(result).toContain('Whatsapp');
     expect(result).toContain('User');
     // Note: We expect the result to contain 'user' eventually when we implement the change
   });
@@ -76,6 +76,6 @@ describe('IDTool', () => {
 
     const result = await tool.execute({}, ctx);
     expect(result).toBeString();
-    expect(result).toContain('user, admin');
+    expect(result).toContain('User, Admin');
   });
 });
