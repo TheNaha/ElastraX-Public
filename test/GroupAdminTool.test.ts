@@ -55,7 +55,7 @@ describe('GroupAdminTool', () => {
       const tool = new GroupAdminTool();
       const ctx = createMockCtx();
       const result = await tool.execute({ action: 'invalid', user: '628123456789' }, ctx);
-      expect(result).toBe('❌ Invalid action. Must be one of: add, remove, promote, demote, mute, unmute, link.');
+      expect(result).toBe('❌ Invalid action. Must be one of: `add`, `remove`, `promote`, `demote`, `mute`, `unmute`, `link`.');
     });
 
     test('should return group link without requiring user', async () => {

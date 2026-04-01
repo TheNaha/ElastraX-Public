@@ -148,7 +148,7 @@ describe('RoleTool', () => {
     const ctx = createMockCtx();
     const result = await tool.execute({ action: 'list' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
-    expect(text).toContain('admin');
+    expect(text).toContain('Admin');
   });
 
   test('action=privs returns privilege details', async () => {

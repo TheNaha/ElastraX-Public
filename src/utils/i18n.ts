@@ -30,8 +30,8 @@ type Locale = 'en' | 'id';
 const translations: Record<Locale, Record<string, string>> = {
   en: {
     // Menu
-    'menu.not_found': '❌ Command or tool "*{name}*" not found. Type /menu to see all commands.',
-    'menu.help_for': '*Help for: /{name}*\n\n',
+    'menu.not_found': '❌ Command or tool "*`{name}`*" not found. Type `/menu` to see all commands.',
+    'menu.help_for': '*Help for: `/{name}`*\n\n',
     'menu.description': '*Description:*',
     'menu.aliases': '*Aliases:*',
     'menu.category': '*Category:*',
@@ -43,13 +43,13 @@ const translations: Record<Locale, Record<string, string>> = {
     'menu.required': 'Required',
     'menu.optional': 'Optional',
     'menu.greeting': 'Hello {name}!',
-    'menu.hint': 'Use */help <command>* to see detailed usage of a command.\n\n',
+    'menu.hint': 'Use *`/help <command>`* to see detailed usage of a command.\n\n',
     'menu.footer': '_Powered by ElastraX v7 with Native AI_',
-    'menu.not_found_suggestion': '❌ Command or tool "*{name}*" not found. Did you mean "*{suggestion}*"?',
+    'menu.not_found_suggestion': '❌ Command or tool "*`{name}`*" not found. Did you mean "*`{suggestion}`*"?',
 
     // Group Admin
     'group.not_in_group': '❌ This command can only be used in a group.',
-    'group.invalid_action': "❌ Invalid action. Must be one of: add, remove, promote, demote, mute, unmute, link.",
+    'group.invalid_action': "❌ Invalid action. Must be one of: `add`, `remove`, `promote`, `demote`, `mute`, `unmute`, `link`.",
     'group.invalid_phone': '❌ Invalid user phone number.',
     'group.not_supported': '❌ Group Administration is not supported by the current adapter.',
     'group.success_add': '✅ Successfully added user {jid}.',
@@ -66,7 +66,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'sticker.error': '❌ Error making sticker: {msg}',
 
     // Language
-    'language.invalid': "❌ Invalid language code. Please provide either 'en' (English) or 'id' (Indonesian). Example: /language en",
+    'language.invalid': "❌ Invalid language code. Please provide either `en` (English) or `id` (Indonesian). Example: `/language en`",
     'language.success_id': '✅ Bahasa untuk obrolan ini telah diubah ke Bahasa Indonesia.',
     'language.success_en': '✅ The language for this chat room has been set to English.',
     'language.error': '❌ Error updating language: {msg}',
@@ -77,8 +77,8 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Agent
     'agent.no_permission': '⛔ You do not have permission to use this command.',
-    'agent.unknown_command': 'Unknown command: /{cmd}',
-    'agent.did_you_mean': 'Unknown command: /{cmd}. Did you mean */{suggestion}*?',
+    'agent.unknown_command': 'Unknown command: `/{cmd}`',
+    'agent.did_you_mean': 'Unknown command: `/{cmd}`. Did you mean *`/{suggestion}`*?',
     'agent.internal_error': 'An internal error occurred while processing your message.',
     'agent.rate_limited': '⏳ Slow down! You can send a message every {seconds} seconds. Please wait.',
 
@@ -261,7 +261,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'sticker.error': '❌ Gagal membuat stiker: {msg}',
 
     // Language
-    'language.invalid': "❌ Kode bahasa tidak valid. Harap berikan 'en' (Inggris) atau 'id' (Indonesia). Contoh: /language id",
+    'language.invalid': "❌ Kode bahasa tidak valid. Harap berikan `en` (Inggris) atau `id` (Indonesia). Contoh: `/language id`",
     'language.success_id': '✅ Bahasa untuk obrolan ini telah diubah ke Bahasa Indonesia.',
     'language.success_en': '✅ Bahasa untuk obrolan ini telah diatur ke Bahasa Inggris.',
     'language.error': '❌ Gagal memperbarui bahasa: {msg}',
@@ -397,11 +397,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.check': '🔐 *Info role untuk* {userTag}\n\n*Role efektif:* *{effectiveRole}*\n\n*Role yang ditetapkan:*\n\n{roles}',
     'role.list': '📋 *Role untuk {scope}:*\n\n{items}',
     'role.list_empty': '📋 Belum ada role yang ditetapkan untuk *{scope}*.',
-    'role.granted': '✅ Role *{role}* diberikan ke {userTag} di *{scope}*.',
+    'role.granted': '✅ Role *`{role}`* diberikan ke {userTag} di *{scope}*.',
     'role.revoked': '✅ Role dicabut dari {userTag} di *{scope}*.',
     'role.no_user': '❌ Harap tentukan pengguna. Contoh: `/role grant 628xxx admin`',
     'role.invalid_role': "❌ Role tidak valid. Harus `user`, `premium`, `admin`, atau `owner`.",
-    'role.insufficient': '⛔ Anda ({callerRole}) tidak bisa menetapkan/mencabut role *{targetRole}*.',
+    'role.insufficient': '⛔ Anda (`{callerRole}`) tidak bisa menetapkan/mencabut role *`{targetRole}`*.',
     'role.usage': '❓ *Cara pakai:*\n\n • `/role check [user]` — Cek role & hak akses\n\n • `/role grant <user> <role> [global]` — Tetapkan role\n\n • `/role revoke <user> <role> [global]` — Cabut role\n\n • `/role list [global]` — Daftar role\n\n • `/role privs <role>` — Lihat hak akses\n\n • `/role setpriv <role> <field> <value>` — Ubah hak akses (owner)\n\n • `/role resetpriv <role>` — Reset ke default (owner)',
 
     // Owner Admin
