@@ -215,33 +215,46 @@ export class ModelRouter {
   private getProvidersByTier(tier?: ModelTier): ResolvedProvider[] {
     if (!tier) return this.providers;
 
-    const preferred = this.providers.filter(p => p.tier === tier);
-    const fallback = this.providers.filter(p => p.tier !== tier);
+    // ⚡ Bolt: Use a single pass to partition providers instead of two .filter() calls
+    const preferred: ResolvedProvider[] = [];
+    const fallback: ResolvedProvider[] = [];
+    for (const p of this.providers) {
+      if (p.tier === tier) preferred.push(p);
+      else fallback.push(p);
+    }
 
     if (preferred.length === 0) {
       logger.debug({ tier }, '[ModelRouter] No providers match requested tier, using all');
       return this.providers;
     }
-    return [...preferred, ...fallback];
+    // ⚡ Bolt: Use .concat() instead of spread operator [...preferred, ...fallback] for better performance
+    return preferred.concat(fallback);
   }
 
   private getCandidateProviders(tier?: ModelTier): ResolvedProvider[] {
     const orderedProviders = this.getProvidersByTier(tier);
     const now = Date.now();
-    const availableProviders = orderedProviders.filter((provider) => {
+
+    // ⚡ Bolt: Single pass to separate available and skipped providers, replacing O(N^2) .includes() check and multiple allocations
+    const availableProviders: ResolvedProvider[] = [];
+    const skippedProviderNames: string[] = [];
+
+    for (const provider of orderedProviders) {
       const cooldownUntil = this.providerCooldownUntil.get(provider.name) ?? 0;
-      return cooldownUntil <= now;
-    });
+      if (cooldownUntil <= now) {
+        availableProviders.push(provider);
+      } else {
+        skippedProviderNames.push(provider.name);
+      }
+    }
 
     if (availableProviders.length === 0) {
       return orderedProviders;
     }
 
-    if (availableProviders.length !== orderedProviders.length) {
+    if (skippedProviderNames.length > 0) {
       logger.debug({
-        skippedProviders: orderedProviders
-          .filter((provider) => !availableProviders.includes(provider))
-          .map((provider) => provider.name),
+        skippedProviders: skippedProviderNames,
       }, '[ModelRouter] Skipping providers in cooldown window');
     }
 
