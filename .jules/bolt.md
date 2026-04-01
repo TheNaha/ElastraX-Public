@@ -52,3 +52,7 @@
 ## 2026-03-26 - [Array Copying Optimization]
 **Learning:** Using the spread operator (`[...array]`) to copy arrays creates an iterator and consumes it, which adds unnecessary overhead. The `array.slice()` method delegates to a highly optimized native engine method, making array cloning significantly faster and allocating less memory.
 **Action:** Replace `[...array]` with `array.slice()` for shallow cloning in high-frequency execution paths to minimize Garbage Collection (GC) pressure.
+
+## 2026-03-31 - [Map Iteration Array Allocation]
+**Learning:** While `for...of` loops over Arrays are generally optimized, iterating over a `Map` using `for (const [key, value] of map)` in high-frequency operations (like periodic pruning) allocates new array tuples for every entry, causing garbage collection overhead.
+**Action:** For these specific hot paths, use `map.forEach((value, key) => ...)` to bypass intermediate allocations.
