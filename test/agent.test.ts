@@ -456,14 +456,14 @@ describe('handleIncomingMessage', () => {
       const ctx = makeCtx({ text: '/men', isGroup: false });
       await handleIncomingMessage(ctx);
       // Should trigger "Did you mean /menu?"
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */menu*'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/menu`*'));
     });
 
     test('should suggest a similar command based on alias (e.g., /hlp -> /help alias for menu)', async () => {
       const ctx = makeCtx({ text: '/hlp', isGroup: false });
       await handleIncomingMessage(ctx);
       // 'help' is an alias for 'menu' in the real tool registry
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean */help*'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/help`*'));
     });
 
     test('should pass query string arguments to the tool for multi-word commands', async () => {

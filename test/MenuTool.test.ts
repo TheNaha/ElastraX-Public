@@ -45,7 +45,7 @@ describe('MenuTool', () => {
 
     const result = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
 
-    expect(result).toContain('*Help for: /mock_tool*');
+    expect(result).toContain('*Help for: `/mock_tool`*');
     expect(result).toContain('• *Description:* A mock tool');
     expect(result).toContain('• *Aliases:* mt');
     expect(result).toContain('• *Category:* Mock');
@@ -130,7 +130,7 @@ describe('MenuTool', () => {
     // "mock_tool" is the actual command name. "moock_tool" is a close typo.
     const result = await menuTool.execute({ command_name: 'moock_tool' }, ctx);
 
-    expect(result).toContain('Did you mean "*mock_tool*"?');
+    expect(result).toContain('Did you mean "*`mock_tool`*"?');
   });
 
   test('should suggest nearest alias if tool not found', async () => {
@@ -142,6 +142,6 @@ describe('MenuTool', () => {
     // "mt" is the alias. "mtt" is a close typo.
     const result = await menuTool.execute({ command_name: 'mtt' }, ctx);
 
-    expect(result).toContain('Did you mean "*mt*"?');
+    expect(result).toContain('Did you mean "*`mt`*"?');
   });
 });

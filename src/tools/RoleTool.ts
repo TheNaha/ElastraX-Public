@@ -144,9 +144,13 @@ export class RoleTool extends BaseTool {
       const { tag, mentionJid } = await resolveUserTag(targetId);
       const mentions = mentionJid ? [mentionJid] : [];
 
+      const effectiveRoleTitleCase = summary.effectiveRoles
+        .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
+        .join(', ');
+
       const text = t(lang, 'role.check', {
         userTag: tag,
-        effectiveRole: summary.effectiveRoles.join(', '),
+        effectiveRole: effectiveRoleTitleCase,
         roles: summary.explicitRoles,
       }) + `\n\n*Effective privileges:*\n${privsStr}`;
 
@@ -169,7 +173,8 @@ export class RoleTool extends BaseTool {
         const byRes = await resolveUserTag(r.grantedBy);
         if (userRes.mentionJid) mentions.push(userRes.mentionJid);
         if (byRes.mentionJid) mentions.push(byRes.mentionJid);
-        itemLines.push(`${i + 1}. *${r.role}* — ${userRes.tag} (by ${byRes.tag})`);
+        const roleCap = r.role.charAt(0).toUpperCase() + r.role.slice(1);
+        itemLines.push(`${i + 1}. *${roleCap}* — ${userRes.tag} (by ${byRes.tag})`);
       }
 
       const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n') });
@@ -181,7 +186,8 @@ export class RoleTool extends BaseTool {
       const targetRole = role || 'user';
       const current = await PrivilegeService.getForRole(targetRole);
       const defaults = PrivilegeService.getDefaults(targetRole);
-      let out = `📊 *Privileges for "${targetRole}":*\n\n`;
+      const roleCap = targetRole.charAt(0).toUpperCase() + targetRole.slice(1);
+      let out = `📊 *Privileges for "${roleCap}":*\n\n`;
       for (const f of PRIVILEGE_FIELDS) {
         const cur = current[f];
         const def = defaults[f];
@@ -292,7 +298,11 @@ function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
 ): string {
   return roles.length > 0
-    ? roles.map((entry) => ` • *${entry.role}* (${entry.scope === 'global' ? 'global' : entry.scope})`).join('\n\n')
+    ? roles.map((entry) => {
+        const roleCap = entry.role.charAt(0).toUpperCase() + entry.role.slice(1);
+        const scopeCap = entry.scope === 'global' ? 'Global' : 'This Chat';
+        return ` • *${roleCap}* (${scopeCap})`;
+      }).join('\n\n')
     : '_No explicit roles assigned_';
 }
 
