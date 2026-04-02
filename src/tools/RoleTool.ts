@@ -174,10 +174,10 @@ export class RoleTool extends BaseTool {
         if (userRes.mentionJid) mentions.push(userRes.mentionJid);
         if (byRes.mentionJid) mentions.push(byRes.mentionJid);
         const roleCap = r.role.charAt(0).toUpperCase() + r.role.slice(1);
-        itemLines.push(`${i + 1}. *${roleCap}* — ${userRes.tag} (by ${byRes.tag})`);
+        itemLines.push(` • *${roleCap}* — ${userRes.tag} (by ${byRes.tag})`);
       }
 
-      const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n') });
+      const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n\n') });
       return mentions.length > 0 ? { text, mentions } : text;
     }
 

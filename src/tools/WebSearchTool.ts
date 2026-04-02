@@ -111,8 +111,8 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
 
       // Format the top 5 results for the LLM context
       const textResults = data.results.slice(0, 5).map((item, idx) => {
-        return `[${idx + 1}] Title: ${item.title || ''}\nURL: ${item.url || ''}\nExcerpt: ${item.content || item.snippet || ''}\n`;
-      }).join('\n');
+        return ` • *[${idx + 1}] Title:* ${item.title || ''}\n   *URL:* ${item.url || ''}\n   *Excerpt:* ${item.content || item.snippet || ''}`;
+      }).join('\n\n');
 
       return `Search results for "${query}":\n\n${textResults}`;
     } catch (err) {
