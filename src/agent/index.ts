@@ -768,30 +768,39 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       // Legacy: send all permitted tool definitions
       availableTools = allowedTools.map((tool) => tool.definition);
     } else {
-      // Smart mode: always-loaded + trigger-matched tools only
-      const alwaysDefs = getAlwaysLoadedDefinitions().filter((d) =>
-        allowedToolNames.has(d.function.name),
-      );
+      // ⚡ Bolt: Eliminate multiple intermediate arrays and O(N) filter/map chains by processing
+      // tool definitions in a single pass. This significantly reduces garbage collection pressure
+      // during the hot-path message handling loop.
+      availableTools = [];
+      const alwaysLoadedNames: string[] = [];
+      const triggeredNames: string[] = [];
+      const seenNames = new Set<string>();
 
-      // Detect trigger patterns against message text + MIME type
+      // 1. Process always-loaded tools
+      for (const d of getAlwaysLoadedDefinitions()) {
+        const toolName = d.function.name;
+        if (allowedToolNames.has(toolName)) {
+          availableTools.push(d);
+          alwaysLoadedNames.push(toolName);
+          seenNames.add(toolName);
+        }
+      }
+
+      // 2. Process trigger-matched tools
       const mimeHint = ctx.mimeType || ctx.quoted?.mimeType || '';
-      const triggered = getTriggeredTools(userContent, mimeHint).filter((t) =>
-        allowedToolNames.has(t.name),
-      );
-      const triggeredDefs = triggered.map((t) => t.definition);
-
-      // Deduplicate (always-loaded tools shouldn't appear twice)
-      const seenNames = new Set(alwaysDefs.map((d) => d.function.name));
-      const uniqueTriggered = triggeredDefs.filter(
-        (d) => !seenNames.has(d.function.name),
-      );
-
-      availableTools = [...alwaysDefs, ...uniqueTriggered];
+      for (const t of getTriggeredTools(userContent, mimeHint)) {
+        const toolName = t.name;
+        if (allowedToolNames.has(toolName) && !seenNames.has(toolName)) {
+          availableTools.push(t.definition);
+          triggeredNames.push(toolName);
+          seenNames.add(toolName);
+        }
+      }
 
       log.info({
         chatId,
-        alwaysLoaded: alwaysDefs.map((d) => d.function.name),
-        triggered: uniqueTriggered.map((d) => d.function.name),
+        alwaysLoaded: alwaysLoadedNames,
+        triggered: triggeredNames,
         totalPermitted: allowedTools.length,
         mode: 'search',
       }, '[Agent] Smart tool loading');

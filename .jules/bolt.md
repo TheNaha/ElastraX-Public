@@ -56,3 +56,7 @@
 ## 2026-03-31 - [Map Iteration Array Allocation]
 **Learning:** While `for...of` loops over Arrays are generally optimized, iterating over a `Map` using `for (const [key, value] of map)` in high-frequency operations (like periodic pruning) allocates new array tuples for every entry, causing garbage collection overhead.
 **Action:** For these specific hot paths, use `map.forEach((value, key) => ...)` to bypass intermediate allocations.
+
+## 2026-04-02 - [Eliminate Intermediate Arrays in Smart Tool Loading]
+**Learning:** During the hot-path message handling loop, determining which tools to load using chained `.filter().map()` calls on arrays of tools created significant unnecessary memory allocation and garbage collection overhead. In particular, computing `alwaysDefs`, `triggered`, `triggeredDefs`, `seenNames` (via a map), `uniqueTriggered`, and the final spread operator `[...alwaysDefs, ...uniqueTriggered]` resulted in up to 8 short-lived array allocations per incoming message.
+**Action:** Replace functional array chaining with a single-pass `for...of` loop to build the final `availableTools` and logging arrays directly. This reduces the number of allocated intermediate arrays from 8 to 3, significantly lowering GC pressure during high-throughput message processing.
