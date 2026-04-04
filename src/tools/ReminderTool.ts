@@ -200,7 +200,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       }
 
       const items = active.map((r, i) => {
-        const baseItem = t(lang, 'reminder.list_item', {
+        const baseItem = ` • ` + t(lang, 'reminder.list_item', {
           n: String(i + 1),
           message: r.message,
           time: formatTime(r.remindAt),
@@ -209,7 +209,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         return r.recurrence
           ? baseItem + t(lang, 'reminder.recurrence_info', { recurrence: r.recurrence })
           : baseItem;
-      }).join('\n');
+      }).join('\n\n');
 
       return t(lang, 'reminder.list', { items });
     }
