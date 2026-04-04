@@ -61,6 +61,17 @@ export async function requestTranscription(
     throw new Error('Transcription endpoint is not configured.');
   }
 
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    throw new Error(`Invalid transcription endpoint URL: ${endpoint}`);
+  }
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error(`Invalid protocol for transcription endpoint: ${url.protocol}. Must be http: or https:`);
+  }
+
   const response = await fetchImpl(endpoint, {
     method: 'POST',
     headers: {
