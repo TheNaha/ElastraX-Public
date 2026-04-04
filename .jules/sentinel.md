@@ -26,3 +26,8 @@
 **Vulnerability:** `AIClient` fetched data from the URL defined in `process.env.AI_API_BASE_URL` without validating its protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
 **Learning:** Similar to `WebSearchTool`, URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations.
 **Prevention:** Updated `isValidUrl` in `src/ai/client.ts` to enforce `http:` or `https:` protocol checks.
+
+## 2025-05-19 - SSRF/LFI Prevention in Transcription via TRANSCRIBE_ENDPOINT
+**Vulnerability:** `requestTranscription` function in `src/utils/transcription.ts` fetched data from the URL defined in the `TRANSCRIBE_ENDPOINT` environment variable without validating its protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
+**Learning:** URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations.
+**Prevention:** Updated `requestTranscription` in `src/utils/transcription.ts` to enforce `http:` or `https:` protocol checks on the resolved endpoint.
