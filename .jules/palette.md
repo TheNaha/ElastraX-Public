@@ -42,3 +42,7 @@
 ## 2025-04-03 - [Consistent List Formatting for Actionable Items]
 **Learning:** We noticed that lists requiring user interaction (like cancellation IDs in `ReminderTool`) were using numbered lists (`1. `) and single newlines, which broke the visual consistency of using leading space bullets (` • `) and double newlines (`\n\n`) across the bot's UI. This made dense lists harder to scan.
 **Action:** When list items require an identifier for future interactions, move the identifier into parentheses alongside the text (e.g., `(ID: 1)`) so the primary list formatting can still utilize leading space bullets (` • `) and double newlines for optimal visual padding and scanning.
+
+## 2025-04-05 - Title Case Metadata Values in MenuTool
+**Learning:** Raw JSON schema types (like 'string' or 'boolean') look unpolished when exposed directly to users in text-based help menus. Applying title casing to these programmatic types at the presentation layer significantly improves the conversational aesthetics and perceived quality of the interface.
+**Action:** Always apply title casing to programmatic metadata values (like parameter types, roles, or scopes) right before they are interpolated into user-facing text strings, while keeping the internal representation lowercase.

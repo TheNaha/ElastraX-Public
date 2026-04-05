@@ -128,7 +128,8 @@ export class MenuTool extends BaseTool<MenuArgs> {
         for (const [key, prop] of Object.entries(props)) {
           const isReq = required.includes(key);
           const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
-          help += ` • *\`${key}\`* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${prop.type})`;
+          const typeCap = prop.type ? String(prop.type).charAt(0).toUpperCase() + String(prop.type).slice(1) : '';
+          help += ` • *\`${key}\`* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${typeCap})`;
           if (prop.enum && prop.enum.length > 0) {
             const enumFmt = prop.enum.map((e) => `\`${e}\``).join(' | ');
             help += `\n   *${t(lang, 'menu.options')}* ${enumFmt}`;
