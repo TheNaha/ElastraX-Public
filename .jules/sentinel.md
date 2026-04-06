@@ -31,3 +31,8 @@
 **Vulnerability:** `requestTranscription` function in `src/utils/transcription.ts` fetched data from the URL defined in the `TRANSCRIBE_ENDPOINT` environment variable without validating its protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
 **Learning:** URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations.
 **Prevention:** Updated `requestTranscription` in `src/utils/transcription.ts` to enforce `http:` or `https:` protocol checks on the resolved endpoint.
+
+## 2026-03-10 - SSRF/LFI Prevention in SeerrClient and JellyfinClient
+**Vulnerability:** `SeerrClient` and `JellyfinClient` fetched data from the URLs defined in their respective environment variables (`SEERR_API_URL` and `JELLYFIN_API_URL`) without validating the protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
+**Learning:** URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations. This pattern of defense-in-depth must be applied consistently across all HTTP clients wrapping environment URLs.
+**Prevention:** Updated `request` in `src/providers/seerr/SeerrClient.ts` and `src/providers/jellyfin/JellyfinClient.ts` to enforce `http:` or `https:` protocol checks on the resolved endpoint.

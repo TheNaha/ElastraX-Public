@@ -149,6 +149,18 @@ export class SeerrClient {
 
   private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`;
+
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(url);
+    } catch {
+      throw new Error(`Invalid URL: ${url}`);
+    }
+
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      throw new Error(`Invalid protocol for Seerr API URL: ${parsedUrl.protocol}. Must be http: or https:`);
+    }
+
     const headers: Record<string, string> = {
       'X-Api-Key': this.apiKey,
       'Accept': 'application/json',
