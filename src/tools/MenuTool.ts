@@ -121,7 +121,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
         usage += required.includes(key) ? ` <${key}>` : ` [${key}]`;
       }
 
-      help += `${t(lang, 'menu.usage')} \`${usage}\`\n\n`;
+      help += ` • ${t(lang, 'menu.usage')} \`${usage}\`\n\n`;
 
       if (Object.keys(props).length > 0) {
         help += `${t(lang, 'menu.parameters')}\n\n`;

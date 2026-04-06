@@ -200,7 +200,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       }
 
       const items = active.map((r, i) => {
-        const baseItem = ` • ` + t(lang, 'reminder.list_item', {
+        const baseItem = t(lang, 'reminder.list_item', {
           n: String(i + 1),
           message: r.message,
           time: formatTime(r.remindAt),
