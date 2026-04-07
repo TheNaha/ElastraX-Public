@@ -98,7 +98,7 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
     args.push('--', url);
 
     await new Promise<void>((resolve, reject) => {
-      const child = downloadToolDeps.spawn(ytdlpBin, args);
+      const child = downloadToolDeps.spawn(ytdlpBin, args, { shell: false });
       let stderr = '';
       child.stderr.on('data', d => { stderr += d.toString(); });
       child.on('error', err => reject(new Error(`yt-dlp not found. Install it or set YTDLP_PATH. Details: ${err.message}`)));
