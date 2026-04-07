@@ -36,3 +36,7 @@
 **Vulnerability:** `SeerrClient` and `JellyfinClient` fetched data from the URLs defined in their respective environment variables (`SEERR_API_URL` and `JELLYFIN_API_URL`) without validating the protocol. This allowed reading local files (LFI) via `file:///` or probing local services (SSRF) if the admin environment variable was manipulated or exposed.
 **Learning:** URL parameters provided by environments should be strictly validated for expected protocols (e.g. `http:` or `https:`) before being passed to `fetch()`, even if they are environment configurations. This pattern of defense-in-depth must be applied consistently across all HTTP clients wrapping environment URLs.
 **Prevention:** Updated `request` in `src/providers/seerr/SeerrClient.ts` and `src/providers/jellyfin/JellyfinClient.ts` to enforce `http:` or `https:` protocol checks on the resolved endpoint.
+## 2025-05-20 - Command Injection in spawn
+**Vulnerability:** Calls to `child_process.spawn()` did not explicitly disable shell execution. If shell execution was enabled or inferred, user-provided inputs like `url` or `format` could be evaluated by the shell, leading to command injection vulnerabilities.
+**Learning:** Always explicitly pass `{ shell: false }` to `spawn` calls when executing external commands with user-provided arguments, ensuring inputs are treated strictly as arguments and not as shell commands.
+**Prevention:** Added `{ shell: false }` to `spawn` calls in `DownloadTool.ts` and `FFmpegConverter.ts`.

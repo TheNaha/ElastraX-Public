@@ -89,7 +89,7 @@ export class FFmpegConverter {
 
     return new Promise((resolve, reject) => {
       // It is assumed ffmpeg is installed on the host system
-      const child = ffmpegConverterDeps.spawn('ffmpeg', ffmpegArgs);
+      const child = ffmpegConverterDeps.spawn('ffmpeg', ffmpegArgs, { shell: false });
       let stderr = '';
 
       child.stderr.on('data', chunk => { stderr += chunk; });
