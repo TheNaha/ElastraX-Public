@@ -60,6 +60,11 @@
 ## 2026-04-01 - [Avoid O(N) Tuple Allocation with Object.entries()]
 **Learning:** Iterating over object entries with `Object.entries()` creates an unnecessary O(N) array of tuple arrays `[key, value]`. In performance-critical areas like rendering conversational menus or diagnostic dumps, this increases Garbage Collection (GC) pressure significantly.
 **Action:** Use a `for...in` loop with an `Object.prototype.hasOwnProperty.call()` check to safely iterate over objects without intermediate tuple array allocations.
+
 ## 2026-04-02 - [Eliminate Intermediate Arrays in Smart Tool Loading]
 **Learning:** During the hot-path message handling loop, determining which tools to load using chained `.filter().map()` calls on arrays of tools created significant unnecessary memory allocation and garbage collection overhead. In particular, computing `alwaysDefs`, `triggered`, `triggeredDefs`, `seenNames` (via a map), `uniqueTriggered`, and the final spread operator `[...alwaysDefs, ...uniqueTriggered]` resulted in up to 8 short-lived array allocations per incoming message.
 **Action:** Replace functional array chaining with a single-pass `for...of` loop to build the final `availableTools` and logging arrays directly. This reduces the number of allocated intermediate arrays from 8 to 3, significantly lowering GC pressure during high-throughput message processing.
+
+## 2026-04-07 - [Eliminate Array Chaining in LLM Output Parsing]
+**Learning:** Parsing the assistant's text output from the LLM using chained array methods (`.map().filter().join()`) creates multiple intermediate array allocations. Since this runs on every single LLM response inside the agent's hot path, the garbage collection overhead accumulates over time.
+**Action:** Replace `.map().filter().join()` chains with a single `for...of` loop to accumulate text sequentially, preventing unnecessary intermediate object allocations.
