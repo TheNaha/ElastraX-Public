@@ -192,22 +192,23 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   }
 
   if (Array.isArray(content)) {
-    const text = content
-      .map((part: unknown) => {
-        if (typeof part === 'string') return part;
-        if (
-          typeof part === 'object'
-          && part !== null
-          && 'text' in part
-          && typeof (part as { text?: unknown }).text === 'string'
-        ) {
-          return (part as { text: string }).text;
-        }
-        return '';
-      })
-      .filter(Boolean)
-      .join('\n')
-      .trim();
+    // ⚡ Bolt: Use a single for...of loop instead of chaining .map().filter().join()
+    // to prevent allocating intermediate arrays and reduce GC pressure during message parsing.
+    let text = '';
+    for (const part of content) {
+      if (typeof part === 'string' && part) {
+        text += (text ? '\n' : '') + part;
+      } else if (
+        typeof part === 'object' &&
+        part !== null &&
+        'text' in part &&
+        typeof (part as { text?: unknown }).text === 'string' &&
+        (part as { text: string }).text
+      ) {
+        text += (text ? '\n' : '') + (part as { text: string }).text;
+      }
+    }
+    text = text.trim();
     if (text) return stripThinkTags(text);
   }
 
