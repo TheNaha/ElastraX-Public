@@ -186,6 +186,11 @@ export class DiscordProvider implements BotProvider {
       }
 
       try {
+        const parsedUrl = new URL(attachment.url);
+        if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+          throw new Error('Invalid URL protocol. Must be http: or https:');
+        }
+
         const res = await fetch(attachment.url);
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         const arrayBuffer = await res.arrayBuffer();
