@@ -81,11 +81,17 @@ export class RoleService {
       }
 
       if (rows.length > 0) {
+        const appliedRoles: string[] = [];
+        for (const row of rows) {
+          if (row.scope === 'global' || row.scope === chatId) {
+            appliedRoles.push(row.role);
+          }
+        }
         logger.debug(
           {
             userId,
             dbRows: rows.length,
-            appliedRoles: rows.filter((row) => row.scope === 'global' || row.scope === chatId).map((row) => row.role),
+            appliedRoles,
           },
           '[RoleService] DB roles found',
         );
