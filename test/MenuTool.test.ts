@@ -47,7 +47,7 @@ describe('MenuTool', () => {
 
     expect(result).toContain('*Help for: `/mock_tool`*');
     expect(result).toContain('• *Description:* A mock tool');
-    expect(result).toContain('• *Aliases:* mt');
+    expect(result).toContain('• *Aliases:* `mt`');
     expect(result).toContain('• *Category:* Mock');
   });
 
@@ -61,7 +61,7 @@ describe('MenuTool', () => {
 
     expect(result).toContain('*Bantuan untuk: /mock_tool*');
     expect(result).toContain('• *Deskripsi:* A mock tool');
-    expect(result).toContain('• *Alias:* mt');
+    expect(result).toContain('• *Alias:* `mt`');
     expect(result).toContain('• *Kategori:* Mock');
   });
 

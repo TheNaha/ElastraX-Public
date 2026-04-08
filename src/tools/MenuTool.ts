@@ -105,7 +105,8 @@ export class MenuTool extends BaseTool<MenuArgs> {
       help += ` • ${t(lang, 'menu.description')} ${tool.description}\n\n`;
 
       if (tool.aliases.length > 0) {
-        help += ` • ${t(lang, 'menu.aliases')} ${tool.aliases.join(', ')}\n\n`;
+        const aliasesFmt = tool.aliases.map((a) => `\`${a}\``).join(', ');
+        help += ` • ${t(lang, 'menu.aliases')} ${aliasesFmt}\n\n`;
       }
 
       const catCap = tool.category.charAt(0).toUpperCase() + tool.category.slice(1);
