@@ -46,3 +46,7 @@
 ## 2025-04-05 - Title Case Metadata Values in MenuTool
 **Learning:** Raw JSON schema types (like 'string' or 'boolean') look unpolished when exposed directly to users in text-based help menus. Applying title casing to these programmatic types at the presentation layer significantly improves the conversational aesthetics and perceived quality of the interface.
 **Action:** Always apply title casing to programmatic metadata values (like parameter types, roles, or scopes) right before they are interpolated into user-facing text strings, while keeping the internal representation lowercase.
+
+## 2025-05-18 - [Copyable Role Keywords in Bot Outputs]
+**Learning:** We noticed that when assigning roles via `RoleTool`, the confirmation messages (`role.granted` and `role.insufficient`) displayed the role names inside bold tags (`*{role}*`). Because roles are exact programmatic strings that users may need to type in future commands (like `/role grant <user> <role>`), they should be formatted as easily copyable code snippets in text-based clients.
+**Action:** When displaying exact programmatic strings such as roles, format them using markdown backticks (e.g., `*\`{role}\`*`) to render them as copyable text in the chat client.
