@@ -202,11 +202,11 @@ const translations: Record<Locale, Record<string, string>> = {
     'role.check': '🔐 *Role info for* {userTag}\n\n*Effective roles:* *{effectiveRole}*\n\n*Assigned roles:*\n\n{roles}',
     'role.list': '📋 *Roles for {scope}:*\n\n{items}',
     'role.list_empty': '📋 No roles assigned for *{scope}*.',
-    'role.granted': '✅ Granted *{role}* role to {userTag} in *{scope}*.',
+    'role.granted': '✅ Granted *`{role}`* role to {userTag} in *{scope}*.',
     'role.revoked': '✅ Revoked role from {userTag} in *{scope}*.',
     'role.no_user': '❌ Please specify a user. Example: `/role grant 628xxx admin`',
     'role.invalid_role': "❌ Invalid role. Must be `user`, `premium`, `admin`, or `owner`.",
-    'role.insufficient': '⛔ You ({callerRole}) cannot assign/revoke the *{targetRole}* role.',
+    'role.insufficient': '⛔ You (`{callerRole}`) cannot assign/revoke the *`{targetRole}`* role.',
     'role.usage': '❓ *Usage:*\n\n • `/role check [user]` — Check roles & privileges\n\n • `/role grant <user> <role> [global]` — Assign role\n\n • `/role revoke <user> <role> [global]` — Remove role\n\n • `/role list [global]` — List assigned roles\n\n • `/role privs <role>` — View privileges\n\n • `/role setpriv <role> <field> <value>` — Override privilege (owner)\n\n • `/role resetpriv <role>` — Reset to defaults (owner)',
 
     // Owner Admin
