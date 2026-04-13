@@ -40,3 +40,7 @@
 **Vulnerability:** Calls to `child_process.spawn()` did not explicitly disable shell execution. If shell execution was enabled or inferred, user-provided inputs like `url` or `format` could be evaluated by the shell, leading to command injection vulnerabilities.
 **Learning:** Always explicitly pass `{ shell: false }` to `spawn` calls when executing external commands with user-provided arguments, ensuring inputs are treated strictly as arguments and not as shell commands.
 **Prevention:** Added `{ shell: false }` to `spawn` calls in `DownloadTool.ts` and `FFmpegConverter.ts`.
+## 2026-03-12 - SSRF/LFI Prevention in Discord Attachment Fetch
+**Vulnerability:** The Discord provider downloaded media by directly passing `attachment.url` to `fetch()` without validating the URL protocol. This permitted Server-Side Request Forgery (SSRF) and Local File Inclusion (LFI) vulnerabilities if the Discord attachment object was manipulated or mocked to contain malicious protocols like `file:///`.
+**Learning:** Even URLs provided by seemingly trusted external systems (like the Discord API) must be validated before being passed to `fetch()`. The assumption that external APIs always return standard protocols is unsafe for downstream consumers making HTTP requests.
+**Prevention:** Always validate `new URL(url).protocol` to ensure it is `http:` or `https:` before passing any attachment or media URL to `fetch()`.
