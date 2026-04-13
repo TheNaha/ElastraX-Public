@@ -68,3 +68,7 @@
 ## 2026-04-07 - [Eliminate Array Chaining in LLM Output Parsing]
 **Learning:** Parsing the assistant's text output from the LLM using chained array methods (`.map().filter().join()`) creates multiple intermediate array allocations. Since this runs on every single LLM response inside the agent's hot path, the garbage collection overhead accumulates over time.
 **Action:** Replace `.map().filter().join()` chains with a single `for...of` loop to accumulate text sequentially, preventing unnecessary intermediate object allocations.
+
+## 2026-04-08 - [Avoid Array Allocation via Array Chaining]
+**Learning:** Chaining array operations like `.filter().map()` or `.map().filter()` causes unnecessary O(N) intermediate array allocations and loop executions. This leads to garbage collection overhead in frequently executed code paths like role lookups (`RoleService.ts`) and webhook data parsing (`webhookServer.ts`).
+**Action:** Replace chained array manipulations with a single-pass `for...of` loop to simultaneously filter and map elements. This avoids intermediate allocations and runs in true O(N) complexity with minimal GC pressure.

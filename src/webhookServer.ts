@@ -67,7 +67,14 @@ function asWebhookBody(value: unknown): WebhookBody {
 
 function toObjectArray(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return [];
-  return value.map((item) => asRecord(item)).filter((item): item is Record<string, unknown> => item !== null);
+  const result: Array<Record<string, unknown>> = [];
+  for (const item of value) {
+    const record = asRecord(item);
+    if (record !== null) {
+      result.push(record);
+    }
+  }
+  return result;
 }
 
 function asNonEmptyString(value: unknown): string | null {
