@@ -71,6 +71,17 @@ describe("Config Validation", () => {
     expect(mockLoggerError).toHaveBeenCalledWith('AI_API_BASE_URL is not a valid URL: "not-a-url"');
   });
 
+  test("should throw if AI_API_BASE_URL uses an invalid protocol", () => {
+    const invalidEnv = {
+      AI_API_KEY: "secret-key",
+      AI_MODEL_NAME: "model-name",
+      AI_API_BASE_URL: "file:///etc/passwd",
+    };
+
+    expect(() => validateEnv(invalidEnv)).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith('AI_API_BASE_URL is not a valid URL: "file:///etc/passwd"');
+  });
+
   test("should throw if AI_API_BASE_URL is empty string (only spaces)", () => {
      const invalidEnv = {
       AI_API_KEY: "secret-key",

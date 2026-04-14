@@ -49,7 +49,10 @@ function validateNumberInRange(
 function validateUrl(rawValue: string | undefined, envKey: string, errors: string[]): void {
   if (!rawValue || rawValue.trim() === '') return;
   try {
-    new URL(rawValue);
+    const parsedUrl = new URL(rawValue);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      errors.push(`${envKey} is not a valid URL: "${rawValue}"`);
+    }
   } catch {
     errors.push(`${envKey} is not a valid URL: "${rawValue}"`);
   }
@@ -97,14 +100,8 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
 
     if (!baseUrl || baseUrl.trim() === '') {
       errors.push('AI_API_BASE_URL is missing or empty');
-    }
-
-    if (baseUrl && baseUrl.trim() !== '') {
-      try {
-        new URL(baseUrl);
-      } catch {
-        errors.push(`AI_API_BASE_URL is not a valid URL: "${baseUrl}"`);
-      }
+    } else {
+      validateUrl(baseUrl, 'AI_API_BASE_URL', errors);
     }
   } else {
     // Multi-provider failover mode
@@ -125,11 +122,7 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
       if (!baseUrl || baseUrl.trim() === '') {
         errors.push(`${baseKey} is missing or empty (or set ${cfAccountKey} for Cloudflare shorthand)`);
       } else {
-        try {
-          new URL(baseUrl);
-        } catch {
-          errors.push(`${baseKey} is not a valid URL: "${baseUrl}"`);
-        }
+        validateUrl(baseUrl, baseKey, errors);
       }
 
       if (!modelName || modelName.trim() === '') {
