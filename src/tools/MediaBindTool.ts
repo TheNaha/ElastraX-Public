@@ -304,9 +304,9 @@ export class MediaBindTool extends BaseTool {
 
         const lines = subs.map((sub, i) => {
           const types = sub.notifyTypes ? JSON.parse(sub.notifyTypes).join(', ') : 'all';
-          return `${i + 1}. ${sub.chatRoomId} (${sub.serviceType}) — ${types}`;
+          return ` • ${sub.chatRoomId} (${sub.serviceType}) — ${types} (ID: ${i + 1})`;
         });
-        return `📋 *Your notification subscriptions:*\n${lines.join('\n')}`;
+        return `📋 *Your notification subscriptions:*\n${lines.join('\n\n')}`;
       }
 
       default:
@@ -333,9 +333,9 @@ export class MediaBindTool extends BaseTool {
 
     const subs = await mediaBindToolDeps.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
     const subLines = subs.length > 0
-      ? subs.map((s) => `  📍 ${s.chatRoomId} (${s.serviceType})`).join('\n')
-      : '  (none)';
+      ? subs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')
+      : '_None_';
 
-    return `📋 *Linked Accounts:*\n${lines.join('\n')}\n\n📬 *Notification Rooms:*\n${subLines}`;
+    return `📋 *Linked Accounts:*\n${lines.join('\n\n')}\n\n📬 *Notification Rooms:*\n${subLines}`;
   }
 }
