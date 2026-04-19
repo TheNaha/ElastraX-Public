@@ -54,3 +54,7 @@
 ## 2025-05-19 - [Consistent List Formatting and Empty States]
 **Learning:** We observed that lists in some tools (like `MediaBindTool`) were using numbered lists with single newlines and unformatted padding for empty states (e.g., `  (none)`). This broke the visual consistency of the bot's UX, making it harder to scan.
 **Action:** In text-based UIs, format empty or missing states (e.g., 'no linked accounts') using visually distinct italicized markdown (e.g., `_None_`) rather than unformatted or padded strings like `  (none)` to differentiate them from regular data items. Always convert numbered lists to use leading space bullets (` • `) and double newlines (`\n\n`), moving necessary identifiers like `(ID: X)` to the end of the text string.
+
+## 2025-05-19 - [Consistent List Formatting for Media Tools]
+**Learning:** We noticed that lists in media tools (`MediaLibraryTool`, `MediaRequestTool`, and `MediaSearchTool`) were using numbered lists (`1. `) and single newlines (`\n`) for joining list items. This broke the visual consistency of the bot's UX, making it harder to scan.
+**Action:** In text-based UIs, format all lists using leading space bullets (` • `) instead of numbered lists and double newlines (`\n\n`) when joining items to align with the rest of the bot's conversational UX style.
