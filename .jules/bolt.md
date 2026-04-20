@@ -72,3 +72,7 @@
 ## 2026-04-08 - [Avoid Array Allocation via Array Chaining]
 **Learning:** Chaining array operations like `.filter().map()` or `.map().filter()` causes unnecessary O(N) intermediate array allocations and loop executions. This leads to garbage collection overhead in frequently executed code paths like role lookups (`RoleService.ts`) and webhook data parsing (`webhookServer.ts`).
 **Action:** Replace chained array manipulations with a single-pass `for...of` loop to simultaneously filter and map elements. This avoids intermediate allocations and runs in true O(N) complexity with minimal GC pressure.
+
+## 2026-04-10 - [O(1) Set Lookups in Iteration]
+**Learning:** During UI rendering logic (like MenuTool building help screens), calling `includes()` on arrays inside loops checking for object properties introduces hidden O(N) operations. Combining this with `Object.keys()` and `Object.entries()` calls creates unnecessary overhead and Garbage Collection (GC) pressure.
+**Action:** Always cache the result of `Object.entries()` if used multiple times. Convert lookup arrays (like `required`) to a `Set` before iterating to replace O(N) `includes()` with O(1) `has()` lookups.
