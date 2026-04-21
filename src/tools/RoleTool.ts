@@ -144,13 +144,13 @@ export class RoleTool extends BaseTool {
       const { tag, mentionJid } = await resolveUserTag(targetId);
       const mentions = mentionJid ? [mentionJid] : [];
 
-      const effectiveRoleTitleCase = summary.effectiveRoles
-        .map((r) => r.charAt(0).toUpperCase() + r.slice(1))
+      const effectiveRoleFmt = summary.effectiveRoles
+        .map((r) => `*\`${r}\`*`)
         .join(', ');
 
       const text = t(lang, 'role.check', {
         userTag: tag,
-        effectiveRole: effectiveRoleTitleCase,
+        effectiveRole: effectiveRoleFmt,
         roles: summary.explicitRoles,
       }) + `\n\n*Effective privileges:*\n${privsStr}`;
 
@@ -173,8 +173,7 @@ export class RoleTool extends BaseTool {
         const byRes = await resolveUserTag(r.grantedBy);
         if (userRes.mentionJid) mentions.push(userRes.mentionJid);
         if (byRes.mentionJid) mentions.push(byRes.mentionJid);
-        const roleCap = r.role.charAt(0).toUpperCase() + r.role.slice(1);
-        itemLines.push(` • *${roleCap}* — ${userRes.tag} (by ${byRes.tag})`);
+        itemLines.push(` • *\`${r.role}\`* — ${userRes.tag} (by ${byRes.tag})`);
       }
 
       const text = t(lang, 'role.list', { scope: scopeLabel, items: itemLines.join('\n\n') });
@@ -299,9 +298,8 @@ function formatExplicitRoles(
 ): string {
   return roles.length > 0
     ? roles.map((entry) => {
-        const roleCap = entry.role.charAt(0).toUpperCase() + entry.role.slice(1);
         const scopeCap = entry.scope === 'global' ? 'Global' : 'This Chat';
-        return ` • *${roleCap}* (${scopeCap})`;
+        return ` • *\`${entry.role}\`* (${scopeCap})`;
       }).join('\n\n')
     : '_No explicit roles assigned_';
 }
