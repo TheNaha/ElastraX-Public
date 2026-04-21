@@ -117,17 +117,21 @@ export class MenuTool extends BaseTool<MenuArgs> {
       const props = tool.definition.function.parameters.properties;
       const required = tool.definition.function.parameters.required || [];
 
+      // ⚡ Bolt: Cache Object.entries and convert lookup arrays into a Set to replace O(N) includes() checks with O(1) has() lookups
+      const propsEntries = Object.entries(props);
+      const requiredSet = new Set(required);
+
       let usage = `/${tool.name}`;
-      for (const key of Object.keys(props)) {
-        usage += required.includes(key) ? ` <${key}>` : ` [${key}]`;
+      for (const [key] of propsEntries) {
+        usage += requiredSet.has(key) ? ` <${key}>` : ` [${key}]`;
       }
 
       help += ` • ${t(lang, 'menu.usage')} \`${usage}\`\n\n`;
 
-      if (Object.keys(props).length > 0) {
+      if (propsEntries.length > 0) {
         help += `${t(lang, 'menu.parameters')}\n\n`;
-        for (const [key, prop] of Object.entries(props)) {
-          const isReq = required.includes(key);
+        for (const [key, prop] of propsEntries) {
+          const isReq = requiredSet.has(key);
           const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
           const typeCap = prop.type ? String(prop.type).charAt(0).toUpperCase() + String(prop.type).slice(1) : '';
           help += ` • *\`${key}\`* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${typeCap})`;
