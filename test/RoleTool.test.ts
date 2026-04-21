@@ -130,7 +130,7 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'check' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Role info');
-    expect(text).toContain('user');
+    expect(text).toContain('*`user`*');
     expect(RoleService.getAccessProfile).toHaveBeenCalledWith(['user']);
   });
 
@@ -148,7 +148,7 @@ describe('RoleTool', () => {
     const ctx = createMockCtx();
     const result = await tool.execute({ action: 'list' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
-    expect(text).toContain('Admin');
+    expect(text).toContain('*`admin`*');
   });
 
   test('action=privs returns privilege details', async () => {

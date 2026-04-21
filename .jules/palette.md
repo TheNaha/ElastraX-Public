@@ -58,3 +58,6 @@
 ## 2025-05-19 - [Consistent List Formatting for Media Tools]
 **Learning:** We noticed that lists in media tools (`MediaLibraryTool`, `MediaRequestTool`, and `MediaSearchTool`) were using numbered lists (`1. `) and single newlines (`\n`) for joining list items. This broke the visual consistency of the bot's UX, making it harder to scan.
 **Action:** In text-based UIs, format all lists using leading space bullets (` • `) instead of numbered lists and double newlines (`\n\n`) when joining items to align with the rest of the bot's conversational UX style.
+## 2024-05-18 - [Markdown code formatting in bot responses]
+**Learning:** We noticed that when assigning roles via `RoleTool`, the confirmation messages (`role.granted` and `role.insufficient`) displayed the role names inside bold tags (`*{role}*`). Because roles are exact programmatic strings that users may need to type in future commands (like `/role grant <user> <role>`), they should be formatted as easily copyable code snippets in text-based clients.
+**Action:** When displaying exact programmatic strings such as roles, format them using markdown backticks (e.g., `*\`{role}\`*`) to render them as copyable text in the chat client.
