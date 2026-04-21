@@ -16,7 +16,7 @@ export const mediaLibraryToolDeps = {
   bindingService: ServiceBindingService,
 };
 
-function formatItem(item: JellyfinItem, index: number, watchLink: string): string {
+function formatItem(item: JellyfinItem, _index: number, watchLink: string): string {
   const type = item.Type === 'Series' ? '📺' : item.Type === 'Episode' ? '📺' : '🎬';
   const year = item.ProductionYear ? ` (${item.ProductionYear})` : '';
   let name = item.Name;
@@ -27,7 +27,7 @@ function formatItem(item: JellyfinItem, index: number, watchLink: string): strin
     }
     name += ` — ${item.Name}`;
   }
-  return `${index}. ${type} *${name}*${year}\n   🔗 ${watchLink}`;
+  return ` • ${type} *${name}*${year}\n   🔗 ${watchLink}`;
 }
 
 type MediaLibraryArgs = {
@@ -109,7 +109,7 @@ export class MediaLibraryTool extends BaseTool {
           const lines = result.Items.slice(0, limit).map((item, i) =>
             formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)),
           );
-          return `🔍 *Library search for "${args.query}":*\n\n${lines.join('\n')}\n\n(${result.TotalRecordCount} total)`;
+          return `🔍 *Library search for "${args.query}":*\n\n${lines.join('\n\n')}\n\n(${result.TotalRecordCount} total)`;
         }
 
         case 'latest': {
@@ -124,7 +124,7 @@ export class MediaLibraryTool extends BaseTool {
           const lines = items.slice(0, limit).map((item, i) =>
             formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)),
           );
-          return `📥 *Recently Added:*\n\n${lines.join('\n')}`;
+          return `📥 *Recently Added:*\n\n${lines.join('\n\n')}`;
         }
 
         case 'link': {

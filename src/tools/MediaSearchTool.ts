@@ -24,14 +24,14 @@ function statusLabel(status?: SeerrMediaStatus): string {
   }
 }
 
-function formatResult(item: SeerrSearchResult, index: number): string {
+function formatResult(item: SeerrSearchResult, _index: number): string {
   const title = item.title || item.name || 'Unknown';
   const year = item.releaseDate?.slice(0, 4) || item.firstAirDate?.slice(0, 4) || '';
   const rating = item.voteAverage ? `⭐ ${item.voteAverage.toFixed(1)}` : '';
   const status = statusLabel(item.mediaInfo?.status);
   const type = item.mediaType === 'tv' ? '📺' : '🎬';
   const yearStr = year ? ` (${year})` : '';
-  return `${index}. ${type} *${title}*${yearStr} ${rating} — ${status} [ID: ${item.id}]`;
+  return ` • ${type} *${title}*${yearStr} ${rating} — ${status} [ID: ${item.id}]`;
 }
 
 type MediaSearchArgs = {
@@ -118,7 +118,7 @@ export class MediaSearchTool extends BaseTool {
           if (filtered.length === 0) return `No ${mediaType} results found for "${args.query}".`;
 
           const lines = filtered.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `🔍 *Search results for "${args.query}":*\n\n${lines.join('\n')}\n\nPage ${results.page}/${results.totalPages} (${results.totalResults} total)`;
+          return `🔍 *Search results for "${args.query}":*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages} (${results.totalResults} total)`;
         }
 
         case 'trending': {
@@ -130,7 +130,7 @@ export class MediaSearchTool extends BaseTool {
           if (filtered.length === 0) return 'No trending content found.';
 
           const lines = filtered.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `🔥 *Trending Now:*\n\n${lines.join('\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          return `🔥 *Trending Now:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
         }
 
         case 'discover': {
@@ -142,7 +142,7 @@ export class MediaSearchTool extends BaseTool {
 
           const lines = results.results.slice(0, 10).map((r, i) => formatResult(r, i + 1));
           const label = mediaType === 'tv' ? 'TV Shows' : 'Movies';
-          return `🎲 *Discover ${label}:*\n\n${lines.join('\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          return `🎲 *Discover ${label}:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
         }
 
         case 'recommend': {
@@ -155,7 +155,7 @@ export class MediaSearchTool extends BaseTool {
           if (results.results.length === 0) return 'No recommendations found for this title.';
 
           const lines = results.results.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `💡 *Recommendations:*\n\n${lines.join('\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          return `💡 *Recommendations:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
         }
 
         default:

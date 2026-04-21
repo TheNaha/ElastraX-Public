@@ -25,11 +25,11 @@ function requestStatusLabel(status: number): string {
   }
 }
 
-function formatRequest(req: SeerrRequest, index: number): string {
+function formatRequest(req: SeerrRequest, _index: number): string {
   const type = req.type === 'tv' ? '📺' : '🎬';
   const status = requestStatusLabel(req.status);
   const tmdbId = req.media.tmdbId;
-  return `${index}. ${type} TMDB:${tmdbId} — ${status} (Request #${req.id})`;
+  return ` • ${type} TMDB:${tmdbId} — ${status} (Request #${req.id})`;
 }
 
 type MediaRequestArgs = {
@@ -163,6 +163,6 @@ export class MediaRequestTool extends BaseTool {
     if (result.results.length === 0) return 'You have no media requests.';
 
     const lines = result.results.map((r, i) => formatRequest(r, i + 1));
-    return `📋 *Your Requests:*\n\n${lines.join('\n')}`;
+    return `📋 *Your Requests:*\n\n${lines.join('\n\n')}`;
   }
 }
