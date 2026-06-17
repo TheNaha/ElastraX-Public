@@ -1,12 +1,12 @@
 services:
   bot:
     # --- OPTION 1: Pull pre-built from GitHub (Recommended for VPSS/Servers) ---
-    image: ghcr.io/thenaha/elastrax:latest
+    # image: ghcr.io/thenaha/elastrax:latest
     
     # --- OPTION 2: Build Locally (Uncomment below and comment OPTION 1) ---
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
+    build:
+      context: .
+      dockerfile: Dockerfile
 
     container_name: elastrax-bot
     volumes:
