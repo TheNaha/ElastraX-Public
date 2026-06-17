@@ -4,47 +4,58 @@
   "entries": [
     {
       "tag": "0000_white_gressill",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 1
     },
     {
       "tag": "0001_flowery_korg",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 2
     },
     {
       "tag": "0002_woozy_molecule_man",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 3
     },
     {
       "tag": "0003_square_doomsday",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 4
     },
     {
       "tag": "0004_left_spot",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 5
     },
     {
       "tag": "0005_colossal_patch",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 6
     },
     {
       "tag": "0006_breezy_reminders",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 7
     },
     {
       "tag": "0007_keen_user_roles",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 8
     },
     {
       "tag": "0008_calm_token_room",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 9
     },
     {
       "tag": "0009_sturdy_features",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 10
     },
     {
       "tag": "0010_role_privileges",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 11
     },
     {
       "tag": "0011_user_identities",
@@ -63,7 +74,8 @@
     },
     {
       "tag": "0014_media_integration",
-      "breakpoints": true
+      "breakpoints": true,
+      "when": 15
     }
   ]
 }
