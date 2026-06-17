@@ -149,6 +149,7 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   validateBoolean(env.CONTEXT_SUMMARIZE, 'CONTEXT_SUMMARIZE', errors);
   validatePort(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors);
   validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
+  validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors);
 
   // V7.15: Media integration (optional — only validate format when set)
   validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors);
