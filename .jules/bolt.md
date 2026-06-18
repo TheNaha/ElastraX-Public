@@ -76,3 +76,7 @@
 ## 2026-04-10 - [O(1) Set Lookups in Iteration]
 **Learning:** During UI rendering logic (like MenuTool building help screens), calling `includes()` on arrays inside loops checking for object properties introduces hidden O(N) operations. Combining this with `Object.keys()` and `Object.entries()` calls creates unnecessary overhead and Garbage Collection (GC) pressure.
 **Action:** Always cache the result of `Object.entries()` if used multiple times. Convert lookup arrays (like `required`) to a `Set` before iterating to replace O(N) `includes()` with O(1) `has()` lookups.
+
+## 2026-06-17 - [Avoid Array Allocation via Array Chaining in WebhookServer]
+**Learning:** Chaining array operations like \`.map().filter()\` causes unnecessary O(N) intermediate array allocations and loop executions. This leads to garbage collection overhead in frequently executed code paths like webhook data parsing (\`src/webhookServer.ts\`).
+**Action:** Replace chained array manipulations with a single-pass \`for...of\` loop to simultaneously map and filter elements. This avoids intermediate allocations and runs in true O(N) complexity with minimal GC pressure.

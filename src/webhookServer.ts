@@ -84,17 +84,25 @@ function asNonEmptyString(value: unknown): string | null {
 }
 
 function toStringArray(value: unknown): string[] {
+  // Performance optimization: Using a single-pass for...of loop instead of
+  // chained .map().filter() avoids intermediate array allocations and
+  // reduces garbage collection overhead in this high-frequency parsing path.
   if (Array.isArray(value)) {
-    return value
-      .map((item) => (typeof item === 'string' ? item.trim() : String(item ?? '').trim()))
-      .filter(Boolean);
+    const result: string[] = [];
+    for (const item of value) {
+      const trimmed = typeof item === 'string' ? item.trim() : String(item ?? '').trim();
+      if (trimmed) result.push(trimmed);
+    }
+    return result;
   }
 
   if (typeof value === 'string') {
-    return value
-      .split(/[;,]/)
-      .map((part) => part.trim())
-      .filter(Boolean);
+    const result: string[] = [];
+    for (const part of value.split(/[;,]/)) {
+      const trimmed = part.trim();
+      if (trimmed) result.push(trimmed);
+    }
+    return result;
   }
 
   return [];
