@@ -119,15 +119,26 @@ export class NotificationSubscriptionService {
   /**
    * Resolve which chat rooms a specific user's notification should be sent to.
    * Returns an array of { chatRoomId, platform } objects.
+   * Combines service-specific and 'all' subscriptions in a single DB query.
    */
   static async getNotificationRooms(userId: string, platform: string, serviceType: string): Promise<{ chatRoomId: string; platform: string }[]> {
-    const subs = await this.getSubscriptions(userId, platform, serviceType);
-    // Also get 'all' type subscriptions for this user
-    const allSubs = await this.getSubscriptions(userId, platform, 'all');
-    const combined = [...subs, ...allSubs];
+    const { db, notificationSubscriptions } = this.deps;
+    const rows = await db
+      .select()
+      .from(notificationSubscriptions)
+      .where(
+        and(
+          eq(notificationSubscriptions.userId, userId),
+          eq(notificationSubscriptions.platform, platform),
+          or(
+            eq(notificationSubscriptions.serviceType, serviceType),
+            eq(notificationSubscriptions.serviceType, 'all'),
+          ),
+        ),
+      );
     // Deduplicate by chatRoomId
     const seen = new Set<string>();
-    return combined
+    return rows
       .filter((sub) => {
         if (seen.has(sub.chatRoomId)) return false;
         seen.add(sub.chatRoomId);

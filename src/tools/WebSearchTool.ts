@@ -10,7 +10,7 @@
  *
  * Configuration:
  *  - `SEARXNG_URL` — Base URL of the SearXNG instance (e.g., https://searx.example.com).
- *    Falls back to the bundled private instance if not set.
+ *    Required; tool is unavailable if not set.
  *
  * Slash command aliases: `/search`, `/google`, `/duckduckgo`
  */
@@ -45,8 +45,7 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
 
   constructor() {
     super();
-    // Default to the provided SearXNG instance if not in env
-    this.searxngUrl = process.env.SEARXNG_URL || 'https://your-searxng-instance.example.com';
+    this.searxngUrl = process.env.SEARXNG_URL || '';
   }
 
   get definition(): ToolDefinition {
@@ -72,6 +71,7 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
   async execute(args: WebSearchArgs, _ctx: MessageContext): Promise<string> {
     const query = args.query;
     if (!query) return 'Error: query parameter is missing.';
+    if (!this.searxngUrl) return 'Error: SEARXNG_URL environment variable is not configured. Web search is unavailable.';
 
     log.debug({ query }, 'Web search initiated');
 

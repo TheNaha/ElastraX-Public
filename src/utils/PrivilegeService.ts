@@ -21,7 +21,7 @@
 
 import { db } from '../db';
 import { rolePrivileges } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 
 /** Numeric quotas attached to a role. */
@@ -113,8 +113,37 @@ export class PrivilegeService {
   /**
    * Compute the effective privileges for a user who holds multiple roles.
    * The most permissive value for each quota is used.
+   * Batch-loads all role overrides in a single DB query for efficiency.
    */
   static async getEffective(roles: string[]): Promise<RolePrivileges> {
+    // Batch-load all DB overrides in one query if any are uncached
+    const uncachedRoles = roles.filter(
+      (r) => !this.dbCache.has(r) || Date.now() - this.cacheLoadedAt >= this.CACHE_TTL_MS,
+    );
+    if (uncachedRoles.length > 1) {
+      try {
+        const rows = await db
+          .select()
+          .from(rolePrivileges)
+          .where(inArray(rolePrivileges.role, uncachedRoles));
+        for (const row of rows) {
+          const overrides: Partial<RolePrivileges> = {};
+          if (row.maxMessagesPerWindow !== null) overrides.maxMessagesPerWindow = row.maxMessagesPerWindow;
+          if (row.rateLimitWindowSec !== null) overrides.rateLimitWindowSec = row.rateLimitWindowSec;
+          if (row.contextLimit !== null) overrides.contextLimit = row.contextLimit;
+          if (row.maxDownloadMb !== null) overrides.maxDownloadMb = row.maxDownloadMb;
+          this.dbCache.set(row.role, overrides);
+        }
+        // Cache empty results for roles not found in DB
+        for (const role of uncachedRoles) {
+          if (!this.dbCache.has(role)) this.dbCache.set(role, {});
+        }
+        this.cacheLoadedAt = Date.now();
+      } catch (err) {
+        logger.error({ err, roles: uncachedRoles }, '[PrivilegeService] Failed to batch-load DB overrides');
+      }
+    }
+
     const all = await Promise.all(roles.map(r => this.getForRole(r)));
     const result = {
       maxMessagesPerWindow: mergeMax(all.map(p => p.maxMessagesPerWindow)),

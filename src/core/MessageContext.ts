@@ -19,6 +19,26 @@ export interface ReplyOptions {
   mentions?: string[];
 }
 
+/**
+ * Cross-platform contract for the raw provider message object stored on
+ * {@link MessageContext}.  Both WhatsApp (Baileys `proto.IMessage`) and
+ * Discord (`discord.js Message` + injected `key`) satisfy this structural
+ * type.  Platform-specific code should cast to the actual provider type
+ * (e.g. `as WAMessage` or `as DiscordMessage`).
+ */
+export interface RawProviderMessage {
+  /** Common key used for cross-platform bot-message detection. */
+  key?: {
+    id?: string;
+    remoteJid?: string;
+    fromMe?: boolean;
+    participant?: string;
+    stanzaId?: string;
+  };
+  message?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
 export interface MessageContext {
   platform: 'whatsapp' | 'discord';
   chatId: string;
@@ -98,8 +118,7 @@ export interface MessageContext {
     stanzaId?: string;
     mediaPath?: string;
     mimeType?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rawMessage: any;
+    rawMessage: RawProviderMessage;
   };
 
   /**
@@ -208,6 +227,5 @@ export interface MessageContext {
    * The raw original message metadata/object from the provider.
    * Useful for provider-specific edge cases.
    */
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  rawMessage: any;
+  rawMessage: RawProviderMessage;
 }

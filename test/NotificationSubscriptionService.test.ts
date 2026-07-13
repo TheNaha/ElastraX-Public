@@ -117,8 +117,6 @@ describe('NotificationSubscriptionService', () => {
       [
         { chatRoomId: 'room-a', platform: 'discord', serviceType: 'seerr' },
         { chatRoomId: 'shared', platform: 'discord', serviceType: 'seerr' },
-      ],
-      [
         { chatRoomId: 'shared', platform: 'discord', serviceType: 'all' },
         { chatRoomId: 'room-b', platform: 'discord', serviceType: 'all' },
       ],

@@ -175,6 +175,7 @@ export class SeerrClient {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!resp.ok) {

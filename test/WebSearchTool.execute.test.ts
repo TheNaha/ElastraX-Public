@@ -31,9 +31,19 @@ const createMockCtx = (): MessageContext => ({
 
 describe('WebSearchTool – execute (fetch path)', () => {
   const originalFetch = global.fetch;
+  const originalSearxngUrl = process.env.SEARXNG_URL;
+
+  beforeEach(() => {
+    process.env.SEARXNG_URL = 'https://test.searxng.local';
+  });
 
   afterEach(() => {
     global.fetch = originalFetch;
+    if (originalSearxngUrl === undefined) {
+      delete process.env.SEARXNG_URL;
+    } else {
+      process.env.SEARXNG_URL = originalSearxngUrl;
+    }
   });
 
   test('should return formatted results on a successful search', async () => {

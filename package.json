@@ -34,7 +34,6 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "discord.js": "^14.25.1",
     "drizzle-orm": "^0.39.3",
-    "duck-duck-scrape": "^2.2.7",
     "file-type": "^21.3.0",
     "node-webpmux": "^3.2.1",
     "pdf-lib": "^1.17.1",

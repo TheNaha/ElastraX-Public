@@ -424,7 +424,7 @@ describe('handleIncomingMessage', () => {
       });
       const ctx = makeCtx({ text: '/menu', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Tool crashed!');
+      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.');
       const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
       expect(calls).toContain('❌');
     });
@@ -436,7 +436,7 @@ describe('handleIncomingMessage', () => {
       const ctx = makeCtx({ text: '/menu', isGroup: false });
       await handleIncomingMessage(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('timed out'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'));
       const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
       expect(calls).toContain('❌');
     });
@@ -652,7 +652,7 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
 
       expect(stuckTool.execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('encountered an error during inference'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'));
     });
   });
 

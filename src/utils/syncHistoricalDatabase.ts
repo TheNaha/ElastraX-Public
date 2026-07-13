@@ -36,8 +36,7 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
 
   // We can't guarantee all chat rooms already exist, so we track them lightly
   const knownRooms = new Map<string, { id: string; platform: string; language: string; created_at: Date }>();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const messagePayloads: any[] = [];
+  const messagePayloads: (typeof messages.$inferInsert)[] = [];
 
   for (const ctx of historicalMessages) {
     // 1. Prepare room payloads
@@ -55,8 +54,7 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
     // We don't try to sync bot's own past messages currently unless we explicitly checking fromMe.
     // Usually Baileys history sync includes fromMe. If fromMe is true, role could be 'assistant'.
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const isFromMe = (ctx.rawMessage as any)?.key?.fromMe;
+    const isFromMe = ctx.rawMessage?.key?.fromMe;
 
     messagePayloads.push({
       chatRoomId: ctx.chatId,
@@ -70,8 +68,7 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
       // We just leave mediaPath null for historical messages until natively requested
       // We can record the mime type though.
       mimeType: ctx.text.length > 0 ? undefined : 'application/octet-stream', // heuristic
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      created_at: new Date(((ctx.rawMessage as any)?.messageTimestamp || Date.now() / 1000) * 1000),
+      created_at: new Date(((ctx.rawMessage.messageTimestamp as number | undefined) || Date.now() / 1000) * 1000),
     });
   }
 

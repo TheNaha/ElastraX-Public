@@ -24,6 +24,8 @@
  *  string is returned so UI output is still legible.
  */
 
+import { logger } from './logger';
+
 /** Supported locale codes. */
 type Locale = 'en' | 'id';
 
@@ -431,7 +433,7 @@ export function t(lang: string | undefined, key: string, vars: Record<string, st
   const locale: Locale = lang === 'id' ? 'id' : 'en';
   let str = translations[locale][key] ?? translations.en[key];
   if (str === undefined) {
-    console.warn(`[i18n] Missing translation key: "${key}" for locale "${locale}"`);
+    logger.warn({ key, locale }, '[i18n] Missing translation key');
     str = key;
   }
   for (const [k, v] of Object.entries(vars)) {

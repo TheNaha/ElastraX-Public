@@ -46,7 +46,6 @@ export function levenshtein(a: string, b: string): number {
       const up = row[j];
 
       // Calculate next value (substitution or match)
-      // a.charCodeAt(j - 1) === bChar ? 0 : 1
       let next = a.charCodeAt(j - 1) === bChar ? diag : diag + 1;
 
       // Min of (substitution/match, deletion, insertion)

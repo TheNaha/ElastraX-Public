@@ -304,7 +304,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     };
     await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
-    room = {
+    // Re-fetch to get the authoritative DB row (handles concurrent insert race)
+    room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0] ?? {
       ...newRoom,
       systemPrompt: null,
       contextLimit: null,
@@ -408,8 +409,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: unknown) {
         log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
-        const errMessage = err instanceof Error ? err.message : '';
-        await ctx.reply(errMessage || t(ctx.language, 'agent.internal_error'));
+        await ctx.reply(t(ctx.language, 'agent.internal_error'));
         await ctx.react?.('❌');
       }
       return;
@@ -984,7 +984,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       } catch (e) {
         log.error(e, 'Failed to get AI completion / execute tool');
         healthMetrics.recordMessageError();
-        finalAiResponseText = "I'm sorry, I encountered an error during inference.";
+        finalAiResponseText = t(ctx.language, 'agent.internal_error');
         isDone = true;
       }
     }

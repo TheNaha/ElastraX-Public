@@ -103,7 +103,10 @@ export class PDFTool extends BaseTool<PDFArgs> {
     bytes: Uint8Array,
     filename: string,
   ): Promise<void> {
-    await ctx.sendMedia!(Buffer.from(bytes), {
+    if (!ctx.sendMedia) {
+      throw new Error('PDFTool: sendMedia is not supported by the current provider');
+    }
+    await ctx.sendMedia(Buffer.from(bytes), {
       mimetype: 'application/pdf',
       filename,
     });

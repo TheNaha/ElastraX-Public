@@ -265,23 +265,30 @@ export class WhatsAppProvider implements BotProvider {
       if (this.sock !== sock) return;
       if (m.type !== 'notify') return;
 
-      await Promise.all(m.messages.map(async (msg) => {
-        if (!msg.message || msg.key.fromMe) return;
+      try {
+        await Promise.all(m.messages.map(async (msg) => {
+          if (!msg.message || msg.key.fromMe) return;
 
-        // Automatically mark the message as read (blue checkmark)
-        try {
-          await sock.readMessages([msg.key]);
-        } catch (err) {
-          logger.warn({ err, key: msg.key }, '[WhatsApp] Failed to mark message as read');
-        }
-
-        if (this.messageHandler) {
-          const ctx = await this.createContext(msg);
-          if (ctx) {
-            await this.messageHandler(ctx);
+          try {
+            await sock.readMessages([msg.key]);
+          } catch (err) {
+            logger.warn({ err, key: msg.key }, '[WhatsApp] Failed to mark message as read');
           }
-        }
-      }));
+
+          try {
+            if (this.messageHandler) {
+              const ctx = await this.createContext(msg);
+              if (ctx) {
+                await this.messageHandler(ctx);
+              }
+            }
+          } catch (err) {
+            logger.error({ err, key: msg.key }, '[WhatsApp] Error processing message');
+          }
+        }));
+      } catch (err) {
+        logger.error({ err }, '[WhatsApp] Unhandled error in messages.upsert handler');
+      }
       });
 
       sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {

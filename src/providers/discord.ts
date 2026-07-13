@@ -92,11 +92,15 @@ export class DiscordProvider implements BotProvider {
     this.client.on('messageCreate', async (msg: DiscordMessage) => {
       if (msg.author.bot) return;
 
-      if (this.messageHandler) {
-        const ctx = await this.createContext(msg);
-        if (ctx) {
-          await this.messageHandler(ctx);
+      try {
+        if (this.messageHandler) {
+          const ctx = await this.createContext(msg);
+          if (ctx) {
+            await this.messageHandler(ctx);
+          }
         }
+      } catch (err: unknown) {
+        logger.error({ err, msgId: msg.id }, '[Discord] Unhandled error in messageCreate handler');
       }
     });
 
