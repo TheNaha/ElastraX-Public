@@ -72,9 +72,9 @@ export class FlowHandler {
             return true;
          }
 
-         // Clear active flow to prevent being stuck if they start a new command
-         SessionManager.clear(ctx.senderId, flowId, ctx.platform);
-         return false;
+         // Warn user they are in a flow instead of silently cancelling
+         await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');
+         return true;
       }
 
       try {

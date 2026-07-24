@@ -74,16 +74,11 @@ export class RoleService {
         .from(userRoles)
         .where(roleLookupCondition);
 
-      for (const row of rows) {
-        if (row.scope === 'global' || row.scope === chatId) {
-          roles.add(row.role);
-        }
-      }
-
       if (rows.length > 0) {
         const appliedRoles: string[] = [];
         for (const row of rows) {
           if (row.scope === 'global' || row.scope === chatId) {
+            roles.add(row.role);
             appliedRoles.push(row.role);
           }
         }

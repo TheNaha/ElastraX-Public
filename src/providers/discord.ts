@@ -23,7 +23,7 @@
 
 import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, AttachmentBuilder, PermissionsBitField } from 'discord.js';
 import { BotProvider } from './BotProvider';
-import { MessageContext, ReplyOptions } from '../core/MessageContext';
+import { MessageContext, ReplyOptions, RawProviderMessage } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { RoleService } from '../utils/RoleService';
 import { saveMediaBuffer } from '../utils/MediaStorage';
@@ -172,7 +172,7 @@ export class DiscordProvider implements BotProvider {
             senderId: fetchMsg.author.id,
             hasMedia: fetchMsg.attachments.size > 0,
             stanzaId: fetchMsg.id,
-            rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }),
+            rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }) as unknown as RawProviderMessage,
           };
         }
       } catch (err) {
@@ -212,33 +212,35 @@ export class DiscordProvider implements BotProvider {
       return saveMediaBuffer(buffer);
     };
 
-    if (hasMedia) {
-      const buffer = await downloadMediaFn(msg);
-      if (buffer) {
-        const saved = await saveBuffer(buffer);
-        if (saved) {
-          mediaPath = saved.path;
-          mimeType = saved.mime;
+    const mediaReadyPromise = (async () => {
+      if (hasMedia) {
+        const buffer = await downloadMediaFn(msg);
+        if (buffer) {
+          const saved = await saveBuffer(buffer);
+          if (saved) {
+            mediaPath = saved.path;
+            mimeType = saved.mime;
+          }
         }
       }
-    }
 
-    if (quoted?.hasMedia) {
-      const buffer = await downloadMediaFn(quoted.rawMessage as DiscordMessage);
-      if (buffer) {
-        const saved = await saveBuffer(buffer);
-        if (saved) {
-          quoted.mediaPath = saved.path;
-          quoted.mimeType = saved.mime;
+      if (quoted?.hasMedia) {
+        const buffer = await downloadMediaFn(quoted.rawMessage as unknown as DiscordMessage);
+        if (buffer) {
+          const saved = await saveBuffer(buffer);
+          if (saved) {
+            quoted.mediaPath = saved.path;
+            quoted.mimeType = saved.mime;
+          }
         }
       }
-    }
+    })();
 
     const downloadMedia = async (): Promise<Buffer | null> => {
       if (hasMedia) {
         return downloadMediaFn(msg);
       } else if (quoted?.hasMedia) {
-        return downloadMediaFn(quoted.rawMessage as DiscordMessage);
+        return downloadMediaFn(quoted.rawMessage as unknown as DiscordMessage);
       }
       return null;
     };
@@ -277,9 +279,9 @@ export class DiscordProvider implements BotProvider {
       hasMedia,
       mediaPath,
       mimeType,
-      mediaReady: Promise.resolve(),
+      mediaReady: mediaReadyPromise,
       quoted,
-      rawMessage: msg,
+      rawMessage: msg as unknown as RawProviderMessage,
       downloadMedia,
 
       sendMedia: async (buffer: Buffer, options = {}) => {
@@ -364,6 +366,7 @@ export class DiscordProvider implements BotProvider {
         for (const userId of userIds) {
           try {
             await msg.guild.members.kick(userId, 'Automated by ElastraX GroupAdmin wrapper');
+            await new Promise(res => setTimeout(res, 500)); // Basic rate limit backoff
           } catch (err) {
             logger.error({ userId, err }, 'Failed to kick Discord user');
           }

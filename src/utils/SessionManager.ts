@@ -131,7 +131,7 @@ export class SessionManager {
 
             if (this.hasFlows(session.flows)) {
               this.sessions.set(row.id, session);
-            } else if (hasExpired) {
+            } else if (hasExpired || !this.hasFlows(session.flows)) {
               expiredIds.push(row.id);
             }
           } catch {
@@ -144,6 +144,22 @@ export class SessionManager {
         }
 
         this.dbLoaded = true;
+        
+        // Start background GC for expired flows
+        setInterval(() => {
+          const currentTime = Date.now();
+          for (const [key, session] of this.sessions.entries()) {
+            const hasExpired = this.pruneExpiredFlows(session, currentTime);
+            if (hasExpired) {
+              if (!this.hasFlows(session.flows)) {
+                this.sessions.delete(key);
+                this.persistToDB(key, null);
+              } else {
+                this.persistToDB(key, session);
+              }
+            }
+          }
+        }, 5 * 60 * 1000).unref();
         logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[SessionManager] Loaded sessions from DB');
       } catch (err) {
         this.dbLoaded = false;

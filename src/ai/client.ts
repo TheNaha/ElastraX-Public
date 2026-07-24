@@ -142,8 +142,9 @@ export class AIClient {
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
-    maxTokens: number = getAIRequestConfig().maxTokens,
+    maxTokens?: number,
   ): Promise<ChatCompletionMessage> {
+    const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, false).maxTokens;
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
     }
@@ -153,7 +154,7 @@ export class AIClient {
     }
 
     const endpoint = this.resolveEndpoint();
-    const payload = this.buildPayload(messages, tools, temperature, maxTokens);
+    const payload = this.buildPayload(messages, tools, temperature, resolvedMaxTokens);
 
     log.debug({ endpoint, model: this.modelName, messageCount: messages.length, hasTools: !!(tools && tools.length) }, 'Sending chat completion request');
     const startTime = Date.now();
@@ -199,8 +200,9 @@ export class AIClient {
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
-    maxTokens: number = getAIRequestConfig(process.env, true).maxTokens,
+    maxTokens?: number,
   ): AsyncGenerator<ChatCompletionChunk> {
+    const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, true).maxTokens;
     if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
       throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
     }
@@ -210,7 +212,7 @@ export class AIClient {
     }
 
     const endpoint = this.resolveEndpoint();
-    const payload = this.buildPayload(messages, tools, temperature, maxTokens, true);
+    const payload = this.buildPayload(messages, tools, temperature, resolvedMaxTokens, true);
 
     const response = await fetch(endpoint, {
       method: 'POST',
@@ -242,21 +244,25 @@ export class AIClient {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() ?? '';
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith(':')) continue; // skip empty lines and comments
-          if (!trimmed.startsWith('data: ')) continue;
+        for (const part of parts) {
+          const lines = part.split('\n');
+          let dataStr = '';
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              dataStr += line.slice(6);
+            }
+          }
 
-          const data = trimmed.slice(6);
-          if (data === '[DONE]') return;
-
-          try {
-            yield JSON.parse(data) as ChatCompletionChunk;
-          } catch {
-            log.debug({ raw: data }, 'Failed to parse SSE chunk');
+          if (dataStr === '[DONE]') return;
+          if (dataStr) {
+            try {
+              yield JSON.parse(dataStr) as ChatCompletionChunk;
+            } catch {
+              log.debug({ raw: dataStr }, 'Failed to parse SSE chunk');
+            }
           }
         }
       }

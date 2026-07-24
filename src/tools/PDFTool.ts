@@ -1,7 +1,7 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
-import { SessionManager, type FlowSession } from '../utils/SessionManager';
+import { SessionManager } from '../utils/SessionManager';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';

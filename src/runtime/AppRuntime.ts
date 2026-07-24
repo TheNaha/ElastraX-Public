@@ -75,8 +75,9 @@ export class AppRuntime {
     this.runStartupCoverageScan = deps.runStartupCoverageScan;
     this.startupCoverageDelayMs = deps.startupCoverageDelayMs ?? 5000;
 
-    if (typeof this.messageQueue.getStats === 'function') {
-      healthMetrics.registerQueueStats(() => this.messageQueue.getStats!());
+    const getStats = this.messageQueue.getStats?.bind(this.messageQueue);
+    if (getStats) {
+      healthMetrics.registerQueueStats(() => getStats());
     }
   }
 
@@ -92,7 +93,11 @@ export class AppRuntime {
     }
 
     for (const provider of this.providers) {
-      await provider.start();
+      try {
+        await provider.start();
+      } catch (err) {
+        logger.error({ err, provider: provider.name }, 'Failed to start provider (non-fatal)');
+      }
     }
 
     this.registerProviderSenders();

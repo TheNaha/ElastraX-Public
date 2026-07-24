@@ -34,7 +34,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { BotProvider } from './BotProvider';
-import { MessageContext, SendMediaOptions, ReplyOptions } from '../core/MessageContext';
+import { MessageContext, SendMediaOptions, ReplyOptions, RawProviderMessage } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { checkPermissions, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
@@ -430,8 +430,8 @@ export class WhatsAppProvider implements BotProvider {
         hasMedia: q.hasMedia,
         stanzaId: q.stanzaId ?? undefined,
         rawMessage: {
-          key: reconstructedKey,
-          message: q.rawMessage,
+          key: reconstructedKey as unknown as RawProviderMessage['key'],
+          message: q.rawMessage as unknown as Record<string, unknown>,
         },
       };
     }
@@ -471,12 +471,12 @@ export class WhatsAppProvider implements BotProvider {
       }
 
       if (quoted?.hasMedia) {
-        const size = getFileLength(quoted.rawMessage);
+        const size = getFileLength((quoted.rawMessage as unknown as WAMessage).message);
         if (size && size > MAX_MEDIA_SIZE) {
           logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large quoted media download');
         } else {
           tasks.push(
-            downloadMediaMessage(quoted.rawMessage, 'buffer', {}, createMediaDownloadOptions(sock))
+            downloadMediaMessage(quoted.rawMessage as unknown as WAMessage, 'buffer', {}, createMediaDownloadOptions(sock))
               .then(async (buf) => {
                 const buffer = buf as Buffer | null;
                 if (buffer) {
@@ -498,7 +498,7 @@ export class WhatsAppProvider implements BotProvider {
         if (parsed.hasMedia) {
           return (await downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
         } else if (quoted?.hasMedia) {
-          return (await downloadMediaMessage(quoted.rawMessage, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
+          return (await downloadMediaMessage(quoted.rawMessage as unknown as WAMessage, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
         }
         return null;
       } catch (err) {
@@ -584,7 +584,7 @@ export class WhatsAppProvider implements BotProvider {
       get mimeType() { return mimeType; },
       mediaReady: mediaReadyPromise,
       quoted,
-      rawMessage: msg,
+      rawMessage: msg as unknown as RawProviderMessage,
 
       // ── Methods ──────────────────────────────────────────────────────────
       downloadMedia,

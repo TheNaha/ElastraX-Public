@@ -50,7 +50,10 @@ async function main() {
     logger.info('Shutting down gracefully...');
 
     // Dump fixtures before exit so the test suite grows automatically
-    await dumpFixtures(null).catch(err => {
+    await Promise.race([
+      dumpFixtures(null),
+      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
+    ]).catch(err => {
       logger.error(err, `[FixtureDumper] Failed during ${signal} — fixtures may be incomplete`);
     });
 
