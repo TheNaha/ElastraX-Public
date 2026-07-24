@@ -89,13 +89,13 @@ export class FlowHandler {
       }
     }
 
-    // Flow processor missing (e.g. after deploy where flow code was removed).
-    // Clear stale session so user is not stuck with a dangling active flow forever.
+    // Atomic cleanup: ensure session is cleared before notifying user.
     SessionManager.clear(ctx.senderId, flowId, ctx.platform);
     logger.warn(
       { flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform },
       '[FlowHandler] No processor registered for active flow; session cleared',
     );
+    await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
     return false;
   }
 }

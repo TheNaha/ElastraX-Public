@@ -875,7 +875,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                   sentKey = await ctx.sendMessage!(displayText);
                   streamedResponseSent = true;
                 } else {
-                  await ctx.editMessage!(sentKey, displayText).catch(() => {});
+                  await ctx.editMessage!(sentKey, displayText).catch((err: unknown) => {
+                    log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming edit failed (observable)');
+                  });
                 }
                 lastEditTime = now;
               }
@@ -921,7 +923,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
           // Final edit to remove cursor indicator
           if (sentKey && finalAiResponseText !== internalErrorText) {
-            await ctx.editMessage!(sentKey, finalAiResponseText).catch(() => {});
+            await ctx.editMessage!(sentKey, finalAiResponseText).catch((err: unknown) => {
+              log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed (observable)');
+            });
           }
           continue;
         }

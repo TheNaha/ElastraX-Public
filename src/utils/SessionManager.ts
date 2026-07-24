@@ -56,6 +56,7 @@ export class SessionManager {
   private static dbLoadPromise: Promise<void> | null = null;
   private static dbDepsPromise: Promise<DbDeps> | null = null;
   private static persistQueue = new Map<string, Promise<void>>();
+  private static gcInterval: ReturnType<typeof setInterval> | null = null;
 
   private static getDbDeps(): Promise<DbDeps> {
     if (!this.dbDepsPromise) {
@@ -146,7 +147,7 @@ export class SessionManager {
         this.dbLoaded = true;
         
         // Start background GC for expired flows
-        setInterval(() => {
+        this.gcInterval = setInterval(() => {
           const currentTime = Date.now();
           for (const [key, session] of this.sessions.entries()) {
             const hasExpired = this.pruneExpiredFlows(session, currentTime);
@@ -159,7 +160,10 @@ export class SessionManager {
               }
             }
           }
-        }, 5 * 60 * 1000).unref();
+        }, 5 * 60 * 1000);
+        if (this.gcInterval && typeof (this.gcInterval as any).unref === 'function') {
+          (this.gcInterval as any).unref();
+        }
         logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[SessionManager] Loaded sessions from DB');
       } catch (err) {
         this.dbLoaded = false;
@@ -192,13 +196,27 @@ export class SessionManager {
     }
   }
 
-  /** Write-through: persist session state to SQLite. */
+  /** Write-through: persist session state to SQLite with strict serial ordering per key. */
   private static persistToDB(key: string, session: UserSession | null): void {
+    // Capture snapshot at enqueue time, not at execution time, to prevent
+    // concurrent updates from overwriting newer state with stale snapshots.
     const snapshot = this.cloneSession(session);
     const previous = this.persistQueue.get(key) ?? Promise.resolve();
     const next = previous
       .catch(() => undefined)
-      .then(() => this.persistToDBInternal(key, snapshot))
+      .then(() => {
+        // Re-verify current session before persisting, avoiding stale writes.
+        const current = this.sessions.get(key);
+        if (!snapshot && (!current || !this.hasFlows(current.flows))) {
+          return this.persistToDBInternal(key, null);
+        }
+        if (snapshot && current && this.hasFlows(current.flows)) {
+          // Only persist if the key still exists and has flows; 
+          // this avoids deleting a new session that was created after snapshot.
+          return this.persistToDBInternal(key, snapshot);
+        }
+        return Promise.resolve();
+      })
       .finally(() => {
         if (this.persistQueue.get(key) === next) {
           this.persistQueue.delete(key);

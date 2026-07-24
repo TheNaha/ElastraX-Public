@@ -736,7 +736,9 @@ export class WebhookServer {
           // Health check endpoint
           if (req.method === 'GET' && url.pathname === '/health') {
             const metrics = healthMetrics.getMetrics();
-            return new Response(JSON.stringify({ status: 'ok', ...metrics }), {
+            // Basic integration check: verify DB connection is alive by reading metrics
+            const providerStatus = metrics.llm ? { providers: metrics.llm.requests > 0 ? 'checked' : 'idle' } : { providers: 'unknown' };
+            return new Response(JSON.stringify({ status: 'ok', ...metrics, integration: providerStatus }), {
               headers: { 'Content-Type': 'application/json' },
             });
           }

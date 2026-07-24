@@ -174,15 +174,16 @@ export function sanitizeMessagesForProvider(
   return messages.map(msg => {
     if (!Array.isArray(msg.content)) return msg;
 
-    const sanitized = msg.content.flatMap((part): AIContentPart[] => {
+    const sanitized: AIContentPart[] = [];
+    for (const part of msg.content) {
       if (part?.type === 'video_url' && !provider.supportsVideo) {
-        return [{ type: 'text', text: '[Video attached — not supported by this provider]' }];
+        sanitized.push({ type: 'text', text: '[Video attached — not supported by this provider]' });
+      } else if (part?.type === 'audio_url' && !provider.supportsAudio) {
+        sanitized.push({ type: 'text', text: '[Audio attached — not supported by this provider]' });
+      } else {
+        sanitized.push(part);
       }
-      if (part?.type === 'audio_url' && !provider.supportsAudio) {
-        return [{ type: 'text', text: '[Audio attached — not supported by this provider]' }];
-      }
-      return [part];
-    });
+    }
 
     return { ...msg, content: sanitized };
   });
@@ -196,6 +197,8 @@ export function sanitizeMessagesForProvider(
 export class ModelRouter {
   private providers: ResolvedProvider[];
   private providerCooldownUntil = new Map<string, number>();
+  private providerFailureCount = new Map<string, number>();
+  private static readonly CIRCUIT_BREAKER_THRESHOLD = 5;
 
   constructor() {
     this.providers = loadProviders();
@@ -235,12 +238,16 @@ export class ModelRouter {
     const orderedProviders = this.getProvidersByTier(tier);
     const now = Date.now();
 
-    // ⚡ Bolt: Single pass to separate available and skipped providers, replacing O(N^2) .includes() check and multiple allocations
     const availableProviders: ResolvedProvider[] = [];
     const skippedProviderNames: string[] = [];
 
     for (const provider of orderedProviders) {
       const cooldownUntil = this.providerCooldownUntil.get(provider.name) ?? 0;
+      const failures = this.providerFailureCount.get(provider.name) ?? 0;
+      if (failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD) {
+        skippedProviderNames.push(provider.name + '(circuit-breaker)');
+        continue;
+      }
       if (cooldownUntil <= now) {
         availableProviders.push(provider);
       } else {
@@ -263,9 +270,12 @@ export class ModelRouter {
 
   private clearProviderCooldown(providerName: string): void {
     this.providerCooldownUntil.delete(providerName);
+    this.providerFailureCount.delete(providerName);
   }
 
   private markProviderFailure(providerName: string): void {
+    const current = this.providerFailureCount.get(providerName) ?? 0;
+    this.providerFailureCount.set(providerName, current + 1);
     this.providerCooldownUntil.set(providerName, Date.now() + getProviderCooldownMs());
   }
 
