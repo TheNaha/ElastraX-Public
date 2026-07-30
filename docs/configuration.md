@@ -52,6 +52,7 @@ These settings control how the AI interacts during a conversation.
 - `AI_MAX_TOKENS`: The maximum number of tokens the model is allowed to generate in a single response (e.g., `2048`).
 - `AI_TIMEOUT_MS`: The maximum time, in milliseconds, to wait for an API response before timing out and potentially triggering a failover (e.g., `60000` for 60 seconds).
 - `AI_MAX_TOOL_ITERATIONS`: The maximum number of consecutive tool calls the AI can make in a single conversational turn before forcing a final text response (e.g., `8`). This prevents infinite loops.
+- `TOOL_LOADING_MODE`: Either `search` (default) or `all`. When set to `search`, it uses "Smart Tool Loading" to save tokens by dynamically loading only relevant tools. When set to `all`, it forces the bot to send all 26+ tool definitions on every request.
 
 ### Long-Term Memory (RAG)
 
