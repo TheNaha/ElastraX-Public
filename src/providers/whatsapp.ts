@@ -45,7 +45,8 @@ import { db } from '../db';
 import { messages } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { IdentityService } from '../utils/IdentityService';
-import { RoleService } from '../utils/RoleService';
+import { AuthService } from '../utils/AuthService';
+import { readFileSync } from 'fs';
 
 /** Maximum file size in bytes that the bot will attempt to download (200 MB). */
 const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
@@ -232,7 +233,7 @@ export class WhatsAppProvider implements BotProvider {
         // ── Seed bot owner in DB at startup ─────────────────────────────────
         // BOT_OWNER_JID is a phone-number JID.  We persist it as an `owner`
         // role in user_roles so it's visible via /role check and DB queries.
-        // Also seed the identity mapping so RoleService can resolve LID↔PN.
+        // Also seed the identity mapping so AuthService can resolve LID↔PN.
         const ownerJid = process.env.BOT_OWNER_JID;
         if (ownerJid) {
           try {
@@ -248,7 +249,7 @@ export class WhatsAppProvider implements BotProvider {
             // Seed owner role in DB (global scope) — prefer LID for consistency
             // if available, otherwise fallback to the PN JID.
             const primaryId = ownerLid && ownerLid !== ownerJid ? ownerLid : ownerJid;
-            await RoleService.setRole(primaryId, 'owner', 'global', 'whatsapp', 'system:startup');
+            await AuthService.setRole(primaryId, 'owner', 'global', 'whatsapp', 'system:startup');
 
             logger.info(
               { ownerJid, ownerLid },
@@ -496,11 +497,10 @@ export class WhatsAppProvider implements BotProvider {
     const downloadMedia = async (): Promise<Buffer | null> => {
       try {
         await mediaReadyPromise;
-        const { readFileSync } = require('fs');
         if (parsed.hasMedia && mediaPath) {
-          try { return readFileSync(mediaPath); } catch {}
+          try { return readFileSync(mediaPath); } catch (e) { /* ignore */ }
         } else if (quoted?.hasMedia && quoted.mediaPath) {
-          try { return readFileSync(quoted.mediaPath); } catch {}
+          try { return readFileSync(quoted.mediaPath); } catch (e) { /* ignore */ }
         }
 
         if (parsed.hasMedia) {
@@ -549,7 +549,7 @@ export class WhatsAppProvider implements BotProvider {
     );
 
     // ── Persist identity mapping (fire-and-forget) ──────────────────────────
-    // Upsert LID ↔ PN mapping so RoleService can resolve all JIDs for this user.
+    // Upsert LID ↔ PN mapping so AuthService can resolve all JIDs for this user.
     const identityLid = senderId.includes('@lid') ? senderId : undefined;
     const identityPn = senderPn && !senderPn.includes('@lid') ? senderPn : undefined;
     if (identityLid || identityPn) {

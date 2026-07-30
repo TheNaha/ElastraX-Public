@@ -1,7 +1,6 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
-import { SessionManager } from '../utils/SessionManager';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
@@ -342,7 +341,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
     if (singleFile && existsSync(singleFile)) files.push(singleFile);
 
     // Start collection flow
-    SessionManager.set(
+    FlowHandler.setSession(
       ctx.senderId,
       'pdf_merge_collect',
       { flow: 'pdf_merge_collect', step: 'collecting', data: { files, chatId: ctx.chatId } },
@@ -401,7 +400,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
     }
 
     // No image attached → start collection flow
-    SessionManager.set(
+    FlowHandler.setSession(
       ctx.senderId,
       'pdf_img_collect',
       { flow: 'pdf_img_collect', step: 'collecting', data: { files: [], mimes: [], chatId: ctx.chatId } },
@@ -479,7 +478,7 @@ FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
   const mimes = (flowData.data.mimes ?? []) as string[];
 
   if (isDone(ctx.text) && files.length > 0) {
-    SessionManager.clear(ctx.senderId, flowId, ctx.platform);
+    FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform);
     const tool = new PDFTool();
     const result = await tool['doImgToPdf'](ctx, lang, files, mimes);
     await ctx.reply(result);
@@ -504,7 +503,7 @@ FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
 
   files.push(media.path);
   mimes.push(media.mime);
-  SessionManager.set(
+  FlowHandler.setSession(
     ctx.senderId,
     flowId,
     { flow: 'pdf_img_collect', step: 'collecting', data: { ...flowData.data, files, mimes } },
@@ -521,7 +520,7 @@ FlowHandler.register('pdf_merge_collect', async (ctx, flowData, flowId) => {
   const files = (flowData.data.files ?? []) as string[];
 
   if (isDone(ctx.text) && files.length >= 2) {
-    SessionManager.clear(ctx.senderId, flowId, ctx.platform);
+    FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform);
     const tool = new PDFTool();
     const result = await tool['doMerge'](ctx, lang, files);
     await ctx.reply(result);
@@ -545,7 +544,7 @@ FlowHandler.register('pdf_merge_collect', async (ctx, flowData, flowId) => {
   }
 
   files.push(media.path);
-  SessionManager.set(
+  FlowHandler.setSession(
     ctx.senderId,
     flowId,
     { flow: 'pdf_merge_collect', step: 'collecting', data: { ...flowData.data, files } },

@@ -28,9 +28,8 @@
 
 import { BaseTool, ToolDefinition, ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { RoleService, BUILTIN_ROLES } from '../utils/RoleService';
-import { PrivilegeService, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/PrivilegeService';
-import type { RolePrivileges } from '../utils/PrivilegeService';
+import { AuthService, BUILTIN_ROLES, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/AuthService';
+import type { RolePrivileges } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
@@ -132,7 +131,7 @@ export class RoleTool extends BaseTool {
       const summary = targetId === ctx.senderId
         ? await buildSenderRoleSummary(ctx)
         : await buildTargetRoleSummary(targetId, ctx.chatId);
-      const accessProfile = await RoleService.getAccessProfile(summary.effectiveRoles);
+      const accessProfile = await AuthService.getAccessProfile(summary.effectiveRoles);
       const privsStr = formatPrivileges(accessProfile.privileges);
 
       logger.info(
@@ -159,7 +158,7 @@ export class RoleTool extends BaseTool {
 
     // ── LIST ───────────────────────────────────────────────────────────────
     if (action === 'list') {
-      const roles = await RoleService.listRoles(scope);
+      const roles = await AuthService.listRoles(scope);
       if (roles.length === 0) {
         return t(lang, 'role.list_empty', { scope: scopeLabel });
       }
@@ -183,8 +182,8 @@ export class RoleTool extends BaseTool {
     // ── PRIVS ──────────────────────────────────────────────────────────────
     if (action === 'privs') {
       const targetRole = role || 'user';
-      const current = await PrivilegeService.getForRole(targetRole);
-      const defaults = PrivilegeService.getDefaults(targetRole);
+      const current = await AuthService.getPrivilegesForRole(targetRole);
+      const defaults = AuthService.getDefaultPrivileges(targetRole);
       const roleCap = targetRole.charAt(0).toUpperCase() + targetRole.slice(1);
       let out = `📊 *Privileges for "${roleCap}":*\n\n`;
       for (const f of PRIVILEGE_FIELDS) {
@@ -200,7 +199,7 @@ export class RoleTool extends BaseTool {
 
     // ── SETPRIV (owner only) ───────────────────────────────────────────────
     if (action === 'setpriv') {
-      const callerAccess = await RoleService.getAccessProfile(await ctx.resolveRoles());
+      const callerAccess = await AuthService.getAccessProfile(await ctx.resolveRoles());
       if (!callerAccess.roles.includes('owner')) {
         return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
@@ -212,7 +211,7 @@ export class RoleTool extends BaseTool {
       if (numValue !== null && Number.isNaN(numValue)) {
         return '❌ Value must be a number or "null" to reset to default.';
       }
-      await PrivilegeService.setOverride(role, field, numValue);
+      await AuthService.setPrivilegeOverride(role, field, numValue);
       const label = numValue === null ? 'default' : numValue === -1 ? 'unlimited' : String(numValue);
       log.info({ role, field, value: numValue, setBy: ctx.senderId }, 'Privilege override set');
       return `✅ Set *${field}* for role *${role}* to *${label}*.`;
@@ -220,12 +219,12 @@ export class RoleTool extends BaseTool {
 
     // ── RESETPRIV (owner only) ─────────────────────────────────────────────
     if (action === 'resetpriv') {
-      const callerAccess = await RoleService.getAccessProfile(await ctx.resolveRoles());
+      const callerAccess = await AuthService.getAccessProfile(await ctx.resolveRoles());
       if (!callerAccess.roles.includes('owner')) {
         return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
       if (!role) return '❌ Please specify a role. Example: /role resetpriv premium';
-      await PrivilegeService.resetToDefaults(role);
+      await AuthService.resetPrivilegesToDefaults(role);
       log.info({ role, resetBy: ctx.senderId }, 'Privilege overrides reset to defaults');
       return `✅ All privilege overrides for *${role}* have been reset to defaults.`;
     }
@@ -249,7 +248,7 @@ export class RoleTool extends BaseTool {
         return t(lang, 'role.insufficient', { callerRole: callerLabel, targetRole: role });
       }
 
-      await RoleService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
+      await AuthService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
       logger.info({ targetId, role, scope, grantedBy: ctx.senderId }, '[RoleTool] Role granted');
 
       const { tag, mentionJid } = await resolveUserTag(targetId);
@@ -275,7 +274,7 @@ export class RoleTool extends BaseTool {
         return t(lang, 'role.insufficient', { callerRole: callerLabel, targetRole: revokeRole });
       }
 
-      const removed = await RoleService.removeRole(targetId, scope, revokeRole);
+      const removed = await AuthService.removeRole(targetId, scope, revokeRole);
       if (!removed) {
         const { tag } = await resolveUserTag(targetId);
         return `❌ No matching role found for ${tag} in *${scopeLabel}*.`;
@@ -305,7 +304,7 @@ function formatExplicitRoles(
 }
 
 async function buildTargetRoleSummary(targetId: string, chatId: string, targetPn?: string): Promise<RoleSummary> {
-  const allDbRoles = await RoleService.getUserRoles(targetId);
+  const allDbRoles = await AuthService.getUserRoles(targetId);
   const effectiveRoles = new Set<string>(['user']);
   const ownerJid = process.env.BOT_OWNER_JID;
   const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
@@ -324,7 +323,7 @@ async function buildTargetRoleSummary(targetId: string, chatId: string, targetPn
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 async function buildSenderRoleSummary(ctx: MessageContext): Promise<RoleSummary> {
-  const allDbRoles = await RoleService.getUserRoles(ctx.senderId);
+  const allDbRoles = await AuthService.getUserRoles(ctx.senderId);
   return {
     explicitRoles: formatExplicitRoles(allDbRoles),
     effectiveRoles: await ctx.resolveRoles(),

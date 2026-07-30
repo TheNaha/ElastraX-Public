@@ -13,7 +13,7 @@
  *  - RATE_LIMIT_MESSAGES  : Max messages per window (default: 10)
  *  - RATE_LIMIT_WINDOW_SEC: Refill window in seconds (default: 60)
  *
- * Per-role overrides are controlled by `PrivilegeService` and passed to
+ * Per-role overrides are controlled by `AuthService` and passed to
  * `checkWithLimits()` at call-time.
  */
 

@@ -9,7 +9,6 @@
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
-import { SessionManager } from '../utils/SessionManager';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
 import { SeerrClient } from '../providers/seerr/SeerrClient';
@@ -47,7 +46,7 @@ export const mediaConnectFlowProcessor = async (
       await ctx.reply('Please enter your username for the streaming service.');
       return;
     }
-    SessionManager.set(
+    FlowHandler.setSession(
       ctx.senderId,
       'media_connect',
       { flow: 'media_connect', step: 'password', data: { ...data, username } },
@@ -104,7 +103,7 @@ export const mediaConnectFlowProcessor = async (
         jellyfinUsername = authResult.User.Name;
         isAdmin = authResult.User.Policy?.IsAdministrator === true;
       } else {
-        SessionManager.clear(ctx.senderId, 'media_connect', ctx.platform);
+        FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
         await ctx.reply('❌ Media services are not configured. Please contact the bot admin.');
         return;
       }
@@ -137,7 +136,7 @@ export const mediaConnectFlowProcessor = async (
         });
       }
 
-      SessionManager.clear(ctx.senderId, 'media_connect', ctx.platform);
+      FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
 
       const adminLabel = isAdmin ? ' (Admin)' : '';
       await ctx.reply(
@@ -147,7 +146,7 @@ export const mediaConnectFlowProcessor = async (
         `Use the notify command to manage notification preferences.`,
       );
     } catch (err: unknown) {
-      SessionManager.clear(ctx.senderId, 'media_connect', ctx.platform);
+      FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
       const msg = err instanceof Error ? err.message : 'Unknown error';
       log.error({ err, username }, 'Media connect authentication failed');
       await ctx.reply(`❌ Authentication failed: ${msg}\nPlease check your credentials and try again.`);
@@ -240,7 +239,7 @@ export class MediaBindTool extends BaseTool {
     }
 
     // Start the flow
-    SessionManager.set(
+    FlowHandler.setSession(
       ctx.senderId,
       'media_connect',
       { flow: 'media_connect', step: 'username', data: {} },

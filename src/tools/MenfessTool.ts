@@ -27,7 +27,6 @@
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
-import { SessionManager } from '../utils/SessionManager';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
@@ -95,14 +94,14 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
   const response = ctx.text.trim().toLowerCase();
 
   if (!isMenfessFlowData(flowData.data)) {
-    SessionManager.clear(ctx.senderId, 'menfess_confirm', ctx.platform);
+    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
     await ctx.reply(t(lang, 'flow.error', { msg: 'Invalid menfess confirmation state.' }));
     return;
   }
 
   if (['yes', 'y', 'ya', 'iya', 'yep', 'yup', 'send', 'kirim'].includes(response)) {
     const { targetChatId, message } = flowData.data;
-    SessionManager.clear(ctx.senderId, 'menfess_confirm', ctx.platform);
+    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
 
     if (!ctx.forwardMessage) {
       await ctx.reply(t(lang, 'menfess.not_supported'));
@@ -119,7 +118,7 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
       await ctx.reply(t(lang, 'menfess.error', { msg: errMessage }));
     }
   } else {
-    SessionManager.clear(ctx.senderId, 'menfess_confirm', ctx.platform);
+    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
     await ctx.reply(t(lang, 'menfess.cancelled'));
   }
 });
@@ -171,7 +170,7 @@ export class MenfessTool extends BaseTool {
       return `Unknown target "${targetInput}". Use a valid chat ID or a configured alias. Available aliases: ${Array.from(targetAliases.keys()).join(', ') || 'none configured'}.`;
     }
 
-    SessionManager.set(
+    FlowHandler.setSession(
       ctx.senderId,
       'menfess_confirm',
       { flow: 'menfess_confirm', step: 'confirm', data: { targetChatId, message } },

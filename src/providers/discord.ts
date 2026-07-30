@@ -25,7 +25,7 @@ import { Client, GatewayIntentBits, Partials, Message as DiscordMessage, Attachm
 import { BotProvider } from './BotProvider';
 import { MessageContext, ReplyOptions, RawProviderMessage } from '../core/MessageContext';
 import { logger } from '../utils/logger';
-import { RoleService } from '../utils/RoleService';
+import { AuthService } from '../utils/AuthService';
 import { saveMediaBuffer } from '../utils/MediaStorage';
 
 /** Maximum file size in bytes for Discord attachments that the bot will download (200 MB). */
@@ -260,7 +260,7 @@ export class DiscordProvider implements BotProvider {
         }
       }
 
-      _rolesCache = await RoleService.resolveRoles(msg.author.id, msg.channelId, isPlatformAdmin);
+      _rolesCache = await AuthService.resolveRoles(msg.author.id, msg.channelId, isPlatformAdmin);
       return _rolesCache;
     };
 
@@ -383,7 +383,7 @@ export class DiscordProvider implements BotProvider {
       checkPermissions: async (required: string) => {
         if (required === 'user') return true;
         const roles = await _resolveRoles();
-        return RoleService.hasPermission(roles, required);
+        return AuthService.hasPermission(roles, required);
       },
 
       resolveRoles: () => _resolveRoles(),

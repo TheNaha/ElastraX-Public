@@ -51,7 +51,7 @@ export class MemoryTool extends BaseTool {
     const ownerId = ctx.isGroup ? ctx.chatId : ctx.senderId;
     
     switch (args.action) {
-      case 'store':
+      case 'store': {
         if (!args.content) return 'Error: content is required.';
         const id = crypto.randomBytes(4).toString('hex');
         await db.insert(memories).values({
@@ -62,19 +62,19 @@ export class MemoryTool extends BaseTool {
         });
         log.info({ ownerId, id, content: args.content }, 'Stored memory');
         return `Stored memory [${id}]: ${args.content}\nThis memory will be automatically injected into your system prompt for future conversations.`;
-        
-      case 'retrieve':
+      }
+      case 'retrieve': {
         const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId));
         if (mems.length === 0) return 'No memories found for this chat/user.';
         return 'Active Memories:\n' + mems.map(m => `[${m.id}] ${m.content}`).join('\n');
-        
-      case 'forget':
+      }
+      case 'forget': {
         if (!args.id) return 'Error: memory ID is required to forget.';
         const deleted = await db.delete(memories).where(and(eq(memories.id, args.id), eq(memories.ownerId, ownerId))).returning();
         if (deleted.length === 0) return `Error: Memory ID ${args.id} not found.`;
         log.info({ ownerId, id: args.id }, 'Deleted memory');
         return `Forgot memory ${args.id}`;
-        
+      }
       default:
         return 'Invalid action. Use store, retrieve, or forget.';
     }

@@ -21,7 +21,7 @@
  */
 
 import { logger } from './logger';
-import { RoleService } from './RoleService';
+import { AuthService } from './AuthService';
 
 interface WhatsAppGroupParticipant {
   id?: string;
@@ -137,7 +137,7 @@ export async function resolveUserRoles(
 
   const isPlatformAdmin = await resolvePlatformAdmin(sock, chatId, senderId, isGroup, senderPn);
 
-  const roles = await RoleService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn);
+  const roles = await AuthService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn);
 
   logger.info(
     { senderId, senderPn, chatId, roles, isPlatformAdmin },
@@ -169,7 +169,7 @@ export async function checkPermissions(
   if (required === 'user') return true;
 
   const roles = await resolveUserRoles(sock, chatId, senderId, isGroup, senderPn);
-  const allowed = RoleService.hasPermission(roles, required);
+  const allowed = AuthService.hasPermission(roles, required);
 
   logger.debug(
     { senderId, senderPn, required, roles, allowed },

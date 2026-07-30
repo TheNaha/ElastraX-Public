@@ -27,7 +27,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { getDownloadMaxMb } from '../config/runtime';
-import { PrivilegeService } from '../utils/PrivilegeService';
+import { AuthService } from '../utils/AuthService';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -176,7 +176,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     const url = String(args.url || '').trim();
     const format: DownloadFormat = (args.format || 'mp4') as DownloadFormat;
     const roles = await ctx.resolveRoles();
-    const privileges = await PrivilegeService.getEffective(roles);
+    const privileges = await AuthService.getEffectivePrivileges(roles);
     let maxMb = privileges.maxDownloadMb;
     if (maxMb === -1) maxMb = Infinity; // Infinite download size override
     else if (!maxMb) maxMb = getDownloadMaxMb();

@@ -46,7 +46,7 @@ import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
 import { getModelRouter } from '../utils/ModelRouter';
 import { RateLimiter } from '../utils/RateLimiter';
-import { RoleService } from '../utils/RoleService';
+import { AuthService } from '../utils/AuthService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
 import type { BaseTool, ToolResult, ToolDefinition } from '../tools/BaseTool';
@@ -63,7 +63,7 @@ function getToolTimeoutMs(): number {
 function getAllowedTools(roles: string[], isGroup: boolean): BaseTool[] {
   return tools.filter((tool) => {
     if (tool.groupOnly && !isGroup) return false;
-    return RoleService.hasPermission(roles, tool.permissions);
+    return AuthService.hasPermission(roles, tool.permissions);
   });
 }
 
@@ -140,9 +140,14 @@ async function executeRequestedToolCalls(
       log.info({ toolName, args, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) }, 'Tool call invoked');
       healthMetrics.recordToolInvocation(toolName);
       await options.ctx.react?.('🔧');
-      const rawResult = await executeToolWithTimeout(tool, args, options.ctx);
-      toolResultStr = resolveToolResultText(rawResult);
-      preferredTier = tool.modelTier;
+      try {
+        const rawResult = await executeToolWithTimeout(tool, args, options.ctx);
+        toolResultStr = resolveToolResultText(rawResult);
+        preferredTier = tool.modelTier;
+      } catch (err: unknown) {
+        log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
+        toolResultStr = `Error executing tool ${toolName}: ${err instanceof Error ? err.message : String(err)}`;
+      }
 
       if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
         const query = typeof args.query === 'string' ? args.query : '';
@@ -319,7 +324,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   ctx.language = room.language;
 
   // V7.11: Resolve user roles once and compute privilege-based rate limits.
-  const { roles: userRoles, privileges } = await RoleService.getAccessProfile(await ctx.resolveRoles());
+  const { roles: userRoles, privileges } = await AuthService.getAccessProfile(await ctx.resolveRoles());
 
   logger.info(
     { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },
@@ -409,8 +414,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: unknown) {
         log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
-        await ctx.reply(t(ctx.language, 'agent.internal_error'));
-        await ctx.react?.('❌');
+        await ctx.reply(t(ctx.language, 'agent.internal_error')).catch(() => {});
+        await ctx.react?.('❌').catch(() => {});
       }
       return;
     }
@@ -841,6 +846,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           let accumulated = '';
           let sentKey: unknown = null;
           let lastEditTime = 0;
+          let streamingFailed = false;
           const toolCallDeltas: Map<number, { id: string; name: string; args: string }> = new Map();
 
           const streamTools = isLastChance ? undefined : availableTools;
@@ -880,13 +886,23 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               const now = Date.now();
               if (now - lastEditTime >= editInterval) {
                 const displayText = accumulated + ' ▌';
-                if (!sentKey) {
-                  sentKey = await ctx.sendMessage!(displayText);
-                  streamedResponseSent = true;
-                } else {
-                  await ctx.editMessage!(sentKey, displayText).catch((err: unknown) => {
-                    log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming edit failed (observable)');
-                  });
+                if (!streamingFailed) {
+                  if (!sentKey) {
+                    try {
+                      sentKey = await ctx.sendMessage!(displayText);
+                      streamedResponseSent = true;
+                    } catch (err: unknown) {
+                      log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming send failed, falling back');
+                      streamingFailed = true;
+                    }
+                  } else {
+                    try {
+                      await ctx.editMessage!(sentKey, displayText);
+                    } catch (err: unknown) {
+                      log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming edit failed, degrading gracefully');
+                      streamingFailed = true;
+                    }
+                  }
                 }
                 lastEditTime = now;
               }
@@ -895,6 +911,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
           // If the stream produced tool calls, we need to process them
           if (toolCallDeltas.size > 0) {
+            if (sentKey && !streamingFailed) {
+              await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(() => {});
+              streamedResponseSent = false;
+            } else if (streamingFailed) {
+              streamedResponseSent = false;
+            }
+
             // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
             const toolCalls: ToolCall[] = Array.from(toolCallDeltas.values(), (tc) => ({
               id: tc.id,
@@ -931,10 +954,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           finalAiResponseText = accumulated.trim() || internalErrorText;
 
           // Final edit to remove cursor indicator
-          if (sentKey && finalAiResponseText !== internalErrorText) {
-            await ctx.editMessage!(sentKey, finalAiResponseText).catch((err: unknown) => {
+          if (sentKey && finalAiResponseText !== internalErrorText && !streamingFailed) {
+            try {
+              await ctx.editMessage!(sentKey, finalAiResponseText);
+            } catch (err: unknown) {
               log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed (observable)');
-            });
+              streamingFailed = true;
+            }
+          }
+          
+          if (streamingFailed) {
+            streamedResponseSent = false;
           }
           continue;
         }
@@ -1058,7 +1088,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   } catch (error) {
     log.error(error, 'Error handling message');
     healthMetrics.recordMessageError();
-    await ctx.react?.('❌'); // show error
-    await ctx.reply(t(ctx.language, 'agent.internal_error'));
+    await ctx.react?.('❌').catch(() => {}); // show error
+    await ctx.reply(t(ctx.language, 'agent.internal_error')).catch(() => {});
   }
 }

@@ -18,7 +18,7 @@
 import { logger } from './utils/logger';
 import { ensureDatabaseSchema } from './db';
 import { validateEnv } from './config/env';
-import { SessionManager } from './utils/SessionManager';
+import { FlowHandler } from './core/FlowHandler';
 import { AppRuntime } from './runtime/AppRuntime';
 import { dumpFixtures, runStartupCoverageScan } from './runtime/startupDiagnostics';
 
@@ -36,7 +36,7 @@ async function main() {
   }
 
   // Restore persisted flow sessions from SQLite so multi-step wizards survive restarts.
-  await SessionManager.initialize();
+  await FlowHandler.initialize();
 
   const runtime = new AppRuntime({
     runStartupCoverageScan: async () => runStartupCoverageScan(null),
