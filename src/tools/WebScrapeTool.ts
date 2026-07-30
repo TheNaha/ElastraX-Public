@@ -10,6 +10,11 @@ export class WebScrapeTool extends BaseTool {
   readonly aliases = ['read', 'scrape'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  
+  override readonly triggerPatterns = [
+    /https?:\/\/[^\s]+/i,
+    /\b(scrape|summarize|summarise|read|article|fetch|extract|content|page|website|webpage|link|tldr|tl;dr|ringkas|ringkaskan|baca|artikel|halaman|situs|ambil|isinya)\b/i
+  ];
 
   get definition(): ToolDefinition {
     return {

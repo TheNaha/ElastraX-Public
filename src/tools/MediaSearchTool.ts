@@ -50,7 +50,7 @@ export class MediaSearchTool extends BaseTool {
   readonly category = 'media';
   readonly permissions = 'user';
   readonly triggerPatterns = [
-    /\b(search|find|looking for|want to watch|is .+ available|movie|film|tv show|series|anime|trending|recommend)\b/i,
+    /\b(search|find|looking for|want to watch|is .+ available|movie|film|tv show|series|anime|trending|recommend|cari|nonton|rekomendasi)\b/i,
   ];
 
   get definition(): ToolDefinition {

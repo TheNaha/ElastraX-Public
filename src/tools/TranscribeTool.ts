@@ -13,7 +13,7 @@ export class TranscribeTool extends BaseTool<ToolArgs> {
   readonly aliases = ['transcribe', 'stt'];
   readonly category = 'utility';
   readonly permissions = 'user';
-  override readonly triggerPatterns = [/^audio\//i];
+  override readonly triggerPatterns = [/^audio\//i, /\b(transcribe|transkrip|what did they say|apa yang dia bilang)\b/i];
 
   get definition(): ToolDefinition {
     return {

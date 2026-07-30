@@ -130,6 +130,7 @@ export class MenfessTool extends BaseTool {
   readonly aliases = ['menfess', 'anon'];
   readonly category = 'fun';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(menfess|confess|rahasia|anonymous)\b/i];
 
   get definition(): ToolDefinition {
     return {

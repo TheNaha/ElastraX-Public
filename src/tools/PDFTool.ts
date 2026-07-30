@@ -38,7 +38,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
   readonly description =
     'PDF toolkit: info, compress, merge, split, rotate, remove pages, page numbers, watermark, image-to-PDF, extract text, flatten forms, edit metadata.';
   readonly aliases = ['pdf'];
-  override readonly triggerPatterns = [/application\/pdf/i, /\bpdf\b/i];
+  override readonly triggerPatterns = [/application\/pdf/i, /\b(pdf|merge|gabung|gambar ke pdf)\b/i];
   readonly category = 'utility';
   readonly permissions = 'user';
 

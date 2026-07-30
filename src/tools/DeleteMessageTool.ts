@@ -15,6 +15,7 @@ export class DeleteMessageTool extends BaseTool<ToolArgs> {
   readonly aliases = ['delete', 'del', 'unsend'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(delete|hapus|tarik|unsend|remove)\b/i];
 
   get definition(): ToolDefinition {
     return {

@@ -115,6 +115,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
   readonly aliases = ['remind', 'reminder'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(remind|ingatkan|reminder|alarm|timer|waktu)\b/i];
 
   get definition(): ToolDefinition {
     return {

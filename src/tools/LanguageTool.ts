@@ -35,7 +35,8 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
   readonly description = 'Change the bot language for this chat room (en/id).';
   readonly aliases = ['lang', 'setlanguage', 'setlang'];
   readonly category = 'settings';
-  readonly permissions = 'user'; // Any user can change language for now
+  readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(language|bahasa|ganti bahasa|change language)\b/i]; // Any user can change language for now
 
   get definition(): ToolDefinition {
     return {

@@ -92,7 +92,7 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly aliases = ['convert', 'cv'];
   readonly category = 'media';
   readonly permissions = 'user';
-  override readonly triggerPatterns = [/^image\//i, /^video\//i, /^audio\//i];
+  override readonly triggerPatterns = [/^image\//i, /^video\//i, /^audio\//i, /\b(convert|konversi|ubah|change format)\b/i];
 
   get definition(): ToolDefinition {
     return {

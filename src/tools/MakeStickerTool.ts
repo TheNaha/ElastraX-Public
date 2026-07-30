@@ -36,7 +36,7 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
   readonly aliases = ['s', 'makesticker', 'createsticker'];
   readonly category = 'media';
   readonly permissions = 'user';
-  override readonly triggerPatterns = [/^image\//i, /^video\//i];
+  override readonly triggerPatterns = [/^image\//i, /^video\//i, /\b(sticker|stiker)\b/i];
 
   get definition(): ToolDefinition {
     return {

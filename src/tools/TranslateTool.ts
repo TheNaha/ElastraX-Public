@@ -78,6 +78,7 @@ export class TranslateTool extends BaseTool<TranslateArgs> {
   readonly aliases = ['translate', 'tr'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(translate|terjemahkan|artikan|meaning|apa artinya)\b/i];
 
   get definition(): ToolDefinition {
     return {

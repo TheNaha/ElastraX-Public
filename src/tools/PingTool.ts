@@ -24,6 +24,7 @@ export class PingTool extends BaseTool<ToolArgs> {
   readonly aliases = ['status', 'uptime'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly triggerPatterns = [/\b(ping|lag|latency|koneksi)\b/i];
 
   get definition(): ToolDefinition {
     return {

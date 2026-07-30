@@ -16,6 +16,10 @@ export class MemoryTool extends BaseTool {
   readonly category = 'utility';
   readonly permissions = 'user';
 
+  override readonly triggerPatterns = [
+    /\b(remember|forget|memory|memories|save|store|recall|remind|note|ingat|lupa|lupakan|memori|simpan|catat|ingatkan)\b/i
+  ];
+
   get definition(): ToolDefinition {
     return {
       type: 'function',

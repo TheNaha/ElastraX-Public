@@ -144,7 +144,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
   readonly aliases = ['download', 'dl'];
   readonly category = 'media';
   readonly permissions = 'user';
-  override readonly triggerPatterns = [/https?:\/\//i];
+  override readonly triggerPatterns = [/https?:\/\//i, /\b(download|unduh|save|simpan)\b/i];
 
   get definition(): ToolDefinition {
     return {

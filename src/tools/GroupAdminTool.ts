@@ -34,6 +34,7 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
   readonly aliases = ['group_admin', 'group-admin', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   readonly category = 'admin';
   readonly permissions = 'admin';
+  override readonly triggerPatterns = [/\b(kick|ban|promote|demote|keluarkan|jadikan admin|turunkan)\b/i];
 
   get definition(): ToolDefinition {
     return {
