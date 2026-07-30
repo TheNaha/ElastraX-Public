@@ -12,7 +12,7 @@ import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
 
-type SenderFn = (chatId: string, text: string) => Promise<void>;
+type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
 type SenderRegistry = {
   registerSender(platform: string, fn: SenderFn): void;
@@ -127,7 +127,7 @@ export class AppRuntime {
 
   private registerProviderSenders(): void {
     for (const provider of this.providers) {
-      const send = async (chatId: string, text: string): Promise<void> => provider.sendMessage(chatId, text);
+      const send = async (chatId: string, text: string, _platform?: string): Promise<void> => provider.sendMessage(chatId, text);
       this.webhookServer.registerSender(provider.name, send);
       this.scheduler.registerSender(provider.name, send);
     }

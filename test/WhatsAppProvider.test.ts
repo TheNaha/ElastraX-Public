@@ -11,7 +11,7 @@ const _mockLogger = {
 };
 
 import { IdentityService } from '../src/utils/IdentityService';
-import { RoleService } from '../src/utils/RoleService';
+import { AuthService as RoleService } from '../src/utils/AuthService';
 
 const mockIdentityUpsert = mock(async () => {});
 const mockSetRole = mock(async () => {});

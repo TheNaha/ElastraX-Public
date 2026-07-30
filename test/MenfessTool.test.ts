@@ -1,7 +1,7 @@
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+import { FlowHandler } from '../src/core/FlowHandler';
 import { MessageContext } from '../src/core/MessageContext';
 import { MenfessTool } from '../src/tools/MenfessTool';
-import { SessionManager } from '../src/utils/SessionManager';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
@@ -29,7 +29,7 @@ describe('MenfessTool', () => {
   let setSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    setSpy = spyOn(SessionManager, 'set');
+    setSpy = spyOn(FlowHandler, 'setSession');
   });
 
   afterEach(() => {

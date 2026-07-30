@@ -2,7 +2,6 @@ import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 import { FlowHandler } from '../src/core/FlowHandler';
 import { MessageContext } from '../src/core/MessageContext';
 import { CANCEL_COMMANDS } from '../src/core/constants';
-import { SessionManager } from '../src/utils/SessionManager';
 import { logger } from '../src/utils/logger';
 
 // We avoid mock.module to prevent polluting other tests in the same run
@@ -33,8 +32,8 @@ describe('FlowHandler', () => {
   const flowRegistry = FlowHandler as unknown as { flows: Record<string, unknown> };
 
   // Save originals
-  const originalSessionGetActiveFlow = SessionManager.getActiveFlow;
-  const originalSessionClear = SessionManager.clear;
+  const originalGetActiveFlow = FlowHandler.getActiveFlow;
+  const originalClearSession = FlowHandler.clearSession;
   const originalLoggerDebug = logger.debug;
   const originalLoggerError = logger.error;
   const originalLoggerWarn = logger.warn;
@@ -47,11 +46,11 @@ describe('FlowHandler', () => {
     // Reset FlowHandler flows
     flowRegistry.flows = {};
 
-    // Mock SessionManager methods
+    // Mock FlowHandler methods directly
     mockGetActiveFlow = mock(() => null);
     mockClearSession = mock(() => {});
-    SessionManager.getActiveFlow = mockGetActiveFlow;
-    SessionManager.clear = mockClearSession;
+    FlowHandler.getActiveFlow = mockGetActiveFlow;
+    FlowHandler.clearSession = mockClearSession;
 
     // Mock Logger methods (suppress output)
     logger.debug = mock(() => {});
@@ -61,8 +60,8 @@ describe('FlowHandler', () => {
 
   afterEach(() => {
     // Restore originals
-    SessionManager.getActiveFlow = originalSessionGetActiveFlow;
-    SessionManager.clear = originalSessionClear;
+    FlowHandler.getActiveFlow = originalGetActiveFlow;
+    FlowHandler.clearSession = originalClearSession;
     logger.debug = originalLoggerDebug;
     logger.error = originalLoggerError;
     logger.warn = originalLoggerWarn;
@@ -154,7 +153,7 @@ describe('FlowHandler', () => {
       expect(ctx.reply).toHaveBeenCalledWith('❌ Active flow cancelled.');
     });
 
-    test('should clear flow and return false when a new slash command is sent (not cancel)', async () => {
+    test('should return true with warning when a new slash command is sent (not cancel)', async () => {
       FlowHandler.register('myFlow', mock(async () => {}));
       mockGetActiveFlow.mockReturnValue({
         flowId: 'myFlow',
@@ -164,12 +163,13 @@ describe('FlowHandler', () => {
       const ctx = createMockCtx({ text: '/help' });
       const result = await FlowHandler.handle(ctx);
 
-      // Returns false so the router can handle /help
-      expect(result).toBe(false);
-      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'myFlow', 'whatsapp');
+      // Returns true with a warning that user is in an active flow
+      expect(result).toBe(true);
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('currently in an active process'));
+      expect(mockClearSession).not.toHaveBeenCalled();
     });
 
-    test('should handle processor errors gracefully and clear the flow', async () => {
+    test('should handle processor errors gracefully without clearing the flow', async () => {
       const error = new Error('something went wrong');
       const processor = mock(async () => { throw error; });
       FlowHandler.register('errorFlow', processor);
@@ -188,7 +188,8 @@ describe('FlowHandler', () => {
         expect.stringContaining('❌ An error occurred processing your flow step:\nsomething went wrong')
       );
 
-      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'errorFlow', 'whatsapp');
+      // Flow is NOT cleared on error so user can retry
+      expect(mockClearSession).not.toHaveBeenCalled();
     });
 
     test('should return false if no processor is registered for the active flow', async () => {

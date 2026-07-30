@@ -330,8 +330,10 @@ export class DiscordProvider implements BotProvider {
       },
 
       sendMessage: async (text: string, _options?: ReplyOptions) => {
-        const sent = await msg.reply({ content: text });
-        return sent;
+        if (msg.channel && 'send' in msg.channel && typeof msg.channel.send === 'function') {
+          return await msg.channel.send({ content: text });
+        }
+        throw new Error('Channel does not support sending messages');
       },
 
       editMessage: async (key: unknown, text: string) => {

@@ -1,17 +1,20 @@
 import { describe, test, expect } from 'bun:test';
-import { DEFAULT_SYSTEM_PROMPT } from '../src/core/prompts';
+import { getDefaultSystemPrompt } from '../src/core/prompts';
 
-describe('DEFAULT_SYSTEM_PROMPT', () => {
-  test('is a non-empty string', () => {
-    expect(typeof DEFAULT_SYSTEM_PROMPT).toBe('string');
-    expect(DEFAULT_SYSTEM_PROMPT.length).toBeGreaterThan(0);
+describe('getDefaultSystemPrompt', () => {
+  test('returns a non-empty string', () => {
+    const prompt = getDefaultSystemPrompt();
+    expect(typeof prompt).toBe('string');
+    expect(prompt.length).toBeGreaterThan(0);
   });
 
   test('contains {{LANGUAGE}} placeholder', () => {
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('{{LANGUAGE}}');
+    const prompt = getDefaultSystemPrompt();
+    expect(prompt).toContain('{{LANGUAGE}}');
   });
 
   test('introduces the bot as ElastraX', () => {
-    expect(DEFAULT_SYSTEM_PROMPT).toContain('ElastraX');
+    const prompt = getDefaultSystemPrompt();
+    expect(prompt).toContain('ElastraX');
   });
 });

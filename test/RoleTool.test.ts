@@ -59,8 +59,8 @@ mock.module('../src/db', () => {
 
 import { MessageContext } from '../src/core/MessageContext';
 import { RoleTool } from '../src/tools/RoleTool';
-import { RoleService } from '../src/utils/RoleService';
-import { PrivilegeService } from '../src/utils/PrivilegeService';
+import { AuthService, BUILTIN_ROLES } from '../src/utils/AuthService';
+
 import { IdentityService } from '../src/utils/IdentityService';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -92,21 +92,21 @@ describe('RoleTool', () => {
 
   beforeEach(() => {
     // spy on service methods
-    spies.push(spyOn(RoleService, 'getUserRoles').mockResolvedValue([]));
-    accessProfileSpy = spyOn(RoleService, 'getAccessProfile').mockResolvedValue({
+    spies.push(spyOn(AuthService, 'getUserRoles').mockResolvedValue([]));
+    accessProfileSpy = spyOn(AuthService, 'getAccessProfile').mockResolvedValue({
       roles: ['user'],
       privileges: { maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 },
     });
     spies.push(accessProfileSpy);
-    listRolesSpy = spyOn(RoleService, 'listRoles').mockResolvedValue([]);
+    listRolesSpy = spyOn(AuthService, 'listRoles').mockResolvedValue([]);
     spies.push(listRolesSpy);
-    spies.push(spyOn(RoleService, 'setRole').mockResolvedValue(undefined));
-    spies.push(spyOn(RoleService, 'removeRole').mockResolvedValue(true));
-    spies.push(spyOn(PrivilegeService, 'getEffective').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
-    spies.push(spyOn(PrivilegeService, 'getForRole').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
-    spies.push(spyOn(PrivilegeService, 'getDefaults').mockReturnValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
-    spies.push(spyOn(PrivilegeService, 'setOverride').mockResolvedValue(undefined));
-    spies.push(spyOn(PrivilegeService, 'resetToDefaults').mockResolvedValue(undefined));
+    spies.push(spyOn(AuthService, 'setRole').mockResolvedValue(undefined));
+    spies.push(spyOn(AuthService, 'removeRole').mockResolvedValue(true));
+    spies.push(spyOn(AuthService, 'getEffectivePrivileges').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
+    spies.push(spyOn(AuthService, 'getPrivilegesForRole').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
+    spies.push(spyOn(AuthService, 'getDefaultPrivileges').mockReturnValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
+    spies.push(spyOn(AuthService, 'setPrivilegeOverride').mockResolvedValue(undefined));
+    spies.push(spyOn(AuthService, 'resetPrivilegesToDefaults').mockResolvedValue(undefined));
     spies.push(spyOn(IdentityService, 'getIdentity').mockImplementation(async () => null));
     spies.push(spyOn(IdentityService, 'getAllJids').mockImplementation(async (jid: string) => [jid]));
   });
@@ -131,7 +131,7 @@ describe('RoleTool', () => {
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Role info');
     expect(text).toContain('*`user`*');
-    expect(RoleService.getAccessProfile).toHaveBeenCalledWith(['user']);
+    expect(AuthService.getAccessProfile).toHaveBeenCalledWith(['user']);
   });
 
   test('action=list with empty list returns list_empty', async () => {
@@ -174,7 +174,7 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'grant', user: 'mentioned', role: 'premium' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Granted');
-    expect(RoleService.setRole).toHaveBeenCalled();
+    expect(AuthService.setRole).toHaveBeenCalled();
   });
 
   test('action=revoke removes role', async () => {
@@ -185,7 +185,7 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'revoke', user: 'mentioned', role: 'user' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Revoked');
-    expect(RoleService.removeRole).toHaveBeenCalled();
+    expect(AuthService.removeRole).toHaveBeenCalled();
   });
 
   test('action=setpriv requires owner (rejects non-owner)', async () => {
@@ -204,7 +204,7 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'setpriv', role: 'premium', field: 'contextLimit', value: '50' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Set *contextLimit*');
-    expect(PrivilegeService.setOverride).toHaveBeenCalledWith('premium', 'contextLimit', 50);
+    expect(AuthService.setPrivilegeOverride).toHaveBeenCalledWith('premium', 'contextLimit', 50);
   });
 
   test('action=resetpriv with owner clears privilege overrides', async () => {
@@ -216,6 +216,6 @@ describe('RoleTool', () => {
     const result = await tool.execute({ action: 'resetpriv', role: 'premium' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('reset to defaults');
-    expect(PrivilegeService.resetToDefaults).toHaveBeenCalledWith('premium');
+    expect(AuthService.resetPrivilegesToDefaults).toHaveBeenCalledWith('premium');
   });
 });

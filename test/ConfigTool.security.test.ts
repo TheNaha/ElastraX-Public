@@ -95,7 +95,7 @@ describe('ConfigTool Security', () => {
         createCtx(),
       );
       expect(result).toContain('Invalid value');
-      expect(result).toContain('Must be between 0.0 and 2.0');
+      expect(result).toContain('Must be a number between 0.0 and 2.0');
       expect(mockUpdateWhere).not.toHaveBeenCalled();
   });
 

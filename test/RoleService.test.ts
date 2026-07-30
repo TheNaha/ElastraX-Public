@@ -3,8 +3,7 @@ import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { userIdentities, userRoles } from '../src/db/schema';
 import { IdentityService } from '../src/utils/IdentityService';
-import { PrivilegeService } from '../src/utils/PrivilegeService';
-import { RoleService, BUILTIN_ROLES } from '../src/utils/RoleService';
+import { AuthService as RoleService, BUILTIN_ROLES } from '../src/utils/AuthService';
 
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
@@ -136,7 +135,7 @@ describe('RoleService', () => {
   });
 
   test('getAccessProfile returns roles with merged privileges', async () => {
-    const getEffectiveSpy = spyOn(PrivilegeService, 'getEffective').mockResolvedValue({
+    const getEffectiveSpy = spyOn(RoleService, 'getEffectivePrivileges').mockResolvedValue({
       maxMessagesPerWindow: 30,
       rateLimitWindowSec: 60,
       contextLimit: 50,

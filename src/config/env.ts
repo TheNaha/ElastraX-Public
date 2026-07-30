@@ -78,12 +78,6 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   const errors: string[] = [];
   const providerList = env.AI_PROVIDERS?.trim();
 
-  const buildCloudflareBaseUrl = (accountId?: string) => {
-    const trimmed = (accountId || '').trim();
-    if (!trimmed) return '';
-    return `https://api.cloudflare.com/client/v4/accounts/${trimmed}/ai/v1`;
-  };
-
   if (!providerList) {
     // Legacy single-provider mode
     const modelName = env.AI_MODEL_NAME;
@@ -91,7 +85,7 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
       errors.push('AI_MODEL_NAME is missing or empty');
     }
 
-    const baseUrl = env.AI_API_BASE_URL || buildCloudflareBaseUrl(env.AI_CF_ACCOUNT_ID);
+    const baseUrl = env.AI_API_BASE_URL || (env.AI_CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${env.AI_CF_ACCOUNT_ID?.trim()}/ai/v1` : '');
     const apiKey = env.AI_API_KEY || env.AI_CF_API_TOKEN;
 
     if (!apiKey || apiKey.trim() === '') {
@@ -116,7 +110,8 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
       const cfAccountKey = `AI_${provider}_CF_ACCOUNT_ID`;
       const apiKey = `AI_${provider}_API_KEY`;
       const cfTokenKey = `AI_${provider}_CF_API_TOKEN`;
-      const baseUrl = env[baseKey] || buildCloudflareBaseUrl(env[cfAccountKey]);
+      const cfId = env[cfAccountKey]?.trim();
+      const baseUrl = env[baseKey] || (cfId ? `https://api.cloudflare.com/client/v4/accounts/${cfId}/ai/v1` : '');
       const modelName = env[modelKey];
 
       if (!baseUrl || baseUrl.trim() === '') {

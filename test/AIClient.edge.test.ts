@@ -178,11 +178,9 @@ describe('AIClient – edge cases', () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     assignFetch(async () => new Response(
-      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}' +
-      '\n' +
-      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}' +
-      '\n' +
-      'data: [DONE]\n',
+      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hel"},"finish_reason":null}]}\n\n' +
+      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"lo"},"finish_reason":null}]}\n\n' +
+      'data: [DONE]\n\n',
       { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
     ));
 
@@ -200,12 +198,11 @@ describe('AIClient – edge cases', () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     assignFetch(async () => new Response(
-      ': keepalive\n' +
-      'data: not-json\n' +
-      'event: ping\n' +
-      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}' +
-      '\n' +
-      'data: [DONE]\n',
+      ': keepalive\n\n' +
+      'data: not-json\n\n' +
+      'event: ping\n\n' +
+      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n' +
+      'data: [DONE]\n\n',
       { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
     ));
 

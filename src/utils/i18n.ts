@@ -75,6 +75,8 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Flow
     'flow.cancelled': '❌ Active flow cancelled.',
+    'flow.in_progress_warning': '⏳ You are currently in an active process. Please complete it, or type /cancel to exit.',
+    'flow.stale_cleared': 'Previous process was interrupted. You can start a new request.',
     'flow.error': '❌ An error occurred processing your flow step:\n{msg}',
 
     // Agent
@@ -270,6 +272,8 @@ const translations: Record<Locale, Record<string, string>> = {
 
     // Flow
     'flow.cancelled': '❌ Sesi aktif dibatalkan.',
+    'flow.in_progress_warning': '⏳ Anda sedang dalam proses aktif. Silakan selesaikan, atau ketik /cancel untuk keluar.',
+    'flow.stale_cleared': 'Proses sebelumnya terputus. Anda dapat memulai permintaan baru.',
     'flow.error': '❌ Terjadi kesalahan saat memproses langkah alur Anda:\n{msg}',
 
     // Agent

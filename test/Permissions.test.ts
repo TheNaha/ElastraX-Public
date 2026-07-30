@@ -1,6 +1,6 @@
 import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 import { IdentityService } from '../src/utils/IdentityService';
-import { RoleService } from '../src/utils/RoleService';
+import { AuthService as RoleService } from '../src/utils/AuthService';
 import { userIdentities, userRoles } from '../src/db/schema';
 
 type MockQuery = {

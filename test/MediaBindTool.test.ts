@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 import { MediaBindTool, mediaBindToolDeps, mediaConnectFlowProcessor } from '../src/tools/MediaBindTool';
-import { SessionManager } from '../src/utils/SessionManager';
+import { FlowHandler } from '../src/core/FlowHandler';
 
 const originalCreateSeerrClient = mediaBindToolDeps.createSeerrClient;
 const originalCreateJellyfinClient = mediaBindToolDeps.createJellyfinClient;
@@ -34,8 +34,8 @@ describe('MediaBindTool', () => {
     mediaBindToolDeps.createJellyfinClient = originalCreateJellyfinClient;
     mediaBindToolDeps.bindingService = originalBindingService;
     mediaBindToolDeps.notificationService = originalNotificationService;
-    SessionManager.clear('user-1', 'media_connect', 'whatsapp');
-    SessionManager.clear('media-flow-user', 'media_connect', 'whatsapp');
+    FlowHandler.clearSession('user-1', 'media_connect', 'whatsapp');
+    FlowHandler.clearSession('media-flow-user', 'media_connect', 'whatsapp');
   });
 
   test('connect reports when media services are unavailable', async () => {
@@ -54,7 +54,7 @@ describe('MediaBindTool', () => {
     } as any;
 
     const result = await new MediaBindTool().execute({ action: 'connect' }, createMockCtx());
-    const activeFlow = SessionManager.getActiveFlow('user-1', 'whatsapp');
+    const activeFlow = FlowHandler.getActiveFlow('user-1', 'whatsapp');
 
     expect(result).toContain('Please enter your username');
     expect(activeFlow?.flow.step).toBe('username');

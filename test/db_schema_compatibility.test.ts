@@ -22,6 +22,7 @@ describe('Schema Compatibility', () => {
         allow_tools INTEGER,
         auto_reply_all INTEGER,
         summarize INTEGER,
+        long_term_memory INTEGER,
         created_at INTEGER NOT NULL
       )
     `);
