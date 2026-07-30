@@ -24,7 +24,7 @@ ElastraX v7 is a multi-platform conversational agent built around a normalized m
 - `src/core/`
     Shared runtime contracts, especially `MessageContext`, plus flow handling and other cross-cutting primitives.
 - `src/db/`
-    Drizzle + SQLite schema and access layer. Stores chat-room config overrides, conversation history, reminders, persistent flow sessions, identities, roles, and privilege overrides.
+    Drizzle + SQLite schema and access layer. Stores chat-room config overrides, conversation history, long-term memory (RAG), reminders, persistent flow sessions, identities, roles, and privilege overrides.
 - `src/providers/`
     Platform adapters for WhatsApp and Discord. These modules own SDK lifecycle, message normalization, and outbound provider behavior, but they do not own agent orchestration.
 - `src/tools/`
@@ -49,7 +49,7 @@ ElastraX v7 is a multi-platform conversational agent built around a normalized m
 2. The provider normalizes it into `MessageContext` and emits it to `AppRuntime`.
 3. `AppRuntime` enqueues the work by room and dispatches it into `handleIncomingMessage()`.
 4. The agent decides whether the message is a direct tool invocation or should enter the LLM loop.
-5. When conversational handling is needed, the agent loads persisted history, resolves the room config, resolves roles/privileges, and calls the model router/client.
+5. When conversational handling is needed, the agent loads persisted history, resolves the room config, retrieves and injects long-term memories if enabled, resolves roles/privileges, and calls the model router/client.
 6. If the model requests tools, the agent executes them iteratively with bounded execution paths and feeds results back into the model until a final answer is produced.
 7. The provider sends the resulting text/media response back to the originating platform.
 8. Conversation state, flow state, and other side effects are persisted through their dedicated services.

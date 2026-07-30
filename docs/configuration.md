@@ -53,11 +53,19 @@ These settings control how the AI interacts during a conversation.
 - `AI_TIMEOUT_MS`: The maximum time, in milliseconds, to wait for an API response before timing out and potentially triggering a failover (e.g., `60000` for 60 seconds).
 - `AI_MAX_TOOL_ITERATIONS`: The maximum number of consecutive tool calls the AI can make in a single conversational turn before forcing a final text response (e.g., `8`). This prevents infinite loops.
 
+### Long-Term Memory (RAG)
+
+In V7.16, ElastraX includes built-in long-term memory. This uses SQLite to seamlessly retrieve past user facts.
+- Memory is **enabled** by default for private DMs.
+- Memory is **disabled** by default for group chats.
+- Note: This is controlled per-room rather than via environment variables. Use `/config set longTermMemory true` in any chat to toggle it dynamically.
+
 ## Tool Configurations
 
 Certain tools require their own environment variables to function correctly.
 
 - `SEARXNG_URL`: The URL of your SearXNG instance for the Web Search tool.
+- `JINA_API_KEY`: (Optional) A free API key from Jina AI used for the `web_scrape` tool. It prevents rate limiting when extracting clean markdown from webpages.
 
 ## Webhook Inbound API
 

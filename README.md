@@ -1,4 +1,4 @@
-# ElastraX v7
+# ElastraX v7.16
 
 A multi-platform, general-purpose hybrid bot with conversational AI, built on Bun.
 
@@ -13,8 +13,9 @@ For a deep dive into the architecture, configuration, and deployment, please see
 - **Multi-Platform Ready**: Designed with a unified `MessageContext` wrapper. Supports WhatsApp (Baileys v7) and Discord.
 - **OpenAI Compatible**: Connects to any OpenAI-compatible endpoint. Includes scripts to deploy a private Llama 3 instance on Modal GPUs. Google AI Studio (Gemini) is also natively supported out of the box!
 - **State Persistence**: Uses SQLite and Drizzle ORM to maintain chat room conversations for the LLM context.
+- **Long-Term Memory (RAG)**: Automatically stores and retrieves user facts using a dedicated memory database table, giving the bot true persistent context.
 - **Hybrid UX**: Every capability is available via slash-command and conversational tool-calling.
-- **Expanded Tools**: Download (yt-dlp), media converter (FFmpeg), PDF utilities, delete bot messages, translation, reminders, room stats, IDs, ping, and group admin actions.
+- **Expanded Tools**: Web Scraping (Jina AI), Web Search (SearXNG), Download (yt-dlp), media converter (FFmpeg), PDF utilities, delete bot messages, translation, reminders, room stats, IDs, ping, and group admin actions.
 - **Scheduler/Reminder System**: Persistent reminders stored in DB and delivered by a background scheduler.
 - **Voice Note Transcription**: Audio can be transcribed through a configurable endpoint.
 - **LLM Failover Router**: Priority-based provider failover (Modal → Gemini → Ollama, etc.).
@@ -88,9 +89,18 @@ AI_OLLAMA_MODEL=llama3
 AI_MAX_TOKENS=2048
 AI_TIMEOUT_MS=60000
 AI_MAX_TOOL_ITERATIONS=8
+
+### 2) Web Search & Web Scraping
+
+```env
+# URL for the SearXNG instance used for /search
+SEARXNG_URL="https://your-searxng-instance.example.com"
+
+# Optional: Free API key for Jina AI to bypass limits during web_scrape
+JINA_API_KEY="your_api_key_here"
 ```
 
-### 2) Webhook Inbound API
+### 3) Webhook Inbound API
 
 ```env
 WEBHOOK_ENABLED=true
