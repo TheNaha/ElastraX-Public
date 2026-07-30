@@ -76,7 +76,10 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
     log.debug({ query }, 'Web search initiated');
 
     try {
-      const baseUrl = this.searxngUrl.endsWith('/') ? this.searxngUrl : `${this.searxngUrl}/`;
+      let baseUrl = this.searxngUrl;
+      if (!baseUrl.endsWith('/search') && !baseUrl.endsWith('/search/')) {
+        baseUrl = baseUrl.endsWith('/') ? baseUrl + 'search' : baseUrl + '/search';
+      }
       const url = new URL(baseUrl);
 
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
