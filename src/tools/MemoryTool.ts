@@ -29,7 +29,7 @@ export class MemoryTool extends BaseTool {
         parameters: {
           type: 'object',
           properties: {
-            action: { type: 'string', enum: ['store', 'retrieve', 'forget'] },
+            action: { type: 'string', enum: ['store', 'retrieve', 'forget'], description: 'Action to perform' },
             content: { type: 'string', description: 'The fact to store (required for store)' },
             id: { type: 'string', description: 'The memory ID to forget (required for forget)' }
           },
@@ -57,7 +57,8 @@ export class MemoryTool extends BaseTool {
         await db.insert(memories).values({
           id,
           ownerId,
-          content: args.content
+          content: args.content,
+          created_at: new Date()
         });
         log.info({ ownerId, id, content: args.content }, 'Stored memory');
         return `Stored memory [${id}]: ${args.content}\nThis memory will be automatically injected into your system prompt for future conversations.`;
@@ -69,8 +70,8 @@ export class MemoryTool extends BaseTool {
         
       case 'forget':
         if (!args.id) return 'Error: memory ID is required to forget.';
-        const result = await db.delete(memories).where(and(eq(memories.id, args.id), eq(memories.ownerId, ownerId)));
-        if (result.rowsAffected === 0) return `Error: Memory ID ${args.id} not found.`;
+        const deleted = await db.delete(memories).where(and(eq(memories.id, args.id), eq(memories.ownerId, ownerId))).returning();
+        if (deleted.length === 0) return `Error: Memory ID ${args.id} not found.`;
         log.info({ ownerId, id: args.id }, 'Deleted memory');
         return `Forgot memory ${args.id}`;
         
