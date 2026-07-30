@@ -76,6 +76,11 @@
       "tag": "0014_media_integration",
       "breakpoints": true,
       "when": 15
+    },
+    {
+      "tag": "0015_long_term_memory",
+      "breakpoints": true,
+      "when": 16
     }
   ]
 }

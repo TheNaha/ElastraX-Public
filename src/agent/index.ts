@@ -29,7 +29,7 @@
  */
 
 import { db } from '../db';
-import { chatRooms, messages } from '../db/schema';
+import { chatRooms, messages, memories } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
@@ -345,7 +345,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   }
 
   // Resolve dynamic configurations for this room
-  const config = ConfigService.getResolvedConfig(room);
+  const config = ConfigService.getResolvedConfig(room, ctx.isGroup);
 
   // We will always process the message to save it to context history
   // But we use this flag to decide if the AI should actually generate a reply
@@ -557,8 +557,17 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const roleLabel = userRoles.filter(r => r !== 'user').join(', ') || 'user';
     const userContextLine = `\nCurrent user: ${senderName} (roles: ${roleLabel}).`;
 
+    let memoryContext = '';
+    if (config.longTermMemory) {
+      const ownerId = isGroup ? chatId : senderId;
+      const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId));
+      if (mems.length > 0) {
+        memoryContext = `\n\n<long_term_memory>\n${mems.map(m => `[${m.id}] ${m.content}`).join('\n')}\n</long_term_memory>\nYou must adapt your behavior and answers based on the long-term memory provided above.`;
+      }
+    }
+
     // Assemble system prompt with localized injection
-    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull) + userContextLine;
+    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull) + userContextLine + memoryContext;
     
     // Assemble AI context
     const messagesForAI: AIChatMessage[] = [

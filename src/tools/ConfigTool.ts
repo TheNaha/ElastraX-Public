@@ -36,7 +36,7 @@ import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 
 const log = logger.child({ module: 'ConfigTool' });
-const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] as const;
+const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize', 'longTermMemory'] as const;
 type ConfigKey = (typeof CONFIG_KEYS)[number];
 type RoomConfigUpdate = Partial<Pick<ChatRoom, ConfigKey>>;
 type ConfigValue = Exclude<ChatRoom[ConfigKey], null | undefined>;
@@ -89,6 +89,7 @@ function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
     case 'allowTools':
     case 'autoReplyAll':
     case 'summarize':
+    case 'longTermMemory':
       return parseBooleanValue(value);
   }
 }
@@ -115,7 +116,7 @@ export class ConfigTool extends BaseTool {
           type: 'object' as const,
           properties: {
             action: { type: 'string', description: 'get, set, or reset', enum: ['get', 'set', 'reset'] },
-            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize'] },
+            key: { type: 'string', description: 'The config key to read or modify', enum: ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize', 'longTermMemory'] },
             value: { type: 'string', description: 'The new value' }
           },
           required: ['action']
@@ -141,6 +142,7 @@ export class ConfigTool extends BaseTool {
       ` • *\`allowTools\`*: ${room.allowTools ?? `(Default: ${resolved.allowTools})`}`,
       ` • *\`autoReplyAll\`*: ${room.autoReplyAll ?? `(Default: ${resolved.autoReplyAll})`}`,
       ` • *\`summarize\`*: ${room.summarize ?? `(Default: ${resolved.summarize})`}`,
+      ` • *\`longTermMemory\`*: ${room.longTermMemory ?? `(Default: ${resolved.longTermMemory})`}`,
     ].join('\n\n');
   }
 
@@ -152,7 +154,7 @@ export class ConfigTool extends BaseTool {
     const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
     if (!room) return 'Error: Chat room not found in database.';
 
-    const resolved = ConfigService.getResolvedConfig(room);
+    const resolved = ConfigService.getResolvedConfig(room, ctx.isGroup);
 
     const getSuggestionMessage = (inputKey?: string): string => {
       if (!inputKey) return '\n';

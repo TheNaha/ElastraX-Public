@@ -31,6 +31,8 @@ export const chatRooms = sqliteTable('chat_rooms', {
   autoReplyAll: integer('auto_reply_all', { mode: 'boolean' }),
   /** V7.13: Per-room summarization toggle. null = inherit CONTEXT_SUMMARIZE env (default: true). */
   summarize: integer('summarize', { mode: 'boolean' }),
+  /** V7.16: Long-Term Memory (RAG) toggle. null = default (enabled for private, disabled for groups) */
+  longTermMemory: integer('long_term_memory', { mode: 'boolean' }),
   
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
@@ -60,6 +62,22 @@ export const messages = sqliteTable('messages', {
 
 export type ChatRoom = typeof chatRooms.$inferSelect;
 export type Message = typeof messages.$inferSelect;
+
+// V7.16: Long-Term Memory (RAG)
+export const memories = sqliteTable('memories', {
+  id: text('id').primaryKey(), // uuid
+  /** The chat room or user ID this memory belongs to */
+  ownerId: text('owner_id').notNull(),
+  /** The actual memory content/fact */
+  content: text('content').notNull(),
+  /** Optional tags for grouping */
+  category: text('category'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+}, (table) => ({
+  ownerIdx: index('memories_owner_idx').on(table.ownerId),
+}));
+
+export type Memory = typeof memories.$inferSelect;
 
 // V7.3: Database-backed Authentication State for WhatsApp (Baileys)
 export const waAuthState = sqliteTable('wa_auth_state', {

@@ -25,7 +25,7 @@ export class ConfigService {
    * Returns the fully resolved configuration for a given chat room.
    * If a field in the DB is null, it falls back to the .env variable or hardcoded default.
    */
-  static getResolvedConfig(room: ChatRoom) {
+  static getResolvedConfig(room: ChatRoom, isGroup: boolean = false) {
     const defaultSystemPrompt = readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt());
     const aiRequestConfig = getAIRequestConfig();
 
@@ -46,6 +46,8 @@ export class ConfigService {
       autoReplyAll: room.autoReplyAll ?? envAutoReplyAll,
       // V7.13: Per-room summarization. null in DB → fall back to env default.
       summarize: room.summarize ?? envSummarize,
+      // V7.16: LongTermMemory ON for private chats, OFF for groups by default.
+      longTermMemory: room.longTermMemory ?? !isGroup,
     };
   }
 }

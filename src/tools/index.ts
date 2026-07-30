@@ -57,6 +57,8 @@ import { MediaRequestTool } from './MediaRequestTool';
 import { MediaLibraryTool } from './MediaLibraryTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
+import { MemoryTool } from './MemoryTool';
+import { WebScrapeTool } from './WebScrapeTool';
 
 const log = logger.child({ module: 'ToolRegistry' });
 
@@ -76,6 +78,8 @@ toolsList.push(new TranslateTool());
 toolsList.push(new ReminderTool());
 toolsList.push(new DeleteMessageTool());
 toolsList.push(new TranscribeTool());
+toolsList.push(new MemoryTool());
+toolsList.push(new WebScrapeTool());
 
 // ── Media ─────────────────────────────────────────────────────────────────────
 toolsList.push(new MakeStickerTool());
