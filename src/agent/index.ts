@@ -559,7 +559,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     let memoryContext = '';
     if (config.longTermMemory) {
-      const ownerId = isGroup ? chatId : senderId;
+      const ownerId = ctx.isGroup ? ctx.chatId : ctx.senderId;
       const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId));
       if (mems.length > 0) {
         memoryContext = `\n\n<long_term_memory>\n${mems.map(m => `[${m.id}] ${m.content}`).join('\n')}\n</long_term_memory>\nYou must adapt your behavior and answers based on the long-term memory provided above.`;
