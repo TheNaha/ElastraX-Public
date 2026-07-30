@@ -24,5 +24,10 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    networks:
+       - proxy
     # We no longer need the command override since the Dockerfile CMD will run the compiled app
-
+networks:
+  proxy:
+    external: true
+    name: proxy
