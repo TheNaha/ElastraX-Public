@@ -495,6 +495,14 @@ export class WhatsAppProvider implements BotProvider {
     // ── Legacy downloadMedia() shim ─────────────────────────────────────────
     const downloadMedia = async (): Promise<Buffer | null> => {
       try {
+        await mediaReadyPromise;
+        const { readFileSync } = require('fs');
+        if (parsed.hasMedia && mediaPath) {
+          try { return readFileSync(mediaPath); } catch {}
+        } else if (quoted?.hasMedia && quoted.mediaPath) {
+          try { return readFileSync(quoted.mediaPath); } catch {}
+        }
+
         if (parsed.hasMedia) {
           return (await downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
         } else if (quoted?.hasMedia) {

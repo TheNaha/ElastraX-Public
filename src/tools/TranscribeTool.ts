@@ -36,7 +36,7 @@ export class TranscribeTool extends BaseTool<ToolArgs> {
     }
 
     try {
-      await ctx.react?.('??');
+      await ctx.react?.('⏳');
       await ctx.reply(t(ctx.language, 'transcribe.starting'));
 
       log.debug({ chatId: ctx.chatId, mimeType: ctx.mimeType }, 'Transcription started');

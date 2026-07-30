@@ -44,13 +44,15 @@ function getErrorCode(err: unknown): string | undefined {
   return typeof code === 'string' ? code : undefined;
 }
 
+import { ROOT_DIR } from '../core/constants';
+
 export function resolveFixtureDir(env: NodeJS.ProcessEnv = process.env): string {
   const configuredDir = env.FIXTURE_DUMP_DIR?.trim();
   if (configuredDir) return configuredDir;
 
   return env.NODE_ENV === 'production'
-    ? resolve('./data/fixtures/wa_messages')
-    : resolve('./test/fixtures/wa_messages');
+    ? join(ROOT_DIR, 'data/fixtures/wa_messages')
+    : join(ROOT_DIR, 'test/fixtures/wa_messages');
 }
 
 export function stripFixtureBlobs(raw: unknown): unknown {

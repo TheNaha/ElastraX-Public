@@ -98,6 +98,7 @@ export class AIClient {
    */
   /** Resolves the full endpoint URL for chat completions. */
   private resolveEndpoint(): string {
+    if (!this.baseUrl) return '';
     return this.baseUrl.endsWith('/chat/completions')
       ? this.baseUrl
       : `${this.baseUrl.replace(/\/$/, '')}/chat/completions`;

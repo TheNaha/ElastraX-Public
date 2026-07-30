@@ -14,7 +14,8 @@ import { existsSync } from 'fs';
 import { fileTypeFromBuffer } from 'file-type';
 import { logger } from './logger';
 
-const MEDIA_DIR = './data/media';
+import { ROOT_DIR } from '../core/constants';
+const MEDIA_DIR = join(ROOT_DIR, 'data/media');
 
 /** Result of a successful media save operation. */
 export interface SavedMedia {

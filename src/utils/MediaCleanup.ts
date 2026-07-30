@@ -3,7 +3,8 @@ import { join } from 'path';
 import { logger } from './logger';
 import { getMediaRetentionHours } from '../config/runtime';
 
-const MEDIA_DIR = './data/media';
+import { ROOT_DIR } from '../core/constants';
+const MEDIA_DIR = join(ROOT_DIR, 'data/media');
 
 function asErrnoException(error: unknown): NodeJS.ErrnoException {
   return error as NodeJS.ErrnoException;

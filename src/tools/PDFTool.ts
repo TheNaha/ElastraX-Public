@@ -129,6 +129,9 @@ export class PDFTool extends BaseTool<PDFArgs> {
 
       const pdfBytes = await readFile(media.path);
       const sizeKb = Math.round(pdfBytes.length / 1024);
+      if (sizeKb > 100000) {
+        return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' }) || 'PDF file is too large to process safely (max 100MB).';
+      }
 
       log.debug({ action, sizeKb, chatId: ctx.chatId }, 'PDF loaded');
 

@@ -61,6 +61,7 @@ export class AppRuntime {
   private rateLimiterTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private mediaCleanupTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private startupCoverageTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+  private mediaCleanupPromise: Promise<void> | null = null;
   private started = false;
 
   constructor(deps: AppRuntimeDeps = {}) {
@@ -112,7 +113,7 @@ export class AppRuntime {
   async stop(): Promise<void> {
     if (!this.started) return;
 
-    this.stopBackgroundTasks();
+    await this.stopBackgroundTasks();
     this.scheduler.stop();
     this.webhookServer.stop();
     this.messageQueue.stop();
@@ -145,8 +146,10 @@ export class AppRuntime {
     }
 
     this.mediaCleanupTimer = this.timers.setInterval(() => {
-      this.mediaCleanup.pruneOldFiles().catch((err) => {
+      this.mediaCleanupPromise = this.mediaCleanup.pruneOldFiles().catch((err) => {
         logger.warn({ err }, '[MediaCleanup] Periodic prune failed');
+      }).finally(() => {
+        this.mediaCleanupPromise = null;
       });
     }, mediaCleanupIntervalMs);
 
@@ -159,7 +162,7 @@ export class AppRuntime {
     }
   }
 
-  private stopBackgroundTasks(): void {
+  private async stopBackgroundTasks(): Promise<void> {
     if (this.rateLimiterTimer) {
       this.timers.clearInterval(this.rateLimiterTimer);
       this.rateLimiterTimer = null;
@@ -173,6 +176,10 @@ export class AppRuntime {
     if (this.startupCoverageTimer) {
       this.timers.clearTimeout(this.startupCoverageTimer);
       this.startupCoverageTimer = null;
+    }
+
+    if (this.mediaCleanupPromise) {
+      await this.mediaCleanupPromise;
     }
   }
 }

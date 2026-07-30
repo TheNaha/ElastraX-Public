@@ -13,7 +13,7 @@
  */
 
 import { ChatRoom } from '../db/schema';
-import { DEFAULT_SYSTEM_PROMPT } from '../core/prompts';
+import { getDefaultSystemPrompt } from '../core/prompts';
 import { getAIRequestConfig, readBooleanEnv, readFloatEnv, readIntegerEnv, readStringEnv } from '../config/runtime';
 
 /**
@@ -26,7 +26,7 @@ export class ConfigService {
    * If a field in the DB is null, it falls back to the .env variable or hardcoded default.
    */
   static getResolvedConfig(room: ChatRoom) {
-    const defaultSystemPrompt = readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, DEFAULT_SYSTEM_PROMPT);
+    const defaultSystemPrompt = readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt());
     const aiRequestConfig = getAIRequestConfig();
 
     const envContextLimit = readIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10, { min: 1 });

@@ -83,8 +83,8 @@ export class FlowHandler {
       } catch (err: unknown) {
         const errMsg = err instanceof Error ? err.message : 'unknown error';
         logger.error(err, `[FlowHandler] Error in flow: ${flow.flow}`);
-        await ctx.reply(t(ctx.language, 'flow.error', { msg: errMsg }));
-        SessionManager.clear(ctx.senderId, flowId, ctx.platform);
+        await ctx.reply(t(ctx.language, 'flow.error', { msg: errMsg }) || `An error occurred processing your flow step:\n${errMsg}`);
+        // Removed SessionManager.clear() to allow user to retry the step on transient errors.
         return true;
       }
     }

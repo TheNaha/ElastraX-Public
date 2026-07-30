@@ -137,78 +137,78 @@ export interface MessageContext {
    * On WhatsApp this shows "typing..." under the bot's name.
    * On Discord this shows "Bot is typing..." in the channel.
    */
-  sendTyping?(): Promise<void>;
+  sendTyping(): Promise<void>;
 
   /**
    * Send a text message and return a key/handle that can be used with `editMessage`.
    * Used for streaming responses — send an initial message, then edit it as chunks arrive.
    * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
-  sendMessage?(text: string, options?: ReplyOptions): Promise<unknown>;
+  sendMessage(text: string, options?: ReplyOptions): Promise<unknown>;
 
   /**
    * Edit a previously sent message by its key/handle.
    * The key is obtained from `sendMessage()`. Used for streaming response updates.
    */
-  editMessage?(key: unknown, text: string): Promise<void>;
+  editMessage(key: unknown, text: string): Promise<void>;
 
   /**
    * React to the message with an emoji (if supported by platform)
    */
-  react?(emoji: string): Promise<void>;
+  react(emoji: string): Promise<void>;
 
   /**
    * Download the media buffer from the current OR quoted message (if applicable).
    * Prefer using mediaReady + mediaPath when possible to avoid re-downloading.
    */
-  downloadMedia?(): Promise<Buffer | null>;
+  downloadMedia(): Promise<Buffer | null>;
 
   /**
    * Send a binary media file back to the same chat (image, audio, video, document).
    * For WhatsApp stickers, use sendSticker instead.
    */
-  sendMedia?(buffer: Buffer, options?: SendMediaOptions): Promise<void>;
+  sendMedia(buffer: Buffer, options?: SendMediaOptions): Promise<void>;
 
   /**
    * Send a composed webp sticker natively back to the current chat
    */
-  sendSticker?(buffer: Buffer): Promise<void>;
+  sendSticker(buffer: Buffer): Promise<void>;
 
   /**
    * Delete a message. Defaults to the current incoming message if no key is provided.
    * On WhatsApp, only the bot's own messages can be deleted for everyone.
    */
-  deleteMessage?(key?: unknown): Promise<void>;
+  deleteMessage(key?: unknown): Promise<void>;
 
   /**
    * Forward the current message to another chat JID / channel ID.
    * If `text` is provided, send that text to the target instead of forwarding the current message.
    */
-  forwardMessage?(targetJid: string, text?: string): Promise<void>;
+  forwardMessage(targetJid: string, text?: string): Promise<void>;
 
   /**
    * Action methods for Group Administration
    */
-  updateGroupParticipants?(action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]): Promise<void>;
+  updateGroupParticipants(action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]): Promise<void>;
 
   /**
    * Get the invite link for the current group.
    * Only available in group chats where the bot is an admin.
    */
-  getGroupInviteLink?(chatId: string): Promise<string>;
+  getGroupInviteLink(chatId: string): Promise<string>;
 
   /**
    * Change group settings (e.g., who can send messages).
    * @param chatId  The group chat ID.
    * @param setting 'announcement' (admins only) | 'not_announcement' (everyone)
    */
-  setGroupSettings?(chatId: string, setting: 'announcement' | 'not_announcement'): Promise<void>;
+  setGroupSettings(chatId: string, setting: 'announcement' | 'not_announcement'): Promise<void>;
 
   /**
    * Make the bot leave the current group chat.
    * Only available in group chats.
    */
-  leaveGroup?(): Promise<void>;
+  leaveGroup(): Promise<void>;
 
   /**
    * Check if the sender has the required permissions.

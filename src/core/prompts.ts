@@ -24,7 +24,15 @@ import { join } from 'path';
  * The built-in fallback system prompt used when no per-room or per-env override exists.
  * The `{{LANGUAGE}}` placeholder is substituted at runtime by the agent in `src/agent/index.ts`.
  */
-export const DEFAULT_SYSTEM_PROMPT = readFileSync(
-  join(process.cwd(), 'src/core/default_system_prompt.txt'),
-  'utf-8'
-);
+import { ROOT_DIR } from './constants';
+
+let cachedPrompt: string | null = null;
+export function getDefaultSystemPrompt(): string {
+  if (!cachedPrompt) {
+    cachedPrompt = readFileSync(
+      join(ROOT_DIR, 'src/core/default_system_prompt.txt'),
+      'utf-8'
+    );
+  }
+  return cachedPrompt;
+}

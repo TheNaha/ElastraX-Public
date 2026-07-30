@@ -41,6 +41,7 @@ export class MessageQueue {
     this.concurrency = concurrency;
     this.idleTimeoutMs = idleTimeoutMs;
     this.pruneTimer = setInterval(() => this.prune(), 2 * 60 * 1000);
+    this.pruneTimer?.unref?.();
   }
 
   /**

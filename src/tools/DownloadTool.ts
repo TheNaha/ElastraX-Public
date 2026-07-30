@@ -27,6 +27,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { getDownloadMaxMb } from '../config/runtime';
+import { PrivilegeService } from '../utils/PrivilegeService';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -63,7 +64,7 @@ function isAudioFormat(fmt: string): fmt is AudioFormat {
   return AUDIO_FORMATS.has(fmt);
 }
 
-async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Buffer> {
+async function downloadViaYtDlp(url: string, format: DownloadFormat, maxMb: number): Promise<Buffer> {
   const ytdlpBin = process.env.YTDLP_PATH || 'yt-dlp';
 
   // Security: Use a unique subdirectory for each job to prevent interference
@@ -82,7 +83,7 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat): Promise<Bu
     const args: string[] = [
       '-o', outTemplate,
       '--no-playlist',
-      '--max-filesize', `${getDownloadMaxMb() + 5}m`,
+      '--max-filesize', maxMb === Infinity ? '0' : `${maxMb + 5}m`,
     ];
 
     if (isAudioFormat(format)) {
@@ -174,7 +175,11 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     const lang = ctx.language ?? 'en';
     const url = String(args.url || '').trim();
     const format: DownloadFormat = (args.format || 'mp4') as DownloadFormat;
-    const maxMb = getDownloadMaxMb();
+    const roles = await ctx.resolveRoles();
+    const privileges = await PrivilegeService.getEffective(roles);
+    let maxMb = privileges.maxDownloadMb;
+    if (maxMb === -1) maxMb = Infinity; // Infinite download size override
+    else if (!maxMb) maxMb = getDownloadMaxMb();
 
     if (!url) return t(lang, 'download.no_url');
     if (!ctx.sendMedia) return t(lang, 'download.not_supported');
@@ -200,7 +205,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
 
       log.info({ url, format, chatId: ctx.chatId, senderId: ctx.senderId }, 'Download started');
 
-      const buffer = await downloadViaYtDlp(url, format);
+      const buffer = await downloadViaYtDlp(url, format, maxMb);
 
       const sizeMb = buffer.length / (1024 * 1024);
       log.debug({ url, format, sizeMb: sizeMb.toFixed(1) }, 'Download completed');
@@ -208,7 +213,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
       if (sizeMb > maxMb) {
         return t(lang, 'download.too_large', {
           size: sizeMb.toFixed(1),
-          max: String(maxMb),
+          max: maxMb === Infinity ? 'Unlimited' : String(maxMb),
         });
       }
 

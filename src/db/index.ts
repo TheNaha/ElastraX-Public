@@ -20,11 +20,12 @@ import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { logger } from '../utils/logger.js';
+import { ROOT_DIR } from '../core/constants.js';
 import * as schema from './schema.js';
 
-const DEFAULT_DB_PATH = './data/bot.db';
+const DEFAULT_DB_PATH = join(ROOT_DIR, 'data/bot.db');
 const DB_PATH = process.env.ELASTRAX_DB_PATH?.trim() || DEFAULT_DB_PATH;
 const usesInMemoryDb = DB_PATH === ':memory:';
 
@@ -48,7 +49,7 @@ let schemaInitialized = false;
 export function ensureDatabaseSchema(): void {
   if (schemaInitialized) return;
 
-  migrate(db, { migrationsFolder: './drizzle/migrations' });
+  migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
   const log = logger.child({ module: 'DB' });
   log.info('Database schema ensured (migrations applied if any)');
 

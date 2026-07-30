@@ -244,15 +244,18 @@ export class ModelRouter {
     for (const provider of orderedProviders) {
       const cooldownUntil = this.providerCooldownUntil.get(provider.name) ?? 0;
       const failures = this.providerFailureCount.get(provider.name) ?? 0;
-      if (failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD) {
-        skippedProviderNames.push(provider.name + '(circuit-breaker)');
+
+      if (cooldownUntil > now) {
+        skippedProviderNames.push(failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD ? provider.name + '(circuit-breaker)' : provider.name);
         continue;
       }
-      if (cooldownUntil <= now) {
-        availableProviders.push(provider);
-      } else {
-        skippedProviderNames.push(provider.name);
+
+      if (failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD) {
+        // Half-open state: cooldown passed, try again with reduced failure count
+        this.providerFailureCount.set(provider.name, ModelRouter.CIRCUIT_BREAKER_THRESHOLD - 1);
       }
+
+      availableProviders.push(provider);
     }
 
     if (availableProviders.length === 0) {

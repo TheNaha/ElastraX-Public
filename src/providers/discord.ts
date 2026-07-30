@@ -277,8 +277,8 @@ export class DiscordProvider implements BotProvider {
       mentionedIds,
       isBotMentioned,
       hasMedia,
-      mediaPath,
-      mimeType,
+      get mediaPath() { return mediaPath; },
+      get mimeType() { return mimeType; },
       mediaReady: mediaReadyPromise,
       quoted,
       rawMessage: msg as unknown as RawProviderMessage,
@@ -366,11 +366,19 @@ export class DiscordProvider implements BotProvider {
         for (const userId of userIds) {
           try {
             await msg.guild.members.kick(userId, 'Automated by ElastraX GroupAdmin wrapper');
-            await new Promise(res => setTimeout(res, 500)); // Basic rate limit backoff
           } catch (err) {
             logger.error({ userId, err }, 'Failed to kick Discord user');
           }
         }
+      },
+      getGroupInviteLink: async (_chatId: string) => {
+        throw new Error('Getting group invite links is not supported on Discord via this adapter.');
+      },
+      setGroupSettings: async (_chatId: string, _setting: string) => {
+        throw new Error('Setting group settings is not supported on Discord via this adapter.');
+      },
+      leaveGroup: async () => {
+        throw new Error('Leaving groups is not supported on Discord via this adapter.');
       },
       checkPermissions: async (required: string) => {
         if (required === 'user') return true;

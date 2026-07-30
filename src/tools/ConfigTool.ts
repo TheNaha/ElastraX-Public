@@ -82,10 +82,7 @@ function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
       try {
         return parseFloatValue(value, 0, 2.0);
       } catch (error) {
-        if (error instanceof Error && error.message === 'Must be between 0 and 2.') {
-          throw new Error('Must be between 0.0 and 2.0.');
-        }
-        throw error;
+        throw new Error('Must be a number between 0.0 and 2.0.');
       }
     case 'maxTokens':
       return parseIntegerValue(value, 64, 8192);
