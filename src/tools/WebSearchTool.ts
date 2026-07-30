@@ -100,7 +100,14 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
         throw new Error(`SearXNG returned HTTP ${response.status}`);
       }
 
-      const data = await response.json() as SearchResponse;
+      const rawText = await response.text();
+      let data: SearchResponse;
+      try {
+        data = JSON.parse(rawText) as SearchResponse;
+      } catch (parseErr) {
+        log.error({ query, parseErr, snippet: rawText.slice(0, 200) }, 'SearXNG returned non-JSON response');
+        throw new Error('Received invalid JSON from search provider. It might be rate-limiting or returning HTML.');
+      }
       
       if (!data.results || data.results.length === 0) {
         log.debug({ query }, 'No search results found');
