@@ -3,13 +3,11 @@ import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 import { CANCEL_COMMANDS } from './constants';
 import { eq, inArray } from 'drizzle-orm';
+import { db } from '../db';
+import { flowSessions } from '../db/schema';
 
 type SessionValue = string | number | boolean | null | SessionValue[] | { [key: string]: SessionValue };
 type SessionData = Record<string, SessionValue>;
-type DbDeps = {
-  db: typeof import('../db').db;
-  flowSessions: typeof import('../db/schema').flowSessions;
-};
 
 export interface FlowSession {
   flow: string;
@@ -32,33 +30,11 @@ export type FlowProcessor = (ctx: MessageContext, activeFlowData: FlowSession, f
 
 export class FlowHandler {
   private static flows: Record<string, FlowProcessor> = {};
-  private static sessions = new Map<string, UserSession>();
   private static dbLoaded = false;
-  private static dbLoadPromise: Promise<void> | null = null;
-  private static dbDepsPromise: Promise<DbDeps> | null = null;
-  private static persistQueue = new Map<string, Promise<void>>();
-  private static gcInterval: ReturnType<typeof setInterval> | null = null;
 
   static register(flowName: string, processor: FlowProcessor) {
     this.flows[flowName] = processor;
     logger.debug({ flowName }, '[FlowHandler] Registered flow processor');
-  }
-
-  private static getDbDeps(): Promise<DbDeps> {
-    if (!this.dbDepsPromise) {
-      this.dbDepsPromise = Promise.all([
-        import('../db'),
-        import('../db/schema'),
-      ]).then(([dbMod, schemaMod]) => ({
-        db: dbMod.db,
-        flowSessions: schemaMod.flowSessions,
-      }));
-    }
-    return this.dbDepsPromise;
-  }
-
-  private static cloneSession(session: UserSession | null): UserSession | null {
-    return session ? structuredClone(session) : null;
   }
 
   private static hasFlows(flows: Record<string, FlowSession>): boolean {
@@ -95,128 +71,43 @@ export class FlowHandler {
 
   static async initialize(): Promise<void> {
     if (this.dbLoaded) return;
-    if (this.dbLoadPromise) return this.dbLoadPromise;
-
-    this.dbLoadPromise = (async () => {
-      try {
-        const { db, flowSessions } = await this.getDbDeps();
-        const rows = db.select().from(flowSessions).all();
-        const now = Date.now();
-        const expiredIds: string[] = [];
-
-        for (const row of rows) {
-          try {
-            const session = JSON.parse(row.data) as UserSession;
-            const hasExpired = this.pruneExpiredFlows(session, now);
-
-            if (this.hasFlows(session.flows)) {
-              if (!this.sessions.has(row.id)) {
-                this.sessions.set(row.id, session);
-              } else {
-                const memSession = this.sessions.get(row.id)!;
-                for (const flowId in session.flows) {
-                  if (!memSession.flows[flowId]) {
-                    memSession.flows[flowId] = session.flows[flowId];
-                  }
-                }
-                if (!memSession.activeFlow) {
-                  memSession.activeFlow = session.activeFlow;
-                }
-              }
-            } else if (hasExpired || !this.hasFlows(session.flows)) {
-              expiredIds.push(row.id);
-            }
-          } catch {
-            // Ignore bad rows
-          }
-        }
-
-        if (expiredIds.length > 0) {
-          await db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
-        }
-
-        this.dbLoaded = true;
-        
-        this.gcInterval = setInterval(() => {
-          const currentTime = Date.now();
-          for (const [key, session] of this.sessions.entries()) {
-            const hasExpired = this.pruneExpiredFlows(session, currentTime);
-            if (hasExpired) {
-              if (!this.hasFlows(session.flows)) {
-                this.sessions.delete(key);
-                this.persistToDB(key);
-              } else {
-                this.persistToDB(key);
-              }
-            }
-          }
-        }, 5 * 60 * 1000);
-        
-        const interval = this.gcInterval as unknown as { unref?: () => void };
-        if (interval && typeof interval.unref === 'function') {
-          interval.unref();
-        }
-        logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[FlowHandler] Loaded sessions from DB');
-      } catch (err) {
-        this.dbLoaded = false;
-        logger.warn({ err }, '[FlowHandler] Failed to load sessions from DB (non-fatal)');
-      } finally {
-        this.dbLoadPromise = null;
-      }
-    })();
-
-    return this.dbLoadPromise;
-  }
-
-  private static async persistToDBInternal(key: string, session: UserSession | null): Promise<void> {
     try {
-      const { db, flowSessions } = await this.getDbDeps();
-      if (!session || !this.hasFlows(session.flows)) {
-        await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
-      } else {
-        const data = JSON.stringify(session);
-        await db.insert(flowSessions)
-          .values({ id: key, data, updated_at: new Date() })
-          .onConflictDoUpdate({
-            target: flowSessions.id,
-            set: { data, updated_at: new Date() },
-          })
-          .run();
+      // Lazy cleanup of all expired flows in DB at startup
+      const rows = await db.select().from(flowSessions).all();
+      const now = Date.now();
+      const expiredIds: string[] = [];
+
+      for (const row of rows) {
+        try {
+          const session = JSON.parse(row.data) as UserSession;
+          const hasExpired = this.pruneExpiredFlows(session, now);
+
+          if (hasExpired && !this.hasFlows(session.flows)) {
+            expiredIds.push(row.id);
+          } else if (hasExpired) {
+            const data = JSON.stringify(session);
+            await db.update(flowSessions).set({ data, updated_at: new Date() }).where(eq(flowSessions.id, row.id)).run();
+          }
+        } catch {
+          expiredIds.push(row.id);
+        }
       }
+
+      if (expiredIds.length > 0) {
+        await db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
+      }
+
+      this.dbLoaded = true;
+      logger.debug({ expiredPruned: expiredIds.length }, '[FlowHandler] Initialized and pruned sessions');
     } catch (err) {
-      logger.warn({ err, key }, '[FlowHandler] Failed to persist session to DB');
+      logger.warn({ err }, '[FlowHandler] Failed to initialize from DB (non-fatal)');
     }
   }
 
-  private static persistToDB(key: string): void {
-    const previous = this.persistQueue.get(key) ?? Promise.resolve();
-    const next = previous
-      .catch(() => undefined)
-      .then(() => {
-        const current = this.sessions.get(key);
-        if (!current || !this.hasFlows(current.flows)) {
-          return this.persistToDBInternal(key, null);
-        } else {
-          return this.persistToDBInternal(key, this.cloneSession(current));
-        }
-      })
-      .finally(() => {
-        if (this.persistQueue.get(key) === next) {
-          this.persistQueue.delete(key);
-        }
-      });
-
-    this.persistQueue.set(key, next);
-  }
-
-  static setSession(userId: string, flowId: string, flowData: Omit<FlowSession, 'expiresAt'>, platform: string = 'whatsapp', ttlSeconds: number = 300) {
+  private static async _setSession(userId: string, flowId: string, flowData: Omit<FlowSession, 'expiresAt'>, platform: string, ttlSeconds: number) {
     const key = `${platform}:${userId}`;
-    
-    if (!this.sessions.has(key)) {
-      this.sessions.set(key, { activeFlow: null, flows: {} });
-    }
-
-    const session = this.sessions.get(key)!;
+    const rows = await db.select().from(flowSessions).where(eq(flowSessions.id, key));
+    let session: UserSession = rows.length > 0 ? JSON.parse(rows[0].data) as UserSession : { activeFlow: null, flows: {} };
     
     session.flows[flowId] = {
       ...flowData,
@@ -224,38 +115,62 @@ export class FlowHandler {
     };
     session.activeFlow = flowId;
     
-    this.persistToDB(key);
+    this.pruneExpiredFlows(session);
+    
+    const data = JSON.stringify(session);
+    await db.insert(flowSessions)
+      .values({ id: key, data, updated_at: new Date() })
+      .onConflictDoUpdate({
+        target: flowSessions.id,
+        set: { data, updated_at: new Date() },
+      })
+      .run();
     logger.debug({ userId, flowId }, '[FlowHandler] Flow session updated');
   }
 
-  static getSession(userId: string, platform: string = 'whatsapp'): UserSession | null {
-    const key = `${platform}:${userId}`;
-    const session = this.sessions.get(key);
-    
-    if (!session) return null;
-
-    const hasExpired = this.pruneExpiredFlows(session);
-
-    if (hasExpired && !this.hasFlows(session.flows)) {
-      this.sessions.delete(key);
-      this.persistToDB(key);
-      return null;
-    }
-
-    if (hasExpired) {
-      this.persistToDB(key);
-    }
-
-    return session;
+  static setSession(userId: string, flowId: string, flowData: Omit<FlowSession, 'expiresAt'>, platform: string = 'whatsapp', ttlSeconds: number = 300) {
+    this._setSession(userId, flowId, flowData, platform, ttlSeconds).catch(err => {
+      logger.error({ err, userId, flowId }, '[FlowHandler] Failed to set session asynchronously');
+    });
   }
 
-  static getActiveFlow(userId: string, platform: string = 'whatsapp'): ActiveFlowEntry | null {
+  private static async _getSession(userId: string, platform: string): Promise<UserSession | null> {
     const key = `${platform}:${userId}`;
-    const session = this.getSession(userId, platform);
+    const rows = await db.select().from(flowSessions).where(eq(flowSessions.id, key));
+    if (rows.length === 0) return null;
+    
+    try {
+      const session = JSON.parse(rows[0].data) as UserSession;
+      const hasExpired = this.pruneExpiredFlows(session);
 
-    if (!session) {
+      if (hasExpired && !this.hasFlows(session.flows)) {
+        await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
+        return null;
+      }
+
+      if (hasExpired) {
+        const data = JSON.stringify(session);
+        await db.update(flowSessions).set({ data, updated_at: new Date() }).where(eq(flowSessions.id, key)).run();
+      }
+
+      return session;
+    } catch {
+      await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
       return null;
     }
+  }
+
+  static getSession(userId: string, platform: string = 'whatsapp'): UserSession | null {
+    // Legacy synchronous getSession is dangerous in a stateless model.
+    // However, none of the tools actually call `getSession()` themselves. They use FlowProcessor callbacks.
+    // We keep this signature for backward compatibility but warn if used, as we rely on `handle()` which uses the async `getActiveFlow`.
+    logger.warn('[FlowHandler] Synchronous getSession called! Returning null in stateless model.');
+    return null;
+  }
+
+  static async getActiveFlow(userId: string, platform: string = 'whatsapp'): Promise<ActiveFlowEntry | null> {
+    const session = await this._getSession(userId, platform);
+    if (!session) return null;
 
     if (!session.activeFlow || !session.flows[session.activeFlow]) {
       this.selectFallbackActiveFlow(session);
@@ -264,7 +179,9 @@ export class FlowHandler {
         return null;
       }
 
-      this.persistToDB(key);
+      const key = `${platform}:${userId}`;
+      const data = JSON.stringify(session);
+      await db.update(flowSessions).set({ data, updated_at: new Date() }).where(eq(flowSessions.id, key)).run();
     }
 
     return {
@@ -273,38 +190,42 @@ export class FlowHandler {
     };
   }
 
-  static clearSession(userId: string, flowId: string, platform: string = 'whatsapp') {
+  private static async _clearSession(userId: string, flowId: string, platform: string) {
     const key = `${platform}:${userId}`;
-    const session = this.sessions.get(key);
+    const session = await this._getSession(userId, platform);
     
     if (session && session.flows[flowId]) {
       delete session.flows[flowId];
       if (session.activeFlow === flowId) {
-         let lastFlow: string | null = null;
-         for (const id in session.flows) {
-           lastFlow = id;
-         }
-         session.activeFlow = lastFlow;
+         this.selectFallbackActiveFlow(session);
       }
       
       if (!this.hasFlows(session.flows)) {
-        this.sessions.delete(key);
+        await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
+      } else {
+        const data = JSON.stringify(session);
+        await db.update(flowSessions).set({ data, updated_at: new Date() }).where(eq(flowSessions.id, key)).run();
       }
-      this.persistToDB(key);
       logger.debug({ userId, flowId }, '[FlowHandler] Flow session cleared');
     }
   }
 
+  static clearSession(userId: string, flowId: string, platform: string = 'whatsapp') {
+    this._clearSession(userId, flowId, platform).catch(err => {
+      logger.error({ err, userId, flowId }, '[FlowHandler] Failed to clear session asynchronously');
+    });
+  }
+
   static async handle(ctx: MessageContext): Promise<boolean> {
-    const activeFlow = this.getActiveFlow(ctx.senderId, ctx.platform);
+    const activeFlow = await this.getActiveFlow(ctx.senderId, ctx.platform);
 
     if (!activeFlow) {
       return false;
     }
 
     const { flowId, flow } = activeFlow;
-
     const flowProcessor = this.flows[flow.flow];
+    
     if (flowProcessor) {
       if (ctx.text.startsWith('/')) {
          if (CANCEL_COMMANDS.includes(ctx.text.trim())) {

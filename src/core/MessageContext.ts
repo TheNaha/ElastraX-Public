@@ -189,26 +189,26 @@ export interface MessageContext {
   /**
    * Action methods for Group Administration
    */
-  updateGroupParticipants(action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]): Promise<void>;
+  updateGroupParticipants?: (action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]) => Promise<void>;
 
   /**
    * Get the invite link for the current group.
    * Only available in group chats where the bot is an admin.
    */
-  getGroupInviteLink(chatId: string): Promise<string>;
+  getGroupInviteLink?: (chatId: string) => Promise<string>;
 
   /**
    * Change group settings (e.g., who can send messages).
    * @param chatId  The group chat ID.
    * @param setting 'announcement' (admins only) | 'not_announcement' (everyone)
    */
-  setGroupSettings(chatId: string, setting: 'announcement' | 'not_announcement'): Promise<void>;
+  setGroupSettings?: (chatId: string, setting: 'announcement' | 'not_announcement') => Promise<void>;
 
   /**
    * Make the bot leave the current group chat.
    * Only available in group chats.
    */
-  leaveGroup(): Promise<void>;
+  leaveGroup?: () => Promise<void>;
 
   /**
    * Check if the sender has the required permissions.

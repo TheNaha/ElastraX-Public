@@ -6,15 +6,12 @@
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { JellyfinClient, type JellyfinItem } from '../providers/jellyfin/JellyfinClient';
-import { ServiceBindingService } from '../utils/ServiceBindingService';
+import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaLibraryTool' });
 
-export const mediaLibraryToolDeps = {
-  createJellyfinClient: () => new JellyfinClient(),
-  bindingService: ServiceBindingService,
-};
+// MediaService is used instead of local deps
 
 function formatItem(item: JellyfinItem, _index: number, watchLink: string): string {
   const type = item.Type === 'Series' ? '📺' : item.Type === 'Episode' ? '📺' : '🎬';
@@ -79,7 +76,7 @@ export class MediaLibraryTool extends BaseTool {
   }
 
   async execute(args: MediaLibraryArgs, ctx: MessageContext): Promise<ToolResult> {
-    const jellyfin = mediaLibraryToolDeps.createJellyfinClient();
+    const jellyfin = MediaService.createJellyfinClient();
 
     if (!jellyfin.isConfigured) {
       return '❌ Streaming library service is not configured.';
@@ -92,7 +89,7 @@ export class MediaLibraryTool extends BaseTool {
 
     try {
       // Get user's Jellyfin userId for personalized results (optional)
-      const binding = await mediaLibraryToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
+      const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
       const jellyfinUserId = binding?.externalUserId;
 
       switch (action) {

@@ -129,6 +129,29 @@ export class AIClient {
     return payload;
   }
 
+  /** Validates config and builds the endpoint and payload for a request. */
+  private prepareRequest(
+    messages: AIChatMessage[],
+    tools?: ToolDefinition[],
+    temperature: number = 0.7,
+    maxTokens?: number,
+    stream: boolean = false
+  ): { endpoint: string; payload: Record<string, unknown> } {
+    const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, stream).maxTokens;
+    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
+      throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
+    }
+
+    if (!this.apiKey) {
+      throw new Error('AI_API_KEY is missing or empty. A valid API key is required.');
+    }
+
+    const endpoint = this.resolveEndpoint();
+    const payload = this.buildPayload(messages, tools, temperature, resolvedMaxTokens, stream);
+
+    return { endpoint, payload };
+  }
+
   /**
    * Send a chat-completion request to the configured LLM endpoint.
    *
@@ -145,17 +168,7 @@ export class AIClient {
     temperature: number = 0.7,
     maxTokens?: number,
   ): Promise<ChatCompletionMessage> {
-    const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, false).maxTokens;
-    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
-      throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
-    }
-
-    if (!this.apiKey) {
-      throw new Error('AI_API_KEY is missing or empty. A valid API key is required.');
-    }
-
-    const endpoint = this.resolveEndpoint();
-    const payload = this.buildPayload(messages, tools, temperature, resolvedMaxTokens);
+    const { endpoint, payload } = this.prepareRequest(messages, tools, temperature, maxTokens, false);
 
     log.debug({ endpoint, model: this.modelName, messageCount: messages.length, hasTools: !!(tools && tools.length) }, 'Sending chat completion request');
     const startTime = Date.now();
@@ -203,17 +216,7 @@ export class AIClient {
     temperature: number = 0.7,
     maxTokens?: number,
   ): AsyncGenerator<ChatCompletionChunk> {
-    const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, true).maxTokens;
-    if (!this.baseUrl || !isValidUrl(this.baseUrl)) {
-      throw new Error('AI_API_BASE_URL is not configured properly or is invalid.');
-    }
-
-    if (!this.apiKey) {
-      throw new Error('AI_API_KEY is missing or empty. A valid API key is required.');
-    }
-
-    const endpoint = this.resolveEndpoint();
-    const payload = this.buildPayload(messages, tools, temperature, resolvedMaxTokens, true);
+    const { endpoint, payload } = this.prepareRequest(messages, tools, temperature, maxTokens, true);
 
     const response = await fetch(endpoint, {
       method: 'POST',

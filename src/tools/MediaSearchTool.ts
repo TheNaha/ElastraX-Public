@@ -6,13 +6,12 @@
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { SeerrClient, type SeerrSearchResult, type SeerrMediaStatus } from '../providers/seerr/SeerrClient';
+import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaSearchTool' });
 
-export const mediaSearchToolDeps = {
-  createSeerrClient: () => new SeerrClient(),
-};
+// MediaService is used instead of local deps
 
 function statusLabel(status?: SeerrMediaStatus): string {
   switch (status) {
@@ -92,7 +91,7 @@ export class MediaSearchTool extends BaseTool {
   }
 
   async execute(args: MediaSearchArgs, _ctx: MessageContext): Promise<ToolResult> {
-    const seerr = mediaSearchToolDeps.createSeerrClient();
+    const seerr = MediaService.createSeerrClient();
 
     if (!seerr.isConfigured) {
       return '❌ Media search service is not configured.';

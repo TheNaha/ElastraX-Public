@@ -6,15 +6,12 @@
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { SeerrClient, type SeerrRequest } from '../providers/seerr/SeerrClient';
-import { ServiceBindingService } from '../utils/ServiceBindingService';
+import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaRequestTool' });
 
-export const mediaRequestToolDeps = {
-  createSeerrClient: () => new SeerrClient(),
-  bindingService: ServiceBindingService,
-};
+// MediaService is used instead of local deps
 
 function requestStatusLabel(status: number): string {
   switch (status) {
@@ -87,7 +84,7 @@ export class MediaRequestTool extends BaseTool {
   }
 
   async execute(args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
-    const seerr = mediaRequestToolDeps.createSeerrClient();
+    const seerr = MediaService.createSeerrClient();
 
     if (!seerr.isConfigured) {
       return '❌ Media request service is not configured.';
@@ -119,7 +116,7 @@ export class MediaRequestTool extends BaseTool {
     if (!args.media_id) return 'Please specify media_id (TMDB ID).';
 
     // Check user has a binding
-    const binding = await mediaRequestToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
+    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
     if (!binding) {
       return '❌ You need to link your account first. Use the connect command.';
     }
@@ -152,7 +149,7 @@ export class MediaRequestTool extends BaseTool {
   }
 
   private async handleMyRequests(seerr: SeerrClient, ctx: MessageContext): Promise<ToolResult> {
-    const binding = await mediaRequestToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
+    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
     if (!binding) {
       return '❌ You need to link your account first. Use the connect command.';
     }

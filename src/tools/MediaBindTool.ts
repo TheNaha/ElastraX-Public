@@ -11,8 +11,7 @@ import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
-import { SeerrClient } from '../providers/seerr/SeerrClient';
-import { JellyfinClient } from '../providers/jellyfin/JellyfinClient';
+import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'MediaBindTool' });
@@ -24,12 +23,7 @@ type MediaBindArgs = {
   __command?: string;
 };
 
-export const mediaBindToolDeps = {
-  createSeerrClient: () => new SeerrClient(),
-  createJellyfinClient: () => new JellyfinClient(),
-  bindingService: ServiceBindingService,
-  notificationService: NotificationSubscriptionService,
-};
+// MediaService is used instead of local deps
 
 // ── Flow Registration ───────────────────────────────────────────────────────
 
@@ -69,8 +63,8 @@ export const mediaConnectFlowProcessor = async (
     await ctx.reply('⏳ Authenticating...');
 
     try {
-      const seerrClient = mediaBindToolDeps.createSeerrClient();
-      const jellyfinClient = mediaBindToolDeps.createJellyfinClient();
+      const seerrClient = MediaService.createSeerrClient();
+      const jellyfinClient = MediaService.createJellyfinClient();
 
       // Try Seerr Jellyfin auth first (handles both)
       let authResult;
@@ -112,7 +106,7 @@ export const mediaConnectFlowProcessor = async (
 
       // Bind Jellyfin
       if (jellyfinUserId!) {
-        await mediaBindToolDeps.bindingService.bind({
+        await MediaService.bindingService.bind({
           userId: ctx.senderId,
           platform: ctx.platform,
           serviceType: 'jellyfin',
@@ -125,7 +119,7 @@ export const mediaConnectFlowProcessor = async (
 
       // Bind Seerr
       if (seerrUserId !== undefined) {
-        await mediaBindToolDeps.bindingService.bind({
+        await MediaService.bindingService.bind({
           userId: ctx.senderId,
           platform: ctx.platform,
           serviceType: 'seerr',
@@ -225,15 +219,15 @@ export class MediaBindTool extends BaseTool {
   }
 
   private async handleConnect(ctx: MessageContext): Promise<ToolResult> {
-    const seerrClient = mediaBindToolDeps.createSeerrClient();
-    const jellyfinClient = mediaBindToolDeps.createJellyfinClient();
+    const seerrClient = MediaService.createSeerrClient();
+    const jellyfinClient = MediaService.createJellyfinClient();
 
     if (!seerrClient.isConfigured && !jellyfinClient.isConfigured) {
       return '❌ Media services are not configured.';
     }
 
     // Check if already bound
-    const existing = await mediaBindToolDeps.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
+    const existing = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
     if (existing) {
       return `You already have a linked account (${existing.externalUsername}). Use disconnect first if you want to relink.`;
     }
@@ -251,8 +245,8 @@ export class MediaBindTool extends BaseTool {
   }
 
   private async handleDisconnect(ctx: MessageContext): Promise<ToolResult> {
-    const jfRemoved = await mediaBindToolDeps.bindingService.unbind(ctx.senderId, ctx.platform, 'jellyfin');
-    const srRemoved = await mediaBindToolDeps.bindingService.unbind(ctx.senderId, ctx.platform, 'seerr');
+    const jfRemoved = await MediaService.bindingService.unbind(ctx.senderId, ctx.platform, 'jellyfin');
+    const srRemoved = await MediaService.bindingService.unbind(ctx.senderId, ctx.platform, 'seerr');
 
     if (!jfRemoved && !srRemoved) {
       return 'You don\'t have any linked media accounts.';
@@ -266,7 +260,7 @@ export class MediaBindTool extends BaseTool {
 
     switch (notifyAction) {
       case 'here': {
-        await mediaBindToolDeps.notificationService.subscribe({
+        await MediaService.notificationService.subscribe({
           userId: ctx.senderId,
           platform: ctx.platform,
           serviceType: 'all',
@@ -278,7 +272,7 @@ export class MediaBindTool extends BaseTool {
       case 'add': {
         const roomId = args.room_id?.trim();
         if (!roomId) return 'Please specify a room ID.';
-        await mediaBindToolDeps.notificationService.subscribe({
+        await MediaService.notificationService.subscribe({
           userId: ctx.senderId,
           platform: ctx.platform,
           serviceType: 'all',
@@ -289,7 +283,7 @@ export class MediaBindTool extends BaseTool {
 
       case 'remove': {
         const roomId = args.room_id?.trim() || ctx.chatId;
-        const removed = await mediaBindToolDeps.notificationService.unsubscribe(
+        const removed = await MediaService.notificationService.unsubscribe(
           ctx.senderId, ctx.platform, 'all', roomId,
         );
         return removed
@@ -298,7 +292,7 @@ export class MediaBindTool extends BaseTool {
       }
 
       case 'list': {
-        const subs = await mediaBindToolDeps.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
+        const subs = await MediaService.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
         if (subs.length === 0) return 'You have no notification subscriptions.';
 
         const lines = subs.map((sub, i) => {
@@ -314,7 +308,7 @@ export class MediaBindTool extends BaseTool {
   }
 
   private async handleStatus(ctx: MessageContext): Promise<ToolResult> {
-    const bindings = await mediaBindToolDeps.bindingService.getBindings(ctx.senderId, ctx.platform);
+    const bindings = await MediaService.bindingService.getBindings(ctx.senderId, ctx.platform);
     if (bindings.length === 0) {
       return 'You don\'t have any linked media accounts. Use connect to link your account.';
     }
@@ -330,7 +324,7 @@ export class MediaBindTool extends BaseTool {
       return ` • ${b.serviceType}: ${b.externalUsername}${meta}`;
     });
 
-    const subs = await mediaBindToolDeps.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
+    const subs = await MediaService.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
     const subLines = subs.length > 0
       ? subs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')
       : '_None_';

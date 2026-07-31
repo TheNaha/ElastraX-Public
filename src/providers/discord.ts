@@ -373,15 +373,6 @@ export class DiscordProvider implements BotProvider {
           }
         }
       },
-      getGroupInviteLink: async (_chatId: string) => {
-        throw new Error('Getting group invite links is not supported on Discord via this adapter.');
-      },
-      setGroupSettings: async (_chatId: string, _setting: string) => {
-        throw new Error('Setting group settings is not supported on Discord via this adapter.');
-      },
-      leaveGroup: async () => {
-        throw new Error('Leaving groups is not supported on Discord via this adapter.');
-      },
       checkPermissions: async (required: string) => {
         if (required === 'user') return true;
         const roles = await _resolveRoles();
