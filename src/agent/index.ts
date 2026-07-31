@@ -271,6 +271,14 @@ async function executeToolWithTimeout(
 }
 
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
+  const modelName = process.env.AI_MODEL_NAME?.toLowerCase() || '';
+  const nativeAudioModels = ['inkling', 'gemini-1.5', 'qwen-audio', 'gpt-4o-audio'];
+  
+  if (nativeAudioModels.some(m => modelName.includes(m))) {
+    log.debug({ modelName }, '[Transcription] Bypassing whisper transcription; model natively supports audio');
+    return null;
+  }
+
   if (!isTranscriptionConfigured() || !isAudioMimeType(ctx.mimeType)) return null;
 
   try {
