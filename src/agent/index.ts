@@ -544,6 +544,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
        return;
     }
 
+    // Immediately signal that we are processing (prevents perceived delays if summarization runs)
+    await ctx.react?.('⏳').catch(() => {});
+    await ctx.sendTyping?.().catch(() => {});
+
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     // V7.11: Use the higher of room config vs role privilege context limit.
     const effectiveContextLimit = Math.max(config.contextLimit, privileges.contextLimit);
@@ -764,7 +768,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // 4. Generate AI Response (Recursive for tools)
     healthMetrics.recordMessageReceived();
-    await ctx.react?.('⏳');
     
     let isDone = false;
     let finalAiResponseText = '';
