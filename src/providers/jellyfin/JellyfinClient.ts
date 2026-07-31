@@ -7,9 +7,7 @@
  * External URL: `JELLYFIN_EXTERNAL_URL` env var (user-facing watch links).
  */
 
-import { logger } from '../../utils/logger';
-
-const log = logger.child({ module: 'JellyfinClient' });
+import { BaseHttpClient } from '../../utils/BaseHttpClient';
 
 // ─── Response Types ────────────────────────────────────────────────────────────
 
@@ -63,70 +61,24 @@ export interface JellyfinSystemInfo {
 
 // ─── Client ────────────────────────────────────────────────────────────────────
 
-export class JellyfinClient {
-  private readonly baseUrl: string;
+export class JellyfinClient extends BaseHttpClient {
   private readonly apiKey: string;
   private readonly externalUrl: string;
 
   constructor(baseUrl?: string, apiKey?: string, externalUrl?: string) {
-    this.baseUrl = (baseUrl ?? process.env.JELLYFIN_API_URL ?? '').replace(/\/+$/, '');
-    this.apiKey = apiKey ?? process.env.JELLYFIN_API_KEY ?? '';
+    const finalBaseUrl = (baseUrl ?? process.env.JELLYFIN_API_URL ?? '').replace(/\/+$/, '');
+    const finalApiKey = apiKey ?? process.env.JELLYFIN_API_KEY ?? '';
+    super(
+      finalBaseUrl,
+      { 'X-Emby-Authorization': `MediaBrowser Token="${finalApiKey}"` },
+      'JellyfinClient'
+    );
+    this.apiKey = finalApiKey;
     this.externalUrl = (externalUrl ?? process.env.JELLYFIN_EXTERNAL_URL ?? '').replace(/\/+$/, '');
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== '' && this.apiKey !== '';
-  }
-
-  // ── HTTP Helpers ──────────────────────────────────────────────────────────
-
-  private async request<T>(method: string, path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(url);
-    } catch {
-      throw new Error(`Invalid URL: ${url}`);
-    }
-
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      throw new Error(`Invalid protocol for Jellyfin API URL: ${parsedUrl.protocol}. Must be http: or https:`);
-    }
-
-    const headers: Record<string, string> = {
-      'X-Emby-Authorization': `MediaBrowser Token="${this.apiKey}"`,
-      'Accept': 'application/json',
-      ...extraHeaders,
-    };
-    if (body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
-
-    log.debug({ method, path }, 'Jellyfin API request');
-
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      log.error({ status: resp.status, path, text }, 'Jellyfin API error');
-      throw new Error(`Jellyfin API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
-    }
-
-    return resp.json() as Promise<T>;
-  }
-
-  private get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path);
-  }
-
-  private post<T>(path: string, body?: unknown, extraHeaders?: Record<string, string>): Promise<T> {
-    return this.request<T>('POST', path, body, extraHeaders);
+    return super.isConfigured && this.apiKey !== '';
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────

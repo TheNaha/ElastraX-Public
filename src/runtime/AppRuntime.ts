@@ -10,6 +10,7 @@ import { Scheduler } from '../utils/Scheduler';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
+import { healthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
 
 type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
@@ -104,6 +105,7 @@ export class AppRuntime {
     this.registerProviderSenders();
     this.webhookServer.start();
     this.scheduler.start();
+    healthMonitor.start();
     this.startBackgroundTasks();
 
     this.started = true;
@@ -116,6 +118,7 @@ export class AppRuntime {
     await this.stopBackgroundTasks();
     this.scheduler.stop();
     this.webhookServer.stop();
+    healthMonitor.stop();
     this.messageQueue.stop();
 
     for (const provider of this.providers) {

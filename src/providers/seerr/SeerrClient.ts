@@ -6,9 +6,7 @@
  * Base URL: `SEERR_API_URL` env var (e.g. `https://req.example.com/api/v1`).
  */
 
-import { logger } from '../../utils/logger';
-
-const log = logger.child({ module: 'SeerrClient' });
+import { BaseHttpClient } from '../../utils/BaseHttpClient';
 
 // ─── Response Types ────────────────────────────────────────────────────────────
 
@@ -132,67 +130,22 @@ export interface SeerrAuthResponse {
 
 // ─── Client ────────────────────────────────────────────────────────────────────
 
-export class SeerrClient {
-  private readonly baseUrl: string;
+export class SeerrClient extends BaseHttpClient {
   private readonly apiKey: string;
 
   constructor(baseUrl?: string, apiKey?: string) {
-    this.baseUrl = (baseUrl ?? process.env.SEERR_API_URL ?? '').replace(/\/+$/, '');
-    this.apiKey = apiKey ?? process.env.SEERR_API_KEY ?? '';
+    const finalBaseUrl = (baseUrl ?? process.env.SEERR_API_URL ?? '').replace(/\/+$/, '');
+    const finalApiKey = apiKey ?? process.env.SEERR_API_KEY ?? '';
+    super(
+      finalBaseUrl,
+      { 'X-Api-Key': finalApiKey },
+      'SeerrClient'
+    );
+    this.apiKey = finalApiKey;
   }
 
   get isConfigured(): boolean {
-    return this.baseUrl !== '' && this.apiKey !== '';
-  }
-
-  // ── HTTP Helpers ──────────────────────────────────────────────────────────
-
-  private async request<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const url = `${this.baseUrl}${path}`;
-
-    let parsedUrl: URL;
-    try {
-      parsedUrl = new URL(url);
-    } catch {
-      throw new Error(`Invalid URL: ${url}`);
-    }
-
-    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
-      throw new Error(`Invalid protocol for Seerr API URL: ${parsedUrl.protocol}. Must be http: or https:`);
-    }
-
-    const headers: Record<string, string> = {
-      'X-Api-Key': this.apiKey,
-      'Accept': 'application/json',
-    };
-    if (body !== undefined) {
-      headers['Content-Type'] = 'application/json';
-    }
-
-    log.debug({ method, path }, 'Seerr API request');
-
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(30_000),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text().catch(() => '');
-      log.error({ status: resp.status, path, text }, 'Seerr API error');
-      throw new Error(`Seerr API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
-    }
-
-    return resp.json() as Promise<T>;
-  }
-
-  private get<T>(path: string): Promise<T> {
-    return this.request<T>('GET', path);
-  }
-
-  private post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>('POST', path, body);
+    return super.isConfigured && this.apiKey !== '';
   }
 
   // ── Auth ──────────────────────────────────────────────────────────────────

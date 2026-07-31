@@ -72,6 +72,7 @@ export interface MetricsSnapshot {
     totalPending: number;
     totalRunning: number;
   };
+  services: Record<string, { status: 'healthy' | 'unhealthy'; lastChecked: number; error?: string }>;
 }
 
 export class HealthMetricsCollector {
@@ -88,12 +89,17 @@ export class HealthMetricsCollector {
 
   private providerStats = new Map<string, { success: number; failures: number }>();
   private toolStats = new Map<string, ToolStats>();
+  private serviceHealth = new Map<string, { status: 'healthy' | 'unhealthy'; lastChecked: number; error?: string }>();
 
   private queueStatsGetter: (() => { totalRooms: number; totalPending: number; totalRunning: number }) | null = null;
 
   /** Register the queue stats provider (called once during init). */
   registerQueueStats(getter: () => { totalRooms: number; totalPending: number; totalRunning: number }): void {
     this.queueStatsGetter = getter;
+  }
+
+  setServiceHealth(service: string, status: 'healthy' | 'unhealthy', error?: string): void {
+    this.serviceHealth.set(service, { status, lastChecked: Date.now(), error });
   }
 
   recordMessageReceived(): void {
@@ -249,6 +255,7 @@ export class HealthMetricsCollector {
       providers,
       tools,
       queue: queueStats,
+      services: Object.fromEntries(this.serviceHealth),
     };
   }
 
@@ -343,6 +350,12 @@ export class HealthMetricsCollector {
     lines.push(`elastrax_process_memory_bytes{type="rss"} ${m.memory.rss}`);
     lines.push(`elastrax_process_memory_bytes{type="heapTotal"} ${m.memory.heapTotal}`);
     lines.push(`elastrax_process_memory_bytes{type="heapUsed"} ${m.memory.heapUsed}`);
+
+    lines.push('# HELP elastrax_service_health Service health status (1=healthy, 0=unhealthy)');
+    lines.push('# TYPE elastrax_service_health gauge');
+    for (const [service, data] of Object.entries(m.services)) {
+      lines.push(`elastrax_service_health{service="${service}"} ${data.status === 'healthy' ? 1 : 0}`);
+    }
 
     return lines.join('\n') + '\n';
   }
