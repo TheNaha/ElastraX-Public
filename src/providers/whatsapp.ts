@@ -498,9 +498,9 @@ export class WhatsAppProvider implements BotProvider {
       try {
         await mediaReadyPromise;
         if (parsed.hasMedia && mediaPath) {
-          try { return readFileSync(mediaPath); } catch (e) { /* ignore */ }
+          try { return readFileSync(mediaPath); } catch { /* ignore */ }
         } else if (quoted?.hasMedia && quoted.mediaPath) {
-          try { return readFileSync(quoted.mediaPath); } catch (e) { /* ignore */ }
+          try { return readFileSync(quoted.mediaPath); } catch { /* ignore */ }
         }
 
         if (parsed.hasMedia) {

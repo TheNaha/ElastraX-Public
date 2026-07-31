@@ -1,18 +1,16 @@
-# ElastraX v7 Documentation
+# ElastraX Documentation
 
-Welcome to the comprehensive documentation for ElastraX v7! This directory contains detailed guides, architecture overviews, and source code documentation.
+Welcome to the official documentation for **ElastraX v7.16**.
+
+ElastraX is a multi-platform, general-purpose hybrid bot powered by an agentic LLM core. It is built on top of [Bun](https://bun.sh) and leverages a modular architecture designed to support dynamic tool-calling, multi-provider failover, and persistent conversational state.
 
 ## Table of Contents
 
-- [Source Code Documentation](./source_documentation.md) - Auto-generated documentation of the source code files.
-- [Architecture Overview](./architecture.md) - Deep dive into the structure and components of ElastraX.
-- [Configuration Guide](./configuration.md) - Detailed explanation of environment variables and configuration options.
-- [Deployment Guide](./deployment.md) - Instructions for deploying ElastraX using Docker, Modal, and other methods.
+1. [Architecture & Design](./architecture.md) - Learn about the core agent loop, flow handler, model routing, and the `MessageContext` interface.
+2. [Setup & Configuration](./setup.md) - Step-by-step guide to installing dependencies, configuring environment variables, and deploying via Docker.
+3. [Tools Overview](./tools.md) - Comprehensive list of all available agentic tools (Web Search, Download, PDF operations, etc.) and how they integrate.
+4. [API & Webhooks](./api.md) - Documentation on the inbound webhook server for processing alerts (Grafana, GitHub, etc.) and health checks.
 
-## Getting Started
+---
 
-If you are new to ElastraX, please refer to the main `README.md` at the root of the project for a quick start guide.
-
-## Contributing
-
-We welcome contributions! Please review the [Architecture Overview](./architecture.md) to understand how the project is structured before making changes. Ensure you run the linter and tests before submitting a pull request.
+*This documentation was automatically regenerated based on the current state of the codebase.*

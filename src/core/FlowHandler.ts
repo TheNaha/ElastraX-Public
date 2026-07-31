@@ -110,7 +110,19 @@ export class FlowHandler {
             const hasExpired = this.pruneExpiredFlows(session, now);
 
             if (this.hasFlows(session.flows)) {
-              this.sessions.set(row.id, session);
+              if (!this.sessions.has(row.id)) {
+                this.sessions.set(row.id, session);
+              } else {
+                const memSession = this.sessions.get(row.id)!;
+                for (const flowId in session.flows) {
+                  if (!memSession.flows[flowId]) {
+                    memSession.flows[flowId] = session.flows[flowId];
+                  }
+                }
+                if (!memSession.activeFlow) {
+                  memSession.activeFlow = session.activeFlow;
+                }
+              }
             } else if (hasExpired || !this.hasFlows(session.flows)) {
               expiredIds.push(row.id);
             }
@@ -139,8 +151,10 @@ export class FlowHandler {
             }
           }
         }, 5 * 60 * 1000);
-        if (this.gcInterval && typeof (this.gcInterval as any).unref === 'function') {
-          (this.gcInterval as any).unref();
+        
+        const interval = this.gcInterval as unknown as { unref?: () => void };
+        if (interval && typeof interval.unref === 'function') {
+          interval.unref();
         }
         logger.debug({ count: this.sessions.size, expiredPruned: expiredIds.length }, '[FlowHandler] Loaded sessions from DB');
       } catch (err) {

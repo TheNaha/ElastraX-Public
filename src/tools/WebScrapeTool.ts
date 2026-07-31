@@ -1,4 +1,4 @@
-import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
+import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 
