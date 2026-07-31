@@ -59,6 +59,8 @@ import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
 import { MemoryTool } from './MemoryTool';
 import { WebScrapeTool } from './WebScrapeTool';
+import { GameSearchTool } from './GameSearchTool';
+import { SoftwareSearchTool } from './SoftwareSearchTool';
 
 const log = logger.child({ module: 'ToolRegistry' });
 
@@ -70,6 +72,8 @@ export const tools = toolsList;
 
 // ── Utility / Core ────────────────────────────────────────────────────────────
 toolsList.push(new WebSearchTool());
+toolsList.push(new GameSearchTool());
+toolsList.push(new SoftwareSearchTool());
 toolsList.push(new MenuTool(() => toolsList));
 toolsList.push(new PingTool());
 toolsList.push(new IDTool());
