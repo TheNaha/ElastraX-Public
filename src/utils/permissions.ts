@@ -83,6 +83,8 @@ async function resolvePlatformAdmin(
   return isWhatsAppGroupAdmin(sock, chatId, senderId, senderPn);
 }
 
+const groupMetadataCache = new Map<string, { data: WhatsAppGroupMetadata; expiresAt: number }>();
+
 /**
  * Check whether a WhatsApp user is a native group admin/superadmin.
  *
@@ -101,7 +103,18 @@ export async function isWhatsAppGroupAdmin(
 ): Promise<boolean> {
   if (!hasGroupMetadataClient(sock)) return false;
   try {
-    const metadata = await sock.groupMetadata(chatId);
+    const now = Date.now();
+    const cached = groupMetadataCache.get(chatId);
+    let metadata: WhatsAppGroupMetadata;
+
+    if (cached && cached.expiresAt > now) {
+      metadata = cached.data;
+    } else {
+      metadata = await sock.groupMetadata(chatId);
+      // Cache for 5 minutes
+      groupMetadataCache.set(chatId, { data: metadata, expiresAt: now + 5 * 60 * 1000 });
+    }
+
     const participants = metadata.participants ?? [];
     const participant = participants.find((entry) => matchesParticipant(entry, senderId, senderPn));
     const isAdmin = isAdminParticipant(participant);
