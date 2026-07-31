@@ -66,7 +66,11 @@ export class SoftwareSearchTool extends BaseTool<ToolArgs & { query?: string }> 
       'reddit.com/r/FREEMEDIAHECKYEAH',
       'reddit.com/r/Piracy',
       'rutracker.org',
-      'soft98.ir'
+      'soft98.ir',
+      'cracksurl.com',
+      'mobilism.org',
+      'nsanenewz.com',
+      'nsaneforums.com'
     ];
     
     log.debug({ query }, 'Software search initiated');

@@ -64,12 +64,17 @@ export class GameSearchTool extends BaseTool<ToolArgs & { query?: string }> {
       'gog-games.to',
       'online-fix.me',
       'cs.rin.ru',
+      'csrin.org',
       'elamigos.site',
       'rutracker.org',
       'ankergames.net',
       'forum.torrminatorr.com',
       'gamebounty.world',
-      'kaoskrew.org'
+      'kaoskrew.org',
+      'astral-games.xyz',
+      'union-crax.xyz',
+      'steamunderground.net',
+      'ovagames.com'
     ];
     
     log.debug({ query }, 'Game search initiated');
