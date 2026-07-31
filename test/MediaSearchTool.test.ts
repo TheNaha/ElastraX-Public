@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
-import { MediaSearchTool, mediaSearchToolDeps } from '../src/tools/MediaSearchTool';
+import { MediaSearchTool } from '../src/tools/MediaSearchTool';
+import { MediaService } from '../src/utils/MediaService';
 
-const originalCreateSeerrClient = mediaSearchToolDeps.createSeerrClient;
+const originalCreateSeerrClient = MediaService.createSeerrClient;
 
 const createMockCtx = (): MessageContext => ({
   platform: 'discord',
@@ -23,18 +24,18 @@ const createMockCtx = (): MessageContext => ({
 
 describe('MediaSearchTool', () => {
   afterEach(() => {
-    mediaSearchToolDeps.createSeerrClient = originalCreateSeerrClient;
+    MediaService.createSeerrClient = originalCreateSeerrClient;
   });
 
   test('returns a configuration message when Seerr is unavailable', async () => {
-    mediaSearchToolDeps.createSeerrClient = () => ({ isConfigured: false }) as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: false }) as any;
 
     const result = await new MediaSearchTool().execute({ action: 'search', query: 'dark' }, createMockCtx());
     expect(result).toContain('not configured');
   });
 
   test('search returns formatted results and filters out people', async () => {
-    mediaSearchToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       search: mock(async () => ({
         page: 1,
@@ -54,7 +55,7 @@ describe('MediaSearchTool', () => {
   });
 
   test('search reports when filtering removes all results', async () => {
-    mediaSearchToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       search: mock(async () => ({
         page: 1,
@@ -73,7 +74,7 @@ describe('MediaSearchTool', () => {
   });
 
   test('returns a friendly error when discovery calls fail', async () => {
-    mediaSearchToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       getTrending: mock(async () => {
         throw new Error('service unavailable');

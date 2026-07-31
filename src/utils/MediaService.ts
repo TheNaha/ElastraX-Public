@@ -12,13 +12,9 @@ class MediaServiceClass {
     return new JellyfinClient();
   }
 
-  get bindingService(): typeof ServiceBindingService {
-    return ServiceBindingService;
-  }
+  bindingService: typeof ServiceBindingService = ServiceBindingService;
 
-  get notificationService(): typeof NotificationSubscriptionService {
-    return NotificationSubscriptionService;
-  }
+  notificationService: typeof NotificationSubscriptionService = NotificationSubscriptionService;
 }
 
 export const MediaService = new MediaServiceClass();

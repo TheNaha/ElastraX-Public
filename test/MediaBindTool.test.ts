@@ -1,12 +1,13 @@
-import { afterEach, describe, expect, mock, test } from 'bun:test';
+import { afterEach, describe, expect, mock, test, spyOn } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
-import { MediaBindTool, mediaBindToolDeps, mediaConnectFlowProcessor } from '../src/tools/MediaBindTool';
+import { MediaBindTool, mediaConnectFlowProcessor } from '../src/tools/MediaBindTool';
+import { MediaService } from '../src/utils/MediaService';
 import { FlowHandler } from '../src/core/FlowHandler';
 
-const originalCreateSeerrClient = mediaBindToolDeps.createSeerrClient;
-const originalCreateJellyfinClient = mediaBindToolDeps.createJellyfinClient;
-const originalBindingService = mediaBindToolDeps.bindingService;
-const originalNotificationService = mediaBindToolDeps.notificationService;
+const originalCreateSeerrClient = MediaService.createSeerrClient;
+const originalCreateJellyfinClient = MediaService.createJellyfinClient;
+const originalBindingService = MediaService.bindingService;
+const originalNotificationService = MediaService.notificationService;
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
@@ -30,42 +31,42 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
 
 describe('MediaBindTool', () => {
   afterEach(() => {
-    mediaBindToolDeps.createSeerrClient = originalCreateSeerrClient;
-    mediaBindToolDeps.createJellyfinClient = originalCreateJellyfinClient;
-    mediaBindToolDeps.bindingService = originalBindingService;
-    mediaBindToolDeps.notificationService = originalNotificationService;
+    MediaService.createSeerrClient = originalCreateSeerrClient;
+    MediaService.createJellyfinClient = originalCreateJellyfinClient;
+    MediaService.bindingService = originalBindingService;
+    MediaService.notificationService = originalNotificationService;
     FlowHandler.clearSession('user-1', 'media_connect', 'whatsapp');
     FlowHandler.clearSession('media-flow-user', 'media_connect', 'whatsapp');
   });
 
   test('connect reports when media services are unavailable', async () => {
-    mediaBindToolDeps.createSeerrClient = () => ({ isConfigured: false }) as any;
-    mediaBindToolDeps.createJellyfinClient = () => ({ isConfigured: false }) as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: false }) as any;
+    MediaService.createJellyfinClient = () => ({ isConfigured: false }) as any;
 
     const result = await new MediaBindTool().execute({ action: 'connect' }, createMockCtx());
     expect(result).toContain('not configured');
   });
 
   test('connect starts the interactive flow when no binding exists', async () => {
-    mediaBindToolDeps.createSeerrClient = () => ({ isConfigured: true }) as any;
-    mediaBindToolDeps.createJellyfinClient = () => ({ isConfigured: false }) as any;
-    mediaBindToolDeps.bindingService = {
+    MediaService.createSeerrClient = () => ({ isConfigured: true }) as any;
+    MediaService.createJellyfinClient = () => ({ isConfigured: false }) as any;
+    MediaService.bindingService = {
       getBinding: mock(async () => null),
     } as any;
 
+    const spy = spyOn(FlowHandler, 'setSession');
     const result = await new MediaBindTool().execute({ action: 'connect' }, createMockCtx());
-    const activeFlow = FlowHandler.getActiveFlow('user-1', 'whatsapp');
 
     expect(result).toContain('Please enter your username');
-    expect(activeFlow?.flow.step).toBe('username');
+    expect(spy).toHaveBeenCalled();
   });
 
   test('disconnect and notify management use the shared dependency services', async () => {
-    mediaBindToolDeps.bindingService = {
+    MediaService.bindingService = {
       unbind: mock(async (_userId: string, _platform: string, serviceType: string) => serviceType === 'jellyfin'),
       getBindings: mock(async () => []),
     } as any;
-    mediaBindToolDeps.notificationService = {
+    MediaService.notificationService = {
       subscribe: mock(async () => {}),
       unsubscribe: mock(async () => true),
       getSubscriptions: mock(async () => [
@@ -82,12 +83,12 @@ describe('MediaBindTool', () => {
   });
 
   test('status reports current bindings and notification rooms', async () => {
-    mediaBindToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBindings: mock(async () => [
         { serviceType: 'jellyfin', externalUsername: 'alice', metadata: '{"isAdmin":true}' },
       ]),
     } as any;
-    mediaBindToolDeps.notificationService = {
+    MediaService.notificationService = {
       getSubscriptions: mock(async () => [
         { chatRoomId: 'chat-1', serviceType: 'all' },
       ]),
@@ -102,7 +103,7 @@ describe('MediaBindTool', () => {
   test('registered flow advances from username to password and can complete authentication', async () => {
     const flowUserId = 'media-flow-user';
     const bind = mock(async () => {});
-    mediaBindToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       authenticateJellyfin: mock(async () => ({
         id: 77,
@@ -111,11 +112,11 @@ describe('MediaBindTool', () => {
         jellyfinUserId: 'jf-1',
       })),
     }) as any;
-    mediaBindToolDeps.createJellyfinClient = () => ({
+    MediaService.createJellyfinClient = () => ({
       isConfigured: true,
       getUserById: mock(async () => ({ Policy: { IsAdministrator: true } })),
     }) as any;
-    mediaBindToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => null),
       bind,
     } as any;

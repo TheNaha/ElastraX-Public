@@ -138,7 +138,7 @@ describe('checkPermissions', () => {
 
   test('should return false if group metadata fetch fails', async () => {
     mockSock.groupMetadata = async () => { throw new Error('Failed'); };
-    const result = await checkPermissions(mockSock, chatId, senderId, true, 'admin');
+    const result = await checkPermissions(mockSock, 'uncached-chat', senderId, true, 'admin');
     expect(result).toBe(false);
   });
 

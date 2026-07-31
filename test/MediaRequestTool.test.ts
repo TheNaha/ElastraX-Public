@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
-import { MediaRequestTool, mediaRequestToolDeps } from '../src/tools/MediaRequestTool';
+import { MediaRequestTool } from '../src/tools/MediaRequestTool';
+import { MediaService } from '../src/utils/MediaService';
 
-const originalCreateSeerrClient = mediaRequestToolDeps.createSeerrClient;
-const originalBindingService = mediaRequestToolDeps.bindingService;
+const originalCreateSeerrClient = MediaService.createSeerrClient;
+const originalBindingService = MediaService.bindingService;
 
 const createMockCtx = (): MessageContext => ({
   platform: 'discord',
@@ -24,20 +25,20 @@ const createMockCtx = (): MessageContext => ({
 
 describe('MediaRequestTool', () => {
   afterEach(() => {
-    mediaRequestToolDeps.createSeerrClient = originalCreateSeerrClient;
-    mediaRequestToolDeps.bindingService = originalBindingService;
+    MediaService.createSeerrClient = originalCreateSeerrClient;
+    MediaService.bindingService = originalBindingService;
   });
 
   test('returns a configuration message when Seerr is unavailable', async () => {
-    mediaRequestToolDeps.createSeerrClient = () => ({ isConfigured: false }) as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: false }) as any;
 
     const result = await new MediaRequestTool().execute({ action: 'request', media_type: 'movie', media_id: 1 }, createMockCtx());
     expect(result).toContain('not configured');
   });
 
   test('requires a linked account before submitting requests', async () => {
-    mediaRequestToolDeps.createSeerrClient = () => ({ isConfigured: true }) as any;
-    mediaRequestToolDeps.bindingService = {
+    MediaService.createSeerrClient = () => ({ isConfigured: true }) as any;
+    MediaService.bindingService = {
       getBinding: mock(async () => null),
     } as any;
 
@@ -58,11 +59,11 @@ describe('MediaRequestTool', () => {
       requestedBy: { id: 12, displayName: 'Alice' },
       createdAt: '2026-03-18T00:00:00.000Z',
     }));
-    mediaRequestToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       createRequest,
     }) as any;
-    mediaRequestToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => ({ externalUserId: '12' })),
     } as any;
 
@@ -76,7 +77,7 @@ describe('MediaRequestTool', () => {
   });
 
   test('returns request status details', async () => {
-    mediaRequestToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       getRequestById: mock(async () => ({
         id: 55,
@@ -94,10 +95,10 @@ describe('MediaRequestTool', () => {
   });
 
   test('lists request history and handles empty histories', async () => {
-    mediaRequestToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => ({ externalUserId: '12' })),
     } as any;
-    mediaRequestToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       getRequests: mock(async () => ({ results: [] })),
     }) as any;
@@ -105,7 +106,7 @@ describe('MediaRequestTool', () => {
     const emptyResult = await new MediaRequestTool().execute({ action: 'my-requests' }, createMockCtx());
     expect(emptyResult).toContain('no media requests');
 
-    mediaRequestToolDeps.createSeerrClient = () => ({
+    MediaService.createSeerrClient = () => ({
       isConfigured: true,
       getRequests: mock(async () => ({
         results: [{

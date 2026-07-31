@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
-import { MediaLibraryTool, mediaLibraryToolDeps } from '../src/tools/MediaLibraryTool';
+import { MediaLibraryTool } from '../src/tools/MediaLibraryTool';
+import { MediaService } from '../src/utils/MediaService';
 
-const originalCreateJellyfinClient = mediaLibraryToolDeps.createJellyfinClient;
-const originalBindingService = mediaLibraryToolDeps.bindingService;
+const originalCreateJellyfinClient = MediaService.createJellyfinClient;
+const originalBindingService = MediaService.bindingService;
 
 const createMockCtx = (): MessageContext => ({
   platform: 'discord',
@@ -24,22 +25,22 @@ const createMockCtx = (): MessageContext => ({
 
 describe('MediaLibraryTool', () => {
   afterEach(() => {
-    mediaLibraryToolDeps.createJellyfinClient = originalCreateJellyfinClient;
-    mediaLibraryToolDeps.bindingService = originalBindingService;
+    MediaService.createJellyfinClient = originalCreateJellyfinClient;
+    MediaService.bindingService = originalBindingService;
   });
 
   test('returns a configuration message when Jellyfin is unavailable', async () => {
-    mediaLibraryToolDeps.createJellyfinClient = () => ({ isConfigured: false }) as any;
+    MediaService.createJellyfinClient = () => ({ isConfigured: false }) as any;
 
     const result = await new MediaLibraryTool().execute({ action: 'search', query: 'matrix' }, createMockCtx());
     expect(result).toContain('not configured');
   });
 
   test('search returns formatted library results', async () => {
-    mediaLibraryToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => ({ externalUserId: 'user-jf' })),
     } as any;
-    mediaLibraryToolDeps.createJellyfinClient = () => ({
+    MediaService.createJellyfinClient = () => ({
       isConfigured: true,
       searchItems: mock(async () => ({
         Items: [{ Id: 'item-1', Name: 'The Matrix', Type: 'Movie', ProductionYear: 1999 }],
@@ -54,10 +55,10 @@ describe('MediaLibraryTool', () => {
   });
 
   test('latest returns recent additions', async () => {
-    mediaLibraryToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => ({ externalUserId: 'user-jf' })),
     } as any;
-    mediaLibraryToolDeps.createJellyfinClient = () => ({
+    MediaService.createJellyfinClient = () => ({
       isConfigured: true,
       getLatestMedia: mock(async () => [
         { Id: 'item-2', Name: 'Silo', Type: 'Series', ProductionYear: 2025 },
@@ -71,10 +72,10 @@ describe('MediaLibraryTool', () => {
   });
 
   test('link and info actions return direct watch details', async () => {
-    mediaLibraryToolDeps.bindingService = {
+    MediaService.bindingService = {
       getBinding: mock(async () => ({ externalUserId: 'user-jf' })),
     } as any;
-    mediaLibraryToolDeps.createJellyfinClient = () => ({
+    MediaService.createJellyfinClient = () => ({
       isConfigured: true,
       getWatchLink: mock((id: string) => `https://watch.example/${id}`),
       getItem: mock(async () => ({
