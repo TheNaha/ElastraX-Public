@@ -69,10 +69,7 @@ export class SoftwareSearchTool extends BaseTool<ToolArgs & { query?: string }> 
       'soft98.ir'
     ];
     
-    // Do a general search to include untrusted sites
-    const fullQuery = query;
-
-    log.debug({ query: fullQuery }, 'Software search initiated');
+    log.debug({ query }, 'Software search initiated');
 
     try {
       let baseUrl = this.searxngUrl;
@@ -80,28 +77,56 @@ export class SoftwareSearchTool extends BaseTool<ToolArgs & { query?: string }> 
         baseUrl = baseUrl.endsWith('/') ? baseUrl + 'search' : baseUrl + '/search';
       }
       
-      const url = new URL(baseUrl);
-      url.search = new URLSearchParams({ q: fullQuery, format: 'json' }).toString();
+      const siteQuery = trustedSites.map(site => `site:${site}`).join(' OR ');
+      const trustedQuery = `${query} (${siteQuery})`;
+      const generalQuery = `${query} crack OR patch OR keygen OR torrent OR download`;
 
-      const response = await fetch(url.toString(), {
+      const trustedUrl = new URL(baseUrl);
+      trustedUrl.search = new URLSearchParams({ q: trustedQuery, format: 'json' }).toString();
+      
+      const generalUrl = new URL(baseUrl);
+      generalUrl.search = new URLSearchParams({ q: generalQuery, format: 'json' }).toString();
+
+      const fetchOpts = {
         headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
           'X-Forwarded-For': '127.0.0.1',
           'X-Real-IP': '127.0.0.1'
         },
         signal: AbortSignal.timeout(10000)
-      });
+      };
 
-      if (!response.ok) throw new Error(`SearXNG returned HTTP ${response.status}`);
+      const [trustedRes, generalRes] = await Promise.all([
+        fetch(trustedUrl.toString(), fetchOpts).catch(() => null),
+        fetch(generalUrl.toString(), fetchOpts).catch(() => null)
+      ]);
 
-      const rawText = await response.text();
-      const data = JSON.parse(rawText) as SearchResponse;
-      
-      if (!data.results || data.results.length === 0) {
+      let allResults: SearchResult[] = [];
+
+      if (trustedRes && trustedRes.ok) {
+        const data = await trustedRes.json() as SearchResponse;
+        if (data.results) allResults.push(...data.results);
+      }
+      if (generalRes && generalRes.ok) {
+        const data = await generalRes.json() as SearchResponse;
+        if (data.results) allResults.push(...data.results);
+      }
+
+      // Deduplicate by URL
+      const uniqueResults = [];
+      const seenUrls = new Set();
+      for (const res of allResults) {
+        if (res.url && !seenUrls.has(res.url)) {
+          seenUrls.add(res.url);
+          uniqueResults.push(res);
+        }
+      }
+
+      if (uniqueResults.length === 0) {
         return `No software downloads found for: "${query}".`;
       }
 
-      const textResults = data.results.slice(0, 10).map((item, idx) => {
+      const textResults = uniqueResults.slice(0, 15).map((item, idx) => {
         const itemUrl = item.url || '';
         const isTrusted = trustedSites.some(site => itemUrl.includes(site));
         const status = isTrusted ? '[✅ TRUSTED]' : '[⚠️ UNTRUSTED - USE CAUTION]';
