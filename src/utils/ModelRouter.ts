@@ -307,6 +307,7 @@ export class ModelRouter {
     let lastError: Error | null = null;
     const verbose = process.env.AI_VERBOSE_LOGS === 'true';
     const orderedProviders = this.getCandidateProviders(tier);
+    let latency = 0;
 
     for (const provider of orderedProviders) {
       try {
@@ -331,7 +332,7 @@ export class ModelRouter {
 
         const start = Date.now();
         const result = await provider.client.chatCompletion(sanitizedMessages, tools, temperature, resolvedMaxTokens);
-        const latency = Date.now() - start;
+        latency = Date.now() - start;
 
         if (verbose) {
           logger.info({
@@ -374,7 +375,7 @@ export class ModelRouter {
         const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
         this.markProviderFailure(provider.name);
-        healthMetrics.recordLLMRequest(provider.name, 0, false);
+        healthMetrics.recordLLMRequest(provider.name, latency, false);
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Provider failed, trying next');
       }
     }

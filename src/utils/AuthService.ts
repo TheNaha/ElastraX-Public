@@ -97,6 +97,8 @@ export class AuthService {
 
   static setDepsForTesting(deps: AuthDeps | null): void {
     this.deps = deps ?? { db, userRoles, rolePrivileges };
+    this.dbCache.clear();
+    this.cacheLoadedAt = 0;
   }
 
   // ── Roles API ──────────────────────────────────────────────────────────
@@ -336,7 +338,7 @@ export class AuthService {
     const uncachedRoles = roles.filter(
       (r) => !this.dbCache.has(r) || Date.now() - this.cacheLoadedAt >= this.CACHE_TTL_MS,
     );
-    if (uncachedRoles.length > 1) {
+    if (uncachedRoles.length >= 1) {
       try {
         const rows = await db
           .select()

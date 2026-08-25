@@ -56,6 +56,10 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
 
     const isFromMe = ctx.rawMessage?.key?.fromMe;
 
+    const rawTs = (ctx.rawMessage as { messageTimestamp?: unknown })?.messageTimestamp;
+    const tsSeconds = typeof rawTs === 'string' ? Number(rawTs) : typeof rawTs === 'number' ? rawTs : undefined;
+    const createdAt = tsSeconds && Number.isFinite(tsSeconds) ? new Date(tsSeconds * 1000) : new Date();
+
     messagePayloads.push({
       chatRoomId: ctx.chatId,
       providerMessageId: ctx.messageId,
@@ -68,7 +72,7 @@ export async function syncHistoricalDatabase(historicalMessages: MessageContext[
       // We just leave mediaPath null for historical messages until natively requested
       // We can record the mime type though.
       mimeType: ctx.text.length > 0 ? undefined : 'application/octet-stream', // heuristic
-      created_at: new Date(((ctx.rawMessage.messageTimestamp as number | undefined) || Date.now() / 1000) * 1000),
+      created_at: createdAt,
     });
   }
 

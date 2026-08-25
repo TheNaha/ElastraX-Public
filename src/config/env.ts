@@ -146,6 +146,15 @@ export function validateEnv(env: Record<string, string | undefined> = process.en
   validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
   validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors);
 
+  // V7.x: Optional configuration — validated only when present so startup never
+  // fails on unset optional vars, but catches typos in values that are set.
+  validatePositiveInteger(env.RATE_LIMIT_MESSAGES, 'RATE_LIMIT_MESSAGES', errors);
+  validatePositiveInteger(env.RATE_LIMIT_WINDOW_SEC, 'RATE_LIMIT_WINDOW_SEC', errors);
+  validatePositiveInteger(env.DOWNLOAD_MAX_MB, 'DOWNLOAD_MAX_MB', errors);
+  validatePositiveInteger(env.MEDIA_CLEANUP_INTERVAL_MS, 'MEDIA_CLEANUP_INTERVAL_MS', errors);
+  validatePositiveInteger(env.MEDIA_RETENTION_HOURS, 'MEDIA_RETENTION_HOURS', errors);
+  validateBoolean(env.AI_STREAMING, 'AI_STREAMING', errors);
+
   // V7.15: Media integration (optional — only validate format when set)
   validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors);
   validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors);

@@ -53,7 +53,7 @@ export class MemoryTool extends BaseTool {
     switch (args.action) {
       case 'store': {
         if (!args.content) return 'Error: content is required.';
-        const id = crypto.randomBytes(4).toString('hex');
+        const id = crypto.randomBytes(8).toString('hex');
         await db.insert(memories).values({
           id,
           ownerId,

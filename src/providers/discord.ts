@@ -317,8 +317,12 @@ export class DiscordProvider implements BotProvider {
         }
       },
 
-      reply: async (replyText: string, _options?: ReplyOptions) => {
-        await msg.reply({ content: replyText });
+      reply: async (replyText: string, options?: ReplyOptions) => {
+        const payload: { content: string; mentions?: string[] } = { content: replyText };
+        if (options?.mentions && options.mentions.length > 0) {
+          payload.mentions = options.mentions;
+        }
+        await msg.reply(payload);
       },
 
       sendTyping: async () => {

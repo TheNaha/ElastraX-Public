@@ -20,6 +20,7 @@ import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'WebSearchTool' });
+const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
 type WebSearchArgs = ToolArgs & {
   query?: string;
 };
@@ -92,18 +93,26 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
       });
       url.search = params.toString();
 
-      const response = await fetch(url.toString(), {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-          'X-Forwarded-For': '127.0.0.1',
-          'X-Real-IP': '127.0.0.1'
-        },
-        signal: AbortSignal.timeout(10000)
-      });
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 10000);
 
-      if (!response.ok) {
-        throw new Error(`SearXNG returned HTTP ${response.status}`);
-      }
+       let response: Response | undefined;
+       try {
+         response = await fetch(url.toString(), {
+           headers: {
+             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+             'X-Forwarded-For': '127.0.0.1',
+             'X-Real-IP': '127.0.0.1'
+           },
+           signal: controller.signal,
+         });
+       } finally {
+         clearTimeout(timeout);
+       }
+
+       if (!response || !response.ok) {
+         throw new Error('SearXNG returned no response or HTTP ' + (response?.status ?? 'unknown'));
+       }
 
       const rawText = await response.text();
       let data: SearchResponse;
@@ -116,7 +125,7 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
       
       if (!data.results || data.results.length === 0) {
         log.debug({ query }, 'No search results found');
-        return `No results found on the web for: ${query}`;
+         return `No results found on the web for: ${esc(query)}`;
       }
 
       log.debug({ query, resultCount: data.results.length }, 'Search results received');
@@ -126,10 +135,10 @@ export class WebSearchTool extends BaseTool<WebSearchArgs> {
         return ` • *[${idx + 1}] Title:* ${item.title || ''}\n   *URL:* ${item.url || ''}\n   *Excerpt:* ${item.content || item.snippet || ''}`;
       }).join('\n\n');
 
-      return `Search results for "${query}":\n\n${textResults}`;
+      return `Search results for "${esc(query)}":\n\n${textResults}`;
     } catch (err) {
       log.error({ err, query }, 'Web search failed');
-      return `Failed to search the web for "${query}" due to an internal error. Make sure the SearXNG instance is reachable.`;
+      return `Failed to search the web for "${esc(query)}" due to an internal error. Make sure the SearXNG instance is reachable.`;
     }
   }
 }

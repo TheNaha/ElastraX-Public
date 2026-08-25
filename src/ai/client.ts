@@ -40,6 +40,16 @@ import { getAIRequestConfig } from '../config/runtime';
 
 const log = logger.child({ module: 'AIClient' });
 
+/** Builds an AbortSignal with a timeout that works across Bun/Node versions. */
+function withTimeout(ms: number): AbortSignal {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  setTimeout(() => controller.abort(), ms);
+  return controller.signal;
+}
+
 /** Checks whether a string is a syntactically valid URL. */
 function isValidUrl(url: string): boolean {
   try {
@@ -75,7 +85,7 @@ export class AIClient {
   constructor(config?: AIClientConfig) {
     // If no URL is provided, it falls back to empty string or env var
     // Alternatively, for Google AI Studio (Gemini), use: "https://generativelanguage.googleapis.com/v1beta/openai/"
-    this.baseUrl = config?.baseUrl || process.env.AI_API_BASE_URL || '';
+    this.baseUrl = config?.baseUrl ?? process.env.AI_API_BASE_URL ?? '';
     this.apiKey = config?.apiKey || process.env.AI_API_KEY || '';
     // Model name defaults to the Llama 3 model deployed on Modal. 
     // If using Gemini, set this to e.g., "gemini-2.5-flash"
@@ -180,7 +190,7 @@ export class AIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(getAIRequestConfig().timeoutMs),
+      signal: withTimeout(getAIRequestConfig().timeoutMs),
     });
 
     const elapsed = Date.now() - startTime;
@@ -225,7 +235,7 @@ export class AIClient {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(getAIRequestConfig(process.env, true).timeoutMs),
+      signal: withTimeout(getAIRequestConfig(process.env, true).timeoutMs),
     });
 
     if (!response.ok) {
@@ -255,8 +265,11 @@ export class AIClient {
           const lines = part.split('\n');
           let dataStr = '';
           for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              dataStr += line.slice(6);
+            // Capture only the first SSE data line per event to avoid
+            // concatenating partial fragments into invalid JSON.
+            if (line.startsWith('data: ') && !dataStr) {
+              dataStr = line.slice(6);
+              break;
             }
           }
 

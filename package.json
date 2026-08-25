@@ -20,7 +20,7 @@
     "@types/bun": "latest",
     "@types/node": "^22.13.4",
     "@types/qrcode-terminal": "^0.12.2",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^13.0.0",
     "drizzle-kit": "^0.30.4",
     "eslint-config-prettier": "^10.0.1",
     "typescript": "^5.7.3",

@@ -160,7 +160,7 @@ export function verifyGitHubSignature(payload: string, secret: string, signature
   const providedBuf = Buffer.from(signatureHeader);
 
   if (expectedBuf.length !== providedBuf.length) {
-    timingSafeEqual(expectedBuf, expectedBuf);
+    timingSafeEqual(Buffer.alloc(expectedBuf.length), Buffer.alloc(expectedBuf.length));
     return false;
   }
   return timingSafeEqual(expectedBuf, providedBuf);
@@ -170,7 +170,7 @@ export function safeSecretCompare(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   if (a.length !== b.length) {
-    timingSafeEqual(b, b);
+    timingSafeEqual(Buffer.alloc(a.length), Buffer.alloc(a.length));
     return false;
   }
   return timingSafeEqual(a, b);

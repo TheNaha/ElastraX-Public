@@ -31,23 +31,40 @@ export class WebhookServer {
     this.senders.set(platform, fn);
   }
 
+  private async withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+    });
+    try {
+      return await Promise.race([p, timeout]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
   private async send(roomId: string, text: string, platform?: string): Promise<void> {
+    const SEND_TIMEOUT_MS = 15000;
+    const deliver = (name: string, fn: SendFn) =>
+      this.withTimeout(fn(roomId, text, name), SEND_TIMEOUT_MS, `webhook:${name}`);
+
     if (platform && this.senders.has(platform)) {
-      return this.senders.get(platform)!(roomId, text, platform);
+      return deliver(platform, this.senders.get(platform)!);
     }
 
     if (roomId.includes('@g.us') || roomId.includes('@s.whatsapp.net')) {
       const wa = this.senders.get('whatsapp');
-      if (wa) return wa(roomId, text);
+      if (wa) return deliver('whatsapp', wa);
     }
 
     if (/^\d+$/.test(roomId)) {
       const dc = this.senders.get('discord');
-      if (dc) return dc(roomId, text);
+      if (dc) return deliver('discord', dc);
     }
 
-    const fallback = this.senders.values().next().value;
-    if (fallback) return (fallback as SendFn)(roomId, text);
+    // Prefer an explicit 'whatsapp' sender; otherwise fall back to the first registered.
+    const fallbackName = this.senders.has('whatsapp') ? 'whatsapp' : this.senders.keys().next().value;
+    if (fallbackName) return deliver(fallbackName, this.senders.get(fallbackName)!);
 
     throw new Error(`No sender available for room_id: ${roomId}`);
   }
@@ -220,6 +237,13 @@ export class WebhookServer {
 
     this.server = Bun.serve({
       port,
+      error(error) {
+        log.error({ err: error }, 'Unhandled webhook server error');
+        return new Response(JSON.stringify({ error: 'Internal server error' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      },
       fetch: async (req, server) => {
         const url = new URL(req.url);
         const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()

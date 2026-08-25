@@ -127,7 +127,7 @@ export async function reloadRegistry() {
   toolsList.push(new FindToolsTool());
 
   // ── Dynamic Plugins ───────────────────────────────────────────────────────────
-  const PLUGINS_DIR = join(process.cwd(), 'src', 'plugins');
+  const PLUGINS_DIR = join(import.meta.dir, '..', 'plugins');
   if (!existsSync(PLUGINS_DIR)) {
     mkdirSync(PLUGINS_DIR, { recursive: true });
   }
@@ -139,27 +139,30 @@ export async function reloadRegistry() {
       // Use cache busting for hot reload
       const module = await import(`${pluginPath}?update=${Date.now()}`);
       
-      for (const key of Object.keys(module)) {
-        const exported = module[key];
-        if (typeof exported === 'function' && exported.prototype && exported.prototype instanceof BaseTool) {
-          const instance = new exported();
-          toolsList.push(instance);
-          log.info({ plugin: file, toolName: instance.name }, 'Loaded plugin tool');
-        }
-      }
+       const exportedValues = [module.default, ...Object.values(module)].filter(Boolean);
+       for (const exported of exportedValues) {
+         if (typeof exported === 'function' && exported.prototype && exported.prototype instanceof BaseTool) {
+           const instance = new exported();
+           toolsList.push(instance);
+           log.info({ plugin: file, toolName: instance.name }, 'Loaded plugin tool');
+         }
+       }
     } catch (err: unknown) {
       log.error({ err, file }, 'Failed to load plugin');
     }
   }
 
-  // Rebuild Maps
-  for (const tool of toolsList) {
-    toolsMap.set(tool.name, tool);
-    aliasMap.set(tool.name, tool);
-    for (const alias of tool.aliases) {
-      aliasMap.set(alias, tool);
-    }
-  }
+   // Rebuild Maps
+   for (const tool of toolsList) {
+     if (toolsMap.has(tool.name)) {
+       log.warn({ toolName: tool.name }, 'Duplicate tool name detected; later registration overrides earlier');
+     }
+     toolsMap.set(tool.name, tool);
+     aliasMap.set(tool.name, tool);
+     for (const alias of tool.aliases) {
+       aliasMap.set(alias, tool);
+     }
+   }
 
   // Rebuild Search Index
   discoverableTools = toolsList.filter((t) => !t.alwaysLoad);

@@ -76,7 +76,7 @@ export async function requestTranscription(
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: apiKey ? `Bearer ${apiKey}` : '',
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
     },
     body: JSON.stringify({
       audio_base64: buffer.toString('base64'),

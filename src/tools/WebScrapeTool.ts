@@ -1,10 +1,17 @@
-import { BaseTool, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 
 const log = logger.child({ module: 'WebScrapeTool' });
+const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
 
-export class WebScrapeTool extends BaseTool {
+type WebScrapeArgs = ToolArgs & {
+  url?: string;
+  query?: string;
+  prompt?: string;
+};
+
+export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
   readonly name = 'web_scrape';
   readonly description = 'Read and extract the full text content of a webpage (news article, blog, docs, etc) from a URL.';
   readonly aliases = ['read', 'scrape'];
@@ -26,6 +33,8 @@ export class WebScrapeTool extends BaseTool {
           type: 'object',
           properties: {
             url: { type: 'string', description: 'The absolute URL to read' },
+            query: { type: 'string', description: 'Optional search query context for the scrape' },
+            prompt: { type: 'string', description: 'Optional instructions for extracting/summarizing content' },
           },
           required: ['url'],
         },
@@ -33,7 +42,8 @@ export class WebScrapeTool extends BaseTool {
     };
   }
 
-  async execute(args: { url?: string }, _ctx: MessageContext): Promise<string> {
+  async execute(args: WebScrapeArgs, _ctx: MessageContext): Promise<string> {
+    const query = args.query;
     if (!args.url) return 'Error: URL is required.';
     try {
       const url = new URL(args.url);
@@ -49,7 +59,15 @@ export class WebScrapeTool extends BaseTool {
         headers['Authorization'] = `Bearer ${process.env.JINA_API_KEY}`;
       }
 
-      const response = await fetch(`https://r.jina.ai/${url.toString()}`, { headers });
+      const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(15000)
+        : (() => {
+          const controller = new AbortController();
+          setTimeout(() => controller.abort(), 15000);
+          return controller.signal;
+        })();
+
+      const response = await fetch(`https://r.jina.ai/${url.toString()}`, { headers, signal });
       if (!response.ok) return `Error fetching URL: HTTP ${response.status}`;
       const text = await response.text();
       
@@ -59,7 +77,9 @@ export class WebScrapeTool extends BaseTool {
       }
       return text;
     } catch (e) {
-      return `Error scraping URL: ${e instanceof Error ? e.message : String(e)}`;
+      const msg = e instanceof Error ? e.message : String(e);
+      const qPart = query ? ` for "${esc(query)}"` : '';
+      return `Error scraping URL${qPart}: ${msg}`;
     }
   }
 }

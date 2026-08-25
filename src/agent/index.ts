@@ -924,7 +924,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           if (toolCallDeltas.size > 0) {
             if (sentKey && !streamingFailed) {
               await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(() => {});
-              streamedResponseSent = false;
+              // Keep streamedResponseSent === true: sentKey remains the live message
+              // and is edited with the final text below, so the final ctx.reply is skipped.
             } else if (streamingFailed) {
               streamedResponseSent = false;
             }
@@ -962,7 +963,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
           // Stream produced only text — we are done
           isDone = true;
-          finalAiResponseText = accumulated.trim() || internalErrorText;
+          finalAiResponseText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || internalErrorText;
 
           // Final edit to remove cursor indicator
           if (sentKey && finalAiResponseText !== internalErrorText && !streamingFailed) {

@@ -49,17 +49,42 @@ export abstract class BaseHttpClient {
       ...extraHeaders,
     };
 
-    if (body !== undefined && !headers['Content-Type']) {
-      headers['Content-Type'] = 'application/json';
+    let serializedBody: FormData | URLSearchParams | Blob | string | undefined;
+    if (body !== undefined) {
+      if (typeof body === 'string') {
+        serializedBody = body;
+      } else if (typeof body === 'object' && body !== null) {
+        if (body instanceof FormData || body instanceof URLSearchParams || body instanceof Blob) {
+          serializedBody = body;
+        } else if (Buffer.isBuffer(body)) {
+          serializedBody = body as unknown as FormData;
+        } else {
+          if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+          serializedBody = JSON.stringify(body);
+        }
+      } else {
+        // boolean / number / bigint — JSON-encode
+        if (!headers['Content-Type']) headers['Content-Type'] = 'application/json';
+        serializedBody = JSON.stringify(body);
+      }
     }
 
     this.log.debug({ method, path }, 'API request');
 
+    const signal =
+      typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(this.defaultTimeoutMs)
+        : (() => {
+            const controller = new AbortController();
+            setTimeout(() => controller.abort(), this.defaultTimeoutMs);
+            return controller.signal;
+          })();
+
     const resp = await fetch(url, {
       method,
       headers,
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-      signal: AbortSignal.timeout(this.defaultTimeoutMs),
+      body: serializedBody,
+      signal,
     });
 
     if (!resp.ok) {

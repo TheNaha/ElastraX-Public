@@ -93,11 +93,11 @@ function isProviderMessageKey(value: unknown): value is ProviderMessageKey {
   }
 
   if (!('remoteJid' in value)) {
-    return true;
+    return false;
   }
 
   const remoteJid = (value as { remoteJid?: unknown }).remoteJid;
-  return typeof remoteJid === 'string' || remoteJid === null || typeof remoteJid === 'undefined';
+  return typeof remoteJid === 'string' || remoteJid === null || remoteJid === undefined;
 }
 
 export const whatsAppProviderDeps = {
@@ -298,7 +298,7 @@ export class WhatsAppProvider implements BotProvider {
 
       const contexts = (await Promise.all(
         histMsgs.map(async (msg) => {
-          if (!msg.message) return null;
+          if (!msg.message || msg.key.fromMe) return null;
           try {
             return await this.createContext(msg, true); // true = skipMediaDownload
           } catch {

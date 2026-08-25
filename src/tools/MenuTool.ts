@@ -118,8 +118,8 @@ export class MenuTool extends BaseTool<MenuArgs> {
       const required = tool.definition.function.parameters.required || [];
 
       // ⚡ Bolt: Cache Object.entries and convert lookup arrays into a Set to replace O(N) includes() checks with O(1) has() lookups
-      const propsEntries = Object.entries(props);
       const requiredSet = new Set(required);
+      const propsEntries = Object.entries(props).sort((a, b) => Number(requiredSet.has(b[0])) - Number(requiredSet.has(a[0])));
 
       let usage = `/${tool.name}`;
       for (const [key] of propsEntries) {

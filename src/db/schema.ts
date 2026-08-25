@@ -35,7 +35,9 @@ export const chatRooms = sqliteTable('chat_rooms', {
   longTermMemory: integer('long_term_memory', { mode: 'boolean' }),
   
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-});
+}, (table) => ({
+  platformIdx: index('chat_rooms_platform_idx').on(table.platform),
+}));
 
 export const messages = sqliteTable('messages', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -109,6 +111,7 @@ export const reminders = sqliteTable('reminders', {
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
   remindAtIdx: index('reminders_remind_at_idx').on(table.remindAt, table.isSent),
+  senderIdIdx: index('reminders_sender_id_idx').on(table.senderId),
 }));
 
 export type Reminder = typeof reminders.$inferSelect;

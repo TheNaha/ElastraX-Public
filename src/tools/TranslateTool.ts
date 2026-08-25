@@ -66,7 +66,7 @@ const LANGUAGE_MAP: Record<string, string> = {
   'vietnamese': 'Vietnamese',
   'ms': 'Malay',
   'malay': 'Malay',
-  'my': 'Malay',
+  'my': 'Burmese',
 };
 type TranslateArgs = ToolArgs & {
   query?: string;

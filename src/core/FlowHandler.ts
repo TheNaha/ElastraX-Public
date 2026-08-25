@@ -107,7 +107,7 @@ export class FlowHandler {
   private static async _setSession(userId: string, flowId: string, flowData: Omit<FlowSession, 'expiresAt'>, platform: string, ttlSeconds: number) {
     const key = `${platform}:${userId}`;
     const rows = await db.select().from(flowSessions).where(eq(flowSessions.id, key));
-    let session: UserSession = rows.length > 0 ? JSON.parse(rows[0].data) as UserSession : { activeFlow: null, flows: {} };
+    const session: UserSession = rows.length > 0 ? JSON.parse(rows[0].data) as UserSession : { activeFlow: null, flows: {} };
     
     session.flows[flowId] = {
       ...flowData,

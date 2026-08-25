@@ -1,19 +1,9 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { searchSearXng } from './searchUtils';
 
 const log = logger.child({ module: 'GameSearchTool' });
-
-type SearchResult = {
-  title?: string;
-  url?: string;
-  content?: string;
-  snippet?: string;
-};
-
-type SearchResponse = {
-  results?: SearchResult[];
-};
 
 export class GameSearchTool extends BaseTool<ToolArgs & { query?: string }> {
   readonly name = 'game_search';
@@ -76,67 +66,23 @@ export class GameSearchTool extends BaseTool<ToolArgs & { query?: string }> {
       'steamunderground.net',
       'ovagames.com'
     ];
-    
+
     log.debug({ query }, 'Game search initiated');
 
     try {
-      let baseUrl = this.searxngUrl;
-      if (!baseUrl.endsWith('/search') && !baseUrl.endsWith('/search/')) {
-        baseUrl = baseUrl.endsWith('/') ? baseUrl + 'search' : baseUrl + '/search';
-      }
-      
-      const siteQuery = trustedSites.map(site => `site:${site}`).join(' OR ');
-      const trustedQuery = `${query} (${siteQuery})`;
-      const generalQuery = `${query} crack OR repack OR torrent OR download`;
-
-      const trustedUrl = new URL(baseUrl);
-      trustedUrl.search = new URLSearchParams({ q: trustedQuery, format: 'json' }).toString();
-      
-      const generalUrl = new URL(baseUrl);
-      generalUrl.search = new URLSearchParams({ q: generalQuery, format: 'json' }).toString();
-
-      const fetchOpts = {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-          'X-Forwarded-For': '127.0.0.1',
-          'X-Real-IP': '127.0.0.1'
-        },
-        signal: AbortSignal.timeout(10000)
-      };
-
-      const [trustedRes, generalRes] = await Promise.all([
-        fetch(trustedUrl.toString(), fetchOpts).catch(() => null),
-        fetch(generalUrl.toString(), fetchOpts).catch(() => null)
-      ]);
-
-      let allResults: SearchResult[] = [];
-
-      if (trustedRes && trustedRes.ok) {
-        const data = await trustedRes.json() as SearchResponse;
-        if (data.results) allResults.push(...data.results);
-      }
-      if (generalRes && generalRes.ok) {
-        const data = await generalRes.json() as SearchResponse;
-        if (data.results) allResults.push(...data.results);
-      }
-
-      // Deduplicate by URL
-      const uniqueResults = [];
-      const seenUrls = new Set();
-      for (const res of allResults) {
-        if (res.url && !seenUrls.has(res.url)) {
-          seenUrls.add(res.url);
-          uniqueResults.push(res);
-        }
-      }
+      const uniqueResults = await searchSearXng(query, this.searxngUrl, {
+        trustedSites,
+        generalQuerySuffix: 'crack OR repack OR torrent OR download',
+        maxResults: 15,
+      });
 
       if (uniqueResults.length === 0) {
         return `No game downloads found for: "${query}".`;
       }
 
-      const textResults = uniqueResults.slice(0, 15).map((item, idx) => {
+      const textResults = uniqueResults.map((item, idx) => {
         const itemUrl = item.url || '';
-        const isTrusted = trustedSites.some(site => itemUrl.includes(site));
+        const isTrusted = trustedSites.some((site) => itemUrl.includes(site));
         const status = isTrusted ? '[✅ TRUSTED]' : '[⚠️ UNTRUSTED - USE CAUTION]';
         return ` • *[${idx + 1}] ${status} ${item.title || 'Unknown'}*\n   *URL:* ${itemUrl}\n   *Info:* ${item.content || item.snippet || ''}`;
       }).join('\n\n');
