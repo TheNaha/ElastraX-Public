@@ -72,3 +72,7 @@ data/
 #Misc
 qwenreadme.md
 .cptr
+
+# Local tooling & stray artifacts
+.opencode/
+test-results.txt

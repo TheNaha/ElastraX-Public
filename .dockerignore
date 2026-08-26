@@ -1,0 +1,23 @@
+# Secrets & live state — never bake into build context / image layers
+.env
+.env.*
+data/
+drizzle/*.db
+
+# Git & local tooling
+.git
+.gitignore
+.opencode/
+.github/
+
+# Dependencies (installed inside the image)
+node_modules/
+
+# Docs, tests & artifacts not needed for the image build
+test/
+docs/
+modal/
+scripts/
+test-results.txt
+Dockerfile
+docker-compose.yml

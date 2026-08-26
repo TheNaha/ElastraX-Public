@@ -7,6 +7,7 @@
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "lint": "bun x eslint src test",
+    "typecheck": "tsc --noEmit",
     "test": "bun test test/",
     "test:coverage": "bun test --coverage test/",
     "db:generate": "bun x drizzle-kit generate",
@@ -25,9 +26,6 @@
     "eslint-config-prettier": "^10.0.1",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.24.1"
-  },
-  "peerDependencies": {
-    "typescript": "^5.0.0"
   },
   "dependencies": {
     "@hapi/boom": "^10.0.1",

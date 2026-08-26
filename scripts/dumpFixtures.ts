@@ -2,7 +2,7 @@
 /**
  * scripts/dumpFixtures.ts
  *
- * Standalone script:  bun run fixtures:dump
+ * Standalone script:  bun run fixtures:dump [--force]
  *
  * Reads every `raw_message` from the SQLite database, runs each through
  * `parseWhatsAppMessage()`, then writes one representative JSON fixture per
@@ -28,6 +28,7 @@ import { existsSync } from 'fs';
 
 // ─── Config ──────────────────────────────────────────────────────────────────
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
+const FORCE = process.argv.includes('--force');
 
 /**
  * Strip large binary fields that make fixtures unreadable and bloat the repo.
@@ -81,7 +82,7 @@ async function main() {
     const clean = stripBlobs(raw);
 
     // Don't overwrite if already exists AND looks externally managed (has no URL field)
-    if (existsSync(filepath)) {
+    if (existsSync(filepath) && !FORCE) {
       skipped.push(filename);
       continue;
     }

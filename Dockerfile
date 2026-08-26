@@ -8,7 +8,7 @@
 # ───────────────────────────────────────────────────────────────────────
 
 # ── Stage 1: Fetch external binaries ────────────────────────────────────
-FROM oven/bun:1 AS fetch
+FROM oven/bun:1.3 AS fetch
 ARG TARGETARCH
 RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
@@ -41,7 +41,7 @@ RUN set -eux; \
 	rm -rf /tmp/ffmpeg.tar.xz "$FFMPEG_DIR"
 
 # ── Stage 2: Install npm dependencies ──────────────────────────────────
-FROM oven/bun:1 AS install
+FROM oven/bun:1.3 AS install
 # better-sqlite3 (devDependency) needs native build tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
 		python3 build-essential pkg-config \
@@ -58,7 +58,7 @@ COPY package.json bun.lock /temp/prod/
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 # ── Stage 3: Pre-release (source + dev deps for optional tests) ────────
-FROM oven/bun:1 AS prerelease
+FROM oven/bun:1.3 AS prerelease
 WORKDIR /usr/src/app
 COPY --from=install /temp/dev/node_modules node_modules
 COPY . .
@@ -68,7 +68,7 @@ ENV NODE_ENV=production
 # RUN bun run build
 
 # ── Stage 4: Final runtime image ──────────────────────────────────────
-FROM oven/bun:1 AS release
+FROM oven/bun:1.3 AS release
 RUN set -eux; \
 	export DEBIAN_FRONTEND=noninteractive; \
 	apt-get update; \
