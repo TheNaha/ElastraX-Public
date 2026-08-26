@@ -1,4 +1,4 @@
-# ElastraX v7.16
+# ElastraX v7
 
 A multi-platform, general-purpose hybrid bot with conversational AI, built on Bun.
 
@@ -11,7 +11,7 @@ For a deep dive into the architecture, configuration, and deployment, please see
 - **Agentic Framework**: The bot acts as an AI conversational agent first. It can dynamically use tools (like Web Search) to answer your questions.
 - **Explicit Commands**: Supports direct commands like `/search` that route directly to the underlying tools without LLM mediation.
 - **Multi-Platform Ready**: Designed with a unified `MessageContext` wrapper. Supports WhatsApp (Baileys v7) and Discord.
-- **OpenAI Compatible**: Connects to any OpenAI-compatible endpoint. Includes scripts to deploy a private Llama 3 instance on Modal GPUs. Google AI Studio (Gemini) is also natively supported out of the box!
+- **OpenAI Compatible**: Connects to any OpenAI-compatible endpoint. Includes Modal scripts to deploy a private Qwen3-Omni inference server (vLLM). Google AI Studio (Gemini) is also natively supported out of the box!
 - **State Persistence**: Uses SQLite and Drizzle ORM to maintain chat room conversations for the LLM context.
 - **Long-Term Memory (RAG)**: Automatically stores and retrieves user facts using a dedicated memory database table, giving the bot true persistent context.
 - **Hybrid UX**: Every capability is available via slash-command and conversational tool-calling.
@@ -75,7 +75,7 @@ AI_PROVIDERS=modal,gemini,ollama
 
 AI_MODAL_BASE_URL=https://...
 AI_MODAL_API_KEY=...
-AI_MODAL_MODEL=meta-llama/Meta-Llama-3-8B-Instruct
+AI_MODAL_MODEL=cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit
 
 AI_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
 AI_GEMINI_API_KEY=...
@@ -111,6 +111,11 @@ WEBHOOK_SECRET=your_shared_secret
 Auth behavior:
 - Generic sources: send secret via `x-webhook-secret` header, JSON `secret`, or `?secret=` query.
 - GitHub webhooks: use `X-Hub-Signature-256` HMAC with `WEBHOOK_SECRET`.
+
+Reachability notes:
+- `GET http://<host>:$WEBHOOK_PORT/health` must return `{"status":"ok",...}` — this is also the container healthcheck.
+- `docker-compose.yml` maps `${WEBHOOK_PORT:-3500}` on both sides; if you change the port in `.env`, recreate the container (`docker compose up -d`) so the mapping follows.
+- Compose attaches the bot to an **external** docker network named `proxy` (for reverse-proxy setups). Create it once per host: `docker network create proxy`.
 
 Canonical request format:
 ```http
