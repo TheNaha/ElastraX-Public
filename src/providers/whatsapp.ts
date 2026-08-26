@@ -116,6 +116,8 @@ export class WhatsAppProvider implements BotProvider {
   private sock: BaileysSocket | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Consecutive failed reconnects — drives exponential backoff. Reset on 'open'. */
+  private reconnectAttempts = 0;
   private starting = false;
   /**
    * The bot's own LID JID (e.g. "265841933336713@lid"), resolved once the
@@ -132,12 +134,17 @@ export class WhatsAppProvider implements BotProvider {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
+    // Exponential backoff: 1.5s, 3s, 6s, ... capped at 5 minutes. Prevents
+    // hammering WA servers (and flooding logs) during long outages.
+    const delay = Math.min(1500 * 2 ** this.reconnectAttempts, 300_000);
+    this.reconnectAttempts += 1;
+    logger.info({ delayMs: delay, attempt: this.reconnectAttempts }, '[WhatsApp] Scheduling reconnect');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.start().catch((err) => {
         logger.error({ err }, '[WhatsApp] Reconnect start failed');
       });
-    }, 1500);
+    }, delay);
   }
 
   /**
@@ -159,12 +166,17 @@ export class WhatsAppProvider implements BotProvider {
 
       const existingSock = this.sock;
       if (existingSock) {
+        // Detach BEFORE ending: Baileys emits connection.update{close}
+        // synchronously inside end(). If this.sock still pointed at the old
+        // socket, its own close-handler would pass the stale-guard, null
+        // this.sock and schedule a reconnect that kills the NEW socket —
+        // a connect/close churn loop.
+        this.sock = null;
         try {
           existingSock.end(new Error('Restarting WhatsApp socket'));
         } catch {
           // no-op
         }
-        this.sock = null;
       }
 
       const sock = whatsAppProviderDeps.createSocket({
@@ -215,6 +227,7 @@ export class WhatsAppProvider implements BotProvider {
         }
       } else if (connection === 'open') {
         logger.info('[WhatsApp] Connected successfully!');
+        this.reconnectAttempts = 0;
         // Resolve the bot's LID via Baileys' LID-PN mapping store.
         // In WA V7 sessions, contextInfo.participant uses LIDs so we need
         // the bot's own LID to correctly set `fromMe` on quoted messages.
