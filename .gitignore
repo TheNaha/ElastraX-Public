@@ -76,3 +76,4 @@ qwenreadme.md
 # Local tooling & stray artifacts
 .opencode/
 test-results.txt
+litestream.yml

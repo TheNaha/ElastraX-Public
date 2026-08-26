@@ -196,6 +196,26 @@ MEDIA_RETENTION_HOURS=72
 FIXTURE_DUMP_DIR=./data/fixtures/wa_messages
 ```
 
+## Backups
+
+Two complementary options, both safe to run while the bot is live:
+
+**On-demand snapshots** — consistent `VACUUM INTO` copies with keep-N pruning:
+```bash
+bun run db:backup          # writes ./data/backups/<name>-backup-<timestamp>.db (keeps 7)
+```
+Tune via `BACKUP_DIR` / `BACKUP_KEEP` in `.env`. Schedule it from host cron/systemd timers.
+
+**Continuous replication** — optional Litestream sidecar:
+```bash
+cp litestream.yml.example litestream.yml   # then edit bucket/region/credentials
+docker compose --profile backup up -d      # starts the litestream service
+# Restore on a fresh host (bot stopped):
+docker compose --profile backup run --rm litestream restore -o /data/bot.db /data/bot.db
+```
+
+Both read only from the database file; neither requires stopping the bot. Snapshots are standalone files (no WAL sidecars) and can be copied off-site directly.
+
 ## Testing
 
 Run unit tests via `bun`:

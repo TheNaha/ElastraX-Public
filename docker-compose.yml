@@ -24,6 +24,27 @@ services:
     networks:
        - proxy
     # We no longer need the command override since the Dockerfile CMD will run the compiled app
+
+  # ── Optional continuous backup sidecar (Litestream) ────────────────────────
+  # Start with: docker compose --profile backup up -d
+  # Requires LITESTREAM_REPLICA_URL in .env (s3://…, sftp://…, etc.) and
+  # litestream.yml mounted — see litestream.yml.example. Shares ./data so it can
+  # replicate data/bot.db (and read snapshots under data/backups) directly.
+  litestream:
+    image: litestream/litestream:latest
+    container_name: elastrax-litestream
+    profiles: ["backup"]
+    depends_on:
+      - bot
+    volumes:
+      - ./data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+       - proxy
+
 networks:
   proxy:
     external: true

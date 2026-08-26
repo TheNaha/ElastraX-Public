@@ -15,6 +15,7 @@
     "db:migrate": "bun x drizzle-kit migrate",
     "db:studio": "bun x drizzle-kit studio",
     "db:embed": "bun run scripts/backfillEmbeddings.ts",
+    "db:backup": "bun run scripts/dbBackup.ts",
     "fixtures:dump": "bun run scripts/dumpFixtures.ts"
   },
   "devDependencies": {
