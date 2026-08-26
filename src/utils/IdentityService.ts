@@ -24,6 +24,18 @@ function buildRowIdFilter(rowIds: number[]) {
   return sql`rowid in (${sql.join(rowIds.map((rowId) => sql`${rowId}`), sql`, `)})`;
 }
 
+/**
+ * Treat placeholder JIDs as unknown. WhatsApp emits bare "0@s.whatsapp.net"
+ * for anonymized group senders; storing them would collide across users once
+ * the UNIQUE indexes exist.
+ */
+function normalizeJid(jid: string | undefined): string | undefined {
+  if (!jid) return undefined;
+  const user = jid.split('@')[0] ?? '';
+  if (user === '' || user === '0') return undefined;
+  return jid;
+}
+
 export class IdentityService {
   private static deps: IdentityDeps = { db, userIdentities };
 
@@ -55,6 +67,10 @@ export class IdentityService {
     displayName?: string,
     platform: string = 'whatsapp',
   ): Promise<void> {
+    if (!lid && !pn) return;
+
+    lid = normalizeJid(lid);
+    pn = normalizeJid(pn);
     if (!lid && !pn) return;
 
     try {

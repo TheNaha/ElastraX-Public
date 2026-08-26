@@ -1,0 +1,1 @@
+ALTER TABLE `reminders` ADD `claimed_at` integer;
