@@ -27,7 +27,7 @@ const log = logger.child({ module: 'FFmpegConverter' });
 
 const ALLOWED_FLAGS = new Set([
   '-vcodec', '-acodec', '-vn', '-an', '-q:a', '-movflags',
-  '-vf', '-loop', '-ss', '-t', '-preset', '-vsync',
+  '-vf', '-loop', '-ss', '-t', '-preset', '-fps_mode',
   '-vframes', '-lossless', '-quality', '-y', '-i'
 ]);
 

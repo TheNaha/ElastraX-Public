@@ -46,7 +46,7 @@ export class StickerUtils {
       '-t', '00:00:05',
       '-preset', 'default',
       '-an',
-      '-vsync', '0'
+      '-fps_mode', 'passthrough'
     ], 'mp4', 'webp');
   }
 

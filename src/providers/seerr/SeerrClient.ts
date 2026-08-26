@@ -225,22 +225,10 @@ export class SeerrClient extends BaseHttpClient {
     return this.get(`/request/${requestId}`);
   }
 
-  async getRequestCount(): Promise<SeerrRequestCount> {
-    return this.get('/request/count');
-  }
-
   // ── Users ─────────────────────────────────────────────────────────────────
 
   async getUserById(userId: number): Promise<SeerrUser> {
     return this.get(`/user/${userId}`);
-  }
-
-  async getUserQuota(userId: number): Promise<SeerrQuota> {
-    return this.get(`/user/${userId}/quota`);
-  }
-
-  async getUsers(take = 50, skip = 0): Promise<{ pageInfo: { pages: number; results: number }; results: SeerrUser[] }> {
-    return this.get(`/user?take=${take}&skip=${skip}`);
   }
 
   // ── Status ────────────────────────────────────────────────────────────────

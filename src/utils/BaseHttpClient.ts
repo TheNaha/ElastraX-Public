@@ -5,6 +5,7 @@ export abstract class BaseHttpClient {
   protected readonly defaultHeaders: Record<string, string>;
   protected readonly log;
   protected readonly defaultTimeoutMs: number;
+  private readonly moduleName: string;
 
   constructor(
     baseUrl: string,
@@ -13,6 +14,7 @@ export abstract class BaseHttpClient {
     defaultTimeoutMs = 30000
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.moduleName = moduleName;
     this.defaultHeaders = {
       'Accept': 'application/json',
       ...defaultHeaders,
@@ -90,7 +92,7 @@ export abstract class BaseHttpClient {
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
       this.log.error({ status: resp.status, path, text }, 'API error');
-      throw new Error(`API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
+      throw new Error(`${this.moduleName.replace(/Client$/, '')} API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
     }
 
     return resp.json() as Promise<T>;

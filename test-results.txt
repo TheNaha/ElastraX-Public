@@ -1,3 +1,0 @@
-bun test v1.3.14 (0d9b296a)
-[2026-07-31 10:16:29.362 +0000] [31mERROR[39m: [36mFFmpeg conversion failed[39m [90m{"module":"FFmpegConverter","code":1,"stderr":"Error message","extIn":"img","extOut":"webp"}[39m
-[2026-07-31 10:16:29.378 +0000] [31mERROR[39m: [36mFFmpeg conversion failed[39m [90m{"module":"FFmpegConverter","code":1,"stderr":"","extIn":"img","extOut":"webp"}[39m
