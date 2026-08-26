@@ -34,11 +34,13 @@ import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage } from '../ai/client';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { getToolByName, getToolByAliasOrName, getAlwaysLoadedDefinitions, getTriggeredTools, tools, toolSearchIndex } from '../tools';
 
 const log = logger.child({ module: 'Agent' });
 import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
+import { MAX_INJECTED_MEMORIES, UNLIMITED } from '../core/constants';
 import { t } from '../utils/i18n';
 import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
@@ -128,13 +130,12 @@ async function executeRequestedToolCalls(
     mode?: 'stream';
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
-  let preferredTier = options.preferredTier;
-
   const toolResults = await Promise.all(toolCalls.map(async (tc: ToolCall) => {
     const toolName = tc.function.name;
     const args = parseToolArgs(tc.function.arguments, toolName, options.logMalformedArgs);
     const tool = getToolByName(toolName);
     let toolResultStr = '';
+    let resultTier: ModelTier | undefined;
 
     if (tool && (options.allowedToolNames.has(tool.name) || options.dynamicToolNames.has(tool.name))) {
       log.info({ toolName, args, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) }, 'Tool call invoked');
@@ -143,10 +144,10 @@ async function executeRequestedToolCalls(
       try {
         const rawResult = await executeToolWithTimeout(tool, args, options.ctx);
         toolResultStr = resolveToolResultText(rawResult);
-        preferredTier = tool.modelTier;
+        resultTier = tool.modelTier;
       } catch (err: unknown) {
         log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
-        toolResultStr = `Error executing tool ${toolName}: ${err instanceof Error ? err.message : String(err)}`;
+        toolResultStr = `Error executing tool ${toolName}: ${getErrorMessage(err)}`;
       }
 
       if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
@@ -172,10 +173,20 @@ async function executeRequestedToolCalls(
       tool_call_id: tc.id,
       name: toolName,
       content: toolResultStr,
+      resultTier,
     };
   }));
 
-  return { toolResults, preferredTier };
+  // Deterministic tier selection: first tool (by call order) that declared a
+  // tier wins; otherwise keep the caller's existing preference. The previous
+  // last-finisher-wins closure assignment was nondeterministic under
+  // Promise.all concurrency.
+  const preferredTier = toolResults.find(r => r.resultTier !== undefined)?.resultTier ?? options.preferredTier;
+
+  return {
+    toolResults: toolResults.map(({ resultTier: _tier, ...rest }) => rest),
+    preferredTier,
+  };
 }
 
 /**
@@ -334,7 +345,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // V7.11: Resolve user roles once and compute privilege-based rate limits.
   const { roles: userRoles, privileges } = await AuthService.getAccessProfile(await ctx.resolveRoles());
 
-  logger.info(
+  logger.debug(
     { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },
     '[Agent] Role & privilege resolution complete',
   );
@@ -550,7 +561,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     // V7.11: Use the higher of room config vs role privilege context limit.
-    const effectiveContextLimit = Math.max(config.contextLimit, privileges.contextLimit);
+    // `-1` means unlimited (ROLE_PRIV_* convention) and always wins.
+    const effectiveContextLimit =
+      config.contextLimit === UNLIMITED || privileges.contextLimit === UNLIMITED
+        ? UNLIMITED
+        : Math.max(config.contextLimit, privileges.contextLimit);
 
     // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
     const historyDesc = await db.select({
@@ -577,7 +592,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let memoryContext = '';
     if (config.longTermMemory) {
       const ownerId = ctx.isGroup ? ctx.chatId : ctx.senderId;
-      const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId));
+      // Cap injection: most recent MAX_INJECTED_MEMORIES, re-ordered chronologically.
+      const mems = (await db.select().from(memories).where(eq(memories.ownerId, ownerId))
+        .orderBy(desc(memories.created_at))
+        .limit(MAX_INJECTED_MEMORIES)).reverse();
       if (mems.length > 0) {
         memoryContext = `\n\n<long_term_memory>\n${mems.map(m => `[${m.id}] ${m.content}`).join('\n')}\n</long_term_memory>\nYou must adapt your behavior and answers based on the long-term memory provided above.`;
       }
@@ -622,34 +640,29 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         return `${textContext}\n${mediaLabel}`;
       }
 
-      // Inline embed for the current turn (current message or quoted attachment)
+      // Inline embed for the current turn (current message or quoted attachment).
+      // Only images are embedded — see the video/audio note below.
+      if (!mimeType.startsWith('image/')) {
+        if (!mimeType.startsWith('video/') && !mimeType.startsWith('audio/')) {
+          // Docs/PDFs: text note so the AI can invoke a tool (e.g., pdf reader)
+          return [{ type: 'text', text: `${textContext}\n[Attachment included: ${mimeType}]` }];
+        }
+        const kind = mimeType.startsWith('video/') ? 'Video' : 'Audio';
+        return [{
+          type: 'text',
+          text: `${textContext}\n[${kind} attached: ${mimeType} — use media tools (e.g. 'sticker', 'convert_media', 'transcribe_audio') to process it]`,
+        }];
+      }
+
       try {
         const fileBuffer = await readFile(mediaPath);
         const base64Data = fileBuffer.toString('base64');
         const dataUri = `data:${mimeType};base64,${base64Data}`;
 
-        if (mimeType.startsWith('image/')) {
-          return [
-            { type: 'text', text: textContext },
-            { type: 'image_url', image_url: { url: dataUri } },
-          ];
-        } else if (mimeType.startsWith('video/')) {
-          // video_url is only supported by vLLM/multimodal providers.
-          // ModelRouter.sanitizeMessagesForProvider() will strip it for providers that don't support it.
-          return [
-            { type: 'text', text: textContext },
-            { type: 'video_url', video_url: { url: dataUri } },
-          ];
-        } else if (mimeType.startsWith('audio/')) {
-          // audio_url is only supported by vLLM/multimodal providers.
-          return [
-            { type: 'text', text: textContext },
-            { type: 'audio_url', audio_url: { url: dataUri } },
-          ];
-        } else {
-          // Docs/PDFs: text note so the AI can invoke a tool (e.g., pdf reader)
-          return [{ type: 'text', text: `${textContext}\n[Attachment included: ${mimeType}]` }];
-        }
+        return [
+          { type: 'text', text: textContext },
+          { type: 'image_url', image_url: { url: dataUri } },
+        ];
       } catch (err) {
         log.error({ err, path: mediaPath }, 'Failed to read media for AI context');
         return textContext;
@@ -690,13 +703,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     messagesForAI.push(...historyMessages);
 
-    // V7.13: Summarize overflow history only when summarization is enabled for this room.
-    // When disabled, the DB query already enforced the limit so no further trimming is needed.
-    if (config.summarize) {
+    // V7.13: Summarize overflow history only when summarization is enabled for this room
+    // and the context limit is finite (`-1` = unlimited leaves nothing to trim).
+    if (config.summarize && effectiveContextLimit !== UNLIMITED) {
       const nonSystemHistory = messagesForAI.slice(1);
       const summaryResult = await summarizeHistory(
         nonSystemHistory,
-        config.contextLimit,
+        effectiveContextLimit,
         async (summaryMessages) => {
           const msg = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2);
           return String(msg?.content || '');
@@ -903,14 +916,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                       sentKey = await ctx.sendMessage!(displayText);
                       streamedResponseSent = true;
                     } catch (err: unknown) {
-                      log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming send failed, falling back');
+                      log.warn({ err: getErrorMessage(err), chatId, mode: 'stream' }, '[Agent] Streaming send failed, falling back');
                       streamingFailed = true;
                     }
                   } else {
                     try {
                       await ctx.editMessage!(sentKey, displayText);
                     } catch (err: unknown) {
-                      log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream' }, '[Agent] Streaming edit failed, degrading gracefully');
+                      log.warn({ err: getErrorMessage(err), chatId, mode: 'stream' }, '[Agent] Streaming edit failed, degrading gracefully');
                       streamingFailed = true;
                     }
                   }
@@ -970,7 +983,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             try {
               await ctx.editMessage!(sentKey, finalAiResponseText);
             } catch (err: unknown) {
-              log.warn({ err: err instanceof Error ? err.message : String(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed (observable)');
+              log.warn({ err: getErrorMessage(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed (observable)');
               streamingFailed = true;
             }
           }

@@ -22,6 +22,7 @@
 
 import { logger } from './logger';
 import { AuthService } from './AuthService';
+import { jidUser as bareNumber } from './jid';
 
 interface WhatsAppGroupParticipant {
   id?: string;
@@ -40,16 +41,6 @@ function hasGroupMetadataClient(sock: unknown): sock is WhatsAppGroupMetadataCli
   if (typeof sock !== 'object' || sock === null) return false;
   const candidate = sock as { groupMetadata?: unknown };
   return typeof candidate.groupMetadata === 'function';
-}
-
-/**
- * Extract the bare number from a JID (e.g. "6281234567890@s.whatsapp.net" → "6281234567890").
- * Returns undefined if the JID has no recognisable number part.
- */
-function bareNumber(jid: string | undefined): string | undefined {
-  if (!jid) return undefined;
-  const at = jid.indexOf('@');
-  return at > 0 ? jid.slice(0, at) : undefined;
 }
 
 function isAdminParticipant(participant: WhatsAppGroupParticipant | undefined): boolean {
@@ -111,7 +102,11 @@ export async function isWhatsAppGroupAdmin(
       metadata = cached.data;
     } else {
       metadata = await sock.groupMetadata(chatId);
-      // Cache for 5 minutes
+      // Cache for 5 minutes; sweep expired entries so the map cannot grow
+      // unboundedly with every group ever seen.
+      for (const [key, entry] of groupMetadataCache) {
+        if (entry.expiresAt <= now) groupMetadataCache.delete(key);
+      }
       groupMetadataCache.set(chatId, { data: metadata, expiresAt: now + 5 * 60 * 1000 });
     }
 
@@ -152,7 +147,7 @@ export async function resolveUserRoles(
 
   const roles = await AuthService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn);
 
-  logger.info(
+  logger.debug(
     { senderId, senderPn, chatId, roles, isPlatformAdmin },
     '[Permissions] resolveUserRoles — resolved',
   );

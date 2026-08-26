@@ -25,6 +25,7 @@
  */
 
 import { MessageContext } from '../core/MessageContext';
+import { jidBareId as bareId } from './jid';
 
 // ─── Public Types ──────────────────────────────────────────────────────────────
 
@@ -41,11 +42,6 @@ export interface ResolvedUser {
 }
 
 // ─── Internals ─────────────────────────────────────────────────────────────────
-
-/** Strip `@domain` and `:device` suffixes for display purposes. */
-function bareId(jid: string): string {
-  return jid.split('@')[0].split(':')[0];
-}
 
 /** True when all non-whitespace characters are digits. */
 function isPureDigits(s: string): boolean {
