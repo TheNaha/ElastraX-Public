@@ -77,6 +77,17 @@ function mergeMax(values: number[]): number {
   return Math.max(...values);
 }
 
+/**
+ * Merge a duration across multiple roles where SHORTER is more permissive
+ * (e.g. rateLimitWindowSec). -1 is treated as "unset" and ignored unless
+ * every value is -1.
+ */
+function mergeMin(values: number[]): number {
+  const finite = values.filter((v) => v !== -1);
+  if (finite.length === 0) return -1;
+  return Math.min(...finite);
+}
+
 export function isPrivilegeField(value: string | undefined): value is PrivilegeField {
   return value !== undefined && PRIVILEGE_FIELDS.includes(value as PrivilegeField);
 }
@@ -173,7 +184,7 @@ export class AuthService {
     }
 
     const result = Array.from(roles);
-    logger.info({ userId, senderPn, chatId, roles: result }, '[AuthService] resolveRoles - final result');
+      logger.debug({ userId, senderPn, chatId, roles: result }, '[AuthService] resolveRoles - final result');
     return result;
   }
 
@@ -186,38 +197,6 @@ export class AuthService {
   static async getAccessProfile(roles: string[]): Promise<AccessProfile> {
     const privileges = await this.getEffectivePrivileges(roles);
     return { roles, privileges };
-  }
-
-  static async getEffectiveRole(userId: string, chatId?: string): Promise<RoleName | null> {
-    try {
-      const { db, userRoles } = this.deps;
-      const rows = await db.select().from(userRoles).where(eq(userRoles.userId, userId));
-
-      if (rows.length === 0) return null;
-
-      const WEIGHT: Record<string, number> = { user: 0, premium: 1, admin: 1, owner: 2 };
-      let best: RoleName | null = null;
-      let bestScore = Number.NEGATIVE_INFINITY;
-
-      for (const row of rows) {
-        const role = row.role as RoleName;
-        const isScoped = chatId && row.scope === chatId;
-        const isGlobal = row.scope === 'global';
-
-        if (!isScoped && !isGlobal) continue;
-
-        const currentScore = (WEIGHT[role] ?? 0) + (isScoped ? 0.5 : 0);
-        if (currentScore > bestScore) {
-          best = role;
-          bestScore = currentScore;
-        }
-      }
-
-      return best;
-    } catch (err) {
-      logger.error({ err, userId }, '[AuthService] Failed to fetch effective role');
-      return null;
-    }
   }
 
   static meetsRequirement(role: RoleName, required: RoleName): boolean {
@@ -235,17 +214,32 @@ export class AuthService {
     const { db, userRoles } = this.deps;
     logger.info({ userId, role, scope, platform, grantedBy }, '[AuthService] setRole - start');
 
+    // user_roles has UNIQUE(user_id, scope) — one role per user per scope.
+    // Look up by (userId, scope) regardless of role so granting a different
+    // role replaces the old one instead of violating the constraint.
     const existing = await db
       .select()
       .from(userRoles)
-      .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope), eq(userRoles.role, role)));
+      .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
 
     if (existing.length > 0) {
-      await db
-        .update(userRoles)
-        .set({ grantedBy })
-        .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope), eq(userRoles.role, role)));
-      logger.info({ userId, role, scope }, '[AuthService] setRole - updated existing entry');
+      const current = existing[0]!;
+      if (current.role === role) {
+        await db
+          .update(userRoles)
+          .set({ grantedBy })
+          .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
+        logger.info({ userId, role, scope }, '[AuthService] setRole - updated existing entry');
+      } else {
+        await db
+          .update(userRoles)
+          .set({ role, platform, grantedBy })
+          .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
+        logger.info(
+          { userId, previousRole: current.role, newRole: role, scope },
+          '[AuthService] setRole - replaced existing role',
+        );
+      }
     } else {
       await db.insert(userRoles).values({
         userId,
@@ -259,13 +253,17 @@ export class AuthService {
     }
   }
 
-  static async removeRole(userId: string, scope: string, role?: string): Promise<boolean> {
+  static async removeRole(userId: string, scope: string, role: string): Promise<boolean> {
     const { db, userRoles } = this.deps;
     logger.info({ userId, scope, role }, '[AuthService] removeRole - start');
 
-    const conditions = role
-      ? and(eq(userRoles.userId, userId), eq(userRoles.scope, scope), eq(userRoles.role, role))
-      : and(eq(userRoles.userId, userId), eq(userRoles.scope, scope));
+    // A specific role is mandatory: bulk-revoking every role of a target
+    // (including owner) must never be possible from a single unscoped call.
+    const conditions = and(
+      eq(userRoles.userId, userId),
+      eq(userRoles.scope, scope),
+      eq(userRoles.role, role),
+    );
 
     const existing = await db.select({ id: userRoles.id }).from(userRoles).where(conditions).limit(1);
 
@@ -365,7 +363,8 @@ export class AuthService {
     const all = await Promise.all(roles.map(r => this.getPrivilegesForRole(r)));
     const result = {
       maxMessagesPerWindow: mergeMax(all.map(p => p.maxMessagesPerWindow)),
-      rateLimitWindowSec:   mergeMax(all.map(p => p.rateLimitWindowSec)),
+      // Shorter window = user can act sooner = more permissive
+      rateLimitWindowSec:   mergeMin(all.map(p => p.rateLimitWindowSec)),
       contextLimit:         mergeMax(all.map(p => p.contextLimit)),
       maxDownloadMb:        mergeMax(all.map(p => p.maxDownloadMb)),
     };
