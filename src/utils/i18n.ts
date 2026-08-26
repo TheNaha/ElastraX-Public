@@ -232,6 +232,12 @@ export const translations: Record<Locale, Record<string, string>> = {
     'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
     'reminder.recurrence_info': ' 🔁 _{recurrence}_',
     'reminder.invalid_recurrence': '❌ Unrecognized recurrence pattern "{recurrence}". Try "daily", "weekly", "monthly", "hourly", or "every 30m" / "every 2h" / "every 7d".',
+
+    // Scheduled digests
+    'digest.header': '📋 *Summary of the last {hours}h*:',
+    'digest.no_messages': 'No messages in the last {hours}h to summarize.',
+    'digest.failed': '❌ Failed to generate the digest.',
+    'digest.media_header': '🎬 *New this week on Jellyfin*:',
   },
   id: {
     // Menu
@@ -430,6 +436,12 @@ export const translations: Record<Locale, Record<string, string>> = {
     'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',
     'reminder.recurrence_info': ' 🔁 _{recurrence}_',
     'reminder.invalid_recurrence': '❌ Pola pengulangan "{recurrence}" tidak dikenali. Coba "daily", "weekly", "monthly", "hourly", atau "every 30m" / "every 2h" / "every 7d".',
+
+    // Scheduled digests
+    'digest.header': '📋 *Ringkasan {hours} jam terakhir*:',
+    'digest.no_messages': 'Tidak ada pesan dalam {hours} jam terakhir untuk diringkas.',
+    'digest.failed': '❌ Gagal membuat ringkasan.',
+    'digest.media_header': '🎬 *Yang baru minggu ini di Jellyfin*:',
   },
 };
 

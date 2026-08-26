@@ -58,6 +58,7 @@ import { MediaLibraryTool } from './MediaLibraryTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
 import { MemoryTool } from './MemoryTool';
+import { DigestTool } from './DigestTool';
 import { WebScrapeTool } from './WebScrapeTool';
 import { GameSearchTool } from './GameSearchTool';
 import { SoftwareSearchTool } from './SoftwareSearchTool';
@@ -100,6 +101,7 @@ export async function reloadRegistry() {
   nextList.push(new DeleteMessageTool());
   nextList.push(new TranscribeTool());
   nextList.push(new MemoryTool());
+  nextList.push(new DigestTool());
   nextList.push(new WebScrapeTool());
 
   // ── Media ─────────────────────────────────────────────────────────────────────
