@@ -34,6 +34,7 @@ import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'ConfigTool' });
 const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize', 'longTermMemory'] as const;
@@ -81,7 +82,7 @@ function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
     case 'temperature':
       try {
         return parseFloatValue(value, 0, 2.0);
-      } catch (error) {
+      } catch {
         throw new Error('Must be a number between 0.0 and 2.0.');
       }
     case 'maxTokens':
@@ -123,10 +124,6 @@ export class ConfigTool extends BaseTool {
         }
       }
     };
-  }
-
-  constructor() {
-    super();
   }
 
   /**
@@ -204,7 +201,7 @@ export class ConfigTool extends BaseTool {
         return `Successfully updated \`${key}\` for this room.`;
 
       } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : 'Unknown validation error.';
+        const message = getErrorMessage(error, 'Unknown validation error.');
         log.warn({ chatId: ctx.chatId, key, value, err: message }, 'Invalid config value rejected');
         return `Invalid value for ${key}: ${message}`;
       }

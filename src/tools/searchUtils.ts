@@ -79,14 +79,21 @@ export async function searchSearXng(
           })(),
   };
 
-  const [trustedRes, generalRes] = await Promise.all([
-    fetch(buildUrl(trustedQuery), fetchOpts).catch(() => null),
-    fetch(buildUrl(generalQuery), fetchOpts).catch(() => null),
-  ]);
+  // A single-query tool (e.g. web_search without trusted sites/suffix) would
+  // fire two identical requests — de-duplicate them.
+  const requests = trustedQuery === generalQuery
+    ? [fetch(buildUrl(trustedQuery), fetchOpts).catch(() => null)]
+    : [
+        fetch(buildUrl(trustedQuery), fetchOpts).catch(() => null),
+        fetch(buildUrl(generalQuery), fetchOpts).catch(() => null),
+      ];
+  const responses = await Promise.all(requests);
 
   const all: SearXngRawResult[] = [];
-  for (const res of [trustedRes, generalRes]) {
+  let anyOk = false;
+  for (const res of responses) {
     if (res && res.ok) {
+      anyOk = true;
       try {
         const data = (await res.json()) as { results?: SearXngRawResult[] };
         if (data.results) all.push(...data.results);
@@ -94,6 +101,12 @@ export async function searchSearXng(
         log.warn({ err }, 'Failed to parse SearXNG JSON response');
       }
     }
+  }
+
+  // Distinguish "instance unreachable / erroring" from "legitimately zero
+  // hits" so callers can surface a failure instead of a false "no results".
+  if (!anyOk) {
+    throw new Error('SearXNG returned no successful response (unreachable or HTTP error)');
   }
 
   const seen = new Set<string>();

@@ -5,9 +5,10 @@
 
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { JellyfinClient, type JellyfinItem } from '../providers/jellyfin/JellyfinClient';
+import { type JellyfinItem } from '../providers/jellyfin/JellyfinClient';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'MediaLibraryTool' });
 
@@ -154,7 +155,7 @@ export class MediaLibraryTool extends BaseTool {
           return 'Available actions: search, latest, link, info';
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = getErrorMessage(err);
       log.error({ err, action }, 'MediaLibrary failed');
       return `❌ Library operation failed: ${msg}`;
     }

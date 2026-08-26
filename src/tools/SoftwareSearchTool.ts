@@ -1,92 +1,53 @@
-import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
-import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
-import { searchSearXng } from './searchUtils';
+import { SearxSearchToolBase } from './SearxSearchToolBase';
 
 const log = logger.child({ module: 'SoftwareSearchTool' });
 
-export class SoftwareSearchTool extends BaseTool<ToolArgs & { query?: string }> {
+export class SoftwareSearchTool extends SearxSearchToolBase {
   readonly name = 'software_search';
   readonly description = 'Search for PC software, applications, and cracks across trusted sites (FileCR, FMHY, rsload, etc). Use this tool ONLY when the user is explicitly looking to download or find information about cracked/repacked desktop software or applications. Do NOT use this for video games or general web search.';
   readonly aliases = ['searchsoftware', 'findsoftware'];
   readonly category = 'utility';
   readonly permissions = 'user';
   override readonly alwaysLoad = true;
-  override readonly triggerPatterns = [/\b(software|app|apps|application|applications|filecr|rsload|crack|cracked)\b/i];
+// (alwaysLoad=true makes triggerPatterns unreachable — no trigger list needed.)
 
-  private readonly searxngUrl: string;
+  protected override readonly queryParamDescription =
+    'The name of the software to search for (e.g. "Photoshop", "Premiere Pro", "IDM").';
+
+  protected override readonly trustedSites = [
+    'filecr.com',
+    'rsload.net',
+    'lrepacks.net',
+    'cybermania.ws',
+    'm0nkrus.ws',
+    'fmhy.net',
+    'reddit.com/r/FREEMEDIAHECKYEAH',
+    'reddit.com/r/Piracy',
+    'rutracker.org',
+    'soft98.ir',
+    'cracksurl.com',
+    'mobilism.org',
+    'nsanenewz.com',
+    'nsaneforums.com'
+  ];
+
+  protected override readonly generalQuerySuffix = 'crack OR patch OR keygen OR torrent OR download';
 
   constructor() {
     super();
-    this.searxngUrl = process.env.SEARXNG_URL || '';
   }
 
-  get definition(): ToolDefinition {
-    return {
-      type: 'function',
-      function: {
-        name: this.name,
-        description: this.description,
-        parameters: {
-          type: 'object',
-          properties: {
-            query: {
-              type: 'string',
-              description: 'The name of the software to search for (e.g. "Photoshop", "Premiere Pro", "IDM").',
-            },
-          },
-          required: ['query'],
-        },
-      },
-    };
+  protected override resultsHeader(query: string): string {
+    return `Software Search Results for "${query}":`;
   }
 
-  async execute(args: ToolArgs & { query?: string }, _ctx: MessageContext): Promise<string> {
-    const query = args.query;
-    if (!query) return 'Error: query parameter is missing.';
-    if (!this.searxngUrl) return 'Error: SEARXNG_URL environment variable is not configured.';
+  protected override noResultsMessage(query: string): string {
+    return `No software downloads found for: "${query}".`;
+  }
 
-    const trustedSites = [
-      'filecr.com',
-      'rsload.net',
-      'lrepacks.net',
-      'cybermania.ws',
-      'm0nkrus.ws',
-      'fmhy.net',
-      'reddit.com/r/FREEMEDIAHECKYEAH',
-      'reddit.com/r/Piracy',
-      'rutracker.org',
-      'soft98.ir',
-      'cracksurl.com',
-      'mobilism.org',
-      'nsanenewz.com',
-      'nsaneforums.com'
-    ];
-
-    log.debug({ query }, 'Software search initiated');
-
-    try {
-      const uniqueResults = await searchSearXng(query, this.searxngUrl, {
-        trustedSites,
-        generalQuerySuffix: 'crack OR patch OR keygen OR torrent OR download',
-        maxResults: 15,
-      });
-
-      if (uniqueResults.length === 0) {
-        return `No software downloads found for: "${query}".`;
-      }
-
-      const textResults = uniqueResults.map((item, idx) => {
-        const itemUrl = item.url || '';
-        const isTrusted = trustedSites.some((site) => itemUrl.includes(site));
-        const status = isTrusted ? '[✅ TRUSTED]' : '[⚠️ UNTRUSTED - USE CAUTION]';
-        return ` • *[${idx + 1}] ${status} ${item.title || 'Unknown'}*\n   *URL:* ${itemUrl}\n   *Info:* ${item.content || item.snippet || ''}`;
-      }).join('\n\n');
-
-      return `Software Search Results for "${query}":\n\n${textResults}`;
-    } catch (err) {
-      log.error({ err, query }, 'Software search failed');
-      return `Failed to search software for "${query}".`;
-    }
+  protected override failureMessage(query: string): string {
+    log.debug({ query }, 'failure message returned');
+    return `Failed to search software for "${query}".`;
   }
 }

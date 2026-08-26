@@ -4,8 +4,7 @@ import { StickerUtils } from '../utils/StickerUtils';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
 import { getErrorMessage } from '../utils/errorUtils';
-import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { resolveTargetMedia, loadMediaBytes } from '../utils/mediaResolve';
 
 const log = logger.child({ module: 'MakeStickerTool' });
 
@@ -65,29 +64,19 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
       const targetMessage = ctx.hasMedia ? ctx : ctx.quoted!;
       log.debug({ chatId: ctx.chatId, mime: targetMessage.mimeType }, 'Sticker creation started');
 
-      if (!targetMessage.mediaPath) {
-        await ctx.react?.('\u{1F4E5}');
-        await ctx.mediaReady;
+      const canDownload = typeof ctx.downloadMedia === 'function';
+      const media = await resolveTargetMedia(ctx, {
+        useDownloader: canDownload,
+        beforeDownload: () => ctx.react?.('\u23F3'),
+      });
+      if (!media) {
+        return t(ctx.language, canDownload ? 'sticker.download_failed' : 'sticker.download_not_supported');
       }
-
-      let buffer: Buffer | null = null;
-      let mime = targetMessage.mimeType || '';
-
-      if (targetMessage.mediaPath && existsSync(targetMessage.mediaPath)) {
-        buffer = await readFile(targetMessage.mediaPath);
-      } else if (ctx.downloadMedia) {
-        await ctx.react?.('\u23F3');
-        buffer = await ctx.downloadMedia();
-        if (!mime) {
-          mime = getRawMimeType(targetMessage);
-        }
-      } else {
-        return t(ctx.language, 'sticker.download_not_supported');
+      let mime = media.mime;
+      if (!mime) {
+        mime = getRawMimeType(targetMessage);
       }
-
-      if (!buffer) {
-        return t(ctx.language, 'sticker.download_failed');
-      }
+      const buffer = await loadMediaBytes(media);
 
       let webpBuffer: Buffer;
       if (mime.includes('image')) {

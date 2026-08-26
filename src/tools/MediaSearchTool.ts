@@ -5,9 +5,10 @@
 
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { SeerrClient, type SeerrSearchResult, type SeerrMediaStatus } from '../providers/seerr/SeerrClient';
+import { type SeerrSearchResult, type SeerrMediaStatus } from '../providers/seerr/SeerrClient';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'MediaSearchTool' });
 
@@ -49,7 +50,11 @@ export class MediaSearchTool extends BaseTool {
   readonly category = 'media';
   readonly permissions = 'user';
   readonly triggerPatterns = [
-    /\b(search|find|looking for|want to watch|is .+ available|movie|film|tv show|series|anime|trending|recommend|cari|nonton|rekomendasi)\b/i,
+    // Domain nouns + explicit media intents only. Generic verbs like
+    // "search"/"find"/"cari" deliberately do NOT trigger — they collide with
+    // web/game/software search and would preload this schema on most chat.
+    // Missed cases fall back to find_tools discovery.
+    /\b(want to watch|movies?|films?|tv shows?|series|anime|drakor|trending|nonton)\b/i,
   ];
 
   get definition(): ToolDefinition {
@@ -161,7 +166,7 @@ export class MediaSearchTool extends BaseTool {
           return 'Available actions: search, trending, discover, recommend';
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = getErrorMessage(err);
       log.error({ err, action }, 'MediaSearch failed');
       return `❌ Search failed: ${msg}`;
     }
