@@ -47,6 +47,7 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
 import { getModelRouter } from '../utils/ModelRouter';
+import { rankMemoriesForInjection } from '../utils/semanticMemory';
 import { RateLimiter } from '../utils/RateLimiter';
 import { AuthService } from '../utils/AuthService';
 import { summarizeHistory } from '../utils/ConversationSummarizer';
@@ -592,10 +593,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let memoryContext = '';
     if (config.longTermMemory) {
       const ownerId = ctx.isGroup ? ctx.chatId : ctx.senderId;
-      // Cap injection: most recent MAX_INJECTED_MEMORIES, re-ordered chronologically.
-      const mems = (await db.select().from(memories).where(eq(memories.ownerId, ownerId))
-        .orderBy(desc(memories.created_at))
-        .limit(MAX_INJECTED_MEMORIES)).reverse();
+      // V8: semantic ranking against the current turn; falls back to pure
+      // recency (old behavior) when embeddings are unconfigured/failed.
+      const ranked = await rankMemoriesForInjection(ownerId, userContent);
+      const mems = ranked
+        ? ranked.map(r => ({ id: r.id, content: r.content }))
+        : (await db.select({ id: memories.id, content: memories.content }).from(memories).where(eq(memories.ownerId, ownerId))
+          .orderBy(desc(memories.created_at))
+          .limit(MAX_INJECTED_MEMORIES)).reverse();
       if (mems.length > 0) {
         memoryContext = `\n\n<long_term_memory>\n${mems.map(m => `[${m.id}] ${m.content}`).join('\n')}\n</long_term_memory>\nYou must adapt your behavior and answers based on the long-term memory provided above.`;
       }

@@ -7,6 +7,7 @@ import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { ConfigService } from '../utils/ConfigService';
 import { MAX_LISTED_MEMORIES } from '../core/constants';
+import { findSemanticDuplicate, updateMemoryEmbedding } from '../utils/semanticMemory';
 
 const log = logger.child({ module: 'MemoryTool' });
 
@@ -56,6 +57,12 @@ export class MemoryTool extends BaseTool {
     switch (args.action) {
       case 'store': {
         if (!args.content) return 'Error: content is required.';
+        // V8 semantic dedupe: skip near-identical re-stores (cosine >= threshold).
+        const duplicate = await findSemanticDuplicate(ownerId, args.content);
+        if (duplicate) {
+          log.debug({ ownerId, duplicateId: duplicate.id }, 'Duplicate memory suppressed');
+          return `Already remembered [${duplicate.id}]: ${duplicate.content}`;
+        }
         const id = crypto.randomBytes(8).toString('hex');
         await db.insert(memories).values({
           id,
@@ -63,6 +70,8 @@ export class MemoryTool extends BaseTool {
           content: args.content,
           created_at: new Date()
         });
+        // Best-effort vector persist; failure never blocks the store itself.
+        await updateMemoryEmbedding(id, args.content);
         log.info({ ownerId, id, content: args.content }, 'Stored memory');
         return `Stored memory [${id}]: ${args.content}\nThis memory will be automatically injected into your system prompt for future conversations.`;
       }

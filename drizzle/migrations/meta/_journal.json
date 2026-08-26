@@ -91,6 +91,11 @@
       "when": 18,
       "tag": "0017_reminder_claims",
       "breakpoints": true
+    },
+    {
+      "when": 19,
+      "tag": "0018_memory_embeddings",
+      "breakpoints": true
     }
   ]
 }

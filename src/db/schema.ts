@@ -15,7 +15,7 @@
  * via `drizzle-kit` in `src/index.ts`.
  */
 
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, blob } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
@@ -75,11 +75,27 @@ export const memories = sqliteTable('memories', {
   /** Optional tags for grouping */
   category: text('category'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  /** V8: Float32Array bytes from the embeddings API (null = not yet embedded) */
+  embedding: blob('embedding', { mode: 'buffer' }),
+  /** Model that produced `embedding` — vectors are only comparable within one model */
+  embeddingModel: text('embedding_model'),
+  /** When the vector was computed */
+  embeddedAt: integer('embedded_at', { mode: 'timestamp' }),
 }, (table) => ({
   ownerIdx: index('memories_owner_idx').on(table.ownerId),
 }));
 
 export type Memory = typeof memories.$inferSelect;
+
+// V8: Generic key/value store for exactly-once scheduled-job markers
+// (daily digest / weekly media digest last-run dates, future feature flags).
+export const appKv = sqliteTable('app_kv', {
+  id: text('id').primaryKey(),
+  value: text('value').notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export type AppKvRow = typeof appKv.$inferSelect;
 
 // V7.3: Database-backed Authentication State for WhatsApp (Baileys)
 export const waAuthState = sqliteTable('wa_auth_state', {
