@@ -91,6 +91,7 @@ import { handleIncomingMessage } from '../src/agent/index';
 import * as toolsModule from '../src/tools';
 import * as flowModule from '../src/core/FlowHandler';
 import * as fsModule from 'fs';
+import type { PathLike } from 'fs';
 import * as fsPromisesModule from 'fs/promises';
 
 const getToolDefinitionsSpy = spyOn(toolsModule, 'getToolDefinitions');
@@ -144,7 +145,7 @@ const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   checkPermissions: mock(async () => true),
   resolveRoles: mock(async () => ['user', 'owner']),
   ...overrides,
-});
+} as MessageContext);
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
@@ -183,7 +184,7 @@ describe('handleIncomingMessage', () => {
     // Configure spies using current mockToolMap / mockFlowResult state.
     // These are re-applied every test so the closures see the latest values.
     flowHandleSpy.mockImplementation(async () => mockFlowResult);
-    existsSyncSpy.mockImplementation((_path: string) => shouldFileExist);
+    existsSyncSpy.mockImplementation((_path: PathLike) => shouldFileExist);
     readFileSpy.mockImplementation(async () => Buffer.from('media-content') as any);
     getToolByNameSpy.mockImplementation((name: string) => mockToolMap[name]);
     getToolByAliasOrNameSpy.mockImplementation((alias: string) =>

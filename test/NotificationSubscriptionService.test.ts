@@ -56,6 +56,8 @@ const subscriptionsTable = {
   notifyTypes: 'notifyTypes',
 } as any;
 
+type SubscriptionRow = typeof import('../src/db/schema').notificationSubscriptions.$inferSelect;
+
 describe('NotificationSubscriptionService', () => {
   afterEach(() => {
     NotificationSubscriptionService.setDepsForTesting(null);
@@ -100,8 +102,8 @@ describe('NotificationSubscriptionService', () => {
   });
 
   test('getSubscriptions and getSubscribersForService return queued rows', async () => {
-    const subA = { chatRoomId: 'room-a', platform: 'discord', serviceType: 'seerr' };
-    const subB = { chatRoomId: 'room-b', platform: 'discord', serviceType: 'all' };
+    const subA = { chatRoomId: 'room-a', platform: 'discord', serviceType: 'seerr' } as unknown as SubscriptionRow;
+    const subB = { chatRoomId: 'room-b', platform: 'discord', serviceType: 'all' } as unknown as SubscriptionRow;
     const fake = createFakeDb([[subA], [subA, subB]]);
     NotificationSubscriptionService.setDepsForTesting({
       db: fake.db as any,

@@ -37,13 +37,13 @@ const createMockCtx = (): MessageContext => ({
   mediaReady: Promise.resolve(),
   sendMedia: mock(async () => {}),
   language: 'en',
-});
+}) as unknown as MessageContext;
 
 describe('Mock isolation regression', () => {
   beforeEach(() => {
     downloadToolDeps.fs.mkdir = mock(async () => {}) as typeof downloadToolDeps.fs.mkdir;
-    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as typeof downloadToolDeps.fs.readdir;
-    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as typeof downloadToolDeps.fs.readFile;
+    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as unknown as typeof downloadToolDeps.fs.readdir;
+    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as unknown as typeof downloadToolDeps.fs.readFile;
     downloadToolDeps.fs.rm = mock(async () => {}) as typeof downloadToolDeps.fs.rm;
     downloadToolDeps.crypto = {
       ...originalDownloadCrypto,
@@ -55,7 +55,7 @@ describe('Mock isolation regression', () => {
 
     ffmpegConverterDeps.fs.mkdir = mock(async () => {}) as typeof ffmpegConverterDeps.fs.mkdir;
     ffmpegConverterDeps.fs.writeFile = mock(async () => {}) as typeof ffmpegConverterDeps.fs.writeFile;
-    ffmpegConverterDeps.fs.readFile = mock(async () => Buffer.from('webp-bytes')) as typeof ffmpegConverterDeps.fs.readFile;
+    ffmpegConverterDeps.fs.readFile = mock(async () => Buffer.from('webp-bytes')) as unknown as typeof ffmpegConverterDeps.fs.readFile;
     ffmpegConverterDeps.fs.unlink = mock(async () => {}) as typeof ffmpegConverterDeps.fs.unlink;
     ffmpegConverterDeps.crypto = {
       ...originalFfmpegCrypto,
@@ -94,7 +94,7 @@ describe('Mock isolation regression', () => {
       return child as never;
     });
 
-    downloadToolDeps.spawn = downloadSpawn as typeof downloadToolDeps.spawn;
+    downloadToolDeps.spawn = downloadSpawn as unknown as typeof downloadToolDeps.spawn;
     ffmpegConverterDeps.spawn = ffmpegSpawn as typeof ffmpegConverterDeps.spawn;
 
     const downloadResult = await new DownloadTool().execute(

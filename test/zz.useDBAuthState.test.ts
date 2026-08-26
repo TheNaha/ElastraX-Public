@@ -109,7 +109,7 @@ describe('useDBAuthState', () => {
 
     const { state } = await useDBAuthState();
 
-    expect(state.creds).toEqual({ id: 'fresh-creds' });
+    expect(state.creds).toEqual({ id: 'fresh-creds' } as unknown as typeof state.creds);
     expect(initCredsCalls).toBe(1);
   });
 
@@ -117,7 +117,7 @@ describe('useDBAuthState', () => {
     authRows.set('creds', JSON.stringify({ id: 'stored-creds' }));
 
     const { state, saveCreds } = await useDBAuthState();
-    expect(state.creds).toEqual({ id: 'stored-creds' });
+    expect(state.creds).toEqual({ id: 'stored-creds' } as unknown as typeof state.creds);
 
     await saveCreds();
     expect(authRows.get('creds')).toBe(JSON.stringify({ id: 'stored-creds' }));
@@ -130,7 +130,7 @@ describe('useDBAuthState', () => {
     const data = await state.keys.get('app-state-sync-key', ['abc']);
 
     expect(fromObjectCalls).toEqual([{ keyData: 'value' }]);
-    expect(data.abc).toEqual({ converted: { keyData: 'value' } });
+    expect(data.abc).toEqual({ converted: { keyData: 'value' } } as unknown as typeof data.abc);
   });
 
   test('keys.set writes present values and removes null values sequentially', async () => {
@@ -142,7 +142,7 @@ describe('useDBAuthState', () => {
         fresh: { token: 'abc' },
         old: null,
       },
-    });
+    } as unknown as Parameters<typeof state.keys.set>[0]);
 
     expect(authRows.get('session-fresh')).toBe(JSON.stringify({ token: 'abc' }));
     expect(authRows.has('session-old')).toBe(false);
@@ -153,7 +153,7 @@ describe('useDBAuthState', () => {
     const { state } = await useDBAuthState();
     const data = await state.keys.get('session', ['missing']);
 
-    expect(data).toEqual({ missing: null });
+    expect(data).toEqual({ missing: null } as unknown as typeof data);
   });
 
   test('swallows write and delete failures', async () => {
@@ -162,6 +162,6 @@ describe('useDBAuthState', () => {
     failDeletes = true;
 
     await expect(saveCreds()).resolves.toBeUndefined();
-    await expect(state.keys.set({ session: { broken: { ok: true }, remove: null } })).resolves.toBeUndefined();
+    await expect(state.keys.set({ session: { broken: { ok: true }, remove: null } } as unknown as Parameters<typeof state.keys.set>[0])).resolves.toBeUndefined();
   });
 });

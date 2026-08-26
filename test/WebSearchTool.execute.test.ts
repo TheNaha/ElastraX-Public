@@ -27,7 +27,7 @@ const createMockCtx = (): MessageContext => ({
   checkPermissions: mock(async () => true),
   messageId: 'msg-1',
   mediaReady: Promise.resolve(),
-});
+} as unknown as MessageContext);
 
 describe('WebSearchTool – execute (fetch path)', () => {
   const originalFetch = global.fetch;

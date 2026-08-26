@@ -135,7 +135,7 @@ describe('AppRuntime', () => {
       reply: mock(async () => {}),
       checkPermissions: mock(async () => true),
       resolveRoles: mock(async () => ['user']),
-    } satisfies MessageContext;
+    } as unknown as MessageContext;
 
     await whatsappProvider.capturedHandler?.(ctx);
 

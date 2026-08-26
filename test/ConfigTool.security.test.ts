@@ -68,7 +68,7 @@ const createCtx = (overrides: Partial<MessageContext> = {}): MessageContext => (
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
   ...overrides,
-});
+} as MessageContext);
 
 describe('ConfigTool Security', () => {
   let tool: ConfigTool;

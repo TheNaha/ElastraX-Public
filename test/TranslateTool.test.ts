@@ -4,7 +4,10 @@ import { TranslateTool } from '../src/tools/TranslateTool';
 import * as ModelRouterModule from '../src/utils/ModelRouter';
 
 describe('TranslateTool', () => {
-  const mockChatCompletion = mock(async () => ({ content: 'Hola mundo', role: 'assistant' }));
+  const mockChatCompletion = mock(
+    async (_messages?: unknown[], _tools?: unknown[], _temperature?: number) =>
+      ({ content: 'Hola mundo', role: 'assistant' }),
+  );
   let routerSpy: ReturnType<typeof spyOn>;
 
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({

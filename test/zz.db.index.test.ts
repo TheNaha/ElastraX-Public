@@ -11,7 +11,10 @@ import { tmpdir } from 'node:os';
  * into other test files sharing the same process.
  */
 
-async function importFreshDbModule(label: string) {
+async function importFreshDbModule(label: string): Promise<{
+  sqlite: import('bun:sqlite').Database;
+  db: unknown;
+}> {
   return import(`../src/db/index.ts?case=${label}-${Date.now()}`);
 }
 

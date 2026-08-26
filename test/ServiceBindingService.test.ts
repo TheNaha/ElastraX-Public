@@ -57,6 +57,8 @@ const serviceBindingsTable = {
   metadata: 'metadata',
 } as any;
 
+type BindingRow = typeof import('../src/db/schema').serviceBindings.$inferSelect;
+
 describe('ServiceBindingService', () => {
   afterEach(() => {
     ServiceBindingService.setDepsForTesting(null);
@@ -128,7 +130,7 @@ describe('ServiceBindingService', () => {
       externalUsername: 'alice',
       externalEmail: 'alice@example.com',
       metadata: null,
-    };
+    } as unknown as BindingRow;
     const adminBinding = {
       id: 2,
       userId: 'user-2',
@@ -138,7 +140,7 @@ describe('ServiceBindingService', () => {
       externalUsername: 'bob',
       externalEmail: 'bob@example.com',
       metadata: '{"isAdmin":true}',
-    };
+    } as unknown as BindingRow;
     const fake = createFakeDb([
       [normalBinding],
       [normalBinding, adminBinding],

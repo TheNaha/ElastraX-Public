@@ -46,7 +46,7 @@ describe('FFmpegConverter', () => {
     ffmpegConverterDeps.spawn = mockSpawn as typeof ffmpegConverterDeps.spawn;
     ffmpegConverterDeps.fs.mkdir = mockMkdir as typeof ffmpegConverterDeps.fs.mkdir;
     ffmpegConverterDeps.fs.writeFile = mockWriteFile as typeof ffmpegConverterDeps.fs.writeFile;
-    ffmpegConverterDeps.fs.readFile = mockReadFile as typeof ffmpegConverterDeps.fs.readFile;
+    ffmpegConverterDeps.fs.readFile = mockReadFile as unknown as typeof ffmpegConverterDeps.fs.readFile;
     ffmpegConverterDeps.fs.unlink = mockUnlink as typeof ffmpegConverterDeps.fs.unlink;
     ffmpegConverterDeps.crypto = {
       ...originalCrypto,

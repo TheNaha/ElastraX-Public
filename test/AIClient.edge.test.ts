@@ -56,7 +56,7 @@ describe('AIClient – edge cases', () => {
   test('chatCompletion should not add tools to payload when tools array is empty', async () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
-    let capturedBody: Record<string, unknown> | undefined;
+    let capturedBody!: Record<string, unknown>;
     assignFetch(async (_url, init) => {
       capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       return new Response(JSON.stringify({
@@ -82,7 +82,7 @@ describe('AIClient – edge cases', () => {
       },
     };
 
-    let capturedBody: Record<string, unknown> | undefined;
+    let capturedBody!: Record<string, unknown>;
     assignFetch(async (_url, init) => {
       capturedBody = JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>;
       return new Response(JSON.stringify({

@@ -9,7 +9,7 @@ mock.module('../src/db', () => ({
   db: {
     update: () => ({
       set: () => ({
-        where: (...args: any[]) => mockWhere(...args),
+        where: (...args: any[]) => mockWhere(...(args as Parameters<typeof mockWhere>)),
       }),
     }),
   },
@@ -39,7 +39,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
   ...overrides,
-});
+} as MessageContext);
 
 describe('LanguageTool', () => {
   test('should have correct name and metadata', () => {
@@ -76,7 +76,7 @@ describe('LanguageTool', () => {
   test('should return error for invalid lang_code', async () => {
     const tool = new LanguageTool();
     const ctx = createMockCtx();
-    const result = await tool.execute({ lang_code: 'fr' }, ctx);
+    const result = await tool.execute({ lang_code: 'fr' as unknown as 'en' | 'id' }, ctx);
     expect(result).toContain('❌ Invalid language code');
   });
 

@@ -1,7 +1,7 @@
 import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 import { IdentityService } from '../src/utils/IdentityService';
 import { AuthService as RoleService } from '../src/utils/AuthService';
-import { userIdentities, userRoles } from '../src/db/schema';
+import { userIdentities, userRoles, rolePrivileges } from '../src/db/schema';
 
 type MockQuery = {
   from: () => MockQuery;
@@ -63,7 +63,7 @@ describe('checkPermissions', () => {
 
   beforeEach(() => {
     IdentityService.setDepsForTesting({ db: mockDb, userIdentities });
-    RoleService.setDepsForTesting({ db: mockDb, userRoles });
+    RoleService.setDepsForTesting({ db: mockDb, userRoles, rolePrivileges });
     mockSock = {
       groupMetadata: async (jid: string) => {
         if (jid === chatId) {

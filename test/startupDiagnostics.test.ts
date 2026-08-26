@@ -14,6 +14,8 @@ mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 import { dumpFixtures, resolveFixtureDir, runStartupCoverageScan, stripFixtureBlobs } from '../src/runtime/startupDiagnostics';
 
+type DiagnosticsDeps = NonNullable<Parameters<typeof dumpFixtures>[1]>;
+
 describe('startupDiagnostics', () => {
   const originalFixtureDir = process.env.FIXTURE_DUMP_DIR;
   const originalNodeEnv = process.env.NODE_ENV;
@@ -93,7 +95,7 @@ describe('startupDiagnostics', () => {
       makeDirectory,
       writeTextFile,
       fileExists,
-    });
+    } as unknown as DiagnosticsDeps);
 
     expect(loadMessages).toHaveBeenCalledTimes(1);
     expect(scanCoverage).toHaveBeenCalledTimes(1);
@@ -137,7 +139,12 @@ describe('startupDiagnostics', () => {
     });
     const writeTextFile = mock(async () => {});
 
-    await expect(dumpFixtures(null, { loadMessages, scanCoverage, makeDirectory, writeTextFile })).resolves.toBeUndefined();
+    await expect(dumpFixtures(null, {
+      loadMessages,
+      scanCoverage,
+      makeDirectory,
+      writeTextFile,
+    } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
@@ -161,7 +168,7 @@ describe('startupDiagnostics', () => {
       makeDirectory: mock(async () => {}),
       writeTextFile,
       fileExists: mock(() => false),
-    })).resolves.toBeUndefined();
+    } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
 
     expect(writeTextFile).toHaveBeenCalledTimes(1);
   });

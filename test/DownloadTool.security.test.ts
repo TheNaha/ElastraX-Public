@@ -62,17 +62,17 @@ const createMockCtx = (): MessageContext => ({
   mediaReady: Promise.resolve(),
   sendMedia: mock(async () => {}),
   language: 'en',
-});
+}) as unknown as MessageContext;
 
 describe('DownloadTool Security', () => {
   beforeEach(() => {
     spawnedProcesses = [];
     mockSpawn.mockClear();
 
-    downloadToolDeps.spawn = mockSpawn as typeof downloadToolDeps.spawn;
+    downloadToolDeps.spawn = mockSpawn as unknown as typeof downloadToolDeps.spawn;
     downloadToolDeps.fs.mkdir = mock(async () => {}) as typeof downloadToolDeps.fs.mkdir;
-    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as typeof downloadToolDeps.fs.readdir;
-    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as typeof downloadToolDeps.fs.readFile;
+    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as unknown as typeof downloadToolDeps.fs.readdir;
+    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as unknown as typeof downloadToolDeps.fs.readFile;
     downloadToolDeps.fs.rm = mock(async () => {}) as typeof downloadToolDeps.fs.rm;
     downloadToolDeps.crypto = {
       ...originalCrypto,
@@ -136,7 +136,7 @@ describe('DownloadTool Security', () => {
         return Buffer.from('cd'.repeat(size), 'hex');
       }),
     } as typeof downloadToolDeps.crypto;
-    downloadToolDeps.fs.readdir = mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']) as typeof downloadToolDeps.fs.readdir;
+    downloadToolDeps.fs.readdir = mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']) as unknown as typeof downloadToolDeps.fs.readdir;
 
     const result = await tool.execute({ url: 'https://example.com/video', format: 'mp4' }, createMockCtx());
 
