@@ -1,5 +1,6 @@
 import { MessageContext } from './MessageContext';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { t } from '../utils/i18n';
 import { CANCEL_COMMANDS } from './constants';
 import { eq, inArray } from 'drizzle-orm';
@@ -160,7 +161,7 @@ export class FlowHandler {
     }
   }
 
-  static getSession(userId: string, platform: string = 'whatsapp'): UserSession | null {
+  static getSession(userId: string, _platform: string = 'whatsapp'): UserSession | null {
     // Legacy synchronous getSession is dangerous in a stateless model.
     // However, none of the tools actually call `getSession()` themselves. They use FlowProcessor callbacks.
     // We keep this signature for backward compatibility but warn if used, as we rely on `handle()` which uses the async `getActiveFlow`.
@@ -242,7 +243,7 @@ export class FlowHandler {
         await flowProcessor(ctx, flow, flowId);
         return true;
       } catch (err: unknown) {
-        const errMsg = err instanceof Error ? err.message : 'unknown error';
+        const errMsg = getErrorMessage(err, 'unknown error');
         logger.error(err, `[FlowHandler] Error in flow: ${flow.flow}`);
         await ctx.reply(t(ctx.language, 'flow.error', { msg: errMsg }) || `An error occurred processing your flow step:\n${errMsg}`);
         return true;

@@ -24,6 +24,7 @@ import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { isValidRecurrence } from '../utils/Scheduler';
 
 const log = logger.child({ module: 'ReminderTool' });
 type ReminderArgs = ToolArgs & {
@@ -205,7 +206,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
           n: String(i + 1),
           message: r.message,
           time: formatTime(r.remindAt),
-        });
+        }) + ` (#${r.id})`;
         // Append recurrence info if present
         return r.recurrence
           ? baseItem + t(lang, 'reminder.recurrence_info', { recurrence: r.recurrence })
@@ -217,7 +218,8 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
 
     // ── CANCEL ─────────────────────────────────────────────────────────────────
     if (action === 'cancel') {
-      const n = parseInt(String(number || ''), 10);
+      // Accept either the list position or the stable reminder id shown as "(#<id>)".
+      const n = parseInt(String(number || '').replace(/^#/, '').trim(), 10);
       if (isNaN(n) || n < 1) return t(lang, 'reminder.cancel_invalid');
 
       const active = db.select()
@@ -226,11 +228,13 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         .orderBy(reminders.remindAt)
         .all();
 
-      const target = active[n - 1];
+      // Exact id match wins (stable across list changes); fall back to position.
+      const target = active.find(r => r.id === n)
+        ?? (n <= active.length ? active[n - 1] : undefined);
       if (!target) return t(lang, 'reminder.cancel_invalid');
 
       db.delete(reminders).where(eq(reminders.id, target.id)).run();
-      log.info({ senderId: ctx.senderId, reminderNumber: n }, 'Reminder cancelled');
+      log.info({ senderId: ctx.senderId, reminderId: target.id }, 'Reminder cancelled');
       return t(lang, 'reminder.cancel', { n: String(n) });
     }
 
@@ -241,6 +245,11 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     const fireAt = parseRelativeTime(time);
     if (!fireAt) {
       return t(lang, 'reminder.invalid_time');
+    }
+
+    // Reject recurrence patterns the Scheduler would silently retire at fire time.
+    if (recurrence && !isValidRecurrence(String(recurrence).trim())) {
+      return t(lang, 'reminder.invalid_recurrence', { recurrence: String(recurrence) });
     }
 
     try {

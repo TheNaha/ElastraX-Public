@@ -12,6 +12,7 @@ import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { healthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
+import { registryReady } from '../tools';
 
 type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
@@ -85,6 +86,10 @@ export class AppRuntime {
 
   async start(): Promise<void> {
     if (this.started) return;
+
+    // Wait for the tool registry (core tools + plugins) before accepting messages,
+    // so slash commands and LLM tool lookups never hit an empty registry.
+    await registryReady;
 
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
       this.messageQueue.enqueue(ctx.chatId, () => this.messageHandler(ctx));

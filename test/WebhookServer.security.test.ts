@@ -12,7 +12,8 @@ const _mockLogger = {
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { verifyGitHubSignature, WebhookServer } from '../src/webhookServer';
+import { verifyGitHubSignature } from '../src/webhooks/utils';
+import { WebhookServer } from '../src/webhookServer';
 
 describe('WebhookServer Security', () => {
   const secret = 'test-secret';
@@ -210,7 +211,7 @@ describe('WebhookServer Security', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
+      expect(await res.json()).toEqual({ ok: true, delivered: 1 });
       expect(sendDiscord).toHaveBeenCalledTimes(1);
     } finally {
       server.stop();

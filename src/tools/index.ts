@@ -73,9 +73,11 @@ export const toolsList: BaseTool[] = [];
 /** The ordered list of every registered tool — used by MenuTool to build the help menu. */
 export const tools = toolsList;
 
-// Internal state tracking for hot-reloading
-const toolsMap = new Map<string, BaseTool>();
-const aliasMap = new Map<string, BaseTool>();
+// Internal state tracking for hot-reloading.
+// These are rebuilt into locals and swapped atomically at the end of
+// `reloadRegistry()` so lookups never observe a half-cleared registry.
+let toolsMap = new Map<string, BaseTool>();
+let aliasMap = new Map<string, BaseTool>();
 let cachedAllDefinitions: ToolDefinition[] = [];
 let cachedAlwaysLoadedDefinitions: ToolDefinition[] = [];
 let discoverableTools: BaseTool[] = [];
@@ -83,48 +85,46 @@ export const toolSearchIndex = new ToolSearchIndex();
 setToolSearchIndex(toolSearchIndex);
 
 export async function reloadRegistry() {
-  toolsList.length = 0;
-  toolsMap.clear();
-  aliasMap.clear();
+  const nextList: BaseTool[] = [];
 
   // ── Utility / Core ────────────────────────────────────────────────────────────
-  toolsList.push(new WebSearchTool());
-  toolsList.push(new GameSearchTool());
-  toolsList.push(new SoftwareSearchTool());
-  toolsList.push(new MenuTool(() => toolsList));
-  toolsList.push(new PingTool());
-  toolsList.push(new IDTool());
-  toolsList.push(new StatsTool());
-  toolsList.push(new TranslateTool());
-  toolsList.push(new ReminderTool());
-  toolsList.push(new DeleteMessageTool());
-  toolsList.push(new TranscribeTool());
-  toolsList.push(new MemoryTool());
-  toolsList.push(new WebScrapeTool());
-  
+  nextList.push(new WebSearchTool());
+  nextList.push(new GameSearchTool());
+  nextList.push(new SoftwareSearchTool());
+  nextList.push(new MenuTool(() => nextList));
+  nextList.push(new PingTool());
+  nextList.push(new IDTool());
+  nextList.push(new StatsTool());
+  nextList.push(new TranslateTool());
+  nextList.push(new ReminderTool());
+  nextList.push(new DeleteMessageTool());
+  nextList.push(new TranscribeTool());
+  nextList.push(new MemoryTool());
+  nextList.push(new WebScrapeTool());
+
   // ── Media ─────────────────────────────────────────────────────────────────────
-  toolsList.push(new MakeStickerTool());
-  toolsList.push(new DownloadTool());
-  toolsList.push(new MediaConvertTool());
-  toolsList.push(new PDFTool());
-  
+  nextList.push(new MakeStickerTool());
+  nextList.push(new DownloadTool());
+  nextList.push(new MediaConvertTool());
+  nextList.push(new PDFTool());
+
   // ── Admin / Group ─────────────────────────────────────────────────────────────
-  toolsList.push(new GroupAdminTool());
-  toolsList.push(new LanguageTool());
-  toolsList.push(new ConfigTool());
-  toolsList.push(new RoleTool());
-  
+  nextList.push(new GroupAdminTool());
+  nextList.push(new LanguageTool());
+  nextList.push(new ConfigTool());
+  nextList.push(new RoleTool());
+
   // ── Fun / Social ──────────────────────────────────────────────────────────────
-  toolsList.push(new MenfessTool());
+  nextList.push(new MenfessTool());
   // ── Media Services (V7.15) ────────────────────────────────────────────────────
-  toolsList.push(new MediaBindTool());
-  toolsList.push(new MediaSearchTool());
-  toolsList.push(new MediaRequestTool());
-  toolsList.push(new MediaLibraryTool());
+  nextList.push(new MediaBindTool());
+  nextList.push(new MediaSearchTool());
+  nextList.push(new MediaRequestTool());
+  nextList.push(new MediaLibraryTool());
   // ── Owner ───────────────────────────────────────────────────────────────────────
-  toolsList.push(new OwnerTool());
+  nextList.push(new OwnerTool());
   // ── Meta (always-loaded) ────────────────────────────────────────────────────────
-  toolsList.push(new FindToolsTool());
+  nextList.push(new FindToolsTool());
 
   // ── Dynamic Plugins ───────────────────────────────────────────────────────────
   const PLUGINS_DIR = join(import.meta.dir, '..', 'plugins');
@@ -138,12 +138,12 @@ export async function reloadRegistry() {
       const pluginPath = join(PLUGINS_DIR, file);
       // Use cache busting for hot reload
       const module = await import(`${pluginPath}?update=${Date.now()}`);
-      
+
        const exportedValues = [module.default, ...Object.values(module)].filter(Boolean);
        for (const exported of exportedValues) {
          if (typeof exported === 'function' && exported.prototype && exported.prototype instanceof BaseTool) {
            const instance = new exported();
-           toolsList.push(instance);
+           nextList.push(instance);
            log.info({ plugin: file, toolName: instance.name }, 'Loaded plugin tool');
          }
        }
@@ -152,37 +152,54 @@ export async function reloadRegistry() {
     }
   }
 
-   // Rebuild Maps
-   for (const tool of toolsList) {
-     if (toolsMap.has(tool.name)) {
-       log.warn({ toolName: tool.name }, 'Duplicate tool name detected; later registration overrides earlier');
+   // Rebuild Maps into locals; first registration wins on collisions (warned).
+   const nextToolsMap = new Map<string, BaseTool>();
+   const nextAliasMap = new Map<string, BaseTool>();
+   for (const tool of nextList) {
+     if (nextToolsMap.has(tool.name)) {
+       log.warn({ toolName: tool.name }, 'Duplicate tool name detected; keeping first registration');
+       continue;
      }
-     toolsMap.set(tool.name, tool);
-     aliasMap.set(tool.name, tool);
-     for (const alias of tool.aliases) {
-       aliasMap.set(alias, tool);
+     nextToolsMap.set(tool.name, tool);
+     for (const key of [tool.name, ...tool.aliases]) {
+       const existing = nextAliasMap.get(key);
+       if (existing && existing !== tool) {
+         log.warn({ key, keptBy: existing.name, droppedFrom: tool.name }, 'Command name/alias collision; keeping first registration');
+         continue;
+       }
+       nextAliasMap.set(key, tool);
      }
    }
 
-  // Rebuild Search Index
-  discoverableTools = toolsList.filter((t) => !t.alwaysLoad);
-  toolSearchIndex.build(discoverableTools);
+  const nextDiscoverable = nextList.filter((t) => !t.alwaysLoad);
 
   // Pre-computed definition sets
-  cachedAllDefinitions = toolsList.map((t) => t.definition);
-  cachedAlwaysLoadedDefinitions = toolsList
+  const nextAllDefinitions = nextList.map((t) => t.definition);
+  const nextAlwaysLoadedDefinitions = nextList
     .filter((t) => t.alwaysLoad)
     .map((t) => t.definition);
 
+  // ── Atomic swap (synchronous — no await between here and the assignments) ──
+  toolsList.length = 0;
+  toolsList.push(...nextList);
+  toolsMap = nextToolsMap;
+  aliasMap = nextAliasMap;
+  discoverableTools = nextDiscoverable;
+  toolSearchIndex.build(discoverableTools);
+  cachedAllDefinitions = nextAllDefinitions;
+  cachedAlwaysLoadedDefinitions = nextAlwaysLoadedDefinitions;
+
   log.info({
     toolCount: toolsList.length,
-    alwaysLoaded: toolsList.filter((t) => t.alwaysLoad).map((t) => t.name),
-    discoverable: discoverableTools.length,
+    alwaysLoaded: nextList.filter((t) => t.alwaysLoad).map((t) => t.name),
+    discoverable: nextDiscoverable.length,
   }, 'Tool registry (re)loaded');
 }
 
-// Initial sync build for core tools only, before plugins are loaded asynchronously
-reloadRegistry().catch(e => log.error(e, 'Initial plugin load failed'));
+/** Resolves once the initial registry load (core tools + plugins) has completed. */
+export const registryReady: Promise<void> = reloadRegistry().catch(e => {
+  log.error(e, 'Initial plugin load failed');
+});
 
 /**
  * Look up a tool by its exact LLM function name (e.g., `'web_search'`).

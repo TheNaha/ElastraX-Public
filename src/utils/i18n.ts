@@ -27,9 +27,14 @@
 import { logger } from './logger';
 
 /** Supported locale codes. */
-type Locale = 'en' | 'id';
+export type Locale = 'en' | 'id';
 
-const translations: Record<Locale, Record<string, string>> = {
+/**
+ * Translation table. Exported so tests can enforce en/id key parity —
+ * `t()` silently falls back to English for missing keys, which would
+ * otherwise let locale drift ship unnoticed.
+ */
+export const translations: Record<Locale, Record<string, string>> = {
   en: {
     // Menu
     'menu.not_found': '❌ Command or tool "*`{name}`*" not found. Type `/menu` to see all commands.',
@@ -179,7 +184,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'reminder.fired': '⏰ *Reminder for {name}:*\n\n{message}',
     'reminder.list_empty': '📭 You have no active reminders.',
     'reminder.list': '⏰ *Your reminders:*\n\n{items}',
-    'reminder.list_item': ' • _{message}_ — *{time}* (ID: {n})',
+    'reminder.list_item': ' • _{message}_ — *{time}*',
     'reminder.cancel': '✅ Reminder #{n} cancelled.',
     'reminder.cancel_invalid': '❌ Invalid reminder number.',
     'reminder.error': '❌ Failed to set reminder: {msg}',
@@ -226,6 +231,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
     'reminder.recurrence_info': ' 🔁 _{recurrence}_',
+    'reminder.invalid_recurrence': '❌ Unrecognized recurrence pattern "{recurrence}". Try "daily", "weekly", "monthly", "hourly", or "every 30m" / "every 2h" / "every 7d".',
   },
   id: {
     // Menu
@@ -376,7 +382,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'reminder.fired': '⏰ *Pengingat untuk {name}:*\n\n{message}',
     'reminder.list_empty': '📭 Kamu tidak punya pengingat aktif.',
     'reminder.list': '⏰ *Pengingatmu:*\n\n{items}',
-    'reminder.list_item': ' • _{message}_ — *{time}* (ID: {n})',
+    'reminder.list_item': ' • _{message}_ — *{time}*',
     'reminder.cancel': '✅ Pengingat #{n} dibatalkan.',
     'reminder.cancel_invalid': '❌ Nomor pengingat tidak valid.',
     'reminder.error': '❌ Gagal mengatur pengingat: {msg}',
@@ -423,6 +429,7 @@ const translations: Record<Locale, Record<string, string>> = {
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',
     'reminder.recurrence_info': ' 🔁 _{recurrence}_',
+    'reminder.invalid_recurrence': '❌ Pola pengulangan "{recurrence}" tidak dikenali. Coba "daily", "weekly", "monthly", "hourly", atau "every 30m" / "every 2h" / "every 7d".',
   },
 };
 
