@@ -51,7 +51,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
   if (step === 'password') {
     const password = ctx.text.trim();
     if (!password) {
-      await ctx.reply('Please enter your password.');
+      await ctx.reply(t(ctx.language, 'media.password_prompt') || 'Now enter your password. (Your message will be processed securely.)');
       return;
     }
 
@@ -64,14 +64,13 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
       const jellyfinClient = MediaService.createJellyfinClient();
 
       // Try Seerr Jellyfin auth first (handles both)
-      let authResult;
       let jellyfinUserId: string;
       let jellyfinUsername: string;
       let isAdmin = false;
       let seerrUserId: number | undefined;
       let seerrEmail: string | undefined;
 
-      if (seerrClient.isConfigured) {
+      if (seerrClient.isConfigured && seerrClient.authenticateJellyfin) {
         const seerrAuth = await seerrClient.authenticateJellyfin(username, password);
         seerrUserId = seerrAuth.id;
         seerrEmail = seerrAuth.email;
@@ -87,20 +86,19 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
             log.warn({ jellyfinUserId }, 'Could not fetch Jellyfin user for admin check');
           }
         }
-      } else if (jellyfinClient.isConfigured) {
-        // Fallback: direct Jellyfin auth
-        authResult = await jellyfinClient.authenticateUser(username, password);
-        jellyfinUserId = authResult.User.Id;
-        jellyfinUsername = authResult.User.Name;
-        isAdmin = authResult.User.Policy?.IsAdministrator === true;
-      } else if (seerrClient.isConfigured && seerrClient.authenticateJellyfin) {
-        // Seerr-only setup: authenticate via Seerr's Jellyfin integration
-        // but don't require a separate Jellyfin server (Seerr proxies the auth).
+      } else if (seerrClient.isConfigured) {
+        // Seerr configured but no Jellyfin auth — try direct Seerr auth
         const seerrAuth = await seerrClient.authenticateJellyfin(username, password);
         seerrUserId = seerrAuth.id;
         seerrEmail = seerrAuth.email;
         jellyfinUserId = seerrAuth.jellyfinUserId ?? '';
         jellyfinUsername = seerrAuth.displayName ?? username;
+      } else if (jellyfinClient.isConfigured) {
+        // Fallback: direct Jellyfin auth
+        const authResult = await jellyfinClient.authenticateUser(username, password);
+        jellyfinUserId = authResult.User.Id;
+        jellyfinUsername = authResult.User.Name;
+        isAdmin = authResult.User.Policy?.IsAdministrator === true;
       } else {
         FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
         await ctx.reply(t(ctx.language, 'media.not_configured') || '❌ Media services are not configured. Please contact the bot admin.');
