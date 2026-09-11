@@ -28,7 +28,7 @@ async function main() {
 
   try {
     logger.info('Running database migrations...');
-    ensureDatabaseSchema();
+    await ensureDatabaseSchema();
     logger.info('Database migrations applied successfully.');
   } catch (err: unknown) {
     logger.error(err, 'Failed to run database migrations');

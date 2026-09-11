@@ -35,8 +35,10 @@ if (!usesInMemoryDb && !existsSync(dir)) {
   mkdirSync(dir, { recursive: true });
 }
 
-export const sqlite = new Database(DB_PATH, { create: true });
-// Enable Write-Ahead Logging (WAL) for better concurrent write performance
+export const sqlite = new Database(DB_PATH, { create: true, strict: true });
+// Enable Write-Ahead Logging (WAL) for better concurrent write performance.
+// WAL is an in-place database operation; it completes quickly for most DBs.
+// For very large databases (>1GB), consider running this once manually.
 if (!usesInMemoryDb) {
   sqlite.exec('PRAGMA journal_mode = WAL;');
 }
@@ -45,13 +47,30 @@ sqlite.exec('PRAGMA foreign_keys = ON;');
 export const db = drizzle({ client: sqlite, schema });
 
 let schemaInitialized = false;
+let migratePromise: Promise<void> | null = null;
 
-export function ensureDatabaseSchema(): void {
-  if (schemaInitialized) return;
+/**
+ * Apply pending Drizzle migrations. Returns a Promise that resolves once
+ * migrations are complete. Safe to call from multiple places — concurrent
+ * callers share the same underlying promise.
+ *
+ * Migrations run via the synchronous `bun:sqlite` driver; for large databases
+ * this may briefly block the event loop, but only once at startup.
+ */
+export function ensureDatabaseSchema(): Promise<void> {
+  if (migratePromise) return migratePromise;
 
-  migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
-  const log = logger.child({ module: 'DB' });
-  log.info('Database schema ensured (migrations applied if any)');
+  migratePromise = Promise.resolve().then(() => {
+    migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+    schemaInitialized = true;
+    const log = logger.child({ module: 'DB' });
+    log.info('Database schema ensured (migrations applied if any)');
+  });
 
-  schemaInitialized = true;
+  return migratePromise;
+}
+
+/** Whether `ensureDatabaseSchema()` has completed (resolved or rejected). */
+export function isSchemaReady(): boolean {
+  return schemaInitialized;
 }
