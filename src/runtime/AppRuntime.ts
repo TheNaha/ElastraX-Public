@@ -69,6 +69,7 @@ export class AppRuntime {
   private startupCoverageTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private mediaCleanupPromise: Promise<void> | null = null;
   private started = false;
+  private stopping = false;
 
   constructor(deps: AppRuntimeDeps = {}) {
     this.providers = deps.providers ?? [new WhatsAppProvider(), new DiscordProvider()];
@@ -129,7 +130,8 @@ export class AppRuntime {
   }
 
   async stop(): Promise<void> {
-    if (!this.started) return;
+    if (!this.started || this.stopping) return;
+    this.stopping = true;
 
     await this.stopBackgroundTasks();
     this.digestService.stop();
@@ -138,11 +140,24 @@ export class AppRuntime {
     healthMonitor.stop();
     this.messageQueue.stop();
 
+    // Stop providers with a timeout so a hung provider can't block shutdown forever
+    const SHUTDOWN_TIMEOUT_MS = 10_000;
     for (const provider of this.providers) {
-      await provider.stop();
+      try {
+        await Promise.race([
+          provider.stop(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error(`Provider ${provider.name} stop timed out`)), SHUTDOWN_TIMEOUT_MS)
+          ),
+        ]);
+      } catch (err) {
+        logger.warn({ err, provider: provider.name }, 'Provider stop error during shutdown (non-fatal)');
+      }
     }
 
     this.started = false;
+    this.stopping = false;
+    logger.info('Graceful shutdown complete.');
   }
 
   private registerProviderSenders(): void {
