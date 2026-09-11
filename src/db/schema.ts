@@ -126,6 +126,8 @@ export const reminders = sqliteTable('reminders', {
   platform: text('platform').notNull().default('whatsapp'),
   /** Cron-style recurrence pattern (e.g. 'daily', 'weekly', 'monthly', or cron expression). Null = one-shot. */
   recurrence: text('recurrence'),
+  /** V8: Language code used when firing this reminder, so messages respect room language. */
+  language: text('language').notNull().default('en'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
   remindAtIdx: index('reminders_remind_at_idx').on(table.remindAt, table.isSent),

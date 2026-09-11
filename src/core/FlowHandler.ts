@@ -161,12 +161,21 @@ export class FlowHandler {
     }
   }
 
-  static getSession(userId: string, _platform: string = 'whatsapp'): UserSession | null {
-    // Legacy synchronous getSession is dangerous in a stateless model.
-    // However, none of the tools actually call `getSession()` themselves. They use FlowProcessor callbacks.
-    // We keep this signature for backward compatibility but warn if used, as we rely on `handle()` which uses the async `getActiveFlow`.
-    logger.warn('[FlowHandler] Synchronous getSession called! Returning null in stateless model.');
-    return null;
+  /**
+   * Legacy synchronous getSession — DEPRECATED.
+   *
+   * The synchronous return contract cannot return a DB-backed session.
+   * Use `getActiveFlow()` (async) instead. This method throws to fail fast
+   * so any code accidentally calling it gets a clear error rather than a
+   * silent `null` that causes downstream logic to be skipped.
+   *
+   * @deprecated Use `FlowHandler.getActiveFlow(userId, platform)` instead.
+   * @throws {Error} Always — forces callers to migrate to the async API.
+   */
+  static getSession(_userId: string, _platform: string = 'whatsapp'): UserSession | null {
+    throw new Error(
+      '[FlowHandler.getSession is deprecated] Use async FlowHandler.getActiveFlow(userId, platform) instead.'
+    );
   }
 
   static async getActiveFlow(userId: string, platform: string = 'whatsapp'): Promise<ActiveFlowEntry | null> {
