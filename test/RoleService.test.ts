@@ -16,7 +16,7 @@ describe('RoleService', () => {
   beforeEach(async () => {
     sqlite = new Database(':memory:');
     db = drizzle(sqlite);
-    IdentityService.setDepsForTesting({ db: db as typeof import('../src/db').db, userIdentities });
+    IdentityService.setDepsForTesting({ db: db as typeof import('../src/db').db, userIdentities, userRoles });
     RoleService.setDepsForTesting({ db: db as typeof import('../src/db').db, userRoles, rolePrivileges });
 
     sqlite.exec(`

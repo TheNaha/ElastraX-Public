@@ -4,7 +4,7 @@
  */
 
 import { db } from '../db';
-import { userRoles, rolePrivileges } from '../db/schema';
+import { userRoles, rolePrivileges, userIdentities } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
@@ -138,37 +138,36 @@ export class AuthService {
         logger.debug({ userId, senderPn, ownerJid }, '[AuthService] Owner check - no match');
       }
 
-      let userIds: string[];
-      try {
-        userIds = await IdentityService.getAllJids(userId);
-        if (senderPn && !userIds.includes(senderPn)) {
-          userIds.push(senderPn);
-        }
-      } catch {
-        userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+    let userIds: string[];
+    let roleRows: { scope: string; role: string }[];
+
+    try {
+      // PERF-03: Single batched query for JIDs + roles (was N+1: getAllJids + user_roles lookup)
+      const { jids, roles: dbRoles } = await IdentityService.getJidsAndRoles(userId, chatId);
+      userIds = jids;
+      roleRows = dbRoles;
+      if (senderPn && !userIds.includes(senderPn)) {
+        userIds.push(senderPn);
       }
+    } catch {
+      userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+      roleRows = [];
+    }
 
-      logger.debug({ userIds, chatId }, '[AuthService] Querying DB for role entries');
+    logger.debug({ userIds, chatId, hasDbRoles: roleRows.length > 0 }, '[AuthService] Identity+roles resolved in single query');
 
-      const roleLookupCondition = userIds.length === 1 ? eq(userRoles.userId, userIds[0]!) : inArray(userRoles.userId, userIds);
-
-      const rows = await db
-        .select({ scope: userRoles.scope, role: userRoles.role })
-        .from(userRoles)
-        .where(roleLookupCondition);
-
-      if (rows.length > 0) {
-        const appliedRoles: string[] = [];
-        for (const row of rows) {
-          if (row.scope === 'global' || row.scope === chatId) {
-            roles.add(row.role);
-            appliedRoles.push(row.role);
-          }
+    if (roleRows.length > 0) {
+      const appliedRoles: string[] = [];
+      for (const row of roleRows) {
+        if (row.scope === 'global' || row.scope === chatId) {
+          roles.add(row.role);
+          appliedRoles.push(row.role);
         }
-        logger.debug(
+      }
+      logger.debug(
           {
             userId,
-            dbRows: rows.length,
+            dbRows: roleRows.length,
             appliedRoles,
           },
           '[AuthService] DB roles found',

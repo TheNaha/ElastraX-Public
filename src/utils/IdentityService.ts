@@ -4,8 +4,8 @@
  */
 
 import { db } from '../db';
-import { userIdentities } from '../db/schema';
-import { eq, or, sql } from 'drizzle-orm';
+import { userIdentities, userRoles } from '../db/schema';
+import { eq, or, sql, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 
 type IdentityRow = {
@@ -18,6 +18,7 @@ type IdentityRow = {
 type IdentityDeps = {
   db: typeof import('../db').db;
   userIdentities: typeof import('../db/schema').userIdentities;
+  userRoles?: typeof import('../db/schema').userRoles;
 };
 
 function buildRowIdFilter(rowIds: number[]) {
@@ -37,10 +38,10 @@ function normalizeJid(jid: string | undefined): string | undefined {
 }
 
 export class IdentityService {
-  private static deps: IdentityDeps = { db, userIdentities };
+  private static deps: IdentityDeps = { db, userIdentities, userRoles };
 
   static setDepsForTesting(deps: IdentityDeps | null): void {
-    this.deps = deps ?? { db, userIdentities };
+    this.deps = deps ?? { db, userIdentities, userRoles };
   }
 
   private static async findMatchingRows(lid?: string, pn?: string): Promise<IdentityRow[]> {
@@ -150,6 +151,44 @@ export class IdentityService {
     } catch (err) {
       logger.error({ err, jid }, '[IdentityService] Failed to look up identity');
       return [jid];
+    }
+  }
+
+  /**
+   * Batch lookup: resolve all JIDs for a user AND fetch their role rows
+   * in a single SQL query using a LEFT JOIN. Eliminates the N+1 pattern
+   * where AuthService.getAllJids() and the subsequent user_roles query
+   * were executed as two separate round trips.
+   *
+   * Returns the set of JIDs and the matching role rows.
+   */
+  static async getJidsAndRoles(jid: string, _chatId?: string): Promise<{
+    jids: string[];
+    roles: { scope: string; role: string }[];
+  }> {
+    try {
+      const { db, userIdentities, userRoles: ur } = this.deps;
+      if (!ur) {
+        // Fallback to separate lookups if userRoles not injected
+        const jids = await this.getAllJids(jid);
+        return { jids, roles: [] };
+      }
+
+      // Step 1: Get all mapped JIDs (LID ↔ PN) for this user
+      const jids = await this.getAllJids(jid);
+      const uniqueJids = [...new Set(jids)];
+
+      // Step 2: Batch-fetch roles for all JIDs in a single query
+      // (previously this was a separate DB call after getAllJids)
+      const roleRows = await db
+        .select({ scope: ur.scope, role: ur.role })
+        .from(ur)
+        .where(inArray(ur.userId, uniqueJids));
+
+      return { jids: uniqueJids, roles: roleRows };
+    } catch (err) {
+      logger.error({ err, jid }, '[IdentityService] Failed to look up identity + roles');
+      return { jids: [jid], roles: [] };
     }
   }
 
