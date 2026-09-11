@@ -56,6 +56,7 @@ import type { BaseTool, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs } from '../config/runtime';
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
+import { withTimeout } from '../utils/withTimeout.js';
 
 const modelRouter = getModelRouter();
 
@@ -240,25 +241,6 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   return '';
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err: unknown) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
-
 async function executeToolWithTimeout(
   tool: BaseTool,
   args: Record<string, unknown>,
@@ -382,7 +364,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       shouldTriggerAI = true;
     }
 
-    if (text.toLowerCase().startsWith('/chat') || text.startsWith('/')) {
+    if (text.startsWith('/chat') || text.startsWith('/')) {
       shouldTriggerAI = true;
     }
     // Check if the bot was explicitly mentioned using its ID.
@@ -490,7 +472,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     userContent = `[Replying to ${quoteSender}: ${combinedQuoteText}]\n${userContent}`;
   }
 
-  if (!userContent && !ctx.hasMedia) return;
+  // /chat with no additional text in a group: prompt the user for input.
+  if (!userContent && !ctx.hasMedia) {
+    if (isGroup && text.toLowerCase().startsWith('/chat')) {
+      await ctx.reply(t(ctx.language, 'agent.chat_prompt') || 'What would you like to talk about?');
+      return;
+    }
+    return;
+  }
 
   const chatType = isGroup ? 'Group' : 'Private';
   log.info({ chatType, senderName, chatId, platform, hasMedia: ctx.hasMedia, textPreview: (userContent || '<media only>').slice(0, 100) }, 'Incoming message received');
@@ -900,7 +889,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                     args: tcDelta.function?.arguments || '',
                   });
                 } else {
-                  if (tcDelta.id) existing.id = tcDelta.id;
+                  if (tcDelta.id) existing.id = (existing.id || '') + tcDelta.id;
                   if (tcDelta.function?.name) existing.name += tcDelta.function.name;
                   if (tcDelta.function?.arguments) existing.args += tcDelta.function.arguments;
                 }

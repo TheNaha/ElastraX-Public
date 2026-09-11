@@ -3,6 +3,7 @@ import { getErrorMessage } from '../utils/errorUtils';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
+import { withTimeout } from '../utils/withTimeout.js';
 
 import type { SendFn, WebhookBody } from './types';
 import {
@@ -32,22 +33,10 @@ export class WebhookServer {
     this.senders.set(platform, fn);
   }
 
-  private async withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
-    });
-    try {
-      return await Promise.race([p, timeout]);
-    } finally {
-      if (timer) clearTimeout(timer);
-    }
-  }
-
   private async send(roomId: string, text: string, platform?: string): Promise<void> {
     const SEND_TIMEOUT_MS = 15000;
     const deliver = (name: string, fn: SendFn) =>
-      this.withTimeout(fn(roomId, text, name), SEND_TIMEOUT_MS, `webhook:${name}`);
+      withTimeout(fn(roomId, text, name), SEND_TIMEOUT_MS, `webhook:${name}`);
 
     if (platform && this.senders.has(platform)) {
       return deliver(platform, this.senders.get(platform)!);

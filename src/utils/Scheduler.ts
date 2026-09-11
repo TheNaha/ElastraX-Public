@@ -22,6 +22,7 @@ import { reminders } from '../db/schema';
 import { eq, lte, and, or, isNull } from 'drizzle-orm';
 import { logger } from './logger';
 import { t } from './i18n';
+import { withTimeout } from './withTimeout.js';
 
 type SendFn = (chatRoomId: string, text: string) => Promise<void>;
 
@@ -30,15 +31,6 @@ const STALE_CLAIM_MS = 2 * 60_000;
 /** Hard cap on a single delivery attempt so a hung sender cannot block the loop. */
 const SEND_TIMEOUT_MS = 15_000;
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`send timed out after ${ms}ms`)), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
-}
 
 /**
  * Compute the next occurrence based on a simple recurrence pattern.
@@ -182,12 +174,12 @@ export class Scheduler {
           continue;
         }
 
-        const message = t('en', 'reminder.fired', {
+        const message = t(reminder.language ?? 'en', 'reminder.fired', {
           name: reminder.senderName,
           message: reminder.message,
         });
 
-        await withTimeout(sender(reminder.chatRoomId, message), SEND_TIMEOUT_MS);
+        await withTimeout(sender(reminder.chatRoomId, message), SEND_TIMEOUT_MS, 'scheduler send');
 
         // Handle recurring reminders: reschedule instead of marking as sent
         if (reminder.recurrence) {

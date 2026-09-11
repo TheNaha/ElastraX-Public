@@ -34,6 +34,8 @@ import { getModelRouter } from './ModelRouter';
 import { MediaService } from './MediaService';
 import { t, type Locale } from './i18n';
 
+import { withTimeout } from './withTimeout.js';
+
 const log = logger.child({ module: 'DigestService' });
 
 type SendFn = (chatRoomId: string, text: string) => Promise<void>;
@@ -98,16 +100,6 @@ export function weekKey(now: Date): string {
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - ((now.getUTCDay() + 6) % 7)),
   );
   return dateKey(utcMonday);
-}
-
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`send timed out after ${ms}ms`)), ms);
-  });
-  return Promise.race([p, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
 }
 
 // ── Transcript building ───────────────────────────────────────────────────────
@@ -331,7 +323,8 @@ export class DigestService {
       const marker = `digest:media:${roomId}:${wk}`;
       if (!claimMarker(marker)) continue;
       try {
-        const text = await this.buildMediaRollup(weekStart, deps);
+        const lang = languageForRoom(roomId);
+        const text = await this.buildMediaRollup(weekStart, deps, lang);
         if (!text) {
           // Nothing new this week — keep the marker, stay silent.
           log.debug({ roomId }, '[DigestService] Weekly media digest skipped (nothing new)');
@@ -353,7 +346,7 @@ export class DigestService {
    * Returns null when the client is unconfigured (marker released → retried later)
    * or nothing new was added (marker kept → silent).
    */
-  static async buildMediaRollup(weekStart: Date, _deps?: DigestDeps): Promise<string | null> {
+  static async buildMediaRollup(weekStart: Date, _deps?: DigestDeps, lang: Locale = 'en'): Promise<string | null> {
     const client = MediaService.createJellyfinClient();
     if (!client.isConfigured) {
       throw new Error('Jellyfin is not configured (JELLYFIN_API_URL/JELLYFIN_API_KEY)');
@@ -380,16 +373,16 @@ export class DigestService {
       return `${emojiFor(item.Type)} ${item.Name}${year}\n   ${link}`;
     });
 
-    return `${t('en', 'digest.media_header')}\n\n${lines.join('\n')}`;
+    return `${t(lang, 'digest.media_header')}\n\n${lines.join('\n')}`;
   }
 
   private static async deliver(platform: string, roomId: string, text: string, deps?: DigestDeps): Promise<void> {
     if (deps?.send) {
-      await withTimeout(deps.send(platform, roomId, text), SEND_TIMEOUT_MS);
+      await withTimeout(deps.send(platform, roomId, text), SEND_TIMEOUT_MS, 'digest send');
       return;
     }
     const sender = this.senders.get(platform);
     if (!sender) throw new Error(`no sender registered for platform '${platform}'`);
-    await withTimeout(sender(roomId, text), SEND_TIMEOUT_MS);
+    await withTimeout(sender(roomId, text), SEND_TIMEOUT_MS, 'digest send');
   }
 }
