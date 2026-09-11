@@ -26,7 +26,7 @@
 
 import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { FlowHandler } from '../core/FlowHandler';
+import { FlowHandler, type FlowSession } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
@@ -89,8 +89,9 @@ function resolveTarget(input: string): string | null {
   return null;
 }
 
-// Register the confirmation flow handler once at module load
-FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
+// ── Flow Processor ──────────────────────────────────────────────────
+
+export const menfessConfirmFlowProcessor = async (ctx: MessageContext, flowData: FlowSession) => {
   const lang = ctx.language ?? 'en';
   const response = ctx.text.trim().toLowerCase();
 
@@ -122,7 +123,9 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
     FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
     await ctx.reply(t(lang, 'menfess.cancelled'));
   }
-});
+};
+
+// ── Tool Class ──────────────────────────────────────────────────────
 
 export class MenfessTool extends BaseTool {
   readonly name = 'menfess';

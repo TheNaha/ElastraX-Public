@@ -14,6 +14,7 @@ import { WebhookServer } from '../webhookServer';
 import { healthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
 import { registryReady } from '../tools';
+import { safeRegisterFlows } from '../flows/registry';
 
 type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
@@ -95,6 +96,9 @@ export class AppRuntime {
     // so slash commands and LLM tool lookups never hit an empty registry.
     await registryReady;
 
+    // Register all flow processors in a centralized location.
+    safeRegisterFlows();
+
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
       this.messageQueue.enqueue(ctx.chatId, () => this.messageHandler(ctx));
     };
@@ -103,13 +107,15 @@ export class AppRuntime {
       provider.onMessage(queuedHandler);
     }
 
-    for (const provider of this.providers) {
+    const startedProviders: BotProvider[] = [];
+    await Promise.all(this.providers.map(async (provider) => {
       try {
         await provider.start();
+        startedProviders.push(provider);
       } catch (err) {
         logger.error({ err, provider: provider.name }, 'Failed to start provider (non-fatal)');
       }
-    }
+    }));
 
     this.registerProviderSenders();
     this.webhookServer.start();

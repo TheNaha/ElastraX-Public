@@ -1,6 +1,6 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { FlowHandler } from '../core/FlowHandler';
+import { FlowHandler, type FlowProcessor } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
@@ -427,7 +427,7 @@ function isPdf(mime: string, path: string): boolean {
 }
 
 // ── Image collection flow ──────────────────────────────────────────────
-FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
+export const pdfImgCollectFlowProcessor: FlowProcessor = async (ctx, flowData, flowId) => {
   const lang = ctx.language ?? 'en';
   const files = (flowData.data.files ?? []) as string[];
   const mimes = (flowData.data.mimes ?? []) as string[];
@@ -467,10 +467,10 @@ FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
   );
   await ctx.react?.('📄');
   await ctx.reply(t(lang, 'pdf.img_collect_added', { count: String(files.length) }));
-});
+};
 
 // ── PDF merge collection flow ──────────────────────────────────────────
-FlowHandler.register('pdf_merge_collect', async (ctx, flowData, flowId) => {
+export const pdfMergeCollectFlowProcessor: FlowProcessor = async (ctx, flowData, flowId) => {
   const lang = ctx.language ?? 'en';
   const files = (flowData.data.files ?? []) as string[];
 
@@ -508,5 +508,5 @@ FlowHandler.register('pdf_merge_collect', async (ctx, flowData, flowId) => {
   );
   await ctx.react?.('📄');
   await ctx.reply(t(lang, 'pdf.merge_collect_added', { count: String(files.length) }));
-});
+};
 
