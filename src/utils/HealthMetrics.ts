@@ -188,6 +188,21 @@ export class HealthMetricsCollector {
     return sorted[Math.max(0, idx)];
   }
 
+  /** Reset all counters and windows (intended for testing). */
+  reset(): void {
+    this.messagesReceived = 0;
+    this.messagesProcessed = 0;
+    this.messageErrors = 0;
+    this.llmRequests = 0;
+    this.llmFailures = 0;
+    this.llmLatency = { values: [], maxSize: 1000, cursor: 0 };
+    this.tokenStats.clear();
+    this.messageDuration = { values: [], maxSize: 1000, cursor: 0 };
+    this.providerStats.clear();
+    this.toolStats.clear();
+    this.serviceHealth.clear();
+  }
+
   getMetrics(): MetricsSnapshot {
     const sortedLLM = this.llmLatency.values.slice().sort((a, b) => a - b);
     let avgLLM = 0;

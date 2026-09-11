@@ -262,6 +262,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         isSent: false,
         platform: ctx.platform,
         recurrence: recurrence ? String(recurrence).trim() : null,
+        language: ctx.language ?? 'en',
         created_at: new Date(),
       }).run();
 
