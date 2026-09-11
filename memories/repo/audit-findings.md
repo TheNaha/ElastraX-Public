@@ -16,6 +16,8 @@
 5. **BUG-09**: Scheduler hardcoded `'en'` for reminder translations — now uses room-stored language
 6. **BUG-10**: DigestService used `t('en', ...)` — now passes `languageForRoom(roomId)`
 
+7. **BUG-06**: MediaBindTool auth flow edge cases — fixed unreachable Seerr-only auth path by reordering if/else branches; Seerr-proxy auth (`authenticateJellyfin`) now checked before plain `isConfigured`, making the path reachable.
+
 ### Incomplete Implementations
 7. **INCOMP-01**: `FlowHandler.getSession()` returned `null` silently — changed to throw `Error` with migration guidance
 8. **INCOMP-03**: Added `HealthMetrics.reset()` method
@@ -39,7 +41,6 @@
 16. **MISSING-06**: MediaBindTool fully localized — i18n keys added for both English and Indonesian sections; Seerr-only auth path implemented
 
 ## Remaining Issues (TODO)
-- **BUG-06**: MediaBindTool auth flow edge cases
 - **INCOMP-02/05/06/07**: Other incomplete implementations
 - **MISSING-01/02/03/05/07**: Missing integrations
 - **UNIFY-01-05**: Other non-unified systems
