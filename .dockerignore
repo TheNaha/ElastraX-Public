@@ -1,0 +1,29 @@
+# ── Secrets & persistent state (never bake into the image) ──────────────
+.env
+.env.*
+!.env.example
+data/
+*.db
+*.db-shm
+*.db-wal
+
+# ── Dependencies & build artifacts ──────────────────────────────────────
+node_modules/
+.opencode/
+
+# ── Version control & CI ────────────────────────────────────────────────
+.git/
+.github/
+
+# ── Docs, tests & local tooling ─────────────────────────────────────────
+docs/
+test/
+*.test.ts
+test-results.txt
+test.log
+Dockerfile
+docker-compose.yml
+.dockerignore
+README.md
+.eslint*
+.prettierrc

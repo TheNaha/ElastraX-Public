@@ -1,3 +1,9 @@
+[install]
+# Don't auto-install optional peer dependencies (e.g. drizzle-orm's optional
+# "better-sqlite3" peer). The app uses Bun's built-in `bun:sqlite`, so pulling
+# native SQLite bindings just bloats the image and slows every fresh install.
+peer = false
+
 [test]
 # Ignore the old ElastraBOT-v6 directory when running tests
 ignore = ["./ElastraBOT-v6/**", "ElastraBOT-v6/**", "**/node_modules/**"]

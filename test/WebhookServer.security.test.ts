@@ -210,7 +210,7 @@ describe('WebhookServer Security', () => {
       });
 
       expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true });
+      expect(await res.json()).toEqual({ ok: true, delivered: 1 });
       expect(sendDiscord).toHaveBeenCalledTimes(1);
     } finally {
       server.stop();

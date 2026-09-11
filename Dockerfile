@@ -42,19 +42,18 @@ RUN set -eux; \
 
 # ── Stage 2: Install npm dependencies ──────────────────────────────────
 FROM oven/bun:1 AS install
-# better-sqlite3 (devDependency) needs native build tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-		python3 build-essential pkg-config \
-	&& rm -rf /var/lib/apt/lists/*
+# No native build tools needed: the project uses Bun's built-in `bun:sqlite`
+# (no better-sqlite3/node-gyp), and bunfig.toml disables optional-peer
+# auto-install so no native packages sneak in via drizzle-orm.
 
 # Dev install (includes devDependencies for testing/linting)
 RUN mkdir -p /temp/dev
-COPY package.json bun.lock /temp/dev/
+COPY package.json bun.lock bunfig.toml /temp/dev/
 RUN cd /temp/dev && bun install --frozen-lockfile
 
 # Production install (excludes devDependencies)
 RUN mkdir -p /temp/prod
-COPY package.json bun.lock /temp/prod/
+COPY package.json bun.lock bunfig.toml /temp/prod/
 RUN cd /temp/prod && bun install --frozen-lockfile --production
 
 # ── Stage 3: Pre-release (source + dev deps for optional tests) ────────
