@@ -12,7 +12,8 @@ const _mockLogger = {
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { verifyGitHubSignature, WebhookServer } from '../src/webhookServer';
+import { verifyGitHubSignature } from '../src/webhooks/utils';
+import { WebhookServer } from '../src/webhookServer';
 
 describe('WebhookServer Security', () => {
   const secret = 'test-secret';

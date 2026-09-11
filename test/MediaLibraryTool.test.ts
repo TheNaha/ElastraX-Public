@@ -21,7 +21,7 @@ const createMockCtx = (): MessageContext => ({
   reply: mock(async () => {}),
   checkPermissions: mock(async () => true),
   resolveRoles: mock(async () => ['user']),
-});
+}) as unknown as MessageContext;
 
 describe('MediaLibraryTool', () => {
   afterEach(() => {

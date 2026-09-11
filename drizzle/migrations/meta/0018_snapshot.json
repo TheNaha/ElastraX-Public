@@ -1,9 +1,40 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a2fcfc8e-c5df-4dae-979e-1db5d030ea9d",
-  "prevId": "8ecced74-2aa2-4ffc-abb5-bdc9ef1709db",
+  "id": "31f2bef4-8d47-49e2-9358-d6707728d952",
+  "prevId": "67ff5285-a3ac-4fa5-93eb-f8eeeef64e20",
   "tables": {
+    "app_kv": {
+      "name": "app_kv",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
     "chat_rooms": {
       "name": "chat_rooms",
       "columns": {
@@ -78,6 +109,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "long_term_memory": {
+          "name": "long_term_memory",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -86,7 +124,15 @@
           "autoincrement": false
         }
       },
-      "indexes": {},
+      "indexes": {
+        "chat_rooms_platform_idx": {
+          "name": "chat_rooms_platform_idx",
+          "columns": [
+            "platform"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -122,6 +168,80 @@
           "name": "flow_sessions_updated_idx",
           "columns": [
             "updated_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "memories": {
+      "name": "memories",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "owner_id": {
+          "name": "owner_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "content": {
+          "name": "content",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "category": {
+          "name": "category",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "embedding": {
+          "name": "embedding",
+          "type": "blob",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "embedding_model": {
+          "name": "embedding_model",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "embedded_at": {
+          "name": "embedded_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "memories_owner_idx": {
+          "name": "memories_owner_idx",
+          "columns": [
+            "owner_id"
           ],
           "isUnique": false
         }
@@ -399,6 +519,13 @@
           "autoincrement": false,
           "default": false
         },
+        "claimed_at": {
+          "name": "claimed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "platform": {
           "name": "platform",
           "type": "text",
@@ -428,6 +555,13 @@
           "columns": [
             "remind_at",
             "is_sent"
+          ],
+          "isUnique": false
+        },
+        "reminders_sender_id_idx": {
+          "name": "reminders_sender_id_idx",
+          "columns": [
+            "sender_id"
           ],
           "isUnique": false
         }
@@ -644,15 +778,15 @@
         }
       },
       "indexes": {
-        "user_identities_lid_idx": {
-          "name": "user_identities_lid_idx",
+        "user_identities_lid_unique_idx": {
+          "name": "user_identities_lid_unique_idx",
           "columns": [
             "lid"
           ],
           "isUnique": true
         },
-        "user_identities_pn_idx": {
-          "name": "user_identities_pn_idx",
+        "user_identities_pn_unique_idx": {
+          "name": "user_identities_pn_unique_idx",
           "columns": [
             "pn"
           ],
@@ -727,7 +861,7 @@
             "user_id",
             "scope"
           ],
-          "isUnique": false
+          "isUnique": true
         },
         "user_roles_scope_idx": {
           "name": "user_roles_scope_idx",

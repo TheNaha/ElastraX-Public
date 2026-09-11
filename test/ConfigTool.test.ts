@@ -44,7 +44,7 @@ const defaultRoom = () => ({
   id: 'chat-abc',
   platform: 'whatsapp',
   language: 'en',
-  systemPrompt: null,
+  systemPrompt: null as string | null,
   contextLimit: null,
   temperature: null,
   maxTokens: null,
@@ -68,7 +68,7 @@ const createCtx = (overrides: Partial<MessageContext> = {}): MessageContext => (
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
   ...overrides,
-});
+} as MessageContext);
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
 describe('ConfigTool', () => {

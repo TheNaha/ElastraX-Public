@@ -24,8 +24,8 @@ describe('IdentityService', () => {
         display_name TEXT,
         updated_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_idx ON user_identities (lid);
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_idx ON user_identities (pn);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_unique_idx ON user_identities (lid);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_unique_idx ON user_identities (pn);
     `);
 
     await db.delete(userIdentities).run();

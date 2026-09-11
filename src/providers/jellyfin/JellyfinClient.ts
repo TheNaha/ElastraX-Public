@@ -96,10 +96,6 @@ export class JellyfinClient extends BaseHttpClient {
 
   // ── Users ─────────────────────────────────────────────────────────────────
 
-  async getUsers(): Promise<JellyfinUser[]> {
-    return this.get('/Users');
-  }
-
   async getUserById(userId: string): Promise<JellyfinUser> {
     return this.get(`/Users/${userId}`);
   }
@@ -128,18 +124,6 @@ export class JellyfinClient extends BaseHttpClient {
     if (opts?.userId) params.set('userId', opts.userId);
     if (opts?.includeTypes?.length) params.set('IncludeItemTypes', opts.includeTypes.join(','));
     return this.get(`/Items/Latest?${params}`);
-  }
-
-  async getResumeItems(userId: string, limit = 10): Promise<JellyfinItemsResponse> {
-    const params = new URLSearchParams({
-      userId,
-      Limit: String(limit),
-      Recursive: 'true',
-      Filters: 'IsResumable',
-      SortBy: 'DatePlayed',
-      SortOrder: 'Descending',
-    });
-    return this.get(`/Items?${params}`);
   }
 
   // ── Links ─────────────────────────────────────────────────────────────────

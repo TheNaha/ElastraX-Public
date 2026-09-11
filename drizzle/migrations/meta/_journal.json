@@ -81,6 +81,21 @@
       "tag": "0015_long_term_memory",
       "breakpoints": true,
       "when": 16
+    },
+    {
+      "tag": "0016_consolidation_fixes",
+      "breakpoints": true,
+      "when": 17
+    },
+    {
+      "when": 18,
+      "tag": "0017_reminder_claims",
+      "breakpoints": true
+    },
+    {
+      "when": 19,
+      "tag": "0018_memory_embeddings",
+      "breakpoints": true
     }
   ]
 }

@@ -11,7 +11,8 @@ const _mockLogger = {
 
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { buildWebhookMessage, readRequestBodyWithLimit, resolveRoomIds, resolveWebhookMaxBodyBytes, resolveWebhookPort } from '../src/webhookServer';
+import { readRequestBodyWithLimit, resolveRoomIds, resolveWebhookMaxBodyBytes, resolveWebhookPort } from '../src/webhooks/utils';
+import { buildWebhookMessage } from '../src/webhooks/adapters';
 
 describe('WebhookServer helpers', () => {
   test('buildWebhookMessage should parse Apprise-like payload', () => {

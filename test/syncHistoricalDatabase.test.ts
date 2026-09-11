@@ -55,7 +55,7 @@ const makeCtx = (overrides: Partial<MessageContext> & { messageId?: string } = {
   messageId: 'msg-001',
   mediaReady: Promise.resolve(),
   ...overrides,
-});
+} as MessageContext);
 
 describe('syncHistoricalDatabase', () => {
   beforeEach(() => {

@@ -26,7 +26,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   resolveRoles: mock(async () => ['user']),
   language: 'en',
   ...overrides,
-});
+}) as MessageContext;
 
 describe('FlowHandler', () => {
   const flowRegistry = FlowHandler as unknown as { flows: Record<string, unknown> };

@@ -44,7 +44,7 @@ mock.module('../src/db', () => {
     insert: () => ({
       values: () => ({
         onConflictDoNothing: async () => ({}),
-        then: (resolve: (value: unknown) => unknown) => Promise.resolve({}).then(resolve),
+        then: (resolve: (value: object) => unknown) => Promise.resolve({}).then(resolve),
       }),
     }),
     update: () => ({
@@ -89,6 +89,7 @@ describe('RoleTool', () => {
   const spies: Array<ReturnType<typeof spyOn>> = [];
   let listRolesSpy: ReturnType<typeof spyOn>;
   let accessProfileSpy: ReturnType<typeof spyOn>;
+  let removeRoleSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
     // spy on service methods
@@ -101,7 +102,8 @@ describe('RoleTool', () => {
     listRolesSpy = spyOn(AuthService, 'listRoles').mockResolvedValue([]);
     spies.push(listRolesSpy);
     spies.push(spyOn(AuthService, 'setRole').mockResolvedValue(undefined));
-    spies.push(spyOn(AuthService, 'removeRole').mockResolvedValue(true));
+    removeRoleSpy = spyOn(AuthService, 'removeRole').mockResolvedValue(true);
+    spies.push(removeRoleSpy);
     spies.push(spyOn(AuthService, 'getEffectivePrivileges').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
     spies.push(spyOn(AuthService, 'getPrivilegesForRole').mockResolvedValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
     spies.push(spyOn(AuthService, 'getDefaultPrivileges').mockReturnValue({ maxMessagesPerWindow: 10, rateLimitWindowSec: 60, contextLimit: 20, maxDownloadMb: 25 }));
@@ -186,6 +188,21 @@ describe('RoleTool', () => {
     const text = typeof result === 'string' ? result : result.text;
     expect(text).toContain('Revoked');
     expect(AuthService.removeRole).toHaveBeenCalled();
+  });
+
+  test('action=revoke without a specific role is rejected (privilege escalation guard)', async () => {
+    // Even an unprivileged caller must not be able to bulk-strip roles,
+    // and no caller should ever reach the DB with an undefined role.
+    for (const callerRoles of [['user'], ['admin'], ['owner']]) {
+      const ctx = createMockCtx({
+        resolveRoles: mock(async () => callerRoles),
+        mentionedIds: ['628999@s.whatsapp.net'],
+      });
+      const result = await tool.execute({ action: 'revoke', user: 'mentioned' }, ctx);
+      const text = typeof result === 'string' ? result : result.text;
+      expect(text).toContain('Invalid role');
+    }
+    expect(removeRoleSpy).not.toHaveBeenCalled();
   });
 
   test('action=setpriv requires owner (rejects non-owner)', async () => {

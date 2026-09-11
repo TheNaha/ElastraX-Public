@@ -1,7 +1,7 @@
 import { describe, test, expect, spyOn, beforeEach, afterEach, mock } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
-import { userIdentities, userRoles } from '../src/db/schema';
+import { userIdentities, userRoles, rolePrivileges } from '../src/db/schema';
 import { IdentityService } from '../src/utils/IdentityService';
 import { AuthService as RoleService, BUILTIN_ROLES } from '../src/utils/AuthService';
 
@@ -17,7 +17,7 @@ describe('RoleService', () => {
     sqlite = new Database(':memory:');
     db = drizzle(sqlite);
     IdentityService.setDepsForTesting({ db: db as typeof import('../src/db').db, userIdentities });
-    RoleService.setDepsForTesting({ db: db as typeof import('../src/db').db, userRoles });
+    RoleService.setDepsForTesting({ db: db as typeof import('../src/db').db, userRoles, rolePrivileges });
 
     sqlite.exec(`
       CREATE TABLE IF NOT EXISTS user_roles (
@@ -29,8 +29,16 @@ describe('RoleService', () => {
         granted_by TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      CREATE INDEX IF NOT EXISTS user_roles_user_scope_idx ON user_roles (user_id, scope);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_roles_user_scope_idx ON user_roles (user_id, scope);
       CREATE INDEX IF NOT EXISTS user_roles_scope_idx ON user_roles (scope, role);
+
+      CREATE TABLE IF NOT EXISTS role_privileges (
+        role TEXT PRIMARY KEY,
+        max_messages_per_window INTEGER,
+        rate_limit_window_sec INTEGER,
+        context_limit INTEGER,
+        max_download_mb INTEGER
+      );
 
       CREATE TABLE IF NOT EXISTS user_identities (
         lid TEXT,
@@ -39,8 +47,8 @@ describe('RoleService', () => {
         display_name TEXT,
         updated_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_idx ON user_identities (lid);
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_idx ON user_identities (pn);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_unique_idx ON user_identities (lid);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_unique_idx ON user_identities (pn);
     `);
 
     await db.delete(userRoles).run();
@@ -158,6 +166,28 @@ describe('RoleService', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.userId).toBe('user-1');
     expect(rows[0]?.role).toBe('admin');
+  });
+
+  test('setRole replaces a different role in the same scope instead of violating UNIQUE(user_id, scope)', async () => {
+    await RoleService.setRole('user-1', 'premium', 'global', 'whatsapp', 'owner-1');
+    // Before the fix this threw SQLITE_CONSTRAINT_UNIQUE
+    await RoleService.setRole('user-1', 'admin', 'global', 'whatsapp', 'owner-2');
+
+    const rows = await db.select().from(userRoles);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.role).toBe('admin');
+    expect(rows[0]?.grantedBy).toBe('owner-2');
+  });
+
+  test('getEffectivePrivileges picks the shortest rate-limit window across roles (most permissive)', async () => {
+    await db.insert(rolePrivileges).values({ role: 'premium', rateLimitWindowSec: 3600 });
+
+    const privs = await RoleService.getEffectivePrivileges(['user', 'premium']);
+
+    // user default window is 60s; a longer premium override must NOT tighten it
+    expect(privs.rateLimitWindowSec).toBe(60);
+    // other quota fields still merge with most-permissive-wins semantics
+    expect(privs.maxMessagesPerWindow).toBe(30); // user=10, premium default=30
   });
 
   test('removeRole with no matching entry returns false', async () => {

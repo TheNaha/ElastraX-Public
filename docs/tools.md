@@ -38,3 +38,19 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 - **Media Bind**: Links the chat room to specific Media Server APIs.
 - **Media Search**: Searches Jellyfin for available movies/shows.
 - **Media Request**: Submits requests via Overseerr/Jellyseerr.
+- **Media Library**: Browse recently added / available library items.
+
+## Misc & Discovery
+
+| Tool | Alias | Description |
+|------|-------|-------------|
+| **Menu** | `/menu`, `/help` | Lists available commands grouped by category. |
+| **Find Tools** | `/findtools` | Asks the LLM to discover and lazily load tools matching a description. |
+| **Get ID** | `/id` | Shows the current chat/user JID (useful for wiring webhooks and roles). |
+| **Language** | `/language` | Switches reply language (`en`/`id`) per chat. |
+| **Delete Message** | `/del` | Deletes a quoted bot message (WhatsApp) or the quoted message (Discord). |
+| **Menfess** | `/menfess` | Anonymous confession relay to configured target chats. |
+| **Game Search** | — | Searches trusted repack sites for PC games (always loaded). |
+| **Software Search** | — | Searches trusted sites for desktop software (always loaded). |
+| **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/`. |
+| **Owner Admin** | `/broadcast`, `/leave` | Owner-only: broadcast to all chats / leave a group. |

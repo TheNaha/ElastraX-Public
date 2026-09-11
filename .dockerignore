@@ -1,22 +1,25 @@
-# ── Secrets & persistent state (never bake into the image) ──────────────
+# Secrets & live state — never bake into build context / image layers
 .env
 .env.*
 !.env.example
 data/
-*.db
+drizzle/*.db
 *.db-shm
 *.db-wal
 
-# ── Dependencies & build artifacts ──────────────────────────────────────
-node_modules/
-.opencode/
-
-# ── Version control & CI ────────────────────────────────────────────────
+# Git & local tooling
 .git/
+.gitignore
+.opencode/
 .github/
 
-# ── Docs, tests & local tooling ─────────────────────────────────────────
+# Dependencies (installed inside the image)
+node_modules/
+
+# Docs, tests & artifacts not needed for the image build
 docs/
+modal/
+scripts/
 test/
 *.test.ts
 test-results.txt

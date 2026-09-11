@@ -172,7 +172,9 @@ export class DiscordProvider implements BotProvider {
             senderId: fetchMsg.author.id,
             hasMedia: fetchMsg.attachments.size > 0,
             stanzaId: fetchMsg.id,
-            rawMessage: Object.assign(fetchMsg, { key: { fromMe: isFromBot } }) as unknown as RawProviderMessage,
+            rawMessage: Object.assign(fetchMsg, {
+              key: { fromMe: isFromBot, id: fetchMsg.id, remoteJid: msg.channel.id },
+            }) as unknown as RawProviderMessage,
           };
         }
       } catch (err) {
@@ -289,8 +291,24 @@ export class DiscordProvider implements BotProvider {
         await msg.reply({ files: [attachment], content: options.caption });
       },
 
-      deleteMessage: async (_key?: unknown) => {
-        try { await msg.delete(); } catch { /* already deleted or no permission */ }
+      deleteMessage: async (key?: unknown) => {
+        try {
+          // 1) A live discord.js Message handle (has its own .delete()).
+          const candidate = key as { delete?: unknown; id?: unknown } | undefined;
+          if (candidate && typeof candidate.delete === 'function') {
+            await (candidate.delete as () => Promise<unknown>).call(candidate);
+            return;
+          }
+          // 2) A Baileys-style key carrying the target message id.
+          if (candidate && typeof candidate.id === 'string'
+              && 'messages' in msg.channel
+              && typeof (msg.channel as { messages?: { delete?: (id: string) => Promise<unknown> } }).messages?.delete === 'function') {
+            await (msg.channel as { messages: { delete: (id: string) => Promise<unknown> } }).messages.delete(candidate.id);
+            return;
+          }
+          // 3) Default: delete the incoming command message.
+          await msg.delete();
+        } catch { /* already deleted or no permission */ }
       },
 
       forwardMessage: async (targetJid: string, text?: string) => {
@@ -318,9 +336,12 @@ export class DiscordProvider implements BotProvider {
       },
 
       reply: async (replyText: string, options?: ReplyOptions) => {
-        const payload: { content: string; mentions?: string[] } = { content: replyText };
+        const payload: {
+          content: string;
+          allowedMentions?: { users: string[] };
+        } = { content: replyText };
         if (options?.mentions && options.mentions.length > 0) {
-          payload.mentions = options.mentions;
+          payload.allowedMentions = { users: [...options.mentions] };
         }
         await msg.reply(payload);
       },

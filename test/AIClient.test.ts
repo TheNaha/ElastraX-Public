@@ -82,7 +82,7 @@ describe("AIClient", () => {
     const originalFetch = global.fetch;
     const client = new AIClient({ baseUrl: "https://api.example.com/v1", apiKey: "test" });
 
-    const mockFetch = mock(async () => {
+    const mockFetch = mock(async (_url?: unknown) => {
       return new Response(JSON.stringify({
         choices: [{ message: { role: "assistant", content: "Hello" } }],
         usage: { total_tokens: 10 }

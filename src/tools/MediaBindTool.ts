@@ -9,10 +9,9 @@
 import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
-import { ServiceBindingService } from '../utils/ServiceBindingService';
-import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'MediaBindTool' });
 
@@ -141,7 +140,7 @@ export const mediaConnectFlowProcessor = async (
       );
     } catch (err: unknown) {
       FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = getErrorMessage(err);
       log.error({ err, username }, 'Media connect authentication failed');
       await ctx.reply(`❌ Authentication failed: ${msg}\nPlease check your credentials and try again.`);
     }

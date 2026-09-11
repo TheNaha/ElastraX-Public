@@ -7,11 +7,13 @@ import { MessageQueue } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
 import { RateLimiter } from '../utils/RateLimiter';
 import { Scheduler } from '../utils/Scheduler';
+import { DigestService } from '../utils/DigestService';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { healthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
+import { registryReady } from '../tools';
 
 type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
 
@@ -35,6 +37,7 @@ export type AppRuntimeDeps = {
   messageQueue?: QueueController;
   webhookServer?: SenderRegistry;
   scheduler?: SenderRegistry;
+  digestService?: SenderRegistry;
   handleIncomingMessage?: (ctx: MessageContext) => Promise<void>;
   rateLimiter?: Pick<typeof RateLimiter, 'prune'>;
   mediaCleanup?: Pick<typeof MediaCleanup, 'pruneOldFiles'>;
@@ -52,6 +55,7 @@ export class AppRuntime {
   private readonly messageQueue: QueueController;
   private readonly webhookServer: SenderRegistry;
   private readonly scheduler: SenderRegistry;
+  private readonly digestService: SenderRegistry;
   private readonly messageHandler: (ctx: MessageContext) => Promise<void>;
   private readonly rateLimiter: Pick<typeof RateLimiter, 'prune'>;
   private readonly mediaCleanup: Pick<typeof MediaCleanup, 'pruneOldFiles'>;
@@ -70,6 +74,7 @@ export class AppRuntime {
     this.messageQueue = deps.messageQueue ?? new MessageQueue();
     this.webhookServer = deps.webhookServer ?? new WebhookServer();
     this.scheduler = deps.scheduler ?? Scheduler;
+    this.digestService = deps.digestService ?? DigestService;
     this.messageHandler = deps.handleIncomingMessage ?? handleIncomingMessage;
     this.rateLimiter = deps.rateLimiter ?? RateLimiter;
     this.mediaCleanup = deps.mediaCleanup ?? MediaCleanup;
@@ -85,6 +90,10 @@ export class AppRuntime {
 
   async start(): Promise<void> {
     if (this.started) return;
+
+    // Wait for the tool registry (core tools + plugins) before accepting messages,
+    // so slash commands and LLM tool lookups never hit an empty registry.
+    await registryReady;
 
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
       this.messageQueue.enqueue(ctx.chatId, () => this.messageHandler(ctx));
@@ -105,6 +114,7 @@ export class AppRuntime {
     this.registerProviderSenders();
     this.webhookServer.start();
     this.scheduler.start();
+    this.digestService.start();
     healthMonitor.start();
     this.startBackgroundTasks();
 
@@ -116,6 +126,7 @@ export class AppRuntime {
     if (!this.started) return;
 
     await this.stopBackgroundTasks();
+    this.digestService.stop();
     this.scheduler.stop();
     this.webhookServer.stop();
     healthMonitor.stop();
@@ -133,6 +144,7 @@ export class AppRuntime {
       const send = async (chatId: string, text: string, _platform?: string): Promise<void> => provider.sendMessage(chatId, text);
       this.webhookServer.registerSender(provider.name, send);
       this.scheduler.registerSender(provider.name, send);
+      this.digestService.registerSender(provider.name, send);
     }
   }
 

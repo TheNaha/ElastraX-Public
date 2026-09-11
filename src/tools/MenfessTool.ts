@@ -29,6 +29,7 @@ import { MessageContext } from '../core/MessageContext';
 import { FlowHandler } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'MenfessTool' });
 
@@ -114,7 +115,7 @@ FlowHandler.register('menfess_confirm', async (ctx, flowData) => {
       await ctx.reply(t(lang, 'menfess.sent'));
     } catch (err: unknown) {
       log.error({ err, targetChatId }, 'Failed to send anonymous message');
-      const errMessage = err instanceof Error ? err.message : 'Unknown error';
+      const errMessage = getErrorMessage(err);
       await ctx.reply(t(lang, 'menfess.error', { msg: errMessage }));
     }
   } else {

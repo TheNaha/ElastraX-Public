@@ -1,6 +1,7 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from '../tools/BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { reloadRegistry } from '../tools/index';
+import { getErrorMessage } from '../utils/errorUtils';
 
 export class ReloadPluginsTool extends BaseTool<ToolArgs> {
   readonly name = 'reload_plugins';
@@ -29,7 +30,7 @@ export class ReloadPluginsTool extends BaseTool<ToolArgs> {
       await reloadRegistry();
       return '✅ Plugins reloaded successfully! The new tools are now available.';
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = getErrorMessage(err);
       return `❌ Failed to reload plugins: ${msg}`;
     }
   }

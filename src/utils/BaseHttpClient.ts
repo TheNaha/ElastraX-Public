@@ -5,7 +5,7 @@ export abstract class BaseHttpClient {
   protected readonly defaultHeaders: Record<string, string>;
   protected readonly log;
   protected readonly defaultTimeoutMs: number;
-  protected readonly serviceName: string;
+  private readonly moduleName: string;
 
   constructor(
     baseUrl: string,
@@ -14,14 +14,13 @@ export abstract class BaseHttpClient {
     defaultTimeoutMs = 30000
   ) {
     this.baseUrl = baseUrl.replace(/\/+$/, '');
+    this.moduleName = moduleName;
     this.defaultHeaders = {
       'Accept': 'application/json',
       ...defaultHeaders,
     };
     this.log = logger.child({ module: moduleName });
     this.defaultTimeoutMs = defaultTimeoutMs;
-    // Human-facing label used in error messages (e.g. "Jellyfin API GET ... failed").
-    this.serviceName = moduleName.replace(/Client$/, '') || 'API';
   }
 
   get isConfigured(): boolean {
@@ -29,9 +28,9 @@ export abstract class BaseHttpClient {
   }
 
   protected async request<T>(
-    method: string, 
-    path: string, 
-    body?: unknown, 
+    method: string,
+    path: string,
+    body?: unknown,
     extraHeaders?: Record<string, string>
   ): Promise<T> {
     const url = `${this.baseUrl}${path}`;
@@ -95,9 +94,7 @@ export abstract class BaseHttpClient {
       // Brand errors with the service name so multi-service logs immediately
       // identify which upstream failed.
       this.log.error({ status: resp.status, path, text }, 'API error');
-      throw new Error(
-        `${this.serviceName} API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`
-      );
+      throw new Error(`${this.moduleName.replace(/Client$/, '')} API ${method} ${path} failed: ${resp.status} ${text.slice(0, 200)}`);
     }
 
     return resp.json() as Promise<T>;

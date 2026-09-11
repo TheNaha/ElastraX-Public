@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
@@ -194,9 +195,7 @@ export class WebhookServer {
     for (let i = 0; i < deliveryResults.length; i++) {
       const result = deliveryResults[i];
       if (result.status === 'rejected') {
-        const errorMessage = result.reason instanceof Error
-          ? result.reason.message
-          : String(result.reason || 'Unknown error');
+        const errorMessage = getErrorMessage(result.reason);
         failed.push({ roomId: targets[i].chatRoomId, error: errorMessage });
       }
     }
@@ -216,14 +215,15 @@ export class WebhookServer {
   }
 
   start(): void {
+    // When disabled, the server still comes up to serve /health and /metrics
+    // (container healthchecks and monitoring depend on them); webhook intake returns 503.
     const enabled = process.env.WEBHOOK_ENABLED !== 'false';
     if (!enabled) {
-      log.info('Webhook server disabled via WEBHOOK_ENABLED=false');
-      return;
+      log.info('Webhook intake disabled via WEBHOOK_ENABLED=false — serving only /health and /metrics');
     }
 
     const secret = process.env.WEBHOOK_SECRET;
-    if (!secret) {
+    if (enabled && !secret) {
       log.warn('WEBHOOK_SECRET not set — generic /webhook endpoint will be disabled; /webhook/seerr and /webhook/jellyfin remain available with their own per-service secrets (SEERR_WEBHOOK_SECRET / JELLYFIN_WEBHOOK_SECRET)');
     }
 
@@ -268,6 +268,13 @@ export class WebhookServer {
 
         const isMediaWebhook = url.pathname === '/webhook/seerr' || url.pathname === '/webhook/jellyfin';
 
+        if (!enabled) {
+          return new Response(JSON.stringify({ error: 'Webhook intake is disabled (WEBHOOK_ENABLED=false).' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
         if (!secret && !isMediaWebhook) {
           return new Response(JSON.stringify({ error: 'Webhook is disabled because WEBHOOK_SECRET is not configured.' }), {
             status: 503,
@@ -281,7 +288,7 @@ export class WebhookServer {
           bodyRaw = await readRequestBodyWithLimit(req, maxBodyBytes);
           body = bodyRaw ? asWebhookBody(JSON.parse(bodyRaw)) : {};
         } catch (err: unknown) {
-          const message = err instanceof Error ? err.message : 'Invalid JSON body';
+          const message = getErrorMessage(err, 'Invalid JSON body');
           const status = message.includes('Request body too large') ? 413 : 400;
           log.warn({ ip, pathname: url.pathname, status, message }, 'Webhook body parse error');
           return new Response(JSON.stringify({ error: message }), {
@@ -344,9 +351,7 @@ export class WebhookServer {
         for (let i = 0; i < deliveryResults.length; i++) {
           const result = deliveryResults[i];
           if (result.status === 'rejected') {
-            const errorMessage = result.reason instanceof Error
-              ? result.reason.message
-              : String(result.reason || 'Unknown error');
+            const errorMessage = getErrorMessage(result.reason);
             failed.push({ roomId: roomIds[i], error: errorMessage });
           }
         }

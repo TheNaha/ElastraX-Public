@@ -26,7 +26,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   react: mock(async () => {}),
   checkPermissions: mock(async () => true),
   ...overrides,
-});
+} as MessageContext);
 
 describe('MakeStickerTool', () => {
   test('should have correct name and metadata', () => {

@@ -3,10 +3,10 @@
  * @description Shared transcription helpers for automatic and explicit STT flows.
  */
 
-import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import type { MessageContext } from '../core/MessageContext';
 import { getTranscriptionConfig } from '../config/runtime';
+import { resolveTargetMedia } from './mediaResolve';
 
 type TranscriptionResponse = {
   text?: string;
@@ -30,23 +30,13 @@ export async function resolveTranscriptionSource(
   ctx: MessageContext,
   allowQuotedFallback: boolean,
 ): Promise<TranscriptionSource | null> {
-  await ctx.mediaReady;
+  const media = await resolveTargetMedia(ctx);
+  if (!media?.path) return null;
 
-  if (ctx.mediaPath && existsSync(ctx.mediaPath)) {
-    return {
-      mediaPath: ctx.mediaPath,
-      mimeType: ctx.mimeType || 'audio/ogg',
-    };
-  }
+  const isQuoted = !!ctx.quoted?.mediaPath && media.path === ctx.quoted.mediaPath;
+  if (isQuoted && !allowQuotedFallback) return null;
 
-  if (allowQuotedFallback && ctx.quoted?.mediaPath && existsSync(ctx.quoted.mediaPath)) {
-    return {
-      mediaPath: ctx.quoted.mediaPath,
-      mimeType: ctx.quoted.mimeType || ctx.mimeType || 'audio/ogg',
-    };
-  }
-
-  return null;
+  return { mediaPath: media.path, mimeType: media.mime || ctx.mimeType || 'audio/ogg' };
 }
 
 export async function requestTranscription(

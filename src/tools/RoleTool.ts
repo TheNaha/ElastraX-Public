@@ -6,7 +6,7 @@
  *
  * Actions:
  *   grant    <user> <role> [scope]  — Assign a role to a user.
- *   revoke   <user> <role> [scope]  — Remove a specific role from a user.
+ *   revoke   <user> <role> [scope]  — Remove a specific role from a user (role required).
  *   check    [user]                 — Show all roles & effective privileges of a user.
  *   list     [scope]                — List all explicitly-assigned roles for a scope.
  *   privs    <role>                 — Show current privileges for a role.
@@ -34,6 +34,7 @@ import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { jidBareId as bareNumber } from '../utils/jid';
 
 const log = logger.child({ module: 'RoleTool' });
 
@@ -259,6 +260,11 @@ export class RoleTool extends BaseTool {
     // ── REVOKE ─────────────────────────────────────────────────────────────
     if (action === 'revoke') {
       if (!user) return t(lang, 'role.no_user');
+      // A specific role is REQUIRED. Without this guard any user could omit
+      // the role and strip every role (including owner) from a target.
+      if (!role || !BUILTIN_ROLES.includes(role)) {
+        return t(lang, 'role.invalid_role');
+      }
       const resolved = resolveTargetUser(args, ctx, 'user');
       if (!resolved) return t(lang, 'role.no_user');
       const resolvedTarget = resolved.jid;
@@ -350,11 +356,6 @@ function formatPrivileges(p: RolePrivileges): string {
     ` • Context limit: *${fmt(p.contextLimit)}*`,
     ` • Max download (MB): *${fmt(p.maxDownloadMb)}*`,
   ].join('\n\n');
-}
-
-/** Strip `@domain` and `:device` suffixes for display. */
-function bareNumber(jid: string): string {
-  return jid.split('@')[0].split(':')[0];
 }
 
 /**

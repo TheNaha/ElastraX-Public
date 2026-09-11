@@ -2,10 +2,12 @@ import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms, memories } from '../db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { ConfigService } from '../utils/ConfigService';
+import { MAX_LISTED_MEMORIES } from '../core/constants';
+import { findSemanticDuplicate, updateMemoryEmbedding } from '../utils/semanticMemory';
 
 const log = logger.child({ module: 'MemoryTool' });
 
@@ -17,7 +19,9 @@ export class MemoryTool extends BaseTool {
   readonly permissions = 'user';
 
   override readonly triggerPatterns = [
-    /\b(remember|forget|memory|memories|save|store|recall|remind|note|ingat|lupa|lupakan|memori|simpan|catat|ingatkan)\b/i
+    // Explicit memory verbs only. "save/simpan/store/note" removed (collides
+    // with download intent); "remind/ingatkan" belongs to ReminderTool.
+    /\b(remember|forget|recall|memory|memories|ingat|lupa|lupakan|memori|catat)\b/i
   ];
 
   get definition(): ToolDefinition {
@@ -53,6 +57,12 @@ export class MemoryTool extends BaseTool {
     switch (args.action) {
       case 'store': {
         if (!args.content) return 'Error: content is required.';
+        // V8 semantic dedupe: skip near-identical re-stores (cosine >= threshold).
+        const duplicate = await findSemanticDuplicate(ownerId, args.content);
+        if (duplicate) {
+          log.debug({ ownerId, duplicateId: duplicate.id }, 'Duplicate memory suppressed');
+          return `Already remembered [${duplicate.id}]: ${duplicate.content}`;
+        }
         const id = crypto.randomBytes(8).toString('hex');
         await db.insert(memories).values({
           id,
@@ -60,11 +70,16 @@ export class MemoryTool extends BaseTool {
           content: args.content,
           created_at: new Date()
         });
+        // Best-effort vector persist; failure never blocks the store itself.
+        await updateMemoryEmbedding(id, args.content);
         log.info({ ownerId, id, content: args.content }, 'Stored memory');
         return `Stored memory [${id}]: ${args.content}\nThis memory will be automatically injected into your system prompt for future conversations.`;
       }
       case 'retrieve': {
-        const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId));
+        // Cap listing to avoid unbounded context growth; most recent first.
+        const mems = await db.select().from(memories).where(eq(memories.ownerId, ownerId))
+          .orderBy(desc(memories.created_at))
+          .limit(MAX_LISTED_MEMORIES);
         if (mems.length === 0) return 'No memories found for this chat/user.';
         return 'Active Memories:\n' + mems.map(m => `[${m.id}] ${m.content}`).join('\n');
       }

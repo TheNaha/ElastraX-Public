@@ -27,7 +27,7 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   checkPermissions: mock(async () => true),
   resolveRoles: mock(async () => ['user']),
   ...overrides,
-});
+} as MessageContext);
 
 describe('MediaBindTool', () => {
   afterEach(() => {

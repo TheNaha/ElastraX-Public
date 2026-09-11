@@ -15,18 +15,36 @@ services:
       - ./data:/usr/src/app/data
     restart: unless-stopped
     ports:
-      - "3500:3500"
+      # Both sides follow WEBHOOK_PORT from .env (host:container)
+      - "${WEBHOOK_PORT:-3500}:${WEBHOOK_PORT:-3500}"
     env_file:
       - .env
-    healthcheck:
-      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:' + (process.env.WEBHOOK_PORT || 3500) + '/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 30s
+    # NOTE: the healthcheck is defined once in the Dockerfile (HEALTHCHECK),
+    # probing GET /health on $WEBHOOK_PORT — do not duplicate it here.
     networks:
        - proxy
     # We no longer need the command override since the Dockerfile CMD will run the compiled app
+
+  # ── Optional continuous backup sidecar (Litestream) ────────────────────────
+  # Start with: docker compose --profile backup up -d
+  # Requires LITESTREAM_REPLICA_URL in .env (s3://…, sftp://…, etc.) and
+  # litestream.yml mounted — see litestream.yml.example. Shares ./data so it can
+  # replicate data/bot.db (and read snapshots under data/backups) directly.
+  litestream:
+    image: litestream/litestream:latest
+    container_name: elastrax-litestream
+    profiles: ["backup"]
+    depends_on:
+      - bot
+    volumes:
+      - ./data:/data
+      - ./litestream.yml:/etc/litestream.yml:ro
+    env_file:
+      - .env
+    restart: unless-stopped
+    networks:
+       - proxy
+
 networks:
   proxy:
     external: true

@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
-import { join, resolve } from 'path';
+import { join } from 'path';
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { scanParserCoverage, logCoverageSummary, type CoverageResult } from '../utils/parserCoverage';

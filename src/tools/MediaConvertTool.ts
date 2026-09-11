@@ -24,8 +24,8 @@ import { FFmpegConverter } from '../utils/FFmpegConverter';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { readFile } from 'fs/promises';
-import { existsSync } from 'fs';
+import { resolveTargetMedia, loadMediaBytes } from '../utils/mediaResolve';
+import { EXT_MIME, extensionFor } from '../utils/mimeTypes';
 
 const log = logger.child({ module: 'MediaConvertTool' });
 
@@ -50,41 +50,9 @@ const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
   webp: ['-vcodec', 'libwebp', '-lossless', '0', '-quality', '80'],
 };
 
-const MIME_MAP: Record<ConvertFormat, string> = {
-  mp3: 'audio/mpeg',
-  ogg: 'audio/ogg',
-  aac: 'audio/aac',
-  opus: 'audio/opus',
-  m4a: 'audio/mp4',
-  wav: 'audio/wav',
-  mp4: 'video/mp4',
-  webm: 'video/webm',
-  mkv: 'video/x-matroska',
-  gif: 'image/gif',
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  webp: 'image/webp',
-};
-
-function getExtension(mimeType: string): string {
-  const map: Record<string, string> = {
-    'audio/mpeg': 'mp3',
-    'audio/ogg': 'ogg',
-    'audio/aac': 'aac',
-    'audio/opus': 'opus',
-    'audio/mp4': 'm4a',
-    'audio/wav': 'wav',
-    'video/mp4': 'mp4',
-    'video/webm': 'webm',
-    'video/x-matroska': 'mkv',
-    'video/quicktime': 'mov',
-    'image/jpeg': 'jpg',
-    'image/png': 'png',
-    'image/gif': 'gif',
-    'image/webp': 'webp',
-  };
-  return map[mimeType] || mimeType.split('/')[1] || 'bin';
-}
+const FORMAT_MIME: Record<ConvertFormat, string> = Object.fromEntries(
+  (Object.keys(FORMAT_ARGS) as ConvertFormat[]).map((fmt) => [fmt, EXT_MIME[fmt]]),
+) as Record<ConvertFormat, string>;
 
 export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly name = 'convert_media';
@@ -126,34 +94,19 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
 
     if (!ctx.sendMedia) return t(lang, 'convert.not_supported');
 
-    // Resolve media: current message > quoted message
-    let mediaPath = ctx.mediaPath;
-    let mimeType = ctx.mimeType;
-
-    if (!mediaPath && ctx.quoted?.mediaPath) {
-      mediaPath = ctx.quoted.mediaPath;
-      mimeType = ctx.quoted.mimeType;
-    }
-
-    if (!mediaPath) {
-      // Try downloading on-demand
-      if (!ctx.downloadMedia) return t(lang, 'convert.no_media');
-      await ctx.react?.('📥');
-      await ctx.mediaReady;
-      mediaPath = ctx.mediaPath;
-      mimeType = ctx.mimeType;
-    }
-
-    if (!mediaPath || !existsSync(mediaPath)) {
-      return t(lang, 'convert.no_media');
-    }
+    // Resolve media: current message > quoted message > on-demand download
+    const media = await resolveTargetMedia(ctx, {
+      useDownloader: Boolean(ctx.downloadMedia),
+      beforeDownload: () => ctx.react?.('📥'),
+    });
+    if (!media) return t(lang, 'convert.no_media');
 
     try {
       await ctx.react?.('⚙️');
       await ctx.reply(t(lang, 'convert.starting'));
 
-      const inputBuffer = await readFile(mediaPath);
-      const extIn = getExtension(mimeType || 'video/mp4');
+      const inputBuffer = await loadMediaBytes(media);
+      const extIn = extensionFor(media.mime || 'video/mp4');
       const ffmpegArgs = FORMAT_ARGS[targetFmt];
 
       log.info({ from: extIn, to: targetFmt, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
@@ -163,7 +116,7 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
       log.debug({ from: extIn, to: targetFmt, outputSize: outputBuffer.length }, 'Media conversion completed');
 
       await ctx.sendMedia(outputBuffer, {
-        mimetype: MIME_MAP[targetFmt],
+        mimetype: FORMAT_MIME[targetFmt],
         filename: `converted.${targetFmt}`,
       });
 

@@ -1,7 +1,21 @@
 import { expect, test, describe } from 'bun:test';
-import { t } from '../src/utils/i18n';
+import { t, translations } from '../src/utils/i18n';
 
 describe('i18n Utils', () => {
+  test('en and id locales have identical key sets', () => {
+    const enKeys = Object.keys(translations.en).sort();
+    const idKeys = Object.keys(translations.id).sort();
+    expect(idKeys).toEqual(enKeys);
+  });
+
+  test('placeholders match between locales for every key', () => {
+    for (const [key, enValue] of Object.entries(translations.en)) {
+      const enVars = [...enValue.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(',');
+      const idVars = [...translations.id[key].matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(',');
+      expect([key, idVars]).toEqual([key, enVars]);
+    }
+  });
+
   test('should return English translation by default', () => {
     expect(t('en', 'menu.category')).toBe('*Category:*');
     expect(t(undefined, 'menu.category')).toBe('*Category:*');

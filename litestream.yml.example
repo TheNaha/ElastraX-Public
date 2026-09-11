@@ -1,0 +1,25 @@
+# Litestream configuration example — continuous SQLite replication.
+#
+# 1. Copy this file to litestream.yml (gitignored) next to docker-compose.yml.
+# 2. Edit the replica block below (bucket/region/endpoint + credentials via
+#    LITESTREAM_ACCESS_KEY_ID / LITESTREAM_SECRET_ACCESS_KEY env vars).
+# 3. Start the sidecar:  docker compose --profile backup up -d
+# 4. Restore onto a fresh host (bot stopped):
+#      docker compose --profile backup run --rm litestream restore -o /data/bot.db /data/bot.db
+#
+# Paths are in-container; ./data is mounted at /data by the compose service.
+# The retention block only affects replica housekeeping, not point-in-time
+# recovery within the retention window.
+
+dbs:
+  - path: /data/bot.db
+    replicas:
+      - type: s3
+        bucket: your-bucket-name
+        path: bot.db
+        region: us-east-1
+        # For non-AWS S3-compatible endpoints (MinIO, Backblaze B2, …):
+        # endpoint: https://s3.example.com
+        retention: 720h            # 30 days of WAL frames
+        retention-check-interval: 1h
+        sync-interval: 10s

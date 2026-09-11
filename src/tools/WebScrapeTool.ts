@@ -1,6 +1,7 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'WebScrapeTool' });
 const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
@@ -20,7 +21,8 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
   
   override readonly triggerPatterns = [
     /https?:\/\/[^\s]+/i,
-    /\b(scrape|summarize|summarise|read|article|fetch|extract|content|page|website|webpage|link|tldr|tl;dr|ringkas|ringkaskan|baca|artikel|halaman|situs|ambil|isinya)\b/i
+    // Bare "read/page/link/content/fetch/baca" removed — matches ordinary chat.
+    /\b(scrape|summarize|summarise|article|website|webpage|tldr|tl;dr|ringkas|ringkasan|ringkaskan|artikel|halaman web|situs)\b/i
   ];
 
   get definition(): ToolDefinition {
@@ -77,7 +79,7 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
       }
       return text;
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = getErrorMessage(e);
       const qPart = query ? ` for "${esc(query)}"` : '';
       return `Error scraping URL${qPart}: ${msg}`;
     }

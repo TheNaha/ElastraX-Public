@@ -8,6 +8,7 @@ import { MessageContext } from '../core/MessageContext';
 import { SeerrClient, type SeerrRequest } from '../providers/seerr/SeerrClient';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'MediaRequestTool' });
 
@@ -105,7 +106,7 @@ export class MediaRequestTool extends BaseTool {
           return 'Available actions: request, status, my-requests';
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Unknown error';
+      const msg = getErrorMessage(err);
       log.error({ err, action }, 'MediaRequest failed');
       return `❌ Request failed: ${msg}`;
     }

@@ -28,6 +28,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { getDownloadMaxMb } from '../config/runtime';
 import { AuthService } from '../utils/AuthService';
+import { EXT_MIME } from '../utils/mimeTypes';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -37,17 +38,6 @@ type DownloadFormat = AudioFormat | VideoFormat;
 type DownloadArgs = ToolArgs & {
   url?: string;
   format?: DownloadFormat;
-};
-
-const MIME_MAP: Record<DownloadFormat, string> = {
-  mp3: 'audio/mpeg',
-  aac: 'audio/aac',
-  m4a: 'audio/mp4',
-  ogg: 'audio/ogg',
-  opus: 'audio/opus',
-  mp4: 'video/mp4',
-  mkv: 'video/x-matroska',
-  webm: 'video/webm',
 };
 
 const AUDIO_FORMATS = new Set<string>(['mp3', 'aac', 'm4a', 'ogg', 'opus']);
@@ -83,7 +73,9 @@ async function downloadViaYtDlp(url: string, format: DownloadFormat, maxMb: numb
     const args: string[] = [
       '-o', outTemplate,
       '--no-playlist',
-      '--max-filesize', maxMb === Infinity ? '0' : `${maxMb + 5}m`,
+      // Omit the cap entirely for unlimited privileges: yt-dlp treats a
+      // literal `0` as "reject any known-size media", not as "unlimited".
+      ...(maxMb === Infinity ? [] : ['--max-filesize', `${maxMb + 5}m`]),
     ];
 
     if (isAudioFormat(format)) {
@@ -144,7 +136,10 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
   readonly aliases = ['download', 'dl'];
   readonly category = 'media';
   readonly permissions = 'user';
-  override readonly triggerPatterns = [/https?:\/\//i, /\b(download|unduh|save|simpan)\b/i];
+  override readonly triggerPatterns = [
+    // URL is the strong signal; "save/simpan" removed as too generic for a
+    // download preload ("where do you save my files"...).
+    /https?:\/\//i, /\b(download|unduh)\b/i];
 
   get definition(): ToolDefinition {
     return {
@@ -195,7 +190,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     }
 
     // Security: Strict format validation
-    if (!Object.prototype.hasOwnProperty.call(MIME_MAP, format)) {
+    if (!Object.prototype.hasOwnProperty.call(EXT_MIME, format)) {
       return t(lang, 'download.error', { msg: 'Invalid format requested.' });
     }
 
@@ -218,7 +213,7 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
       }
 
       await ctx.react?.('📤');
-      const mime = MIME_MAP[format] || 'application/octet-stream';
+      const mime = EXT_MIME[format] || 'application/octet-stream';
       await ctx.sendMedia(buffer, {
         mimetype: mime,
         filename: `download.${format}`,

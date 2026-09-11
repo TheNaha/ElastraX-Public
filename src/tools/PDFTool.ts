@@ -6,6 +6,7 @@ import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
+import { resolveTargetMedia } from '../utils/mediaResolve';
 
 const log = logger.child({ module: 'PDFTool' });
 
@@ -74,25 +75,6 @@ export class PDFTool extends BaseTool<PDFArgs> {
     };
   }
 
-  /** Resolve the primary PDF from current or quoted message. */
-  private async resolvePdf(
-    ctx: MessageContext,
-  ): Promise<{ path: string; mime: string } | null> {
-    let mediaPath = ctx.mediaPath;
-    let mimeType = ctx.mimeType || '';
-    if (!mediaPath && ctx.quoted?.mediaPath) {
-      mediaPath = ctx.quoted.mediaPath;
-      mimeType = ctx.quoted.mimeType || '';
-    }
-    if (!mediaPath) {
-      await ctx.mediaReady;
-      mediaPath = ctx.mediaPath;
-      mimeType = ctx.mimeType || '';
-    }
-    if (!mediaPath || !existsSync(mediaPath)) return null;
-    return { path: mediaPath, mime: mimeType };
-  }
-
   private isPdf(mime: string, path: string): boolean {
     return mime.includes('pdf') || path.toLowerCase().endsWith('.pdf');
   }
@@ -119,8 +101,8 @@ export class PDFTool extends BaseTool<PDFArgs> {
     if (action === 'img_to_pdf') return this.imgToPdf(ctx, lang);
     if (action === 'merge') return this.mergePdfs(ctx, lang);
 
-    const media = await this.resolvePdf(ctx);
-    if (!media) return t(lang, 'pdf.no_file');
+    const media = await resolveTargetMedia(ctx);
+    if (!media?.path) return t(lang, 'pdf.no_file');
     if (!this.isPdf(media.mime, media.path)) return t(lang, 'pdf.not_pdf');
 
     try {
@@ -379,24 +361,14 @@ export class PDFTool extends BaseTool<PDFArgs> {
   /** Convert image(s) to PDF: instant for one image, collection flow for multiple. */
   private async imgToPdf(ctx: MessageContext, lang: string): Promise<string> {
     if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
-    let mediaPath = ctx.mediaPath;
-    let mimeType = ctx.mimeType || '';
-    if (!mediaPath && ctx.quoted?.mediaPath) {
-      mediaPath = ctx.quoted.mediaPath;
-      mimeType = ctx.quoted.mimeType || '';
-    }
-    if (!mediaPath) {
-      await ctx.mediaReady;
-      mediaPath = ctx.mediaPath;
-      mimeType = ctx.mimeType || '';
-    }
+    const media = await resolveTargetMedia(ctx);
 
-    const isImage = mediaPath && existsSync(mediaPath) &&
-      (/image\/(jpeg|jpg|png)/i.test(mimeType) || /\.(jpe?g|png)$/i.test(mediaPath));
+    const isImage = !!media && media.path !== undefined &&
+      (/image\/(jpeg|jpg|png)/i.test(media.mime) || /\.(jpe?g|png)$/i.test(media.path));
 
-    if (isImage) {
+    if (isImage && media?.path) {
       // Single image → instant convert
-      return this.doImgToPdf(ctx, lang, [mediaPath!]);
+      return this.doImgToPdf(ctx, lang, [media.path]);
     }
 
     // No image attached → start collection flow
@@ -454,23 +426,6 @@ function isPdf(mime: string, path: string): boolean {
   return mime.includes('pdf') || path.toLowerCase().endsWith('.pdf');
 }
 
-/** Shared collection processor factory */
-async function resolveMedia(ctx: MessageContext): Promise<{ path: string; mime: string } | null> {
-  let mediaPath = ctx.mediaPath;
-  let mimeType = ctx.mimeType || '';
-  if (!mediaPath && ctx.quoted?.mediaPath) {
-    mediaPath = ctx.quoted.mediaPath;
-    mimeType = ctx.quoted.mimeType || '';
-  }
-  if (!mediaPath) {
-    await ctx.mediaReady;
-    mediaPath = ctx.mediaPath;
-    mimeType = ctx.mimeType || '';
-  }
-  if (!mediaPath || !existsSync(mediaPath)) return null;
-  return { path: mediaPath, mime: mimeType };
-}
-
 // ── Image collection flow ──────────────────────────────────────────────
 FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
   const lang = ctx.language ?? 'en';
@@ -490,8 +445,8 @@ FlowHandler.register('pdf_img_collect', async (ctx, flowData, flowId) => {
     return;
   }
 
-  const media = await resolveMedia(ctx);
-  if (!media || !isImage(media.mime, media.path)) {
+  const media = await resolveTargetMedia(ctx);
+  if (!media?.path || !isImage(media.mime, media.path)) {
     await ctx.reply(t(lang, 'pdf.img_collect_hint', { count: String(files.length) }));
     return;
   }
@@ -532,8 +487,8 @@ FlowHandler.register('pdf_merge_collect', async (ctx, flowData, flowId) => {
     return;
   }
 
-  const media = await resolveMedia(ctx);
-  if (!media || !isPdf(media.mime, media.path)) {
+  const media = await resolveTargetMedia(ctx);
+  if (!media?.path || !isPdf(media.mime, media.path)) {
     await ctx.reply(t(lang, 'pdf.merge_collect_hint', { count: String(files.length) }));
     return;
   }

@@ -15,7 +15,7 @@
  * via `drizzle-kit` in `src/index.ts`.
  */
 
-import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, uniqueIndex, blob } from 'drizzle-orm/sqlite-core';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // The chat/group JID
@@ -75,11 +75,27 @@ export const memories = sqliteTable('memories', {
   /** Optional tags for grouping */
   category: text('category'),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+  /** V8: Float32Array bytes from the embeddings API (null = not yet embedded) */
+  embedding: blob('embedding', { mode: 'buffer' }),
+  /** Model that produced `embedding` — vectors are only comparable within one model */
+  embeddingModel: text('embedding_model'),
+  /** When the vector was computed */
+  embeddedAt: integer('embedded_at', { mode: 'timestamp' }),
 }, (table) => ({
   ownerIdx: index('memories_owner_idx').on(table.ownerId),
 }));
 
 export type Memory = typeof memories.$inferSelect;
+
+// V8: Generic key/value store for exactly-once scheduled-job markers
+// (daily digest / weekly media digest last-run dates, future feature flags).
+export const appKv = sqliteTable('app_kv', {
+  id: text('id').primaryKey(),
+  value: text('value').notNull(),
+  updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
+});
+
+export type AppKvRow = typeof appKv.$inferSelect;
 
 // V7.3: Database-backed Authentication State for WhatsApp (Baileys)
 export const waAuthState = sqliteTable('wa_auth_state', {
@@ -104,6 +120,8 @@ export const reminders = sqliteTable('reminders', {
   remindAt: integer('remind_at', { mode: 'timestamp' }).notNull(),
   // Whether the reminder has already been delivered
   isSent: integer('is_sent', { mode: 'boolean' }).default(false).notNull(),
+  // Claim marker for at-most-once delivery across restarts/concurrent workers (null = unclaimed)
+  claimedAt: integer('claimed_at', { mode: 'timestamp' }),
   // Which platform this reminder belongs to
   platform: text('platform').notNull().default('whatsapp'),
   /** Cron-style recurrence pattern (e.g. 'daily', 'weekly', 'monthly', or cron expression). Null = one-shot. */
@@ -127,7 +145,9 @@ export const userRoles = sqliteTable('user_roles', {
   grantedBy: text('granted_by').notNull(),
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
-  userScopeIdx: index('user_roles_user_scope_idx').on(table.userId, table.scope),
+  // UNIQUE(user_id, scope): one role per user per scope (migration 0007).
+  // AuthService.setRole relies on replace-on-conflict semantics.
+  userScopeIdx: uniqueIndex('user_roles_user_scope_idx').on(table.userId, table.scope),
   scopeIdx: index('user_roles_scope_idx').on(table.scope, table.role),
 }));
 
@@ -178,9 +198,9 @@ export const userIdentities = sqliteTable('user_identities', {
   /** When this record was last seen / updated. */
   updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
 }, (table) => ({
-  /** Both lid and pn should be unique (one identity per JID). */
-  lidIdx: uniqueIndex('user_identities_lid_idx').on(table.lid),
-  pnIdx: uniqueIndex('user_identities_pn_idx').on(table.pn),
+  /** One identity row per LID / PN (canonical *_unique_idx names from migration 0013). */
+  lidIdx: uniqueIndex('user_identities_lid_unique_idx').on(table.lid),
+  pnIdx: uniqueIndex('user_identities_pn_unique_idx').on(table.pn),
 }));
 
 export type UserIdentity = typeof userIdentities.$inferSelect;
