@@ -310,6 +310,7 @@ export class ModelRouter {
     let latency = 0;
 
     for (const provider of orderedProviders) {
+      let start = Date.now();
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
@@ -330,7 +331,6 @@ export class ModelRouter {
           }, '[ModelRouter] Sending chat completion request');
         }
 
-        const start = Date.now();
         const result = await provider.client.chatCompletion(sanitizedMessages, tools, temperature, resolvedMaxTokens);
         latency = Date.now() - start;
 
@@ -372,11 +372,12 @@ export class ModelRouter {
         logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
         return result;
       } catch (error: unknown) {
+        latency = Date.now() - start;
         const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
         this.markProviderFailure(provider.name);
         healthMetrics.recordLLMRequest(provider.name, latency, false);
-        logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Provider failed, trying next');
+        logger.warn({ provider: provider.name, err: err.message, latency }, '[ModelRouter] Provider failed, trying next');
       }
     }
 
