@@ -255,7 +255,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
           try {
             ({ PDFParse } = await import('pdf-parse'));
           } catch {
-            return 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.';
+            return t(lang, 'pdf.parse_not_installed') || 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.';
           }
           const parser = new PDFParse({ data: Buffer.from(pdfBytes) });
           const data = await parser.getText();

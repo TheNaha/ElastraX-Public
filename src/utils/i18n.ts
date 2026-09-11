@@ -197,6 +197,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'pdf.img_collect_hint': '🖼️ Send a JPEG/PNG image ({count} collected so far). Type *done* to convert, or /cancel to abort.',
     'pdf.img_collect_empty': '❌ No images received yet. Send at least one image first.',
     'pdf.collect_max': '❌ Maximum {max} files reached. Type *done* to process.',
+    'pdf.parse_not_installed': 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.',
 
     // Group Management (expanded)
     'group.promote_success': '✅ {jid} has been promoted to admin.',
@@ -430,6 +431,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'pdf.img_collect_hint': '🖼️ Kirim gambar JPEG/PNG ({count} terkumpul). Ketik *done* untuk konversi, atau /cancel untuk batal.',
     'pdf.img_collect_empty': '❌ Belum ada gambar yang diterima. Kirim minimal satu gambar dulu.',
     'pdf.collect_max': '❌ Maksimal {max} file tercapai. Ketik *done* untuk proses.',
+    'pdf.parse_not_installed': 'pdf-parse belum terpasang. Jalankan `bun add pdf-parse` untuk mengaktifkan ekstraksi teks.',
 
     // Group Management (expanded)
     'group.promote_success': '✅ {jid} telah dipromosikan menjadi admin.',
