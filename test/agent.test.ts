@@ -326,7 +326,7 @@ describe('handleIncomingMessage', () => {
           mentionedIds: ['user2@s.whatsapp.net'],
         });
         await handleIncomingMessage(ctx);
-        // This fails currently because the code checks if ANYONE is mentioned
+        // Bot should not reply because isBotMentioned defaults to false
         expect(ctx.reply).not.toHaveBeenCalled();
     });
 
