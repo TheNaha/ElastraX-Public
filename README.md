@@ -94,7 +94,7 @@ AI_MAX_TOOL_ITERATIONS=8
 ### 2) Web Search & Web Scraping
 
 ```env
-# URL for the SearXNG instance used for /search
+# URL for your SearXNG instance used by /search
 SEARXNG_URL="https://your-searxng-instance.example.com"
 
 # Optional: Free API key for Jina AI to bypass limits during web_scrape
