@@ -96,6 +96,11 @@
       "when": 19,
       "tag": "0018_memory_embeddings",
       "breakpoints": true
+    },
+    {
+      "when": 20,
+      "tag": "0019_reminder_language",
+      "breakpoints": true
     }
   ]
 }
