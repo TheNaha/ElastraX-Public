@@ -1,33 +1,12 @@
 import { logger } from './logger';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
+import { resolveLLMTargets } from '../config/llm';
 
 const log = logger.child({ module: 'HealthMonitor' });
 
 const PING_INTERVAL_MS = 60_000;
 const PING_TIMEOUT_MS = 5_000;
-
-function buildCloudflareBaseUrl(accountId?: string): string {
-  return accountId ? `https://api.cloudflare.com/client/v4/accounts/${accountId.trim()}/ai/v1` : '';
-}
-
-/** Mirrors ModelRouter's provider resolution so health checks cover exactly what is configured. */
-function resolveLLMTargets(): { key: string; baseUrl: string; apiKey: string }[] {
-  const providerList = process.env.AI_PROVIDERS;
-  if (!providerList || providerList.trim() === '') {
-    const baseUrl = process.env.AI_API_BASE_URL || buildCloudflareBaseUrl(process.env.AI_CF_ACCOUNT_ID);
-    if (!baseUrl) return [];
-    return [{ key: 'llm', baseUrl, apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || '' }];
-  }
-  return providerList.split(',').map(p => p.trim().toLowerCase()).filter(Boolean).map(name => {
-    const upper = name.toUpperCase();
-    return {
-      key: `llm:${name}`,
-      baseUrl: process.env[`AI_${upper}_BASE_URL`] || buildCloudflareBaseUrl(process.env[`AI_${upper}_CF_ACCOUNT_ID`]),
-      apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || '',
-    };
-  }).filter(t => t.baseUrl !== '');
-}
 
 export class HealthMonitor {
   private timers: ReturnType<typeof setInterval>[] = [];

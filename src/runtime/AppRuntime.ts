@@ -11,7 +11,7 @@ import { DigestService } from '../utils/DigestService';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
-import { healthMonitor } from '../utils/HealthMonitor';
+import { healthMonitor, type HealthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs } from '../config/runtime';
 import { registryReady } from '../tools';
 import { safeRegisterFlows } from '../flows/registry';
@@ -45,6 +45,7 @@ export type AppRuntimeDeps = {
   timers?: TimerApi;
   runStartupCoverageScan?: () => Promise<void>;
   startupCoverageDelayMs?: number;
+  healthMonitor?: HealthMonitor;
 };
 
 export function resolveMediaCleanupIntervalMs(rawMediaCleanupInterval: string | undefined): number {
@@ -63,6 +64,7 @@ export class AppRuntime {
   private readonly timers: TimerApi;
   private readonly runStartupCoverageScan?: () => Promise<void>;
   private readonly startupCoverageDelayMs: number;
+  private readonly healthMon: HealthMonitor;
 
   private rateLimiterTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private mediaCleanupTimer: ReturnType<typeof globalThis.setInterval> | null = null;
@@ -83,6 +85,7 @@ export class AppRuntime {
     this.timers = deps.timers ?? globalThis;
     this.runStartupCoverageScan = deps.runStartupCoverageScan;
     this.startupCoverageDelayMs = deps.startupCoverageDelayMs ?? 5000;
+    this.healthMon = deps.healthMonitor ?? healthMonitor;
 
     const getStats = this.messageQueue.getStats?.bind(this.messageQueue);
     if (getStats) {
@@ -122,7 +125,7 @@ export class AppRuntime {
     this.webhookServer.start();
     this.scheduler.start();
     this.digestService.start();
-    healthMonitor.start();
+    this.healthMon.start();
     this.startBackgroundTasks();
 
     this.started = true;
@@ -137,7 +140,7 @@ export class AppRuntime {
     this.digestService.stop();
     this.scheduler.stop();
     this.webhookServer.stop();
-    healthMonitor.stop();
+    this.healthMon.stop();
     this.messageQueue.stop();
 
     // Stop providers with a timeout so a hung provider can't block shutdown forever

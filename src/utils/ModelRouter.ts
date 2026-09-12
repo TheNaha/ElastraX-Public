@@ -45,6 +45,7 @@ import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier, TokenUsage 
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
 import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
+import { resolveLLMProviders } from '../config/llm';
 
 export interface ProviderConfig {
   name: string;
@@ -74,26 +75,6 @@ type MessageWithUsage = ChatCompletionMessage & {
   usage?: Partial<TokenUsage>;
 };
 
-/**
- * Provider name prefixes that support video and audio by default (vLLM multimodal deployments).
- * Any provider whose name starts with one of these strings gets supportsVideo/Audio=true
- * unless the env var explicitly overrides it to 'false'.
- */
-const MULTIMODAL_PREFIXES = ['modal'];
-
-/** Resolve default video/audio support based on well-known provider names. */
-function defaultMediaSupport(name: string): { supportsVideo: boolean; supportsAudio: boolean } {
-  const n = name.toLowerCase();
-  const isMultimodal = MULTIMODAL_PREFIXES.some(prefix => n.startsWith(prefix));
-  return { supportsVideo: isMultimodal, supportsAudio: isMultimodal };
-}
-
-function buildCloudflareBaseUrl(accountId?: string): string {
-  const trimmed = (accountId || '').trim();
-  if (!trimmed) return '';
-  return `https://api.cloudflare.com/client/v4/accounts/${trimmed}/ai/v1`;
-}
-
 function resolveChatCompletionsUrl(baseUrl: string): string {
   const normalized = baseUrl.replace(/\/$/, '');
   return normalized.endsWith('/chat/completions')
@@ -101,51 +82,20 @@ function resolveChatCompletionsUrl(baseUrl: string): string {
     : `${normalized}/chat/completions`;
 }
 
-function parseTier(raw?: string): ModelTier {
-  if (raw === 'fast' || raw === 'powerful') return raw;
-  return 'standard';
-}
-
-function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
-  if (raw === undefined) return defaultVal;
-  return raw.toLowerCase() === 'true';
-}
-
-/** Loads all provider configs from process.env according to the documented pattern. */
+/** Loads all provider configs from process.env, building AIClient instances. */
 function loadProviders(): ResolvedProvider[] {
-  const providerList = process.env.AI_PROVIDERS;
+  // Use the shared LLM target resolver (eliminates duplication with HealthMonitor)
+  const targets = resolveLLMProviders();
 
-  // Legacy single-provider fallback
-  if (!providerList || providerList.trim() === '') {
-    const legacyCfBase = buildCloudflareBaseUrl(process.env.AI_CF_ACCOUNT_ID);
-    const defaults = defaultMediaSupport('default');
+  return targets.map(t => {
     const cfg: ProviderConfig = {
-      name: 'default',
-      baseUrl: process.env.AI_API_BASE_URL || legacyCfBase,
-      apiKey: process.env.AI_API_KEY || process.env.AI_CF_API_TOKEN || '',
-      modelName: process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct',
-      tier: parseTier(process.env.AI_TIER),
-      supportsVideo: parseBool(process.env.AI_SUPPORTS_VIDEO, defaults.supportsVideo),
-      supportsAudio: parseBool(process.env.AI_SUPPORTS_AUDIO, defaults.supportsAudio),
-    };
-    return [{
-      ...cfg,
-      client: new AIClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, modelName: cfg.modelName }),
-    }];
-  }
-
-  return providerList.split(',').map(p => p.trim().toLowerCase()).filter(Boolean).map(name => {
-    const upper = name.toUpperCase();
-    const cfBase = buildCloudflareBaseUrl(process.env[`AI_${upper}_CF_ACCOUNT_ID`]);
-    const defaults = defaultMediaSupport(name);
-    const cfg: ProviderConfig = {
-      name,
-      baseUrl: process.env[`AI_${upper}_BASE_URL`] || cfBase,
-      apiKey: process.env[`AI_${upper}_API_KEY`] || process.env[`AI_${upper}_CF_API_TOKEN`] || '',
-      modelName: process.env[`AI_${upper}_MODEL`] || 'gpt-4o-mini',
-      tier: parseTier(process.env[`AI_${upper}_TIER`]),
-      supportsVideo: parseBool(process.env[`AI_${upper}_SUPPORTS_VIDEO`], defaults.supportsVideo),
-      supportsAudio: parseBool(process.env[`AI_${upper}_SUPPORTS_AUDIO`], defaults.supportsAudio),
+      name: t.name,
+      baseUrl: t.baseUrl,
+      apiKey: t.apiKey,
+      modelName: t.modelName,
+      tier: t.tier,
+      supportsVideo: t.supportsVideo,
+      supportsAudio: t.supportsAudio,
     };
     return {
       ...cfg,
@@ -310,7 +260,7 @@ export class ModelRouter {
     let latency = 0;
 
     for (const provider of orderedProviders) {
-      let start = Date.now();
+      const start = Date.now();
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
 
