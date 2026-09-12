@@ -11,6 +11,8 @@
  *    which is important because providers and the agent may access the DB simultaneously.
  *  - `synchronous = NORMAL` — Balances durability against write throughput; safe for
  *    a bot workload where losing the very last message on a crash is acceptable.
+ *  - `wal_autocheckpoint = 1000` — Automatically checkpoints the WAL every 1000 pages
+ *    to prevent unbounded WAL file growth on busy systems.
  *
  * The exported `db` object should be imported directly by all modules that need
  * database access — no connection pool or factory is required for SQLite.
@@ -43,6 +45,8 @@ if (!usesInMemoryDb) {
   sqlite.exec('PRAGMA journal_mode = WAL;');
 }
 sqlite.exec('PRAGMA synchronous = NORMAL;');
+// Auto-checkpoint the WAL every 1000 pages to prevent unbounded WAL growth.
+sqlite.exec('PRAGMA wal_autocheckpoint = 1000;');
 sqlite.exec('PRAGMA foreign_keys = ON;');
 export const db = drizzle({ client: sqlite, schema });
 

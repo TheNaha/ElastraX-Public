@@ -167,7 +167,7 @@ export class IdentityService {
     roles: { scope: string; role: string }[];
   }> {
     try {
-      const { db, userIdentities, userRoles: ur } = this.deps;
+      const { db, userRoles: ur } = this.deps;
       if (!ur) {
         // Fallback to separate lookups if userRoles not injected
         const jids = await this.getAllJids(jid);

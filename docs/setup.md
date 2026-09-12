@@ -65,10 +65,53 @@ bun run start
 ```
 
 ### Production (Docker)
-The provided `docker-compose.yml` ensures all dependencies (FFmpeg, yt-dlp, webpmux) are correctly installed in an Alpine container.
+The provided `docker-compose.yml` ensures all dependencies (FFmpeg, yt-dlp, webpmux) are correctly installed in the Debian-based `oven/bun` container.
 ```bash
 docker compose up -d --build
 ```
 
+### Disabling the Webhook Server
+Set `WEBHOOK_ENABLED=false` to disable the HTTP webhook endpoints while keeping
+the bot running on WhatsApp/Discord. Health and metrics endpoints remain active.
+
 ## 5. Connecting WhatsApp
 When starting the bot for the first time without a saved session, a QR code will be printed to the terminal. Scan it using the "Linked Devices" feature in the WhatsApp app on your phone.
+
+## 6. Database Management
+
+| Command | Description |
+|---------|-------------|
+| `bun run db:push` | Sync schema changes to the database (dev) |
+| `bun run db:migrate` | Apply pending migrations |
+| `bun run db:reset` | Drop and recreate the database from scratch |
+| `bun run db:check` | Verify migration state (CI) |
+| `bun run db:studio` | Open Drizzle Studio web UI |
+| `bun run db:embed` | Backfill embeddings for memories |
+| `bun run db:backup` | Create a VACUUM snapshot of the database |
+
+## 7. Database Backups (Litestream)
+
+Litestream provides continuous archiving and point-in-time recovery for SQLite.
+
+To enable backups, first copy the example config:
+```bash
+cp litestream.yml.example litestream.yml
+```
+
+Then start the backup service:
+```bash
+docker compose --profile backup up -d
+```
+
+Backups are stored in `./data/.local/share/litestream/` by default. Override with:
+- `BACKUP_DIR` — custom backup directory
+- `BACKUP_KEEP` — number of snapshots to retain
+
+## 8. Development Scripts
+
+| Command | Description |
+|---------|-------------|
+| `bun run fixtures:dump` | Dump message fixtures from the database for test coverage |
+| `bun run lint` | Run ESLint on source and tests |
+| `bun run lint:fix` | Auto-fix lint issues |
+| `bun run typecheck` | Run TypeScript type checking |

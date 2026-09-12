@@ -1,6 +1,6 @@
 # API & Webhooks
 
-ElastraX runs an embedded Express server (`src/webhookServer.ts`) to handle inbound HTTP webhooks and platform health checks.
+ElastraX runs an embedded **Bun native HTTP server** (`src/webhooks/WebhookServer.ts`) to handle inbound HTTP webhooks and platform health checks.
 
 ## Environment Variables
 ```env
