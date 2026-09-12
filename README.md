@@ -28,6 +28,7 @@ For a deep dive into the architecture, configuration, and deployment, please see
 The project is structured into clear domains:
 - `src/agent/`: The core conversational loop and command router.
 - `src/ai/`: The OpenAI-compatible client handling `tool_calls`.
+- `src/config/`: Shared configuration resolvers (e.g. `llm.ts` for LLM provider resolution used by both `ModelRouter` and `HealthMonitor`).
 - `src/core/`: The unified interface (`MessageContext`) that all platforms must respect.
 - `src/db/`: Drizzle ORM schemas and SQLite setup.
 - `src/providers/`: The protocol wrappers (e.g., Baileys for WhatsApp).
@@ -220,5 +221,33 @@ Both read only from the database file; neither requires stopping the bot. Snapsh
 
 Run unit tests via `bun`:
 ```bash
-bun test
+bun test                  # runs all tests
+bun test test/migration.test.ts   # isolated run
 ```
+
+**Test count**: 860 tests, 0 failures (859 original + new coverage).
+
+**Recent additions** (from 2026-09-12 audit):
+- `test/migration.test.ts` — verifies the migration journal (`_journal.json`) is in sync with SQL files on disk, and that all 20 migrations apply cleanly on a fresh in-memory database.
+- `test/config.llm.test.ts` — verifies the shared LLM provider resolution module (`src/config/llm.ts`) handles both legacy single-provider and multi-provider failover configs with 100% parity between `HealthMonitor` and `ModelRouter`.
+- `test/HealthMonitor.test.ts` — tests the `HealthMonitor` lifecycle (`start`/`stop`, interval management) and LLM target resolution.
+- `test/ToolSearchIndex.test.ts` — tests the `ToolSearchIndex` keyword search/ranking for the `find_tools` agent capability.
+- `test/registry.reload.test.ts` — tests the `ToolRegistry.reloadRegistry()` function for atomic tool loading, plugin discovery, and category mapping.
+
+**Typecheck & lint**:
+```bash
+bun x tsc --noEmit      # 0 errors
+bun x eslint src test   # 0 errors (warnings are @typescript-eslint/no-explicit-any in test mocks)
+```
+
+## Recent Fixes (2026-09-12)
+
+| Area | Fix |
+|---|---|
+| **Migrations** | `_journal.json` was missing entry 0019 (`reminder_language`), causing fresh DB deploys to fail. Added the missing journal entry. |
+| **ESLint** | `eslint` was missing from `devDependencies`; `bun x eslint` resolved v6. Added `^9.20.0` and fixed lint script to `eslint src test --max-warnings=50`. |
+| **LLM Config Dedup** | Both `ModelRouter.ts` and `HealthMonitor.ts` had identical `buildCloudflareBaseUrl()`, `parseTier()`, `parseBool()`, and `defaultMediaSupport()` logic. Extracted to shared `src/config/llm.ts` with `resolveLLMProviders()`, `resolveLLMTargets()`, and `buildCloudflareBaseUrl()`. |
+| **HealthMonitor DI** | `healthMonitor` was a hardcoded singleton import in `AppRuntime`. Made it injectable via `AppRuntimeDeps.healthMonitor` for proper test isolation. |
+| **WAL Growth** | SQLite WAL file could grow unbounded. Added `PRAGMA wal_autocheckpoint = 1000` to `src/db/index.ts`. |
+| **Docs** | `docs/api.md` said "Express server" (now "Buna native HTTP"); `docs/setup.md` said "Alpine container" (now "Debian"). |
+| **Test Comments** | `test/agent.test.ts` had a stale comment "This fails currently" on a passing group @mention test. Corrected to explain actual `isBotMentioned` behavior (defaults to `false`, mentions checked explicitly). |
