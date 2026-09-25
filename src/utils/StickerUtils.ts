@@ -16,6 +16,7 @@
  */
 
 import { FFmpegConverter } from './FFmpegConverter';
+import { APP_VERSION } from '../config/version';
 import nodeWebpmux from 'node-webpmux';
 
 /** Utilities for converting images/videos to WhatsApp sticker WebP format. */
@@ -57,7 +58,7 @@ export class StickerUtils {
     const img = new nodeWebpmux.Image();
     await img.load(media);
 
-    const packname = metadata.packname || 'ElastraX-v7';
+    const packname = metadata.packname || `ElastraX-v${APP_VERSION}`;
     const author = metadata.author || 'AI Agent';
     const categories = metadata.categories || [''];
 

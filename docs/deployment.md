@@ -2,7 +2,7 @@
 
 ## Supported runtime
 
-Use Bun `1.3.14` everywhere. The version is pinned in `package.json`, CI, and the digest-pinned Docker base image. `bun.lock` is the only supported JavaScript dependency lock; do not generate or deploy from `package-lock.json`.
+Use Bun `1.3.14` everywhere. The release being deployed is ElastraX `v8.0.1`. The version is pinned in `package.json`, CI, and the digest-pinned Docker base image. `bun.lock` is the only supported JavaScript dependency lock; do not generate or deploy from `package-lock.json`.
 
 ```bash
 bun install --frozen-lockfile
@@ -52,7 +52,7 @@ Inspect the local-only listener:
 curl --fail http://127.0.0.1:${WEBHOOK_PORT:-3500}/live
 ```
 
-`/health` is a compatibility alias. `/ready` is intended for orchestration. Neither endpoint exposes metrics. Prometheus metrics remain unavailable unless `METRICS_AUTH_TOKEN` is configured and presented as a Bearer token.
+`/health` is a compatibility alias. `/ready` is intended for orchestration. Both responses include `version: 8.0.1` and `releaseTag: v8.0.1`. Neither endpoint exposes metrics. Prometheus metrics remain unavailable unless `METRICS_AUTH_TOKEN` is configured and presented as a Bearer token.
 
 ## Reverse proxy example
 
@@ -97,4 +97,4 @@ A release is publishable only after CI passes all gates:
 5. Compose validation;
 6. pinned Docker build and non-root/read-only webhook smoke.
 
-The publish workflow builds `linux/amd64` and `linux/arm64`, pushes only from `main` or version tags, and attaches provenance and an SBOM. It does not deploy.
+The publish workflow builds `linux/amd64` and `linux/arm64`, pushes only from a successful `main` CI run or an explicitly approved manual dispatch, and attaches provenance and an SBOM. It does not deploy. For a release, tag the verified commit, then dispatch the workflow with `release_tag` and `publish_latest`.

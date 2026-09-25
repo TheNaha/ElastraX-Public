@@ -4,7 +4,9 @@
 
 **Scope:** TypeScript runtime, providers, tools/flows, AI, SQLite migrations, webhooks, Docker/CI, test harness, fixtures, documentation, and experimental Modal adapter.
 
-**Status:** Implementation candidate complete; no production deployment performed.
+**Release:** ElastraX `v8.0.1`
+
+**Status:** Release candidate aligned; the identity hotfix is deployed and the retention drill is verified. The full v8.0.1 publication remains pending tag approval.
 
 ## Previously confirmed release blockers addressed
 
@@ -26,8 +28,8 @@
 - External delivery is at-least-once with durable deduplication. Exactly-once semantics are not promised when providers do not supply idempotency keys.
 - A single bot process remains intentional for SQLite; multi-process rolling deployment is not supported.
 - GitHub Actions may still require an account-side billing/permissions repair; no workflow can prove a runner started before that external state is fixed.
-- The current candidate has not been deployed. A stopped backup, migration rehearsal, container smoke test, and explicit approval are required before live rollout.
-- The final hermetic suite passes 1,052 tests with zero failures in normal, randomized, and isolated-per-file modes, including concurrent canonical-identity merge coverage. Typecheck and zero-warning lint are clean. Bun's high-severity dependency audit and the working-tree Gitleaks scan are clean. A production-image build and disposable loopback/proxy webhook smoke also pass: `/health` 200, unauthenticated `/webhook` 401, authenticated `/webhook` 202 queued, and `/ready` 503 when no provider is configured.
+- The identity hotfix has been deployed and manually verified. The v8.0.1 full-release tag, image digest publication, and production rollout still require explicit approval.
+- The final hermetic suite passes 1,054 tests with zero failures in normal, randomized, and isolated-per-file modes, including concurrent canonical-identity merge and release-identity coverage. Typecheck and zero-warning lint are clean. Bun's high-severity dependency audit and the working-tree Gitleaks scan are clean. A production-image build and disposable loopback/proxy webhook smoke also pass: `/health` 200, unauthenticated `/webhook` 401, authenticated `/webhook` 202 queued, and `/ready` 503 when no provider is configured.
 
 ## Release commands
 

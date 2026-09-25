@@ -15,6 +15,7 @@ mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 import { verifyGitHubSignature } from '../src/webhooks/utils';
 import { WebhookServer } from '../src/webhookServer';
+import { APP_RELEASE_TAG, APP_VERSION } from '../src/config/version';
 import type { WebhookDeliveryJob } from '../src/webhooks/types';
 
 const SECRET = 'test-webhook-secret-0123456789abcdef';
@@ -101,12 +102,12 @@ describe('WebhookServer security and HTTP contract', () => {
       for (const path of ['/health', '/live']) {
         const response = await Bun.fetch(`${baseUrl}${path}`);
         expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ status: 'ok' });
+        expect(await response.json()).toEqual({ status: 'ok', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
       }
 
       const ready = await Bun.fetch(`${baseUrl}/ready`);
       expect(ready.status).toBe(200);
-      expect(await ready.json()).toEqual({ status: 'ready' });
+      expect(await ready.json()).toEqual({ status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
     });
   });
 
@@ -131,7 +132,7 @@ describe('WebhookServer security and HTTP contract', () => {
       try {
         const response = await Bun.fetch(`${baseUrl}/ready`);
         expect(response.status).toBe(503);
-        expect(await response.json()).toEqual({ status: 'not_ready' });
+        expect(await response.json()).toEqual({ status: 'not_ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
       } finally {
         unregister();
       }

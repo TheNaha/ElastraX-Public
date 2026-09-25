@@ -25,6 +25,7 @@
  */
 
 import { logger } from './logger';
+import { APP_VERSION } from '../config/version';
 
 /** Supported locale codes. */
 export type Locale = 'en' | 'id';
@@ -51,7 +52,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'menu.optional': 'Optional',
     'menu.greeting': 'Hello {name}!',
     'menu.hint': 'Use *`/help <command>`* to see detailed usage of a command.\n\n',
-    'menu.footer': '_Powered by ElastraX v7 with Native AI_',
+    'menu.footer': `_Powered by ElastraX v${APP_VERSION} with Native AI_`,
     'menu.not_found_suggestion': '❌ Command or tool "*`{name}`*" not found. Did you mean "*`{suggestion}`*"?',
 
     // Group Admin
@@ -285,7 +286,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'menu.optional': 'Opsional',
     'menu.greeting': 'Halo {name}!',
     'menu.hint': 'Gunakan */help <command>* untuk melihat detail cara menggunakan sebuah command.\n\n',
-    'menu.footer': '_Powered by ElastraX v7 with Native AI_',
+    'menu.footer': `_Powered by ElastraX v${APP_VERSION} with Native AI_`,
     'menu.not_found_suggestion': '❌ Perintah atau alat "*{name}*" tidak ditemukan. Maksud Anda "*{suggestion}*"?',
 
     // Group Admin

@@ -112,7 +112,7 @@ describe('StickerUtils', () => {
         const jsonString = exifBuffer.toString('utf-8', 22);
         const parsedJson = JSON.parse(jsonString.replace(/\0/g, ''));
 
-        expect(parsedJson['sticker-pack-name']).toBe('ElastraX-v7');
+        expect(parsedJson['sticker-pack-name']).toBe('ElastraX-v8.0.1');
         expect(parsedJson['sticker-pack-publisher']).toBe('AI Agent');
         expect(parsedJson['emojis']).toEqual(['']);
     });

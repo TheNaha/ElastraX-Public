@@ -37,6 +37,28 @@ bun run start
 
 For WhatsApp, scan the QR code with the owner account. For Discord, set `DISCORD_BOT_TOKEN` before startup. Both providers can run in the same process.
 
+## Release identity
+
+The current release is **ElastraX v8.0.1**.
+
+- Package name: `elastrax`
+- Package version: `8.0.1`
+- Git/Docker release tag: `v8.0.1`
+- Runtime contract: Bun `1.3.14`
+- Liveness/readiness responses expose the release version and tag.
+
+Create the release tag only after the verification commit is on `main`:
+
+```bash
+git tag -a v8.0.1 -m "ElastraX v8.0.1"
+git push origin v8.0.1
+gh workflow run docker-publish.yml --ref main \
+  -f release_tag=v8.0.1 \
+  -f publish_latest=true
+```
+
+Publish and deploy by immutable image digest rather than a mutable `latest` tag.
+
 ## Webhooks
 
 Inbound webhooks are disabled unless explicitly enabled:

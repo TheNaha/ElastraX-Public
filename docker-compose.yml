@@ -1,6 +1,6 @@
 services:
   bot:
-    image: ${ELASTRAX_IMAGE:-ghcr.io/thenaha/elastrax:local}
+    image: ${ELASTRAX_IMAGE:-ghcr.io/thenaha/elastrax:v8.0.1}
     build:
       context: .
       dockerfile: Dockerfile

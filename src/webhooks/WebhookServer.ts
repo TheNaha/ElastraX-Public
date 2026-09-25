@@ -3,6 +3,7 @@ import { healthMetrics } from '../utils/HealthMetrics';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
 import { withCancellableTimeout, withTimeout } from '../utils/withTimeout.js';
+import { APP_RELEASE_TAG, APP_VERSION } from '../config/version';
 import { parseWebhookConfig, type WebhookConfig, type SecretCompatibilityWindow } from './config';
 import type {
   SendFn,
@@ -387,7 +388,7 @@ export class WebhookServer {
   private async handleReadiness(): Promise<Response> {
     const config = this.requireConfig();
     if (this.readinessChecks.size === 0) {
-      return jsonResponse({ status: 'ready' });
+      return jsonResponse({ status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
     }
 
     try {
@@ -398,10 +399,10 @@ export class WebhookServer {
         'webhook:readiness',
       );
       return result
-        ? jsonResponse({ status: 'ready' })
-        : jsonResponse({ status: 'not_ready' }, 503);
+        ? jsonResponse({ status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG })
+        : jsonResponse({ status: 'not_ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG }, 503);
     } catch {
-      return jsonResponse({ status: 'not_ready' }, 503);
+      return jsonResponse({ status: 'not_ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG }, 503);
     }
   }
 
@@ -517,7 +518,7 @@ export class WebhookServer {
         return jsonResponse({ error: 'Method Not Allowed' }, 405, { Allow: 'GET' });
       }
       if (url.pathname === '/health' || url.pathname === '/live') {
-        return jsonResponse({ status: 'ok' });
+        return jsonResponse({ status: 'ok', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
       }
       if (url.pathname === '/ready') return this.handleReadiness();
       return this.handleMetrics(req);
