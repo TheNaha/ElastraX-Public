@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from 'crypto';
+import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import type { WebhookBody } from './types';
 
 export class WebhookRequestError extends Error {
@@ -262,13 +262,9 @@ export function verifyGitHubSignature(
 
 export function safeSecretCompare(provided: string, expected: string): boolean {
   if (!provided || !expected) return false;
-  const providedBytes = Buffer.from(provided);
-  const expectedBytes = Buffer.from(expected);
-  if (providedBytes.length !== expectedBytes.length) {
-    timingSafeEqual(expectedBytes, expectedBytes);
-    return false;
-  }
-  return timingSafeEqual(providedBytes, expectedBytes);
+  const providedDigest = createHash('sha256').update(provided).digest();
+  const expectedDigest = createHash('sha256').update(expected).digest();
+  return timingSafeEqual(providedDigest, expectedDigest);
 }
 
 type RateBucket = {

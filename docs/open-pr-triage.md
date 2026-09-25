@@ -1,4 +1,6 @@
-# Open PR Triage Inventory
+# Open PR Triage
+
+> **Resolution (2026-09-25):** All 23 open proposals listed below were reviewed and closed as superseded after their security/performance/migration fixes were implemented and tested on `main`. No proposal branch was merged. Inventory
 
 Read-only inventory of the open pull requests in `TheNaha/ElastraX`, produced with `gh pr list` and `gh pr view`/`gh api` reads. **Nothing was closed, merged, labelled, retitled, or edited.** Every group below is a proposal for a human to act on; this document records the evidence, not a decision.
 
