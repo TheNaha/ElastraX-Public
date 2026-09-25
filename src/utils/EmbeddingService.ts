@@ -1,43 +1,37 @@
-/**
- * @file src/utils/EmbeddingService.ts
- * @description Client for any OpenAI-compatible embeddings endpoint.
- *
- * Used by the semantic-memory layer to embed memory texts and the current
- * conversation turn so memories can be ranked by cosine similarity instead of
- * pure recency.
- *
- * Configuration (all optional — when URL or model is missing the feature is
- * disabled and every caller falls back to recency-based behavior):
- *   EMBEDDING_API_URL     Base URL of an OpenAI-compatible API.
- *                         Accepted forms (resolved in order):
- *                           https://host/v1/embeddings  → used as-is
- *                           https://host/v1             → /embeddings appended
- *                           https://host                → /v1/embeddings appended
- *   EMBEDDING_API_KEY     Bearer token (omit for local/no-auth endpoints)
- *   EMBEDDING_MODEL       Model name, e.g. text-embedding-3-small / bge-m3
- *   EMBEDDING_TIMEOUT_MS  Per-request timeout (default 8000)
- *
- * Design notes:
- *  - Never throws into the caller's flow: `tryEmbed` returns null on any
- *    failure so message handling degrades gracefully.
- *  - A small TTL+LRU cache avoids re-embedding identical texts (quoted-message
- *    retries, repeated short queries).
- */
-
 import { createHash } from 'crypto';
 import { logger } from './logger';
 import { getErrorMessage } from './errorUtils';
 
 const log = logger.child({ module: 'EmbeddingService' });
-
 const CACHE_MAX_ENTRIES = 500;
 const CACHE_TTL_MS = 10 * 60_000;
-/** Batch cap — keeps request bodies small and provider limits happy. */
+const SPACE_PREFIX = 'embedding-space:v1:';
+
 export const MAX_BATCH_SIZE = 32;
+
+export interface EmbeddingConfig {
+  baseUrl: string;
+  apiKey?: string;
+  model: string;
+  timeoutMs: number;
+  dimension?: number;
+}
+
+export interface EmbeddingSpace {
+  id: string;
+  model: string;
+  endpoint: string;
+  dimension: number;
+}
 
 interface CacheEntry {
   vector: Float32Array;
   expiresAt: number;
+}
+
+interface RawEmbeddingItem {
+  index?: unknown;
+  embedding?: unknown;
 }
 
 function resolveEndpoint(rawUrl: string): string {
@@ -47,46 +41,107 @@ function resolveEndpoint(rawUrl: string): string {
   return `${url}/v1/embeddings`;
 }
 
+function endpointHash(endpoint: string): string {
+  return createHash('sha256').update(endpoint).digest('hex');
+}
+
+export function createEmbeddingSpaceId(model: string, endpoint: string, dimension: number): string {
+  if (!model.trim()) throw new TypeError('Embedding model must be non-empty.');
+  if (!Number.isInteger(dimension) || dimension < 1) {
+    throw new TypeError('Embedding dimension must be a positive integer.');
+  }
+  const identity = JSON.stringify([model.trim(), endpointHash(resolveEndpoint(endpoint)), dimension]);
+  return `${SPACE_PREFIX}${Buffer.from(identity, 'utf8').toString('base64url')}`;
+}
+
+export function parseEmbeddingSpaceId(value: string): EmbeddingSpace | null {
+  if (!value.startsWith(SPACE_PREFIX)) return null;
+  try {
+    const decoded = JSON.parse(
+      Buffer.from(value.slice(SPACE_PREFIX.length), 'base64url').toString('utf8'),
+    ) as unknown;
+    if (!Array.isArray(decoded) || decoded.length !== 3) return null;
+    const [model, hash, dimension] = decoded;
+    if (typeof model !== 'string' || typeof hash !== 'string') return null;
+    if (!Number.isInteger(dimension) || (dimension as number) < 1) return null;
+    return {
+      id: value,
+      model,
+      endpoint: `sha256:${hash}`,
+      dimension: dimension as number,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readDimension(raw: string | undefined): number | undefined {
+  if (raw === undefined || raw.trim() === '') return undefined;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 export class EmbeddingService {
   private static cache = new Map<string, CacheEntry>();
+  private static inFlight = new Map<string, Promise<Float32Array[]>>();
+  private static knownDimensions = new Map<string, number>();
 
-  /** True when both a base URL and a model are configured. */
   static isEnabled(): boolean {
-    const cfg = this.readConfig();
-    return !!(cfg && cfg.baseUrl && cfg.model);
+    return this.readConfig() !== null;
   }
 
-  static readConfig(): { baseUrl?: string; apiKey?: string; model?: string; timeoutMs: number } | null {
+  static readConfig(): EmbeddingConfig | null {
     const baseUrl = process.env.EMBEDDING_API_URL?.trim() || undefined;
     const apiKey = process.env.EMBEDDING_API_KEY?.trim() || undefined;
     const model = process.env.EMBEDDING_MODEL?.trim() || undefined;
-    const timeoutRaw = parseInt(process.env.EMBEDDING_TIMEOUT_MS ?? '', 10);
+    const timeoutRaw = Number.parseInt(process.env.EMBEDDING_TIMEOUT_MS ?? '', 10);
     const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 8_000;
+    const dimension = readDimension(process.env.EMBEDDING_DIMENSION);
     if (!baseUrl || !model) return null;
-    return { baseUrl, apiKey, model, timeoutMs };
+    return { baseUrl, apiKey, model, timeoutMs, dimension };
   }
 
-  private static cacheKey(model: string, text: string): string {
-    return createHash('sha1').update(`${model}\u0000${text}`).digest('hex');
+  static getCurrentSpace(dimension?: number): EmbeddingSpace {
+    const config = this.readConfig();
+    if (!config) throw new Error('EmbeddingService is not configured.');
+    const endpoint = resolveEndpoint(config.baseUrl);
+    const key = `${config.model}\u0000${endpoint}`;
+    const resolvedDimension = dimension ?? config.dimension ?? this.knownDimensions.get(key);
+    if (!resolvedDimension) {
+      throw new Error('Embedding dimension is not known yet.');
+    }
+    return {
+      id: createEmbeddingSpaceId(config.model, config.baseUrl, resolvedDimension),
+      model: config.model,
+      endpoint,
+      dimension: resolvedDimension,
+    };
   }
 
-  static cacheGet(model: string, text: string): Float32Array | undefined {
-    const entry = this.cache.get(this.cacheKey(model, text));
+  private static baseKey(config: EmbeddingConfig): string {
+    return `${config.model}\u0000${resolveEndpoint(config.baseUrl)}`;
+  }
+
+  private static cacheKey(spaceId: string, text: string): string {
+    return createHash('sha1').update(`${spaceId}\u0000${text}`).digest('hex');
+  }
+
+  static cacheGet(spaceId: string, text: string): Float32Array | undefined {
+    const key = this.cacheKey(spaceId, text);
+    const entry = this.cache.get(key);
     if (!entry) return undefined;
     if (entry.expiresAt < Date.now()) {
-      this.cache.delete(this.cacheKey(model, text));
+      this.cache.delete(key);
       return undefined;
     }
-    // LRU refresh
-    this.cache.delete(this.cacheKey(model, text));
-    this.cache.set(this.cacheKey(model, text), entry);
+    this.cache.delete(key);
+    this.cache.set(key, entry);
     return entry.vector;
   }
 
-  static cacheSet(model: string, text: string, vector: Float32Array): void {
-    const key = this.cacheKey(model, text);
+  static cacheSet(spaceId: string, text: string, vector: Float32Array): void {
+    const key = this.cacheKey(spaceId, text);
     while (this.cache.size >= CACHE_MAX_ENTRIES) {
-      // Map preserves insertion order → first key is least-recently-used.
       const oldest = this.cache.keys().next().value;
       if (oldest === undefined) break;
       this.cache.delete(oldest);
@@ -94,75 +149,149 @@ export class EmbeddingService {
     this.cache.set(key, { vector, expiresAt: Date.now() + CACHE_TTL_MS });
   }
 
-  /**
-   * Embed a batch of texts. Returns vectors in input order.
-   * Throws on failure (use tryEmbed for the tolerant variant).
-   */
+  private static async fetchBatch(
+    config: EmbeddingConfig,
+    texts: string[],
+    expectedDimension: number | undefined,
+  ): Promise<Float32Array[]> {
+    const response = await fetch(resolveEndpoint(config.baseUrl), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(config.apiKey ? { Authorization: `Bearer ${config.apiKey}` } : {}),
+      },
+      body: JSON.stringify({ model: config.model, input: texts }),
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!response.ok) {
+      throw new Error(`Embeddings API responded ${response.status}: ${(await response.text()).slice(0, 200)}`);
+    }
+
+    const json = await response.json() as unknown;
+    const data = typeof json === 'object' && json !== null && 'data' in json
+      ? (json as { data?: unknown }).data
+      : null;
+    const items = Array.isArray(data) ? data : null;
+    if (!items || items.length !== texts.length) {
+      throw new Error(`Embeddings API returned ${items?.length ?? 0} items for ${texts.length} inputs.`);
+    }
+
+    let dimension = expectedDimension;
+    const results = new Array<Float32Array>(texts.length);
+    const seen = new Set<number>();
+    for (const raw of items as RawEmbeddingItem[]) {
+      if (typeof raw !== 'object' || raw === null) {
+        throw new Error('Embeddings API returned an invalid data item.');
+      }
+      if (!Number.isInteger(raw.index) || (raw.index as number) < 0 || (raw.index as number) >= texts.length) {
+        throw new Error('Embeddings API returned an invalid response index.');
+      }
+      const index = raw.index as number;
+      if (seen.has(index)) throw new Error('Embeddings API returned a duplicate response index.');
+      seen.add(index);
+      if (!Array.isArray(raw.embedding) || raw.embedding.length === 0) {
+        throw new Error('Embeddings API returned an empty embedding vector.');
+      }
+      if (!raw.embedding.every(value => typeof value === 'number' && Number.isFinite(value))) {
+        throw new Error('Embeddings API returned a non-finite embedding value.');
+      }
+      const vector = Float32Array.from(raw.embedding);
+      if (!vector.every(value => Number.isFinite(value))) {
+        throw new Error('Embeddings API returned a value outside the float32 range.');
+      }
+      if (dimension === undefined) dimension = vector.length;
+      if (vector.length !== dimension) {
+        throw new Error(`Embeddings API dimension mismatch: expected ${dimension}, received ${vector.length}.`);
+      }
+      results[index] = vector;
+    }
+    if (seen.size !== texts.length || results.some(vector => vector === undefined)) {
+      throw new Error('Embeddings API response indices are incomplete.');
+    }
+
+    const actualDimension = results[0]!.length;
+    this.knownDimensions.set(this.baseKey(config), actualDimension);
+    return results;
+  }
+
   static async embed(texts: string[]): Promise<Float32Array[]> {
-    const cfg = this.readConfig();
-    if (!cfg || !cfg.model) throw new Error('EmbeddingService is not configured (set EMBEDDING_API_URL and EMBEDDING_MODEL)');
+    const config = this.readConfig();
+    if (!config) {
+      throw new Error('EmbeddingService is not configured (set EMBEDDING_API_URL and EMBEDDING_MODEL).');
+    }
     if (texts.length === 0) return [];
 
+    const knownDimension = config.dimension ?? this.knownDimensions.get(this.baseKey(config));
+    const cacheSpaceId = knownDimension ? createEmbeddingSpaceId(config.model, config.baseUrl, knownDimension) : null;
     const results = new Array<Float32Array | undefined>(texts.length).fill(undefined);
-    const pending: number[] = [];
+    const uniquePending: Array<{ text: string; indexes: number[] }> = [];
+    const byText = new Map<string, { text: string; indexes: number[] }>();
 
-    texts.forEach((text, i) => {
-      if (!text.trim()) return; // leave undefined → empty vector below
-      const cached = this.cacheGet(cfg.model!, text);
-      if (cached) results[i] = cached;
-      else pending.push(i);
+    texts.forEach((text, index) => {
+      if (!text.trim()) return;
+      if (cacheSpaceId) {
+        const cached = this.cacheGet(cacheSpaceId, text);
+        if (cached) {
+          results[index] = cached;
+          return;
+        }
+      }
+      const pending = byText.get(text);
+      if (pending) pending.indexes.push(index);
+      else {
+        const created = { text, indexes: [index] };
+        byText.set(text, created);
+        uniquePending.push(created);
+      }
     });
 
-    for (let start = 0; start < pending.length; start += MAX_BATCH_SIZE) {
-      const batchIdx = pending.slice(start, start + MAX_BATCH_SIZE);
-      const batchTexts = batchIdx.map(i => texts[i]);
-
-      const response = await fetch(resolveEndpoint(cfg.baseUrl!), {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
-        },
-        body: JSON.stringify({ model: cfg.model, input: batchTexts }),
-        signal: AbortSignal.timeout(cfg.timeoutMs),
-      });
-      if (!response.ok) {
-        throw new Error(`Embeddings API responded ${response.status}: ${(await response.text()).slice(0, 200)}`);
-      }
-      const json = (await response.json()) as { data?: { index?: number; embedding?: number[] }[] };
-      if (!Array.isArray(json.data) || json.data.length === 0) {
-        throw new Error('Embeddings API returned no data');
+    for (let start = 0; start < uniquePending.length; start += MAX_BATCH_SIZE) {
+      const batch = uniquePending.slice(start, start + MAX_BATCH_SIZE);
+      const batchTexts = batch.map(item => item.text);
+      const requestKey = createHash('sha1')
+        .update(`${this.baseKey(config)}\u0000${JSON.stringify(batchTexts)}`)
+        .digest('hex');
+      let request = this.inFlight.get(requestKey);
+      if (!request) {
+        request = this.fetchBatch(config, batchTexts, knownDimension);
+        this.inFlight.set(requestKey, request);
       }
 
-      // OpenAI spec returns data sorted by index; sort defensively anyway.
-      const sorted = [...json.data].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-      sorted.forEach((item, pos) => {
-        if (!Array.isArray(item.embedding) || item.embedding.length === 0) {
-          throw new Error('Embeddings API returned an empty embedding vector');
-        }
-        const target = batchIdx[pos] ?? batchIdx[0];
-        const vec = Float32Array.from(item.embedding);
-        results[target] = vec;
-        this.cacheSet(cfg.model!, texts[target], vec);
+      let vectors: Float32Array[];
+      try {
+        vectors = await request;
+      } finally {
+        if (this.inFlight.get(requestKey) === request) this.inFlight.delete(requestKey);
+      }
+
+      const dimension = vectors[0]?.length ?? knownDimension;
+      if (!dimension) throw new Error('Embeddings API returned an empty batch.');
+      const spaceId = createEmbeddingSpaceId(config.model, config.baseUrl, dimension);
+      batch.forEach((item, position) => {
+        const vector = vectors[position]!;
+        item.indexes.forEach(index => {
+          results[index] = vector;
+        });
+        this.cacheSet(spaceId, item.text, vector);
       });
     }
 
-    return results.map(r => r ?? new Float32Array(0));
+    return results.map(result => result ?? new Float32Array(0));
   }
 
-  /** Failure-tolerant single-text embed. Returns null instead of throwing. */
   static async tryEmbed(text: string): Promise<Float32Array | null> {
     try {
-      const [vec] = await this.embed([text]);
-      return vec && vec.length > 0 ? vec : null;
+      const [vector] = await this.embed([text]);
+      return vector && vector.length > 0 ? vector : null;
     } catch (error: unknown) {
       log.warn({ err: getErrorMessage(error) }, '[EmbeddingService] Embed failed — semantic features degrade to recency');
       return null;
     }
   }
 
-  /** Test helper: wipe the in-memory cache. */
   static clearCache(): void {
     this.cache.clear();
+    this.inFlight.clear();
+    this.knownDimensions.clear();
   }
 }

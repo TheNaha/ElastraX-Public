@@ -33,6 +33,12 @@ interface LatencyWindow {
   cursor: number;
 }
 
+export interface TokenStats {
+  prompt: number;
+  completion: number;
+  total: number;
+}
+
 export interface MetricsSnapshot {
   uptime: number;
   messages: {
@@ -48,7 +54,7 @@ export interface MetricsSnapshot {
     latencyP99: number;
     avgLatency: number;
   };
-  tokens: Record<string, { prompt: number; completion: number }>;
+  tokens: Record<string, TokenStats>;
   messageDuration: {
     latencyP50: number;
     latencyP95: number;
@@ -84,7 +90,7 @@ export class HealthMetricsCollector {
   private llmFailures = 0;
   private llmLatency: LatencyWindow = { values: [], maxSize: 1000, cursor: 0 };
 
-  private tokenStats = new Map<string, { prompt: number; completion: number }>();
+  private tokenStats = new Map<string, TokenStats>();
   private messageDuration: LatencyWindow = { values: [], maxSize: 1000, cursor: 0 };
 
   private providerStats = new Map<string, { success: number; failures: number }>();
@@ -124,13 +130,22 @@ export class HealthMetricsCollector {
     }
   }
 
-  recordTokenUsage(model: string, promptTokens: number, completionTokens: number): void {
+  recordTokenUsage(
+    model: string,
+    promptTokens: number,
+    completionTokens: number,
+    totalTokens: number = promptTokens + completionTokens,
+  ): void {
+    const prompt = Number.isFinite(promptTokens) && promptTokens > 0 ? promptTokens : 0;
+    const completion = Number.isFinite(completionTokens) && completionTokens > 0 ? completionTokens : 0;
+    const total = Number.isFinite(totalTokens) && totalTokens > 0 ? totalTokens : prompt + completion;
     if (!this.tokenStats.has(model)) {
-      this.tokenStats.set(model, { prompt: 0, completion: 0 });
+      this.tokenStats.set(model, { prompt: 0, completion: 0, total: 0 });
     }
     const stats = this.tokenStats.get(model)!;
-    stats.prompt += promptTokens;
-    stats.completion += completionTokens;
+    stats.prompt += prompt;
+    stats.completion += completion;
+    stats.total += total;
   }
 
   /** Record an LLM request completion with latency in milliseconds. */
@@ -233,7 +248,7 @@ export class HealthMetricsCollector {
       };
     });
 
-    const tokens: Record<string, { prompt: number; completion: number }> = {};
+    const tokens: Record<string, TokenStats> = {};
     this.tokenStats.forEach((stats, name) => {
       tokens[name] = { ...stats };
     });
@@ -352,6 +367,7 @@ export class HealthMetricsCollector {
       const stats = m.tokens[model]!;
       lines.push(`elastrax_tokens_total{model="${model}",type="prompt"} ${stats.prompt}`);
       lines.push(`elastrax_tokens_total{model="${model}",type="completion"} ${stats.completion}`);
+      lines.push(`elastrax_tokens_total{model="${model}",type="total"} ${stats.total}`);
     }
 
     lines.push('# HELP elastrax_message_duration_ms Message processing duration percentiles');

@@ -1,79 +1,68 @@
-/**
- * @file src/utils/ModelRouter.ts
- * @description Multi-provider LLM router with automatic failover.
- *
- * Tries AI providers in priority order, falling back to the next one if a
- * request fails. This ensures high availability and allows you to mix providers
- * (e.g., Modal for speed, Gemini as backup, local Ollama as last resort).
- *
- * Configuration — set AI_PROVIDERS to a comma-separated priority list:
- *   AI_PROVIDERS=modal,gemini,ollama        (default: just uses the legacy AI_API_BASE_URL setup)
- *
- * Per-provider environment variables (replace {NAME} with the provider name in uppercase):
- *   AI_{NAME}_BASE_URL        — OpenAI-compatible endpoint (required per provider)
- *   AI_{NAME}_API_KEY         — Bearer token (optional, defaults to 'dummy')
- *   AI_{NAME}_MODEL           — Model identifier
- *   AI_{NAME}_SUPPORTS_VIDEO  — 'true' if the model/provider accepts video_url content blocks
- *   AI_{NAME}_SUPPORTS_AUDIO  — 'true' if the model/provider accepts audio_url content blocks
- *
- * Well-known provider auto-defaults (can be overridden via env):
- *   modal      — supportsVideo: true,  supportsAudio: true  (vLLM / Qwen3-Omni)
- *   gemini     — supportsVideo: false, supportsAudio: false (inline base64 not supported via OAI compat)
- *   openrouter — supportsVideo: false, supportsAudio: false
- *   groq       — supportsVideo: false, supportsAudio: false
- *   cloudflare — supportsVideo: false, supportsAudio: false
- *   pollinations— supportsVideo: false, supportsAudio: false
- *   airforce   — supportsVideo: false, supportsAudio: false
- *
- * Example .env block:
- *   AI_PROVIDERS=modal1,pollinations,airforce,cloudflare,openrouter,groq,gemini
- *   AI_MODAL1_BASE_URL=https://your-modal-endpoint.modal.run/v1
- *   AI_MODAL1_API_KEY=dummy
- *   AI_MODAL1_MODEL=cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit
- *   AI_MODAL1_SUPPORTS_VIDEO=true
- *   AI_MODAL1_SUPPORTS_AUDIO=true
- *
- * If AI_PROVIDERS is not set, it falls back to the legacy single-provider setup
- * (AI_API_BASE_URL / AI_API_KEY / AI_MODEL_NAME).
- */
-
 import { logger } from './logger';
 import { AIClient } from '../ai/client';
 import type { AIChatMessage, AIContentPart } from '../ai/client';
+import { AIProtocolError, AllProvidersOpenError } from '../ai/errors';
+import type { AIStreamChunk, ChatCompletionEnvelope } from '../ai/types';
 import type { ToolDefinition } from '../tools/BaseTool';
-import type { ChatCompletionMessage, ChatCompletionChunk, ModelTier, TokenUsage } from '../types/ai';
+import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
 import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 
 export interface ProviderConfig {
+  key: string;
   name: string;
   baseUrl: string;
   apiKey: string;
   modelName: string;
-  /** Model tier for multi-model routing. Defaults to 'standard'. */
   tier: ModelTier;
-  /**
-   * V7.13: Whether this provider's model accepts `video_url` content blocks.
-   * Defaults to false for all providers except modal-style vLLM deployments.
-   */
+  supportsImage: boolean;
   supportsVideo: boolean;
-  /**
-   * V7.13: Whether this provider's model accepts `audio_url` content blocks.
-   * Defaults to false for all providers except modal-style vLLM deployments.
-   */
   supportsAudio: boolean;
+  supportsTools: boolean;
+  includeStreamUsage: boolean;
+  maxTokensParam: 'max_tokens' | 'max_completion_tokens';
+  maxOutputTokens: number | null;
+  supportsParallelToolCalls?: boolean;
 }
 
-/** Internal provider with a pre-built, cached AIClient instance. */
 interface ResolvedProvider extends ProviderConfig {
   client: AIClient;
 }
 
-type MessageWithUsage = ChatCompletionMessage & {
-  usage?: Partial<TokenUsage>;
-};
+export type ProviderCircuitState = 'closed' | 'open' | 'half-open';
+
+export interface ProviderCircuitSnapshot {
+  key: string;
+  state: ProviderCircuitState;
+  failures: number;
+  openUntil: number;
+  probeInFlight: boolean;
+}
+
+export interface ModelRouterOptions {
+  now?: () => number;
+  random?: () => number;
+}
+
+interface CircuitEntry {
+  state: ProviderCircuitState;
+  failures: number;
+  openUntil: number;
+  probeInFlight: boolean;
+}
+
+export interface ProviderMessageCapabilities {
+  supportsImage?: boolean;
+  supportsVideo: boolean;
+  supportsAudio: boolean;
+}
+
+export interface AdaptedChatRequest {
+  messages: AIChatMessage[];
+  tools?: ToolDefinition[];
+}
 
 function resolveChatCompletionsUrl(baseUrl: string): string {
   const normalized = baseUrl.replace(/\/$/, '');
@@ -82,51 +71,107 @@ function resolveChatCompletionsUrl(baseUrl: string): string {
     : `${normalized}/chat/completions`;
 }
 
-/** Loads all provider configs from process.env, building AIClient instances. */
-function loadProviders(): ResolvedProvider[] {
-  // Use the shared LLM target resolver (eliminates duplication with HealthMonitor)
-  const targets = resolveLLMProviders();
+function envBoolean(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  throw new Error(`${name} must be true or false`);
+}
 
-  return targets.map(t => {
-    const cfg: ProviderConfig = {
-      name: t.name,
-      baseUrl: t.baseUrl,
-      apiKey: t.apiKey,
-      modelName: t.modelName,
-      tier: t.tier,
-      supportsVideo: t.supportsVideo,
-      supportsAudio: t.supportsAudio,
+function optionalEnvBoolean(name: string): boolean | undefined {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  return undefined;
+}
+
+function envPositiveInteger(name: string): number | null {
+  const raw = process.env[name]?.trim();
+  if (!raw || !/^\d+$/.test(raw)) return null;
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function loadProviders(): ResolvedProvider[] {
+  const targets = resolveLLMProviders();
+  const usedKeys = new Set<string>();
+
+  return targets.map(target => {
+    const upper = target.name.toUpperCase();
+    const generic = target.name === 'default' ? '' : `_${upper}`;
+    const readCapability = (name: string, fallback: boolean): boolean => (
+      envBoolean(`AI${generic}_${name}`, envBoolean(`AI_${name}`, fallback))
+    );
+    let key = target.key;
+    if (usedKeys.has(key)) {
+      let suffix = 2;
+      while (usedKeys.has(`${key}#${suffix}`)) suffix++;
+      key = `${key}#${suffix}`;
+    }
+    usedKeys.add(key);
+
+    const tokenParamRaw = (
+      process.env[`AI${generic}_MAX_TOKENS_PARAM`]?.trim()
+      ?? process.env.AI_MAX_TOKENS_PARAM?.trim()
+    );
+    const parallelTools = (
+      optionalEnvBoolean(`AI${generic}_SUPPORTS_PARALLEL_TOOLS`)
+      ?? optionalEnvBoolean('AI_SUPPORTS_PARALLEL_TOOLS')
+    );
+    const config: ProviderConfig = {
+      key,
+      name: target.name,
+      baseUrl: target.baseUrl,
+      apiKey: target.apiKey || 'dummy',
+      modelName: target.modelName,
+      tier: target.tier,
+      supportsImage: readCapability('SUPPORTS_IMAGE', true),
+      supportsVideo: target.supportsVideo,
+      supportsAudio: target.supportsAudio,
+      supportsTools: readCapability('SUPPORTS_TOOLS', true),
+      includeStreamUsage: readCapability('STREAM_USAGE', true),
+      maxTokensParam: tokenParamRaw === 'max_completion_tokens' ? 'max_completion_tokens' : 'max_tokens',
+      maxOutputTokens: (
+        envPositiveInteger(`AI${generic}_MAX_OUTPUT_TOKENS`)
+        ?? envPositiveInteger('AI_MAX_OUTPUT_TOKENS')
+      ),
+      ...(parallelTools === undefined ? {} : { supportsParallelToolCalls: parallelTools }),
     };
     return {
-      ...cfg,
-      client: new AIClient({ baseUrl: cfg.baseUrl, apiKey: cfg.apiKey, modelName: cfg.modelName }),
+      ...config,
+      client: new AIClient({
+        baseUrl: config.baseUrl,
+        apiKey: config.apiKey,
+        modelName: config.modelName,
+        maxTokensParam: config.maxTokensParam,
+        includeStreamUsage: config.includeStreamUsage,
+        supportsParallelToolCalls: config.supportsParallelToolCalls,
+      }),
     };
   });
 }
 
-/**
- * V7.13: Sanitize a messages array for a specific provider's capabilities.
- *
- * Strips `video_url` and `audio_url` content block types if the provider doesn't support them,
- * replacing them with a plain-text description so the AI is still aware media was present.
- *
- * Returns a new messages array (does not mutate the original).
- */
 export function sanitizeMessagesForProvider(
   messages: AIChatMessage[],
-  provider: Pick<ProviderConfig, 'supportsVideo' | 'supportsAudio'>,
+  provider: ProviderMessageCapabilities,
 ): AIChatMessage[] {
-  if (provider.supportsVideo && provider.supportsAudio) {
-    // Provider supports everything — no transformation needed
+  if (
+    provider.supportsImage !== false
+    && provider.supportsVideo
+    && provider.supportsAudio
+  ) {
     return messages;
   }
 
-  return messages.map(msg => {
-    if (!Array.isArray(msg.content)) return msg;
-
+  return messages.map(message => {
+    if (!Array.isArray(message.content)) return message;
     const sanitized: AIContentPart[] = [];
-    for (const part of msg.content) {
-      if (part?.type === 'video_url' && !provider.supportsVideo) {
+    for (const part of message.content) {
+      if (part?.type === 'image_url' && provider.supportsImage === false) {
+        sanitized.push({ type: 'text', text: '[Image attached — not supported by this provider]' });
+      } else if (part?.type === 'video_url' && !provider.supportsVideo) {
         sanitized.push({ type: 'text', text: '[Video attached — not supported by this provider]' });
       } else if (part?.type === 'audio_url' && !provider.supportsAudio) {
         sanitized.push({ type: 'text', text: '[Audio attached — not supported by this provider]' });
@@ -134,119 +179,256 @@ export function sanitizeMessagesForProvider(
         sanitized.push(part);
       }
     }
-
-    return { ...msg, content: sanitized };
+    return { ...message, content: sanitized };
   });
 }
 
-/**
- * Singleton router that tries providers in priority order with automatic failover.
- * Pre-builds and caches AIClient instances at init time for efficiency.
- * Supports tier-based routing for multi-model strategies.
- */
+function removeToolProtocol(messages: AIChatMessage[]): AIChatMessage[] {
+  return messages.flatMap(message => {
+    if (message.role === 'tool') {
+      const content = typeof message.content === 'string'
+        ? message.content
+        : message.content.map(part => part.text ?? `[${part.type}]`).join(' ');
+      return [{
+        role: 'user' as const,
+        content: `[Tool result${message.name ? ` ${message.name}` : ''}]: ${content}`,
+      }];
+    }
+    if (message.role !== 'assistant' || !message.tool_calls?.length) return [message];
+    const { tool_calls: toolCalls, ...withoutToolCalls } = message;
+    const names = toolCalls.map(call => call.function.name).filter(Boolean).join(', ');
+    return [{
+      ...withoutToolCalls,
+      content: typeof withoutToolCalls.content === 'string' && withoutToolCalls.content.length > 0
+        ? withoutToolCalls.content
+        : `[Tool calls omitted: ${names}]`,
+    }];
+  });
+}
+
+export function adaptChatRequest(
+  messages: AIChatMessage[],
+  tools: ToolDefinition[] | undefined,
+  provider: Pick<ProviderConfig, 'supportsImage' | 'supportsVideo' | 'supportsAudio' | 'supportsTools'>,
+): AdaptedChatRequest {
+  const sanitized = sanitizeMessagesForProvider(messages, provider);
+  const adapted: AdaptedChatRequest = {
+    messages: provider.supportsTools ? sanitized : removeToolProtocol(sanitized),
+  };
+  if (tools && tools.length > 0 && provider.supportsTools) adapted.tools = tools;
+  return adapted;
+}
+
+function usefulText(content: string): string {
+  return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+}
+
+function hasUsefulResponse(message: ChatCompletionMessage): boolean {
+  if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
+  if (typeof message.refusal === 'string' && usefulText(message.refusal).length > 0) return true;
+  const content = typeof message.content === 'string' ? message.content : message.output_text ?? '';
+  return usefulText(content).length > 0;
+}
+
 export class ModelRouter {
   private providers: ResolvedProvider[];
-  private providerCooldownUntil = new Map<string, number>();
-  private providerFailureCount = new Map<string, number>();
+  private readonly circuits = new Map<string, CircuitEntry>();
+  private readonly now: () => number;
+  private readonly random: () => number;
   private static readonly CIRCUIT_BREAKER_THRESHOLD = 5;
 
-  constructor() {
+  constructor(options: ModelRouterOptions = {}) {
     this.providers = loadProviders();
+    this.now = options.now ?? Date.now;
+    this.random = options.random ?? Math.random;
     if (this.providers.length === 0) {
       throw new Error('No AI providers configured. Set AI_PROVIDERS or AI_API_BASE_URL.');
     }
     logger.info({
-      providers: this.providers.map(p => ({ name: p.name, tier: p.tier, supportsVideo: p.supportsVideo, supportsAudio: p.supportsAudio })),
+      providers: this.providers.map(provider => ({
+        key: provider.key,
+        name: provider.name,
+        tier: provider.tier,
+        supportsImage: provider.supportsImage,
+        supportsVideo: provider.supportsVideo,
+        supportsAudio: provider.supportsAudio,
+        supportsTools: provider.supportsTools,
+      })),
     }, '[ModelRouter] Loaded providers with cached clients');
   }
 
-  /**
-   * Returns providers filtered by tier preference.
-   * If a tier is specified, providers matching that tier are tried first,
-   * then all others as fallback.
-   */
   private getProvidersByTier(tier?: ModelTier): ResolvedProvider[] {
     if (!tier) return this.providers;
-
-    // ⚡ Bolt: Use a single pass to partition providers instead of two .filter() calls
     const preferred: ResolvedProvider[] = [];
     const fallback: ResolvedProvider[] = [];
-    for (const p of this.providers) {
-      if (p.tier === tier) preferred.push(p);
-      else fallback.push(p);
+    for (const provider of this.providers) {
+      if (provider.tier === tier) preferred.push(provider);
+      else fallback.push(provider);
     }
-
     if (preferred.length === 0) {
       logger.debug({ tier }, '[ModelRouter] No providers match requested tier, using all');
       return this.providers;
     }
-    // ⚡ Bolt: Use .concat() instead of spread operator [...preferred, ...fallback] for better performance
     return preferred.concat(fallback);
+  }
+
+  private getCircuit(providerKey: string): CircuitEntry {
+    const existing = this.circuits.get(providerKey);
+    if (existing) return existing;
+    const created: CircuitEntry = {
+      state: 'closed',
+      failures: 0,
+      openUntil: 0,
+      probeInFlight: false,
+    };
+    this.circuits.set(providerKey, created);
+    return created;
   }
 
   private getCandidateProviders(tier?: ModelTier): ResolvedProvider[] {
     const orderedProviders = this.getProvidersByTier(tier);
-    const now = Date.now();
-
-    const availableProviders: ResolvedProvider[] = [];
-    const skippedProviderNames: string[] = [];
+    const now = this.now();
+    const available: ResolvedProvider[] = [];
+    const skipped: string[] = [];
 
     for (const provider of orderedProviders) {
-      const cooldownUntil = this.providerCooldownUntil.get(provider.name) ?? 0;
-      const failures = this.providerFailureCount.get(provider.name) ?? 0;
-
-      if (cooldownUntil > now) {
-        skippedProviderNames.push(failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD ? provider.name + '(circuit-breaker)' : provider.name);
+      const circuit = this.getCircuit(provider.key);
+      if (circuit.state === 'open' && now < circuit.openUntil) {
+        skipped.push(`${provider.name}(open)`);
         continue;
       }
-
-      if (failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD) {
-        // Half-open state: cooldown passed, try again with reduced failure count
-        this.providerFailureCount.set(provider.name, ModelRouter.CIRCUIT_BREAKER_THRESHOLD - 1);
+      if (circuit.state === 'open') {
+        circuit.state = 'half-open';
+        circuit.probeInFlight = false;
       }
-
-      availableProviders.push(provider);
+      available.push(provider);
     }
 
-    if (availableProviders.length === 0) {
-      return orderedProviders;
+    if (available.length === 0) {
+      throw new AllProvidersOpenError(orderedProviders.map(provider => provider.key));
+    }
+    if (skipped.length > 0) logger.debug({ skipped }, '[ModelRouter] Skipping unavailable provider circuits');
+    return available;
+  }
+
+  private acquireProvider(provider: ResolvedProvider): boolean {
+    const circuit = this.getCircuit(provider.key);
+    if (circuit.state !== 'half-open') return true;
+    if (circuit.probeInFlight) return false;
+    circuit.probeInFlight = true;
+    return true;
+  }
+
+  private clearProviderCircuit(providerKey: string): void {
+    this.circuits.delete(providerKey);
+  }
+
+  private markProviderFailure(providerKey: string): void {
+    const circuit = this.getCircuit(providerKey);
+    if (circuit.state === 'open') return;
+    circuit.failures++;
+    circuit.probeInFlight = false;
+    if (circuit.failures >= ModelRouter.CIRCUIT_BREAKER_THRESHOLD) {
+      circuit.state = 'open';
+      const jitter = 0.8 + Math.max(0, Math.min(1, this.random())) * 0.4;
+      circuit.openUntil = this.now() + Math.max(1, Math.round(getProviderCooldownMs() * jitter));
+    }
+  }
+
+  getProviderCircuit(providerKey: string): ProviderCircuitSnapshot {
+    const circuit = this.getCircuit(providerKey);
+    return {
+      key: providerKey,
+      state: circuit.state,
+      failures: circuit.failures,
+      openUntil: circuit.openUntil,
+      probeInFlight: circuit.probeInFlight,
+    };
+  }
+
+  private resolveMaxTokens(provider: ProviderConfig, requested?: number, streaming = false): number {
+    const configured = requested ?? getAIRequestConfig(process.env, streaming).maxTokens;
+    return provider.maxOutputTokens === null
+      ? configured
+      : Math.min(configured, provider.maxOutputTokens);
+  }
+
+  async chatCompletionEnvelope(
+    messages: AIChatMessage[],
+    tools?: ToolDefinition[],
+    temperature: number = 0.7,
+    maxTokens?: number,
+    tier?: ModelTier,
+  ): Promise<ChatCompletionEnvelope> {
+    let lastError: Error | null = null;
+    let attempted = false;
+    const verbose = process.env.AI_VERBOSE_LOGS === 'true';
+    const orderedProviders = this.getCandidateProviders(tier);
+
+    for (const provider of orderedProviders) {
+      if (!this.acquireProvider(provider)) {
+        logger.debug({ provider: provider.name }, '[ModelRouter] Half-open probe already in flight');
+        continue;
+      }
+      attempted = true;
+      const start = this.now();
+      try {
+        if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
+        const adapted = adaptChatRequest(messages, tools, provider);
+        const resolvedMaxTokens = this.resolveMaxTokens(provider, maxTokens);
+        if (verbose) {
+          logger.info({
+            provider: provider.name,
+            providerKey: provider.key,
+            tier: provider.tier,
+            url: resolveChatCompletionsUrl(provider.baseUrl),
+            model: provider.modelName,
+            messageCount: adapted.messages.length,
+            toolsEnabled: !!adapted.tools?.length,
+            temperature,
+            maxTokens: resolvedMaxTokens,
+          }, '[ModelRouter] Sending chat completion request');
+        }
+
+        const envelope = await provider.client.chatCompletionEnvelope(
+          adapted.messages,
+          adapted.tools,
+          temperature,
+          resolvedMaxTokens,
+        );
+        const latency = this.now() - start;
+        if (envelope.usage) {
+          healthMetrics.recordTokenUsage(
+            envelope.model,
+            envelope.usage.prompt_tokens,
+            envelope.usage.completion_tokens,
+            envelope.usage.total_tokens,
+          );
+        }
+        if (!hasUsefulResponse(envelope.message)) {
+          throw new AIProtocolError('empty_response', `Provider "${provider.name}" returned no useful content.`);
+        }
+
+        healthMetrics.recordLLMRequest(provider.name, latency, true);
+        this.clearProviderCircuit(provider.key);
+        envelope.provider = { name: provider.name, key: provider.key };
+        logger.debug({ provider: provider.name, latency, model: envelope.model }, '[ModelRouter] Provider succeeded');
+        return envelope;
+      } catch (error: unknown) {
+        const latency = this.now() - start;
+        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
+        lastError = err;
+        this.markProviderFailure(provider.key);
+        healthMetrics.recordLLMRequest(provider.name, latency, false);
+        logger.warn({ provider: provider.name, err: err.message, latency }, '[ModelRouter] Provider failed, trying next');
+      }
     }
 
-    if (skippedProviderNames.length > 0) {
-      logger.debug({
-        skippedProviders: skippedProviderNames,
-      }, '[ModelRouter] Skipping providers in cooldown window');
-    }
-
-    return availableProviders;
+    if (lastError) throw lastError;
+    if (!attempted) throw new AllProvidersOpenError(orderedProviders.map(provider => provider.key));
+    throw new Error('All AI providers failed.');
   }
 
-  private clearProviderCooldown(providerName: string): void {
-    this.providerCooldownUntil.delete(providerName);
-    this.providerFailureCount.delete(providerName);
-  }
-
-  private markProviderFailure(providerName: string): void {
-    const current = this.providerFailureCount.get(providerName) ?? 0;
-    this.providerFailureCount.set(providerName, current + 1);
-    this.providerCooldownUntil.set(providerName, Date.now() + getProviderCooldownMs());
-  }
-
-  private getUsage(result: ChatCompletionMessage): Partial<TokenUsage> | undefined {
-    return (result as MessageWithUsage).usage;
-  }
-
-  /**
-   * Sends a chat completion request, trying each provider in order until one succeeds.
-   *
-   * @param messages    Full conversation history including system prompt.
-   * @param tools       Optional LLM function-calling tool definitions.
-   * @param temperature Sampling temperature.
-   * @param maxTokens   Max tokens to generate.
-   * @param tier        Optional model tier preference for multi-model routing.
-   * @returns           Typed `ChatCompletionMessage` from choices[0].
-   * @throws            If ALL providers fail, re-throws the last error.
-   */
   async chatCompletion(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
@@ -254,138 +436,92 @@ export class ModelRouter {
     maxTokens?: number,
     tier?: ModelTier,
   ): Promise<ChatCompletionMessage> {
-    let lastError: Error | null = null;
-    const verbose = process.env.AI_VERBOSE_LOGS === 'true';
-    const orderedProviders = this.getCandidateProviders(tier);
-    let latency = 0;
-
-    for (const provider of orderedProviders) {
-      const start = Date.now();
-      try {
-        if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
-
-        const resolvedMaxTokens = maxTokens ?? getAIRequestConfig().maxTokens;
-        // V7.13: Strip unsupported video_url/audio_url blocks for this provider
-        const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
-
-        if (verbose) {
-          logger.info({
-            provider: provider.name,
-            tier: provider.tier,
-            url: resolveChatCompletionsUrl(provider.baseUrl),
-            model: provider.modelName,
-            messageCount: sanitizedMessages.length,
-            toolsEnabled: !!(tools && tools.length > 0),
-            temperature,
-            maxTokens: resolvedMaxTokens,
-          }, '[ModelRouter] Sending chat completion request');
-        }
-
-        const result = await provider.client.chatCompletion(sanitizedMessages, tools, temperature, resolvedMaxTokens);
-        latency = Date.now() - start;
-
-        if (verbose) {
-          logger.info({
-            provider: provider.name,
-            hasToolCalls: Array.isArray(result?.tool_calls) && result.tool_calls.length > 0,
-            contentType: Array.isArray(result?.content) ? 'array' : typeof result?.content,
-            contentPreview: typeof result?.content === 'string' ? result.content.slice(0, 120) : undefined,
-          }, '[ModelRouter] Provider response received');
-        }
-
-        // Guard: if the provider returned HTTP 200 but the response has no useful
-        // content AND no tool calls, treat it as a failure and try the next provider.
-        // Also strip Qwen3-style <think>…</think> blocks before checking emptiness.
-        const hasToolCalls = Array.isArray(result?.tool_calls) && result.tool_calls.length > 0;
-        const rawContent = typeof result?.content === 'string' ? result.content : '';
-        const strippedContent = rawContent.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-        if (!hasToolCalls && !strippedContent) {
-          logger.warn({ provider: provider.name, latency }, '[ModelRouter] Provider returned empty content, trying next');
-          this.markProviderFailure(provider.name);
-          healthMetrics.recordLLMRequest(provider.name, latency, false);
-          lastError = new Error(`Provider "${provider.name}" returned empty content`);
-          continue;
-        }
-
-        healthMetrics.recordLLMRequest(provider.name, latency, true);
-        this.clearProviderCooldown(provider.name);
-        // V7.13: Usage may be on the message object for some providers (runtime-only field)
-        const usage = this.getUsage(result);
-        if (usage) {
-          healthMetrics.recordTokenUsage(
-            provider.modelName,
-            usage.prompt_tokens ?? 0,
-            usage.completion_tokens ?? 0
-          );
-        }
-
-        logger.debug({ provider: provider.name, latency }, '[ModelRouter] Provider succeeded');
-        return result;
-      } catch (error: unknown) {
-        latency = Date.now() - start;
-        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
-        lastError = err;
-        this.markProviderFailure(provider.name);
-        healthMetrics.recordLLMRequest(provider.name, latency, false);
-        logger.warn({ provider: provider.name, err: err.message, latency }, '[ModelRouter] Provider failed, trying next');
-      }
-    }
-
-    throw lastError ?? new Error('All AI providers failed.');
+    const envelope = await this.chatCompletionEnvelope(messages, tools, temperature, maxTokens, tier);
+    return envelope.message;
   }
 
-  /**
-   * Sends a streaming chat completion request with automatic failover.
-   * Returns an async generator yielding SSE chunks.
-   *
-   * @param messages    Full conversation history.
-   * @param tools       Optional tool definitions.
-   * @param temperature Sampling temperature.
-   * @param maxTokens   Max tokens.
-   * @param tier        Optional model tier preference.
-   * @yields            `ChatCompletionChunk` objects as they arrive from the stream.
-   */
   async *chatCompletionStream(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
     temperature: number = 0.7,
     maxTokens?: number,
     tier?: ModelTier,
-  ): AsyncGenerator<ChatCompletionChunk> {
+  ): AsyncGenerator<AIStreamChunk> {
     let lastError: Error | null = null;
+    let attempted = false;
     const orderedProviders = this.getCandidateProviders(tier);
 
     for (const provider of orderedProviders) {
-      let yieldedAny = false;
-      const start = Date.now();
+      if (!this.acquireProvider(provider)) {
+        logger.debug({ provider: provider.name }, '[ModelRouter] Streaming half-open probe already in flight');
+        continue;
+      }
+      attempted = true;
+      const start = this.now();
+      let sawChunk = false;
+      let sawToolCall = false;
+      let accumulatedText = '';
+      let usageRecorded = false;
+      let latestUsage: AIStreamChunk['usage'] = null;
+      let usageModel = provider.modelName;
+      const recordUsage = (): void => {
+        if (usageRecorded || !latestUsage) return;
+        healthMetrics.recordTokenUsage(
+          usageModel,
+          latestUsage.prompt_tokens,
+          latestUsage.completion_tokens,
+          latestUsage.total_tokens,
+        );
+        usageRecorded = true;
+      };
       try {
         if (!provider.baseUrl) throw new Error(`Provider "${provider.name}" has no base URL.`);
-
-        const resolvedMaxTokens = maxTokens ?? getAIRequestConfig(process.env, true).maxTokens;
-        // V7.13: Strip unsupported video_url/audio_url blocks for this provider
-        const sanitizedMessages = sanitizeMessagesForProvider(messages, provider);
-
-        const stream = provider.client.chatCompletionStream(sanitizedMessages, tools, temperature, resolvedMaxTokens);
+        const adapted = adaptChatRequest(messages, tools, provider);
+        const resolvedMaxTokens = this.resolveMaxTokens(provider, maxTokens, true);
+        const stream = provider.client.chatCompletionStream(
+          adapted.messages,
+          adapted.tools,
+          temperature,
+          resolvedMaxTokens,
+        );
 
         for await (const chunk of stream) {
-          yieldedAny = true;
+          sawChunk = true;
+          usageModel = chunk.model || usageModel;
+          if (chunk.usage) latestUsage = chunk.usage;
+          for (const choice of chunk.choices) {
+            if (typeof choice.delta.content === 'string' && choice.delta.content.length > 0) {
+              accumulatedText += choice.delta.content;
+            }
+            if ((choice.delta.tool_calls?.length ?? 0) > 0) {
+              sawToolCall = true;
+            }
+          }
           yield chunk;
         }
 
-        const latency = Date.now() - start;
-        healthMetrics.recordLLMRequest(provider.name, latency, true);
-        this.clearProviderCooldown(provider.name);
-
-        return; // Successfully streamed from this provider
+        if (!sawChunk || (!sawToolCall && usefulText(accumulatedText).length === 0)) {
+          throw new AIProtocolError('empty_response', `Provider "${provider.name}" returned an empty stream.`);
+        }
+        if (!usageRecorded) {
+          recordUsage();
+          if (!usageRecorded) {
+            logger.debug({ provider: provider.name }, '[ModelRouter] Stream completed without token usage');
+          }
+        }
+        healthMetrics.recordLLMRequest(provider.name, this.now() - start, true);
+        this.clearProviderCircuit(provider.key);
+        return;
       } catch (error: unknown) {
+        recordUsage();
         const err = error instanceof Error ? error : new Error(getErrorMessage(error));
         lastError = err;
-        this.markProviderFailure(provider.name);
-        healthMetrics.recordLLMRequest(provider.name, Date.now() - start, false);
-        if (yieldedAny) {
+        this.markProviderFailure(provider.key);
+        healthMetrics.recordLLMRequest(provider.name, this.now() - start, false);
+        if (sawToolCall || usefulText(accumulatedText).length > 0) {
           logger.warn(
             { provider: provider.name, err: err.message },
-            '[ModelRouter] Streaming provider failed after yielding chunks; aborting without cross-provider fallback',
+            '[ModelRouter] Streaming provider failed after yielding output; cross-provider fallback is unsafe',
           );
           throw err;
         }
@@ -393,21 +529,19 @@ export class ModelRouter {
       }
     }
 
-    throw lastError ?? new Error('All AI providers failed (streaming).');
+    if (lastError) throw lastError;
+    if (!attempted) throw new AllProvidersOpenError(orderedProviders.map(provider => provider.key));
+    throw new Error('All AI providers failed (streaming).');
   }
 
-  /** Returns the list of loaded provider configs (useful for /stats display). */
-  getProviders(): ProviderConfig[] {
-    return this.providers;
+  getProviders(): Array<Omit<ProviderConfig, 'apiKey'>> {
+    return this.providers.map(({ apiKey: _apiKey, ...provider }) => ({ ...provider }));
   }
 }
 
 let singletonRouter: ModelRouter | null = null;
 
 export function getModelRouter(): ModelRouter {
-  if (!singletonRouter) {
-    singletonRouter = new ModelRouter();
-  }
+  if (!singletonRouter) singletonRouter = new ModelRouter();
   return singletonRouter;
 }
-
