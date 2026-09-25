@@ -31,7 +31,7 @@
 - A single bot process remains intentional for SQLite; multi-process rolling deployment is not supported.
 - GitHub Actions may still require an account-side billing/permissions repair; no workflow can prove a runner started before that external state is fixed.
 - The identity hotfix has been deployed and manually verified. The v8.0.1 full-release tag, image digest publication, and production rollout still require explicit approval.
-- The final hermetic suite passes 1,210 tests with zero failures in normal, randomized, and isolated-per-file modes, including migration 0022 backfill, same-remote-ID cross-platform isolation, room-scoped delivery, CI diagnostics, and provider staging scenarios. Typecheck and zero-warning lint are clean. Bun's high-severity dependency audit and the working-tree Gitleaks scan are clean. A production-image build and disposable fresh-volume smoke apply migration 0022 successfully: `/health` 200, unauthenticated `/webhook` 401, authenticated `/webhook` 202 queued, and `/ready` 503 when no provider is configured.
+- The final hermetic suite passes 1,212 tests with zero failures in normal, randomized, and isolated-per-file modes, including migration 0022 backfill, same-remote-ID cross-platform isolation, room-scoped delivery, CI diagnostics, and provider staging scenarios. Typecheck and zero-warning lint are clean. Bun's high-severity dependency audit and the working-tree Gitleaks scan are clean. A production-image build and disposable fresh-volume smoke apply migration 0022 successfully: `/health` 200, unauthenticated `/webhook` 401, authenticated `/webhook` 202 queued, and `/ready` 503 when no provider is configured.
 
 ## Release commands
 
