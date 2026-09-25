@@ -29,14 +29,17 @@ The `handleIncomingMessage` function is the single entry point for all normalize
 5. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated.
 
 ### 4. Interactive State Management (`FlowHandler.ts`)
-For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages state persistence using an in-memory Map backed by SQLite. It gracefully handles session expiration, conflict resolution on hot-reloads, and step-by-step processing.
+For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
 
-### 5. Multi-Provider AI Router (`ModelRouter.ts`)
+### 5. Canonical Room Identity
+The v8.1 migration stores a canonical `room:<platform>:<remoteRoomId>` key for every durable room reference. `ctx.chatId` remains the raw provider room ID for provider I/O; `ctx.roomKey` is used for rooms, history, reminders, subscriptions, inbox, and outbox. See [Room Identity Migration](./room-identity-migration.md).
+
+### 6. Multi-Provider AI Router (`ModelRouter.ts`)
 The AI layer features a highly resilient Failover Router:
 - Allows configuration of multiple providers (e.g., Modal, Gemini, Ollama, Cloudflare).
 - If the primary tier fails (HTTP 5xx, timeout, or rate-limit), the router circuit-breaks and silently falls back to a lower tier without dropping the user's message.
 - Providers are instantiated lazily and their health is tracked in `src/utils/HealthMetrics.ts`.
 
-### 6. Storage & Long-Term Memory
+### 7. Storage & Long-Term Memory
 - **Database**: SQLite using `better-sqlite3` (or Bun's native SQLite) with Drizzle ORM (`src/db/schema.ts`).
 - **Memory (RAG)**: The `MemoryTool` allows the AI to explicitly store facts about users. These facts are queried and injected into the system prompt, providing persistent long-term memory across chat sessions.

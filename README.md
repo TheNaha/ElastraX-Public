@@ -59,6 +59,22 @@ gh workflow run docker-publish.yml --ref main \
 
 Publish and deploy by immutable image digest rather than a mutable `latest` tag.
 
+## Operational verification
+
+- [CI diagnostics](docs/ci-diagnostics.md) — distinguish code failures from account-side Actions scheduling failures.
+- [Provider staging matrix](docs/provider-staging-matrix.md) — credential-free harness plus the manual real-provider acceptance matrix.
+- [Canary runbook](docs/canary-runbook.md) — backup, preflight, digest-pinned deploy, verification, and rollback.
+- [Open PR triage](docs/open-pr-triage.md) — read-only inventory of duplicate, superseded, obsolete, and security-sensitive proposals.
+- [Room identity migration](docs/room-identity-migration.md) — canonical room keys, additive backfill, dual reads/writes, and rollback rules.
+
+The same checks are available as scripts:
+
+```sh
+bun run ci:diagnose
+bun run provider:staging
+bun run db:room-keys
+```
+
 ## Webhooks
 
 Inbound webhooks are disabled unless explicitly enabled:

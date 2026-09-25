@@ -80,6 +80,9 @@ jobs:
       - name: Tests
         run: bun run test:hermetic
 
+      - name: Provider staging harness
+        run: bun run provider:staging
+
       - name: Validate Compose model
         run: docker compose config --quiet
 
