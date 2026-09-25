@@ -75,5 +75,6 @@ qwenreadme.md
 
 # Local tooling & stray artifacts
 .opencode/
+.kilo/plans/
 test-results.txt
 litestream.yml

@@ -1,8 +1,1 @@
 title = "ElastraX gitleaks configuration"
-
-[allowlist]
-description = "Test fixture files contain base64-encoded WhatsApp protocol data that triggers false positives"
-paths = [
-  '''test/fixtures/''',
-  '''data/fixtures/''',
-]
