@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite } from '../db';
 import type { MessageContext } from '../core/MessageContext';
+import { hasRoomKeyColumn, remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
@@ -10,6 +12,20 @@ export type InboxAdmission = {
   accepted: boolean;
   reason?: 'duplicate' | 'completed' | 'dead_letter';
   eventKey: string;
+  /** Canonical room key the event was filed under. */
+  roomKey: string;
+  /** Raw provider room id, retained so a row can be rolled back. */
+  chatRoomId: string;
+};
+
+export type InboxRoomRow = {
+  id: number;
+  platform: string;
+  roomKey: string;
+  chatRoomId: string;
+  state: string;
+  providerMessageId: string | null;
+  receivedAt: number;
 };
 
 function eventKeyFor(ctx: MessageContext): string {
@@ -21,37 +37,95 @@ function eventKeyFor(ctx: MessageContext): string {
 }
 
 export class InboxService {
+  /**
+   * Admit one provider event.  The canonical room key is stored alongside the
+   * raw provider room id: room-scoped queries use `room_key`, rollback and
+   * provider delivery use `chat_room_id`.
+   */
   static admit(ctx: MessageContext): InboxAdmission {
     const now = Date.now();
     const eventKey = eventKeyFor(ctx);
-    const result = sqlite
-      .query<never, [string, string, string | null, string, number, number, number, number]>(
-        `INSERT INTO message_inbox
-           (platform, chat_room_id, provider_message_id, event_key, payload,
-            received_at, available_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?)
-         ON CONFLICT(platform, event_key) DO NOTHING`,
-      )
-      .run(
-        ctx.platform,
-        ctx.chatId,
-        ctx.messageId?.trim() || null,
-        eventKey,
-        now,
-        now,
-        now,
-        now,
-      );
+    const roomKey = roomKeyForContext(ctx);
+    const withRoomKey = hasRoomKeyColumn('message_inbox');
+    const result = withRoomKey
+      ? sqlite
+        .query<never, [string, string, string, string | null, string, number, number, number, number]>(
+          `INSERT INTO message_inbox
+             (platform, chat_room_id, room_key, provider_message_id, event_key, payload,
+              received_at, available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
+           ON CONFLICT(platform, event_key) DO NOTHING`,
+        )
+        .run(
+          ctx.platform,
+          ctx.chatId,
+          roomKey,
+          ctx.messageId?.trim() || null,
+          eventKey,
+          now,
+          now,
+          now,
+          now,
+        )
+      : sqlite
+        .query<never, [string, string, string | null, string, number, number, number, number]>(
+          `INSERT INTO message_inbox
+             (platform, chat_room_id, provider_message_id, event_key, payload,
+              received_at, available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?)
+           ON CONFLICT(platform, event_key) DO NOTHING`,
+        )
+        .run(
+          ctx.platform,
+          ctx.chatId,
+          ctx.messageId?.trim() || null,
+          eventKey,
+          now,
+          now,
+          now,
+          now,
+        );
     const row = sqlite
       .query<{ id: number; state: string }, [string, string]>(
         'SELECT id, state FROM message_inbox WHERE platform = ? AND event_key = ?',
       )
       .get(ctx.platform, eventKey);
     if (!row) throw new Error('Unable to admit provider event');
-    if (Number(result.changes) === 1) return { id: Number(row.id), accepted: true, eventKey };
-    if (row.state === 'completed') return { id: Number(row.id), accepted: false, reason: 'completed', eventKey };
-    if (row.state === 'dead_letter') return { id: Number(row.id), accepted: false, reason: 'dead_letter', eventKey };
-    return { id: Number(row.id), accepted: true, reason: 'duplicate', eventKey };
+    const id = Number(row.id);
+    if (Number(result.changes) === 1) return { id, accepted: true, eventKey, roomKey, chatRoomId: ctx.chatId };
+    if (row.state === 'completed') {
+      return { id, accepted: false, reason: 'completed', eventKey, roomKey, chatRoomId: ctx.chatId };
+    }
+    if (row.state === 'dead_letter') {
+      return { id, accepted: false, reason: 'dead_letter', eventKey, roomKey, chatRoomId: ctx.chatId };
+    }
+    return { id, accepted: true, reason: 'duplicate', eventKey, roomKey, chatRoomId: ctx.chatId };
+  }
+
+  /**
+   * Room-scoped diagnostic read.  Prefers the canonical key and falls back to the
+   * raw provider room id so pre-migration rows stay visible after the room has
+   * been re-keyed.
+   */
+  static findByRoom(roomKey: string, platform?: string, limit = 50): InboxRoomRow[] {
+    if (!roomKey) return [];
+    const ids = [roomKey];
+    const remote = remoteRoomIdFromKey(roomKey);
+    if (remote) ids.push(remote);
+    const placeholders = ids.map(() => '?').join(',');
+    const keyColumn = hasRoomKeyColumn('message_inbox') ? 'room_key' : 'chat_room_id';
+    const params: SQLQueryBindings[] = [...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
+    const rows = sqlite
+      .query<InboxRoomRow, SQLQueryBindings[]>(
+        `SELECT id, platform, ${keyColumn} AS roomKey, chat_room_id AS chatRoomId,
+                state, provider_message_id AS providerMessageId, received_at AS receivedAt
+         FROM message_inbox
+         WHERE ${keyColumn} IN (${placeholders}) AND (? IS NULL OR platform = ?)
+         ORDER BY received_at DESC
+         LIMIT ?`,
+      )
+      .all(...params);
+    return rows.map(row => ({ ...row, roomKey: row.roomKey ?? roomKey }));
   }
 
   static claim(id: number, owner: string): boolean {

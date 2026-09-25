@@ -4,6 +4,7 @@ import type { MessageContext } from '../src/core/MessageContext';
 import type { BotProvider } from '../src/providers/BotProvider';
 import type { AppRuntimeDeps } from '../src/runtime/AppRuntime';
 import { AppRuntime, resolveMediaCleanupIntervalMs } from '../src/runtime/AppRuntime';
+import { canonicalRoomKey } from '../src/messaging/roomKeys';
 import { healthMetrics } from '../src/utils/HealthMetrics';
 
 const _mockLogger = {
@@ -80,7 +81,7 @@ describe('AppRuntime', () => {
       start: mock(() => {}),
       stop: mock(() => {}),
     };
-    const handleIncoming = mock(async () => {});
+    const handleIncoming = mock(async (_ctx: MessageContext) => {});
     const pruneRateLimiter = mock(() => {});
     const pruneMedia = mock(async () => {});
     const runStartupCoverageScan = mock(async () => {});
@@ -144,9 +145,14 @@ describe('AppRuntime', () => {
 
     await whatsappProvider.capturedHandler?.(ctx);
 
+    // Durable work is keyed on the canonical room key; the context keeps the
+    // raw provider room id for provider I/O.
+    const roomKey = canonicalRoomKey('whatsapp', `room-1-${runToken}`);
     expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(enqueue).toHaveBeenCalledWith(`room-1-${runToken}`, expect.any(Function));
+    expect(enqueue).toHaveBeenCalledWith(roomKey, expect.any(Function));
     expect(handleIncoming).toHaveBeenCalledWith(ctx);
+    expect(handleIncoming.mock.calls[0]?.[0]?.roomKey).toBe(roomKey);
+    expect(handleIncoming.mock.calls[0]?.[0]?.chatId).toBe(`room-1-${runToken}`);
 
     const whatsappWebhookSender = webhookServer.registerSender.mock.calls[0]?.[1];
     const discordSchedulerSender = scheduler.registerSender.mock.calls[1]?.[1];

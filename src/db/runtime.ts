@@ -17,6 +17,7 @@ export interface Lease {
 export interface InboxEventInput {
   platform: string;
   chatRoomId: string;
+  roomKey?: string | null;
   providerMessageId?: string | null;
   eventKey: string;
   payload?: string | null;
@@ -28,6 +29,7 @@ export interface OutboxMessageInput {
   id?: string;
   platform: string;
   chatRoomId: string;
+  roomKey?: string | null;
   idempotencyKey: string;
   payload: string;
   now?: number;
@@ -39,6 +41,7 @@ export interface ScheduledDeliveryInput {
   platform: string;
   jobKey: string;
   chatRoomId: string;
+  roomKey?: string | null;
   payload: string;
   scheduledAt: number;
   now?: number;
@@ -49,6 +52,7 @@ export interface ClaimedInbox {
   id: number;
   platform: string;
   chatRoomId: string;
+  roomKey: string | null;
   eventKey: string;
   payload: string | null;
   attemptCount: number;
@@ -57,6 +61,8 @@ export interface ClaimedInbox {
 export interface ClaimedDelivery {
   id: string;
   platform: string;
+  chatRoomId: string;
+  roomKey: string | null;
   payload: string;
   attemptCount: number;
 }
@@ -157,18 +163,20 @@ export function withImmediateTransaction<T>(sqlite: Database, operation: () => T
 export function enqueueInboxEvent(sqlite: Database, input: InboxEventInput): number {
   const now = input.now ?? Date.now();
   const row = sqlite
-    .query<{ id: number }, [string, string, string | null, string, string | null, number, number, number, number]>(
+    .query<{ id: number }, [string, string, string | null, string | null, string, string | null, number, number, number, number]>(
       `INSERT INTO message_inbox
-         (platform, chat_room_id, provider_message_id, event_key, payload, received_at, available_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         (platform, chat_room_id, room_key, provider_message_id, event_key, payload, received_at, available_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(platform, event_key) DO UPDATE SET
          payload = CASE WHEN message_inbox.state = 'received' THEN excluded.payload ELSE message_inbox.payload END,
+         room_key = COALESCE(excluded.room_key, message_inbox.room_key),
          updated_at = excluded.updated_at
        RETURNING id`,
     )
     .get(
       input.platform,
       input.chatRoomId,
+      input.roomKey ?? null,
       input.providerMessageId ?? null,
       input.eventKey,
       input.payload ?? null,
@@ -213,7 +221,7 @@ export function claimInboxEvents(
       if (Number(result.changes) !== 1) continue;
       const row = sqlite
         .query<ClaimedInbox, [number]>(
-          `SELECT id, platform, chat_room_id AS chatRoomId, event_key AS eventKey,
+          `SELECT id, platform, chat_room_id AS chatRoomId, room_key AS roomKey, event_key AS eventKey,
                   payload, attempt_count AS attemptCount
            FROM message_inbox WHERE id = ?`,
         )
@@ -274,12 +282,13 @@ export function enqueueOutboxMessage(sqlite: Database, input: OutboxMessageInput
   const now = input.now ?? Date.now();
   const id = input.id ?? randomUUID();
   const row = sqlite
-    .query<{ id: string }, [string, string, string, string, string, number, number, number]>(
+    .query<{ id: string }, [string, string, string, string | null, string, string, number, number, number]>(
       `INSERT INTO message_outbox
-         (id, platform, chat_room_id, idempotency_key, payload, available_at, created_at, updated_at, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         (id, platform, chat_room_id, room_key, idempotency_key, payload, available_at, created_at, updated_at, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
        ON CONFLICT(platform, idempotency_key) DO UPDATE SET
          payload = CASE WHEN message_outbox.state IN ('failed', 'pending') THEN excluded.payload ELSE message_outbox.payload END,
+         room_key = COALESCE(excluded.room_key, message_outbox.room_key),
          updated_at = excluded.updated_at
        RETURNING id`,
     )
@@ -287,6 +296,7 @@ export function enqueueOutboxMessage(sqlite: Database, input: OutboxMessageInput
       id,
       input.platform,
       input.chatRoomId,
+      input.roomKey ?? null,
       input.idempotencyKey,
       input.payload,
       input.availableAt ?? now,
@@ -301,12 +311,13 @@ export function enqueueScheduledDelivery(sqlite: Database, input: ScheduledDeliv
   const now = input.now ?? Date.now();
   const id = input.id ?? randomUUID();
   const row = sqlite
-    .query<{ id: string }, [string, string, string, string, string, number, number, number, number]>(
+    .query<{ id: string }, [string, string, string, string, string | null, string, number, number, number, number]>(
       `INSERT INTO scheduled_deliveries
-         (id, platform, job_key, chat_room_id, payload, scheduled_at, available_at, created_at, updated_at, state)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
+         (id, platform, job_key, chat_room_id, room_key, payload, scheduled_at, available_at, created_at, updated_at, state)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')
        ON CONFLICT(platform, job_key) DO UPDATE SET
          payload = CASE WHEN scheduled_deliveries.state IN ('failed', 'pending') THEN excluded.payload ELSE scheduled_deliveries.payload END,
+         room_key = COALESCE(excluded.room_key, scheduled_deliveries.room_key),
          scheduled_at = CASE WHEN scheduled_deliveries.state IN ('failed', 'pending') THEN excluded.scheduled_at ELSE scheduled_deliveries.scheduled_at END,
          available_at = CASE WHEN scheduled_deliveries.state IN ('failed', 'pending') THEN excluded.available_at ELSE scheduled_deliveries.available_at END,
          updated_at = excluded.updated_at
@@ -317,6 +328,7 @@ export function enqueueScheduledDelivery(sqlite: Database, input: ScheduledDeliv
       input.platform,
       input.jobKey,
       input.chatRoomId,
+      input.roomKey ?? null,
       input.payload,
       input.scheduledAt,
       input.availableAt ?? input.scheduledAt,
@@ -362,7 +374,8 @@ function claimRows(
       if (Number(result.changes) !== 1) continue;
       const row = sqlite
         .query<ClaimedDelivery, [string]>(
-          `SELECT id, platform, payload, attempt_count AS attemptCount FROM ${table} WHERE id = ?`,
+          `SELECT id, platform, chat_room_id AS chatRoomId, room_key AS roomKey,
+                  payload, attempt_count AS attemptCount FROM ${table} WHERE id = ?`,
         )
         .get(candidate.id);
       if (row) claimed.push(row);

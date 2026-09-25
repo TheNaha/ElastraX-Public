@@ -33,6 +33,7 @@ import {
   WebhookRequestError,
 } from './utils';
 import { adaptJellyfin, adaptSeerr, buildWebhookMessage } from './adapters';
+import { resolveSubscriptionDestination, resolveWebhookDestinations } from './rooms';
 
 const log = logger.child({ module: 'WebhookServer' });
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
@@ -268,7 +269,7 @@ export class WebhookServer {
   private async addMediaTargets(
     userIds: Array<{ userId: string; platform: string }>,
     serviceType: 'seerr' | 'jellyfin',
-    addTarget: (destination: WebhookDestination) => void,
+    addTarget: (destination: WebhookDestination) => Promise<void>,
   ): Promise<void> {
     const config = this.requireConfig();
     const bounded = userIds.slice(0, config.maxDestinations);
@@ -279,7 +280,15 @@ export class WebhookServer {
     );
 
     for (const rooms of roomGroups) {
-      for (const room of rooms) addTarget({ chatRoomId: room.chatRoomId, platform: room.platform });
+      for (const room of rooms) {
+        await addTarget({
+          chatRoomId: room.chatRoomId,
+          platform: room.platform,
+          // Notification subscriptions already carry the canonical key; keep it
+          // so a room is never re-registered under a second identity.
+          ...(room.roomKey ? { roomKey: room.roomKey } : {}),
+        });
+      }
     }
   }
 
@@ -301,15 +310,19 @@ export class WebhookServer {
     const text = this.redactSecret(truncateText(formatted, config.maxTextLength), serviceSecret);
     const targets: WebhookDestination[] = [];
     const seen = new Set<string>();
-    const addTarget = (destination: WebhookDestination) => {
-      const key = `${destination.chatRoomId}:${destination.platform ?? ''}`;
-      if (seen.has(key)) return;
+    const addTarget = async (destination: WebhookDestination): Promise<void> => {
+      if (seen.has(`${destination.chatRoomId}:${destination.platform ?? ''}`)) return;
       if (targets.length >= config.maxDestinations) {
         throw new WebhookRequestError(400, 'Too many webhook destinations');
       }
       validateDestinationIds([destination.chatRoomId], config.maxRoomIdLength);
+      // Canonical room key per destination; a cross-platform mismatch is a 400.
+      const resolved = await resolveSubscriptionDestination(destination.chatRoomId, destination.platform);
+      // Two aliases of one room collapse onto the same canonical key.
+      const key = `${resolved.roomKey || resolved.chatRoomId}:${resolved.platform ?? ''}`;
+      if (seen.has(key)) return;
       seen.add(key);
-      targets.push(destination);
+      targets.push(resolved);
     };
 
     if (route === 'seerr') {
@@ -334,7 +347,7 @@ export class WebhookServer {
     }
 
     for (const room of await NotificationSubscriptionService.getAdminNotificationRooms(serviceType)) {
-      addTarget({ chatRoomId: room.chatRoomId, platform: room.platform });
+      await addTarget({ chatRoomId: room.chatRoomId, platform: room.platform });
     }
 
     if (targets.length === 0) {
@@ -380,7 +393,7 @@ export class WebhookServer {
       route,
       source,
       text: this.redactSecret(truncateText(formatted, config.maxTextLength), config.sharedSecret),
-      destinations: roomIds.map(chatRoomId => ({ chatRoomId, platform: requestedPlatform ?? undefined })),
+      destinations: await resolveWebhookDestinations(roomIds, requestedPlatform),
       receivedAt: new Date(this.now()).toISOString(),
     }, replay);
   }

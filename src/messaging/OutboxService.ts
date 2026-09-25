@@ -1,16 +1,36 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite, withImmediateTransaction } from '../db';
+import { hasRoomKeyColumn, remoteRoomIdFromKey, resolveCanonicalRoomKey } from './roomKeys';
 
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
 const MAX_TEXT_BYTES = 100_000;
 
+export type OutboxEnqueueOptions = {
+  availableAt?: number;
+  /** Canonical room key; derived from platform + chatRoomId when omitted. */
+  roomKey?: string;
+};
+
 export type ClaimedOutboxMessage = {
   id: string;
   platform: string;
+  /** Canonical room key (empty on pre-migration rows). */
+  roomKey: string;
+  /** Raw provider room id — this is what providers must receive. */
   chatRoomId: string;
   text: string;
   attemptCount: number;
+};
+
+export type PendingOutboxRow = {
+  id: string;
+  platform: string;
+  roomKey: string;
+  chatRoomId: string;
+  state: string;
+  availableAt: number;
 };
 
 function normalizeText(text: string): string {
@@ -25,31 +45,53 @@ function idempotencyKey(parts: string[]): string {
   return createHash('sha256').update(parts.join('\u0000')).digest('hex');
 }
 
+function enqueueOptions(options?: number | OutboxEnqueueOptions): OutboxEnqueueOptions {
+  return typeof options === 'number' ? { availableAt: options } : (options ?? {});
+}
+
+function roomKeyFor(platform: string, chatRoomId: string, explicit?: string): string {
+  const provided = explicit?.trim();
+  return provided && provided.length > 0 ? provided : resolveCanonicalRoomKey(platform, chatRoomId);
+}
+
 export class OutboxService {
   static enqueueText(
     platform: string,
     chatRoomId: string,
     text: string,
     keyParts: string[],
-    availableAt = Date.now(),
+    options?: number | OutboxEnqueueOptions,
   ): string {
     if (process.env.NODE_ENV === 'test' && typeof (sqlite as unknown as { query?: unknown }).query !== 'function') {
       return `test:${randomUUID()}`;
     }
+    const { availableAt = Date.now(), roomKey: explicitRoomKey } = enqueueOptions(options);
     const now = Date.now();
     const id = randomUUID();
+    const roomKey = roomKeyFor(platform, chatRoomId, explicitRoomKey);
     const payload = JSON.stringify({ text: normalizeText(text) });
     const key = idempotencyKey([platform, ...keyParts]);
-    const row = sqlite
-      .query<{ id: string }, [string, string, string, string, string, number, number, number]>(
-        `INSERT INTO message_outbox
-           (id, platform, chat_room_id, idempotency_key, payload, state,
-            available_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-         ON CONFLICT(platform, idempotency_key) DO NOTHING
-         RETURNING id`,
-      )
-      .get(id, platform, chatRoomId, key, payload, availableAt, now, now);
+    const row = hasRoomKeyColumn('message_outbox')
+      ? sqlite
+        .query<{ id: string }, [string, string, string, string, string, string, number, number, number]>(
+          `INSERT INTO message_outbox
+             (id, platform, chat_room_id, room_key, idempotency_key, payload, state,
+              available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+           ON CONFLICT(platform, idempotency_key) DO NOTHING
+           RETURNING id`,
+        )
+        .get(id, platform, chatRoomId, roomKey, key, payload, availableAt, now, now)
+      : sqlite
+        .query<{ id: string }, [string, string, string, string, string, number, number, number]>(
+          `INSERT INTO message_outbox
+             (id, platform, chat_room_id, idempotency_key, payload, state,
+              available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'pending', ?, ?, ?)
+           ON CONFLICT(platform, idempotency_key) DO NOTHING
+           RETURNING id`,
+        )
+        .get(id, platform, chatRoomId, key, payload, availableAt, now, now);
     if (row) return String(row.id);
     const existing = sqlite
       .query<{ id: string }, [string, string]>(
@@ -60,33 +102,43 @@ export class OutboxService {
     return String(existing.id);
   }
 
-  static recordTextDelivered(platform: string, chatRoomId: string, text: string, keyParts: string[]): string {
+  static recordTextDelivered(
+    platform: string,
+    chatRoomId: string,
+    text: string,
+    keyParts: string[],
+    options?: number | OutboxEnqueueOptions,
+  ): string {
     if (process.env.NODE_ENV === 'test' && typeof (sqlite as unknown as { query?: unknown }).query !== 'function') {
       return `test:${randomUUID()}`;
     }
+    const { availableAt = Date.now(), roomKey: explicitRoomKey } = enqueueOptions(options);
     const now = Date.now();
     const key = idempotencyKey([platform, ...keyParts]);
     const id = randomUUID();
-    const row = sqlite
-      .query<{ id: string }, [string, string, string, string, string, number, number, number, number]>(
-        `INSERT INTO message_outbox
-           (id, platform, chat_room_id, idempotency_key, payload, state,
-            sent_at, available_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?)
-         ON CONFLICT(platform, idempotency_key) DO NOTHING
-         RETURNING id`,
-      )
-      .get(
-        id,
-        platform,
-        chatRoomId,
-        key,
-        JSON.stringify({ text: normalizeText(text) }),
-        now,
-        now,
-        now,
-        now,
-      );
+    const roomKey = roomKeyFor(platform, chatRoomId, explicitRoomKey);
+    const payload = JSON.stringify({ text: normalizeText(text) });
+    const row = hasRoomKeyColumn('message_outbox')
+      ? sqlite
+        .query<{ id: string }, [string, string, string, string, string, string, number, number, number, number]>(
+          `INSERT INTO message_outbox
+             (id, platform, chat_room_id, room_key, idempotency_key, payload, state,
+              sent_at, available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?)
+           ON CONFLICT(platform, idempotency_key) DO NOTHING
+           RETURNING id`,
+        )
+        .get(id, platform, chatRoomId, roomKey, key, payload, now, availableAt, now, now)
+      : sqlite
+        .query<{ id: string }, [string, string, string, string, string, number, number, number, number]>(
+          `INSERT INTO message_outbox
+             (id, platform, chat_room_id, idempotency_key, payload, state,
+              sent_at, available_at, created_at, updated_at)
+           VALUES (?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?)
+           ON CONFLICT(platform, idempotency_key) DO NOTHING
+           RETURNING id`,
+        )
+        .get(id, platform, chatRoomId, key, payload, now, availableAt, now, now);
     if (row) return String(row.id);
     const existing = sqlite
       .query<{ id: string }, [string, string]>(
@@ -100,6 +152,7 @@ export class OutboxService {
   static claim(owner: string, platforms: readonly string[], limit = 10): ClaimedOutboxMessage[] {
     if (platforms.length === 0) return [];
     const now = Date.now();
+    const roomKeyColumn = hasRoomKeyColumn('message_outbox') ? 'room_key' : "''";
     return withImmediateTransaction(sqlite, () => {
       const placeholders = platforms.map(() => '?').join(',');
       const candidates = sqlite
@@ -125,8 +178,8 @@ export class OutboxService {
           .run(owner, now + LEASE_MS, now, candidate.id, now, now);
         if (Number(result.changes) !== 1) continue;
         const row = sqlite
-          .query<{ id: string; platform: string; chatRoomId: string; payload: string; attemptCount: number }, [string]>(
-            `SELECT id, platform, chat_room_id AS chatRoomId, payload,
+          .query<{ id: string; platform: string; roomKey: string; chatRoomId: string; payload: string; attemptCount: number }, [string]>(
+            `SELECT id, platform, ${roomKeyColumn} AS roomKey, chat_room_id AS chatRoomId, payload,
                     attempt_count AS attemptCount
              FROM message_outbox WHERE id = ?`,
           )
@@ -139,10 +192,34 @@ export class OutboxService {
         } catch {
           text = '';
         }
-        claimed.push({ ...row, text });
+        claimed.push({ ...row, roomKey: row.roomKey ?? '', text });
       }
       return claimed;
     });
+  }
+
+  /**
+   * Room-scoped diagnostic read, keyed on the canonical room key with a fallback
+   * to the raw provider room id for rows written before the room was re-keyed.
+   */
+  static pendingForRoom(roomKey: string, platform?: string, limit = 50): PendingOutboxRow[] {
+    const ids = [roomKey];
+    const remote = remoteRoomIdFromKey(roomKey);
+    if (remote) ids.push(remote);
+    const placeholders = ids.map(() => '?').join(',');
+    const roomKeyColumn = hasRoomKeyColumn('message_outbox') ? 'room_key' : 'chat_room_id';
+    const params: SQLQueryBindings[] = [...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
+    const rows = sqlite
+      .query<PendingOutboxRow, SQLQueryBindings[]>(
+        `SELECT id, platform, ${roomKeyColumn} AS roomKey, chat_room_id AS chatRoomId,
+                state, available_at AS availableAt
+         FROM message_outbox
+         WHERE ${roomKeyColumn} IN (${placeholders}) AND (? IS NULL OR platform = ?)
+         ORDER BY available_at
+         LIMIT ?`,
+      )
+      .all(...params);
+    return rows.map(row => ({ ...row, roomKey: row.roomKey ?? roomKey }));
   }
 
   static markEnqueuedSent(id: string, providerMessageId: string | null = null): boolean {
@@ -179,7 +256,9 @@ export class OutboxService {
       )
       .get(id, owner);
     if (!row) return 'not_owned';
-    const state: 'retry' | 'dead_letter' = row.attemptCount >= MAX_ATTEMPTS ? 'dead_letter' : 'retry';
+    const outcome: 'retry' | 'dead_letter' = row.attemptCount >= MAX_ATTEMPTS ? 'dead_letter' : 'retry';
+    // The table only accepts 'failed'/'dead_letter'; 'retry' is the caller-facing name.
+    const persistedState = outcome === 'retry' ? 'failed' : 'dead_letter';
     const delay = Math.min(60 * 60_000, 5_000 * 2 ** Math.max(0, row.attemptCount - 1));
     const message = error instanceof Error ? error.message : String(error);
     sqlite
@@ -189,7 +268,7 @@ export class OutboxService {
              lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
       )
-      .run(state, message.slice(0, 2_000), now + delay, now, id, owner);
-    return state;
+      .run(persistedState, message.slice(0, 2_000), now + delay, now, id, owner);
+    return outcome;
   }
 }

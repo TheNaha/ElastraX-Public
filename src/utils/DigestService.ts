@@ -27,12 +27,20 @@
 
 import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { getErrorMessage } from './errorUtils';
 import { getModelRouter } from './ModelRouter';
 import { MediaService } from './MediaService';
 import { t, type Locale } from './i18n';
+import {
+  inferRoomPlatform,
+  keyPlatformOf,
+  normalizeRoomPlatform,
+  remoteRoomIdFromKey,
+  resolveRemoteRoom,
+  type RoomPlatform,
+} from '../messaging/roomKeys';
 
 import { withCancellableTimeout } from './withTimeout.js';
 
@@ -107,13 +115,109 @@ export function weekKey(now: Date): string {
 // ── Transcript building ───────────────────────────────────────────────────────
 
 /**
+ * Room identifiers to read for one canonical room key: the key itself plus the
+ * raw provider room id, so history written before the room was re-keyed stays
+ * part of the digest (dual read).
+ */
+function roomIdCandidates(roomId: string): string[] {
+  const value = roomId.trim();
+  const ids = [value];
+  const remote = remoteRoomIdFromKey(value);
+  if (remote) ids.push(remote);
+  return [...new Set(ids.filter(Boolean))];
+}
+
+type DigestRoom = {
+  /** Canonical, platform-scoped room key used for queries and markers. */
+  roomKey: string;
+  /** Raw provider room id used for delivery. */
+  remoteRoomId: string;
+  platform: string;
+};
+
+function roomConfig(roomId: string): { platform: string; language: string | null } | null {
+  for (const candidate of roomIdCandidates(roomId)) {
+    const row = db.select({ platform: chatRooms.platform, language: chatRooms.language })
+      .from(chatRooms)
+      .where(eq(chatRooms.id, candidate))
+      .all()[0];
+    if (row) return { platform: row.platform, language: row.language ?? null };
+  }
+  const roomKey = roomId.trim();
+  if (!remoteRoomIdFromKey(roomKey)) return null;
+  // Canonical-keyed room rows: the legacy `chat_rooms.id` is the raw room id.
+  const row = db.select({ platform: chatRooms.platform, language: chatRooms.language })
+    .from(chatRooms)
+    .where(eq(chatRooms.roomKey, roomKey))
+    .all()[0];
+  return row ? { platform: row.platform, language: row.language ?? null } : null;
+}
+
+/**
+ * Translate a configured room (raw provider room id, an already canonical key,
+ * or a stored `room_key`) into the canonical key plus the raw id used for
+ * delivery.
+ */
+function resolveDigestRoom(roomId: string, platformHint?: string | null, roomKeyHint?: string | null): DigestRoom {
+  const value = roomId.trim();
+  const storedKey = roomKeyHint?.trim();
+  if (storedKey && remoteRoomIdFromKey(storedKey)) {
+    return {
+      roomKey: storedKey,
+      remoteRoomId: value,
+      platform: normalizeRoomPlatform(platformHint) ?? keyPlatformOf(storedKey) ?? 'whatsapp',
+    };
+  }
+  const remote = remoteRoomIdFromKey(value);
+  const keyPlatform = keyPlatformOf(value);
+  if (remote && keyPlatform) {
+    return {
+      roomKey: value,
+      remoteRoomId: remote,
+      platform: normalizeRoomPlatform(platformHint) ?? keyPlatform,
+    };
+  }
+  const registered = roomConfig(value);
+  const platform: string = normalizeRoomPlatform(platformHint)
+    ?? inferRoomPlatform(value)
+    ?? registered?.platform
+    ?? 'whatsapp';
+  return { roomKey: resolveRemoteRoom(platform, value).roomKey, remoteRoomId: value, platform };
+}
+
+/**
+ * Scope a room read to one platform. `messages.platform` is nullable on rows
+ * written by older lanes, so an unknown platform still matches.
+ */
+function platformScope(column: typeof messages.platform, platform: RoomPlatform | null) {
+  if (!platform) return undefined;
+  return or(isNull(column), eq(column, platform));
+}
+
+/**
  * Fetch up to `limit` messages for a room since `since`, oldest first,
- * formatted as "[HH:MM] Name: content".
+ * formatted as "[HH:MM] Name: content".  Accepts a canonical room key or a raw
+ * provider room id and reads both forms, scoped to the room's own platform so a
+ * room key never picks up another platform's history.
  */
 export function fetchRoomTranscript(
   roomId: string,
   opts: { since: Date; limit: number },
 ): string[] {
+  const value = roomId.trim();
+  const remote = remoteRoomIdFromKey(value);
+  const platform = normalizeRoomPlatform(keyPlatformOf(value));
+  const roomFilter = remote
+    // Dual read: rows filed under the canonical key plus rows still addressed by
+    // the raw provider room id.
+    ? or(
+      and(eq(messages.roomKey, value), platformScope(messages.platform, platform)),
+      and(
+        inArray(messages.chatRoomId, [value, remote]),
+        platformScope(messages.platform, platform),
+      ),
+    )
+    : eq(messages.chatRoomId, value);
   const rows = db.select({
     senderName: messages.senderName,
     role: messages.role,
@@ -121,7 +225,7 @@ export function fetchRoomTranscript(
     created_at: messages.created_at,
   })
     .from(messages)
-    .where(and(eq(messages.chatRoomId, roomId), gte(messages.created_at, opts.since)))
+    .where(and(roomFilter, gte(messages.created_at, opts.since)))
     .orderBy(desc(messages.created_at))
     .limit(Math.max(1, Math.min(1_000, opts.limit)))
     .all()
@@ -166,7 +270,8 @@ export async function summarizeRoom(
 ): Promise<{ text: string; messageCount: number } | null> {
   const now = opts.now ?? new Date();
   const since = new Date(now.getTime() - opts.hours * 3_600_000);
-  const transcript = fetchRoomTranscript(roomId, { since, limit: opts.maxMessages });
+  // Queries run on the canonical room key (which also reads the raw-id rows).
+  const transcript = fetchRoomTranscript(resolveDigestRoom(roomId).roomKey, { since, limit: opts.maxMessages });
   if (transcript.length === 0) return null;
 
   const callLLM = opts.deps?.callLLM ?? defaultCallLLM;
@@ -191,20 +296,8 @@ export async function summarizeRoom(
 
 // ── Platform/room helpers ─────────────────────────────────────────────────────
 
-function platformForRoom(roomId: string): string {
-  const row = db.select({ platform: chatRooms.platform })
-    .from(chatRooms)
-    .where(eq(chatRooms.id, roomId))
-    .all()[0];
-  return row?.platform ?? 'whatsapp';
-}
-
 function languageForRoom(roomId: string): Locale {
-  const row = db.select({ language: chatRooms.language })
-    .from(chatRooms)
-    .where(eq(chatRooms.id, roomId))
-    .all()[0];
-  return localeFor(row?.language);
+  return localeFor(roomConfig(roomId)?.language);
 }
 
 /** True unless notifyTypes is set and does NOT include 'digest'. */
@@ -278,12 +371,15 @@ export class DigestService {
     if (now.getUTCHours() < cfg.hourUtc) return 0;
 
     let sent = 0;
-    for (const roomId of cfg.rooms) {
-      const marker = `digest:daily:${roomId}:${dateKey(now)}`;
+    for (const configuredRoom of cfg.rooms) {
+      // Room config/markers/messages use the canonical key; delivery uses the
+      // raw provider room id.
+      const room = resolveDigestRoom(configuredRoom);
+      const marker = `digest:daily:${room.roomKey}:${dateKey(now)}`;
       if (!claimMarker(marker)) continue;
       try {
-        const lang = languageForRoom(roomId);
-        const result = await summarizeRoom(roomId, {
+        const lang = languageForRoom(room.roomKey);
+        const result = await summarizeRoom(room.roomKey, {
           hours: cfg.lookbackHours,
           maxMessages: cfg.maxMessages,
           lang,
@@ -292,16 +388,16 @@ export class DigestService {
         });
         if (!result) {
           // Quiet room — keep the marker so we don't re-scan all day.
-          log.debug({ roomId }, '[DigestService] Daily digest skipped (no messages)');
+          log.debug({ roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Daily digest skipped (no messages)');
           continue;
         }
         const text = `${t(lang, 'digest.header', { hours: String(cfg.lookbackHours) })}\n\n${result.text}`;
-        await this.deliver(platformForRoom(roomId), roomId, text, deps);
+        await this.deliver(room.platform, room.remoteRoomId, text, deps);
         sent++;
-        log.info({ roomId, messages: result.messageCount }, '[DigestService] Daily digest delivered');
+        log.info({ roomKey: room.roomKey, roomId: room.remoteRoomId, messages: result.messageCount }, '[DigestService] Daily digest delivered');
       } catch (err) {
         releaseMarker(marker);
-        log.warn({ err: getErrorMessage(err), roomId }, '[DigestService] Daily digest failed — will retry');
+        log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Daily digest failed — will retry');
       }
     }
     return sent;
@@ -324,6 +420,8 @@ export class DigestService {
     // in JS so null (all types), JSON arrays and raw strings are handled uniformly.
     const subs = db.select({
       chatRoomId: notificationSubscriptions.chatRoomId,
+      roomKey: notificationSubscriptions.roomKey,
+      platform: notificationSubscriptions.platform,
       notifyTypes: notificationSubscriptions.notifyTypes,
     })
       .from(notificationSubscriptions)
@@ -331,26 +429,29 @@ export class DigestService {
       .all()
       .filter(s => wantsDigest(s.notifyTypes));
 
-    const rooms = [...new Set(subs.map(s => s.chatRoomId))];
+    // The subscription platform is authoritative, so one remote id subscribed on
+    // two platforms stays two separate rooms.
+    const resolvedRooms = subs.map(sub => resolveDigestRoom(sub.chatRoomId, sub.platform, sub.roomKey));
+    const rooms = [...new Map(resolvedRooms.map(room => [room.roomKey, room] as const)).values()];
     let sent = 0;
 
-    for (const roomId of rooms) {
-      const marker = `digest:media:${roomId}:${wk}`;
+    for (const room of rooms) {
+      const marker = `digest:media:${room.roomKey}:${wk}`;
       if (!claimMarker(marker)) continue;
       try {
-        const lang = languageForRoom(roomId);
+        const lang = languageForRoom(room.roomKey);
         const text = await this.buildMediaRollup(weekStart, deps, lang);
         if (!text) {
           // Nothing new this week — keep the marker, stay silent.
-          log.debug({ roomId }, '[DigestService] Weekly media digest skipped (nothing new)');
+          log.debug({ roomKey: room.roomKey }, '[DigestService] Weekly media digest skipped (nothing new)');
           continue;
         }
-        await this.deliver(platformForRoom(roomId), roomId, text, deps);
+        await this.deliver(room.platform, room.remoteRoomId, text, deps);
         sent++;
-        log.info({ roomId }, '[DigestService] Weekly media digest delivered');
+        log.info({ roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest delivered');
       } catch (err) {
         releaseMarker(marker);
-        log.warn({ err: getErrorMessage(err), roomId }, '[DigestService] Weekly media digest failed — will retry');
+        log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest failed — will retry');
       }
     }
     return sent;

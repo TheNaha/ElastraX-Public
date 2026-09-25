@@ -1,9 +1,17 @@
 import { db } from '../db';
-import { reminders } from '../db/schema';
+import { chatRooms, reminders } from '../db/schema';
 import { asc, eq, lte, and, or, isNull } from 'drizzle-orm';
 import { logger } from './logger';
 import { t } from './i18n';
 import { withCancellableTimeout } from './withTimeout.js';
+import {
+  canonicalRoomKeyForStoredRoom,
+  keyPlatformOf,
+  normalizeRoomPlatform,
+  providerRoomTargetMismatch,
+  remoteRoomIdFromKey,
+  remoteRoomIdFromRoomKey,
+} from '../messaging/roomKeys';
 
 type SendFn = (chatRoomId: string, text: string, signal?: AbortSignal) => Promise<void>;
 
@@ -25,6 +33,66 @@ function collectRows(query: unknown, limit: number): typeof reminders.$inferSele
   const ordered = typeof typed.orderBy === 'function' ? typed.orderBy(asc(reminders.remindAt)) : typed;
   const bounded = typeof ordered.limit === 'function' ? ordered.limit(limit) : ordered;
   return bounded.all();
+}
+
+type ReminderTarget = {
+  roomKey: string;
+  remoteRoomId: string;
+  language: string | null;
+  /** Set when the stored room reference cannot be delivered on this platform. */
+  mismatch: string | null;
+};
+
+/**
+ * A reminder row carries both identities: `room_key` (canonical) and
+ * `chat_room_id` (the raw provider room id, kept for rollback).  Room config is
+ * read with the key, providers receive the raw id, and a key that addresses
+ * another platform is refused instead of being sent.
+ */
+function resolveReminderTarget(reminder: typeof reminders.$inferSelect): ReminderTarget {
+  const platform = normalizeRoomPlatform(reminder.platform) ?? 'whatsapp';
+  const stored = String(reminder.chatRoomId ?? '');
+  const roomKey = reminder.roomKey?.trim() || canonicalRoomKeyForStoredRoom(platform, stored);
+  const remoteRoomId = remoteRoomIdFromRoomKey(platform, stored);
+  const keyPlatform = keyPlatformOf(roomKey);
+  const keyRemote = remoteRoomIdFromKey(roomKey);
+  const mismatch = remoteRoomId === null
+    ? `reminder ${reminder.id} targets ${stored}, which is not a ${platform} room`
+    : keyPlatform === null
+      ? providerRoomTargetMismatch(platform, roomKey, remoteRoomId)
+      : keyPlatform !== platform
+        ? `reminder ${reminder.id} is keyed for ${keyPlatform} but stored as ${platform}`
+        : keyRemote !== remoteRoomId
+          ? `reminder ${reminder.id} is keyed for ${keyRemote} but stores ${remoteRoomId}`
+          : null;
+  return {
+    roomKey,
+    remoteRoomId: remoteRoomId ?? stored,
+    language: reminder.language ?? languageForRoomKey(roomKey, platform),
+    mismatch,
+  };
+}
+
+/** Room language keyed on the canonical room key, tolerating raw-id rows. */
+function languageForRoomKey(roomKey: string, platform: string): string | null {
+  const remote = remoteRoomIdFromKey(roomKey);
+  try {
+    const byKey = db.select({ language: chatRooms.language })
+      .from(chatRooms)
+      .where(eq(chatRooms.roomKey, roomKey))
+      .all()[0];
+    if (byKey?.language) return byKey.language;
+    for (const candidate of remote ? [remote] : [roomKey]) {
+      const row = db.select({ language: chatRooms.language })
+        .from(chatRooms)
+        .where(eq(chatRooms.id, candidate))
+        .all()[0];
+      if (row?.language) return row.language;
+    }
+  } catch (error) {
+    logger.warn({ err: error, roomKey, platform }, '[Scheduler] Room configuration lookup failed');
+  }
+  return null;
 }
 
 function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | null {
@@ -161,12 +229,20 @@ export class Scheduler {
             continue;
           }
 
-          const message = t(reminder.language ?? 'en', 'reminder.fired', {
+          const target = resolveReminderTarget(reminder);
+          if (target.mismatch) {
+            this.releaseClaim(reminder.id, new Date());
+            logger.error({ id: reminder.id, roomKey: target.roomKey, reason: target.mismatch }, 'Reminder delivery refused');
+            continue;
+          }
+
+          const message = t(target.language ?? 'en', 'reminder.fired', {
             name: reminder.senderName,
             message: reminder.message,
           });
+          // Providers receive the raw remote room id, never the canonical key.
           await withCancellableTimeout(
-            signal => sender(reminder.chatRoomId, message, signal),
+            signal => sender(target.remoteRoomId, message, signal),
             SEND_TIMEOUT_MS,
             'scheduler send',
           );

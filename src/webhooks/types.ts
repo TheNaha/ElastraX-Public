@@ -4,8 +4,11 @@ export type SendFn = (chatId: string, text: string, signal?: AbortSignal) => Pro
 export type WebhookRoute = 'generic' | 'github' | 'seerr' | 'jellyfin';
 
 export type WebhookDestination = {
+  /** Raw provider room id — the value handed to the provider. */
   chatRoomId: string;
   platform?: string;
+  /** Canonical room key used for durable rows and dedupe. */
+  roomKey?: string;
 };
 
 export type WebhookDeliveryJob = {

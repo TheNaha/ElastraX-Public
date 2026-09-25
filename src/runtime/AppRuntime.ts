@@ -19,6 +19,7 @@ import { isSchemaReady, sqlite } from '../db';
 import { runRetentionMaintenance } from '../db/maintenance';
 import { InboxService } from '../messaging/InboxService';
 import { OutboxService } from '../messaging/OutboxService';
+import { providerRoomTargetMismatch, resolveCanonicalRoomKey } from '../messaging/roomKeys';
 import type {
   WebhookEnqueuer,
   WebhookReadinessCheck,
@@ -148,8 +149,11 @@ export class AppRuntime {
     await safeRegisterFlows();
 
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
+      // Canonical room key first: every durable row filed for this message is
+      // keyed on it, while providers keep using the raw ctx.chatId.
+      const roomKey = this.attachRoomKey(ctx);
       if (!hasDurableMessagingStore()) {
-        this.messageQueue.enqueue(ctx.chatId, async signal => {
+        this.messageQueue.enqueue(roomKey, async signal => {
           signal?.throwIfAborted();
           if (!ctx.signal && signal) Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
           await this.messageHandler(ctx);
@@ -161,7 +165,7 @@ export class AppRuntime {
         admission = InboxService.admit(ctx);
       } catch (error) {
         if (!isTestRuntime()) throw error;
-        this.messageQueue.enqueue(ctx.chatId, async signal => {
+        this.messageQueue.enqueue(roomKey, async signal => {
           signal?.throwIfAborted();
           if (!ctx.signal && signal) Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
           await this.messageHandler(ctx);
@@ -169,7 +173,7 @@ export class AppRuntime {
         return;
       }
       if (!admission.accepted) {
-        logger.info({ chatId: ctx.chatId, platform: ctx.platform, reason: admission.reason }, 'Provider event already completed');
+        logger.info({ chatId: ctx.chatId, roomKey, platform: ctx.platform, reason: admission.reason }, 'Provider event already completed');
         return;
       }
       const task = async (signal?: AbortSignal): Promise<void> => {
@@ -189,13 +193,13 @@ export class AppRuntime {
 
       let accepted = false;
       for (let attempt = 0; attempt < 80; attempt++) {
-        accepted = this.messageQueue.enqueue(ctx.chatId, task) !== false;
+        accepted = this.messageQueue.enqueue(roomKey, task) !== false;
         if (accepted) break;
         await new Promise(resolve => setTimeout(resolve, 25));
       }
       if (!accepted) {
         InboxService.deferUnclaimed(admission.id, new Error('Message queue remained at capacity'));
-        logger.warn({ chatId: ctx.chatId, platform: ctx.platform }, 'Message rejected after queue backpressure timeout');
+        logger.warn({ chatId: ctx.chatId, roomKey, platform: ctx.platform }, 'Message rejected after queue backpressure timeout');
       }
     };
 
@@ -305,17 +309,42 @@ export class AppRuntime {
     return this.activeProviders[0]?.name ?? 'whatsapp';
   }
 
+  /**
+   * Resolve/attach the canonical room key on the context before any durable row
+   * is written.  Provider I/O keeps using `ctx.chatId`.
+   */
+  private attachRoomKey(ctx: MessageContext): string {
+    const existing = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
+    if (existing) return existing;
+    const roomKey = resolveCanonicalRoomKey(ctx.platform, ctx.chatId);
+    try {
+      ctx.roomKey = roomKey;
+    } catch {
+      try {
+        Object.defineProperty(ctx, 'roomKey', { value: roomKey, configurable: true, writable: true });
+      } catch (err) {
+        logger.warn({ err }, 'Unable to attach canonical room key to message context');
+      }
+    }
+    return roomKey;
+  }
+
   private readonly enqueueWebhook: WebhookEnqueuer = async (job, signal) => {
     if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
     if (job.destinations.length === 0) throw new Error('Webhook job has no destinations');
     const acceptedAt = new Date().toISOString();
     const eventKey = job.eventId ?? `${job.route}:${job.source}:${job.receivedAt}:${job.text}`;
-    const deliveryIds = job.destinations.map(destination => OutboxService.enqueueText(
-      destination.platform ?? this.inferWebhookPlatform(destination.chatRoomId),
-      destination.chatRoomId,
-      job.text,
-      ['webhook', job.route, eventKey, destination.platform ?? '', destination.chatRoomId],
-    ));
+    const deliveryIds = job.destinations.map(destination => {
+      const platform = destination.platform ?? this.inferWebhookPlatform(destination.chatRoomId);
+      const roomKey = destination.roomKey?.trim() || resolveCanonicalRoomKey(platform, destination.chatRoomId);
+      return OutboxService.enqueueText(
+        platform,
+        destination.chatRoomId,
+        job.text,
+        ['webhook', job.route, eventKey, destination.platform ?? '', destination.chatRoomId, roomKey],
+        { roomKey },
+      );
+    });
     if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
     return {
       accepted: true,
@@ -395,6 +424,10 @@ export class AppRuntime {
         const provider = providers.get(message.platform);
         try {
           if (!provider) throw new Error(`No provider for ${message.platform}`);
+          // Rows are filed under a canonical room key but providers only accept
+          // raw remote room ids; refuse to leak a key or another platform's room.
+          const mismatch = providerRoomTargetMismatch(message.platform, message.roomKey, message.chatRoomId);
+          if (mismatch) throw new Error(`Refusing unsafe outbox target: ${mismatch}`);
           const result = await withCancellableTimeout(
             signal => provider.sendMessage(message.chatRoomId, message.text, signal),
             15_000,

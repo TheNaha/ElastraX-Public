@@ -62,7 +62,7 @@ describe('WebhookServer media routing', () => {
       { id: 1, userId: 'user-1', platform: 'discord' },
     ] as never);
     const roomsSpy = spyOn(NotificationSubscriptionService, 'getNotificationRooms').mockResolvedValue([
-      { chatRoomId: 'room-a', platform: 'discord' },
+      { chatRoomId: 'room-a', roomKey: 'room:discord:room-a', platform: 'discord' },
     ]);
     const adminSpy = spyOn(NotificationSubscriptionService, 'getAdminNotificationRooms').mockResolvedValue([]);
 
@@ -115,13 +115,13 @@ describe('WebhookServer media routing', () => {
     const roomsSpy = spyOn(NotificationSubscriptionService, 'getNotificationRooms').mockImplementation(async (userId: string) => {
       if (userId === 'user-1') {
         return [
-          { chatRoomId: 'room-a', platform: 'discord' },
-          { chatRoomId: 'shared', platform: 'discord' },
+          { chatRoomId: 'room-a', roomKey: 'room:discord:room-a', platform: 'discord' },
+          { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord' },
         ];
       }
       return [
-        { chatRoomId: 'shared', platform: 'discord' },
-        { chatRoomId: 'room-b', platform: 'discord' },
+        { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord' },
+        { chatRoomId: 'room-b', roomKey: 'room:discord:room-b', platform: 'discord' },
       ];
     });
     const adminSpy = spyOn(NotificationSubscriptionService, 'getAdminNotificationRooms').mockResolvedValue([]);

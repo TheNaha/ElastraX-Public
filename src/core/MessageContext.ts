@@ -59,7 +59,21 @@ export interface RawProviderMessage {
 
 export interface MessageContext {
   platform: 'whatsapp' | 'discord';
+  /**
+   * Raw provider room id (WhatsApp JID, Discord channel id).  This is the only
+   * value providers may use for I/O.
+   */
   chatId: string;
+
+  /**
+   * Canonical, platform-scoped room key (the `chat_rooms` primary key) used for
+   * every database lookup: inbox/outbox rows, room configuration, and message
+   * history.  Optional because providers and test fixtures construct contexts
+   * directly; production `AppRuntime` resolves and attaches it before the
+   * message is admitted to the inbox.
+   */
+  roomKey?: string;
+
   senderId: string;
   senderName: string;
   text: string;
