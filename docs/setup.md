@@ -1,117 +1,162 @@
-# Setup & Configuration
+# Setup
 
-This guide explains how to get ElastraX up and running in both development and production environments.
+## 1. Install the supported runtime
 
-## Prerequisites
-- [Bun](https://bun.sh/) (latest version)
-- `ffmpeg` (Required for audio/video conversions and stickers)
-- `yt-dlp` (Required for the `download_media` tool)
-- Docker (optional, for containerized deployments)
+Install Bun `1.3.14` and verify it:
 
-## 1. Installation
-Clone the repository and install dependencies using Bun:
 ```bash
-git clone https://github.com/thenaha/ElastraX.git
-cd ElastraX
-bun install
+bun --version
 ```
 
-## 2. Environment Configuration
-Copy the sample environment file:
+Use `bun.lock` for all dependency operations. Do not mix npm or another package manager into the release path.
+
+```bash
+bun install --frozen-lockfile
+```
+
+FFmpeg and yt-dlp are optional for text-only local operation and required for media features. The container supplies pinned, checksum-verified copies automatically.
+
+## 2. Configure the environment
+
 ```bash
 cp .env.example .env
 ```
-Open `.env` and configure your settings:
 
-### Bot Ownership
-- `BOT_OWNER_JID`: Your WhatsApp JID (e.g., `6281234567890@s.whatsapp.net`). Grants root admin rights.
+At minimum, configure one AI provider and the WhatsApp owner:
 
-### AI Configuration (Multi-Provider)
-To enable high-availability failover, define multiple providers:
 ```env
-AI_PROVIDERS="modal,gemini"
-
-AI_MODAL_BASE_URL="https://<workspace>--elastra-gpbot.modal.run/v1"
-AI_MODAL_API_KEY="dummy"
-AI_MODAL_MODEL="cyankiwi/Qwen3"
-
-AI_GEMINI_BASE_URL="https://generativelanguage.googleapis.com/v1beta/openai/"
-AI_GEMINI_API_KEY="your_gemini_api_key"
-AI_GEMINI_MODEL="gemini-2.5-flash"
+AI_API_BASE_URL=https://your-provider.example/v1
+AI_API_KEY=your-provider-key
+AI_MODEL_NAME=your-model
+BOT_OWNER_JID=1234567890@s.whatsapp.net
 ```
 
-### Discord Integration (Optional)
-If deploying to Discord:
+For multiple providers, set `AI_PROVIDERS` and the corresponding `AI_<NAME>_BASE_URL`, `AI_<NAME>_API_KEY`, and `AI_<NAME>_MODEL` values. See [.env.example](../.env.example) for all routing, tool, media, and service settings.
+
+Secrets should be generated independently:
+
+```bash
+openssl rand -base64 32
+```
+
+Keep `.env` outside source control and out of Docker build context.
+
+## 3. Select messaging providers
+
+### WhatsApp
+
+Start the bot and scan the QR code with `BOT_OWNER_JID`. The Baileys authentication state is stored under the writable data directory. Back up that directory before moving hosts.
+
+### Discord
+
+Set a bot token before startup:
+
 ```env
-DISCORD_BOT_TOKEN="your_discord_bot_token"
+DISCORD_BOT_TOKEN=your-discord-bot-token
 ```
 
-## 3. Database Migration
-Initialize the SQLite database schema:
-```bash
-bun run db:push
+The token is never passed to AI providers or webhooks.
+
+## 4. Optional integrations
+
+- Ollama: set `AI_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`, model, and tier.
+- SearXNG: set `SEARXNG_URL`; keep the service on a trusted local/private network.
+- Transcription: set `TRANSCRIBE_ENDPOINT` and `TRANSCRIBE_API_KEY` when required by the endpoint.
+- Seerr: set `SEERR_API_URL`, `SEERR_API_KEY`, and a separate 24+ byte `SEERR_WEBHOOK_SECRET`.
+- Jellyfin: set `JELLYFIN_API_URL`, API/user identifiers, and a separate 24+ byte `JELLYFIN_WEBHOOK_SECRET`.
+
+A media webhook route with no configured secret returns `503`; it never accepts unauthenticated notifications.
+
+## 5. Enable webhooks
+
+```env
+WEBHOOK_ENABLED=true
+WEBHOOK_HOST=127.0.0.1
+WEBHOOK_PORT=3500
+WEBHOOK_SECRET=your-generated-secret
+METRICS_AUTH_TOKEN=your-generated-metrics-secret
 ```
 
-## 4. Running the Bot
+Use `X-Webhook-Secret` for generic and media requests. GitHub requests use `X-Hub-Signature-256`. Body/query secret compatibility is disabled unless separately enabled with future expiry values. See [api.md](api.md).
 
-### Development Mode
-```bash
-bun run dev
-```
+The native listener is not a TLS server. Put a trusted reverse proxy in front of it and expose only webhook routes.
 
-### Production (Native)
+## 6. Run
+
 ```bash
 bun run start
 ```
 
-### Production (Docker)
-The provided `docker-compose.yml` ensures all dependencies (FFmpeg, yt-dlp, webpmux) are correctly installed in the Debian-based `oven/bun` container.
+For watch mode:
+
 ```bash
-docker compose up -d --build
+bun run dev
 ```
 
-### Disabling the Webhook Server
-Set `WEBHOOK_ENABLED=false` to disable the HTTP webhook endpoints while keeping
-the bot running on WhatsApp/Discord. Health and metrics endpoints remain active.
+Before release, run:
 
-## 5. Connecting WhatsApp
-When starting the bot for the first time without a saved session, a QR code will be printed to the terminal. Scan it using the "Linked Devices" feature in the WhatsApp app on your phone.
-
-## 6. Database Management
-
-| Command | Description |
-|---------|-------------|
-| `bun run db:push` | Sync schema changes to the database (dev) |
-| `bun run db:migrate` | Apply pending migrations |
-| `bun run db:reset` | Drop and recreate the database from scratch |
-| `bun run db:check` | Verify migration state (CI) |
-| `bun run db:studio` | Open Drizzle Studio web UI |
-| `bun run db:embed` | Backfill embeddings for memories |
-| `bun run db:backup` | Create a VACUUM snapshot of the database |
-
-## 7. Database Backups (Litestream)
-
-Litestream provides continuous archiving and point-in-time recovery for SQLite.
-
-To enable backups, first copy the example config:
 ```bash
-cp litestream.yml.example litestream.yml
+bun run check
+bun run test:webhooks
 ```
 
-Then start the backup service:
+## Docker deployment
+
+Create the external network, configure `.env`, and start Compose:
+
 ```bash
-docker compose --profile backup up -d
+docker network create proxy
+cp .env.example .env
+docker compose build --pull
+docker compose up -d
 ```
 
-Backups are stored in `./data/.local/share/litestream/` by default. Override with:
-- `BACKUP_DIR` — custom backup directory
-- `BACKUP_KEEP` — number of snapshots to retain
+Compose uses a non-root image, read-only root filesystem, writable named volume at `/app/data`, and a host port bound only to `127.0.0.1`. See [deployment.md](deployment.md) for the reverse proxy and backup examples.
 
-## 8. Development Scripts
+## Database lifecycle
 
-| Command | Description |
-|---------|-------------|
-| `bun run fixtures:dump` | Dump message fixtures from the database for test coverage |
-| `bun run lint` | Run ESLint on source and tests |
-| `bun run lint:fix` | Auto-fix lint issues |
-| `bun run typecheck` | Run TypeScript type checking |
+ElastraX uses forward-only Drizzle migrations and SQLite WAL mode.
+
+```bash
+bun run db:check
+bun run db:generate
+bun run db:migrate
+bun run db:backup
+bun run db:restore
+```
+
+Only run `db:generate` when intentionally changing the schema, then commit `drizzle/` and `src/db/schema.ts` together. CI regenerates and fails on any uncommitted drift. Back up before applying or restoring migrations.
+
+## Health and metrics
+
+- `/live` and `/health`: minimal process liveness.
+- `/ready`: compatibility readiness for an orchestrator.
+- `/metrics`: protected Prometheus output; hidden if `METRICS_AUTH_TOKEN` is unset.
+
+Do not expose any of these endpoints publicly. Keep liveness checks on a private container/health network and access metrics through a separately authenticated monitoring path.
+
+## Troubleshooting
+
+### Startup environment error
+
+Read the first validation failure. Numeric bounds require decimal integers; booleans must be exactly `true` or `false`; compatibility deadlines require absolute RFC3339 timestamps. Secrets must contain at least 24 bytes without surrounding whitespace.
+
+### Webhook returns `401`
+
+Send `X-Webhook-Secret` with the exact configured value. Do not use body/query fields unless their bounded migration windows are enabled. GitHub uses a signature rather than the shared-secret header.
+
+### Webhook returns `503`
+
+A required secret is missing, webhook intake is disabled, or a durable enqueuer rejected the job. Media routes always fail closed without their own secret.
+
+### Webhook returns `429`
+
+The per-source/per-connection token bucket is exhausted. Honor `Retry-After`; do not disable limits for a public endpoint.
+
+### Container cannot write data
+
+Keep the `/app/data` named volume attached. A host bind mount must be writable by the image's non-root `bun` UID/GID; pre-create and `chown` such a mount before startup.
+
+### Health check fails
+
+Inspect container logs and verify `WEBHOOK_PORT`, the internal bind address, and private-network access. Never add a `0.0.0.0` host-port mapping to work around a proxy issue.

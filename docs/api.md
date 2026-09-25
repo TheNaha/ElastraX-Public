@@ -1,64 +1,117 @@
-# API & Webhooks
+# API and Webhooks
 
-ElastraX runs an embedded **Bun native HTTP server** (`src/webhooks/WebhookServer.ts`) to handle inbound HTTP webhooks and platform health checks.
+ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endpoints. The exact route table is:
 
-## Environment Variables
+| Method | Path | Purpose |
+|---|---|---|
+| `POST` | `/webhook` | Generic payloads; signed GitHub payloads remain accepted here |
+| `POST` | `/webhook/github` | Explicit GitHub webhook route |
+| `POST` | `/webhook/seerr` | Jellyseerr/Overseerr notifications |
+| `POST` | `/webhook/jellyfin` | Jellyfin notifications |
+| `GET` | `/health` | Compatibility alias for minimal liveness |
+| `GET` | `/live` | Minimal liveness: `{"status":"ok"}` |
+| `GET` | `/ready` | Readiness compatibility hook |
+| `GET` | `/metrics` | Protected Prometheus metrics |
+
+All other paths return `404`. A known path with the wrong method returns `405` and an `Allow` header. Every POST route requires `Content-Type: application/json`; other media types return `415`.
+
+## Authentication
+
+Generate each shared secret with at least 24 random bytes:
+
+```bash
+openssl rand -base64 32
+```
+
+Set `WEBHOOK_SECRET` for `/webhook` and `/webhook/github`. The preferred generic authentication header is:
+
+```http
+X-Webhook-Secret: <secret>
+```
+
+`Authorization: Bearer <secret>` is also accepted. GitHub requests must instead carry a valid `X-Hub-Signature-256` HMAC. `X-GitHub-Delivery` is used for replay detection.
+
+Media routes require independent `SEERR_WEBHOOK_SECRET` and `JELLYFIN_WEBHOOK_SECRET` values. An unset media secret fails closed with `503`; it never enables unauthenticated intake. Media requests accept `X-Webhook-Secret` or `Authorization: Bearer <secret>`.
+
+### Bounded legacy secret locations
+
+JSON `secret` and `?secret=` are disabled by default because bodies may be retained and proxy logs may record URLs. A migration can enable each location independently only with both an explicit boolean and a future absolute RFC3339 expiry:
+
 ```env
-WEBHOOK_ENABLED=true
-WEBHOOK_PORT=3500
-WEBHOOK_SECRET=your_secure_random_string
+WEBHOOK_BODY_SECRET_COMPAT_ENABLED=true
+WEBHOOK_BODY_SECRET_COMPAT_UNTIL=2026-12-31T23:59:59Z
+WEBHOOK_QUERY_SECRET_COMPAT_ENABLED=true
+WEBHOOK_QUERY_SECRET_COMPAT_UNTIL=2026-12-31T23:59:59Z
 ```
 
-## 1. Webhook Inbound API (`POST /webhook`)
+The deadline is checked for every request. Remove the compatibility variables after all senders have migrated to `X-Webhook-Secret`.
 
-This endpoint allows external services (like Grafana, GitHub Actions, or custom scripts) to send messages to any WhatsApp or Discord chat room.
+## Generic payload
 
-### Authentication
-The webhook server enforces security via a shared secret. You can provide the secret in one of three ways:
-1. Header: `x-webhook-secret: your_secret`
-2. JSON Body: `{"secret": "your_secret"}`
-3. Query Parameter: `?secret=your_secret`
+```http
+POST /webhook
+Content-Type: application/json
+X-Webhook-Secret: <secret>
+X-Webhook-Id: alert-018f6f08
 
-*Note: For GitHub webhooks, the server natively supports validation via the `X-Hub-Signature-256` HMAC header.*
-
-### Payload Formats
-
-**Canonical Format:**
-```json
 {
-   "room_id": "120363xxxxxx@g.us",
-   "text": "Hello from external webhook!",
-   "secret": "your_secure_random_string"
-}
-```
-*(Tip: `room_id` can also be an array `room_ids` to broadcast a message to multiple chats simultaneously).*
-
-**Rich Alert Format (Grafana / Prometheus):**
-The server attempts to parse rich fields into a beautifully formatted markdown message:
-```json
-{
-   "room_id": "120363xxxxxx@g.us",
-   "title": "Database CPU Spiking",
-   "message": "The primary database cluster is above 90% CPU utilization.",
-   "priority": "critical",
-   "source": "Grafana Alerts",
-   "tags": ["production", "database", "pager"],
-   "url": "https://grafana.example.com/alert/123"
+  "room_id": "120363xxxxxx@g.us",
+  "title": "Production alert",
+  "message": "HTTP 5xx ratio exceeded 5%",
+  "priority": "critical",
+  "event": "api.error_rate",
+  "source": "prometheus",
+  "tags": ["production", "api"],
+  "url": "https://status.example.com/incidents/123"
 }
 ```
 
-**Apprise Compatibility:**
-ElastraX supports standard Apprise payload structures:
+`room_id`, `room_ids`, and their query equivalents are merged and deduplicated. Generic keys include `title`, `text|message|body|description`, `priority|severity|level`, `event|event_type`, `source|service`, `tags|tag`, and `url|link`. Unknown payloads produce a bounded field summary rather than a raw JSON dump. Authentication and common credential fields are removed before any formatter sees the payload.
+
+Fan-out defaults to 25 destinations and is bounded by `WEBHOOK_MAX_DESTINATIONS`.
+
+## Replay and rate limits
+
+Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. IDs are retained in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`; a future durable outbox will use the same ID as its idempotency key.
+
+`X-Webhook-Source` or the payload `source` identifies a source. Source and connection keys are independently governed by the token-bucket limits `WEBHOOK_RATE_LIMIT_MAX` and `WEBHOOK_RATE_LIMIT_WINDOW_MS`. Source length and the number of tracked rate-limit keys are bounded.
+
+## Request bounds
+
+The listener rejects:
+
+- bodies over `WEBHOOK_MAX_BODY_BYTES` with `413`;
+- bodies not completed within `WEBHOOK_BODY_READ_TIMEOUT_MS` with `408`;
+- invalid or excess destinations with `400`;
+- authenticated request bursts over the configured rate limit with `429` and `Retry-After`.
+
+Formatted chat text is truncated to `WEBHOOK_MAX_TEXT_LENGTH`.
+
+## Delivery responses
+
+Without an outbox enqueuer, the current synchronous sender is preserved:
+
+- `200 {"ok":true,"delivered":N}` when every destination succeeds;
+- `207` with a bounded failed-destination list when only some sends fail.
+
+`WebhookServer.registerEnqueuer()` provides the future durable-outbox integration and supplies an `AbortSignal` with `WEBHOOK_ENQUEUE_TIMEOUT_MS`. When registered, the server returns `202` only after the enqueuer confirms that it durably accepted the job:
+
 ```json
 {
-   "room_id": "120363xxxxxx@g.us",
-   "title": "Build Failed",
-   "body": "CI pipeline failed on branch main.",
-   "notify_type": "failure"
+  "ok": true,
+  "status": "queued",
+  "duplicate": false,
+  "deliveryId": "outbox-123",
+  "acceptedAt": "2026-09-25T12:00:00.000Z"
 }
 ```
 
-## 2. Healthcheck (`GET /health`)
+A rejected enqueue returns `503`; the server never fabricates durability or falls back to an untracked send.
 
-Used by Docker and orchestration systems to verify that the bot is running and connected.
-Returns a `200 OK` JSON response containing process metrics, memory usage, and the connection status of active providers (e.g., WhatsApp Socket status).
+## Operational endpoints
+
+`/health` and `/live` expose only process liveness. `/ready` returns `200 {"status":"ready"}` by default for compatibility. Integrations can register bounded readiness checks with `WebhookServer.registerReadinessCheck()`; any false, failed, or timed-out check produces a detail-free `503`.
+
+Set `METRICS_AUTH_TOKEN` to enable `/metrics`. Without it the route is hidden with `404`. With it, send `Authorization: Bearer <token>` or `X-Metrics-Token`. Query-string metrics authentication is not supported.
+
+Native startup binds `127.0.0.1` by default. See [Deployment](./deployment.md) for the loopback Compose binding and reverse-proxy example.

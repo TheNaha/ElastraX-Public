@@ -1,253 +1,147 @@
-# ElastraX v7
+# ElastraX
 
-A multi-platform, general-purpose hybrid bot with conversational AI, built on Bun.
+ElastraX is a Bun/TypeScript AI agent for WhatsApp and Discord. It supports OpenAI-compatible and Google AI providers, a persisted tool/flow system, scheduled jobs, media handling, inbound webhooks, and SQLite.
 
-## Documentation
+## Runtime
 
-For a deep dive into the architecture, configuration, and deployment, please see the [docs folder](./docs/README.md).
+Bun `1.3.14` is the single supported runtime for local development, CI, and containers. The version and package-manager contract are pinned in `package.json`; `bun.lock` is the dependency lock.
 
-## Features
+Requirements for native development:
 
-- **Agentic Framework**: The bot acts as an AI conversational agent first. It can dynamically use tools (like Web Search) to answer your questions.
-- **Explicit Commands**: Supports direct commands like `/search` that route directly to the underlying tools without LLM mediation.
-- **Multi-Platform Ready**: Designed with a unified `MessageContext` wrapper. Supports WhatsApp (Baileys v7) and Discord.
-- **OpenAI Compatible**: Connects to any OpenAI-compatible endpoint. Includes Modal scripts to deploy a private Qwen3-Omni inference server (vLLM). Google AI Studio (Gemini) is also natively supported out of the box!
-- **State Persistence**: Uses SQLite and Drizzle ORM to maintain chat room conversations for the LLM context.
-- **Long-Term Memory (RAG)**: Automatically stores and retrieves user facts using a dedicated memory database table, giving the bot true persistent context.
-- **Hybrid UX**: Every capability is available via slash-command and conversational tool-calling.
-- **Expanded Tools**: Web Scraping (Jina AI), Web Search (SearXNG), Download (yt-dlp), media converter (FFmpeg), PDF utilities, delete bot messages, translation, reminders, room stats, IDs, ping, and group admin actions.
-- **Scheduler/Reminder System**: Persistent reminders stored in DB and delivered by a background scheduler.
-- **Voice Note Transcription**: Audio can be transcribed through a configurable endpoint.
-- **LLM Failover Router**: Priority-based provider failover (Modal → Gemini → Ollama, etc.).
-- **Webhook Inbound Server**: Canonical `/webhook` API plus auto-adapters for GitHub and Grafana payloads.
-- **Conversation Summarizer**: Automatically compresses overflowing history into memory summaries.
-- **Container Healthcheck**: `/health` endpoint and Docker healthcheck are configured.
+- Bun 1.3.14
+- FFmpeg and yt-dlp available on `PATH` only when media conversion/downloading is used
+- an AI provider and credentials
 
-## Architecture
+## Quick start
 
-The project is structured into clear domains:
-- `src/agent/`: The core conversational loop and command router.
-- `src/ai/`: The OpenAI-compatible client handling `tool_calls`.
-- `src/config/`: Shared configuration resolvers (e.g. `llm.ts` for LLM provider resolution used by both `ModelRouter` and `HealthMonitor`).
-- `src/core/`: The unified interface (`MessageContext`) that all platforms must respect.
-- `src/db/`: Drizzle ORM schemas and SQLite setup.
-- `src/providers/`: The protocol wrappers (e.g., Baileys for WhatsApp).
-- `src/tools/`: The agentic tools directory. Each tool implements `BaseTool` exposing a definition for the LLM.
-- `modal/`: Python scripts to deploy an inference server to Modal.
-
-## Setup & Running
-
-1. **Install dependencies**:
-   ```bash
-   bun install
-   ```
-2. **Setup environment variables**:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your AI Provider details (e.g. OpenRouter or Gemini) and SearXNG URL.
-   ```
-3. **Database migrations**:
-   ```bash
-   bun run db:push
-   ```
-4. **Run via Docker**:
-   ```bash
-   docker compose up --build
-   ```
-5. **Scan QR Code**:
-   Check the terminal logs for the WhatsApp QR code on first startup.
-
-## Environment Configuration
-
-### 1) LLM Provider Mode
-
-Use either **legacy single-provider** or **multi-provider failover**.
-
-Legacy:
-```env
-AI_API_BASE_URL=https://...
-AI_API_KEY=...
-AI_MODEL_NAME=...
+```bash
+bun install --frozen-lockfile
+cp .env.example .env
 ```
 
-Failover:
-```env
-AI_PROVIDERS=modal,gemini,ollama
-
-AI_MODAL_BASE_URL=https://...
-AI_MODAL_API_KEY=...
-AI_MODAL_MODEL=cyankiwi/Qwen3-Omni-30B-A3B-Instruct-AWQ-4bit
-
-AI_GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/
-AI_GEMINI_API_KEY=...
-AI_GEMINI_MODEL=gemini-2.5-flash
-
-AI_OLLAMA_BASE_URL=http://localhost:11434/v1
-AI_OLLAMA_API_KEY=ollama
-AI_OLLAMA_MODEL=llama3
-
-# Runtime behavior
-AI_MAX_TOKENS=2048
-AI_TIMEOUT_MS=60000
-AI_MAX_TOOL_ITERATIONS=8
-
-### 2) Web Search & Web Scraping
+Set at minimum:
 
 ```env
-# URL for your SearXNG instance used by /search
-SEARXNG_URL="https://your-searxng-instance.example.com"
-
-# Optional: Free API key for Jina AI to bypass limits during web_scrape
-JINA_API_KEY="your_api_key_here"
+AI_API_BASE_URL=https://your-provider.example/v1
+AI_API_KEY=your-provider-key
+AI_MODEL_NAME=your-model
+BOT_OWNER_JID=1234567890@s.whatsapp.net
+NODE_ENV=development
 ```
 
-### 3) Webhook Inbound API
+Start the agent:
+
+```bash
+bun run start
+```
+
+For WhatsApp, scan the QR code with the owner account. For Discord, set `DISCORD_BOT_TOKEN` before startup. Both providers can run in the same process.
+
+## Webhooks
+
+Inbound webhooks are disabled unless explicitly enabled:
 
 ```env
 WEBHOOK_ENABLED=true
+WEBHOOK_SECRET=generate-with-openssl-rand-base64-32
 WEBHOOK_PORT=3500
-WEBHOOK_SECRET=your_shared_secret
+WEBHOOK_HOST=127.0.0.1
 ```
 
-Auth behavior:
-- Generic sources: send secret via `x-webhook-secret` header, JSON `secret`, or `?secret=` query.
-- GitHub webhooks: use `X-Hub-Signature-256` HMAC with `WEBHOOK_SECRET`.
+Use `X-Webhook-Secret`; do not put secrets in URLs:
 
-Reachability notes:
-- `GET http://<host>:$WEBHOOK_PORT/health` must return `{"status":"ok",...}` — this is also the container healthcheck.
-- `docker-compose.yml` maps `${WEBHOOK_PORT:-3500}` on both sides; if you change the port in `.env`, recreate the container (`docker compose up -d`) so the mapping follows.
-- Compose attaches the bot to an **external** docker network named `proxy` (for reverse-proxy setups). Create it once per host: `docker network create proxy`.
-
-Canonical request format:
-```http
-POST /webhook
-Content-Type: application/json
-
-{
-   "room_id": "120363xxxxxx@g.us",
-   "text": "Hello from webhook",
-   "secret": "your_shared_secret"
-}
-```
-
-Comprehensive notifier payload (optional fields):
-```json
-{
-   "room_ids": ["120363xxxxxx@g.us", "123456789012345678"],
-   "platform": "whatsapp",
-   "title": "Prod API Alert",
-   "message": "HTTP 5xx ratio > 5% for 10m",
-   "priority": "critical",
-   "event": "alerts.api.error_rate",
-   "source": "Grafana",
-   "tags": ["prod", "api", "pager"],
-   "url": "https://grafana.example.com/alert/123",
-   "secret": "your_shared_secret"
-}
-```
-
-Apprise-compatible payload support:
-```json
-{
-   "room_id": "120363xxxxxx@g.us",
-   "title": "Build Notification",
-   "body": "Pipeline completed successfully",
-   "notify_type": "success",
-   "tags": ["ci", "release"],
-   "source": "GitHub Actions",
-   "secret": "your_shared_secret"
-}
-```
-
-Notes:
-- `room_id` and `room_ids` are both supported (fan-out delivery to multiple rooms).
-- Generic payload keys supported: `title`, `text|message|body`, `priority|severity|level`, `event|event_type`, `source|service`, `tags|tag`, `url|link`.
-- Apprise-like payload keys supported: `title|subject`, `body|message|text`, `notify_type|type`, `tag|tags`, plus optional `source/service`, `timestamp`, and `url/link`.
-- Message length is truncated safely using `WEBHOOK_MAX_TEXT_LENGTH` (default `3500`).
-
-Health endpoint:
-```http
-GET /health
-```
-
-### 3) Voice Transcription
-
-```env
-TRANSCRIBE_ENDPOINT=https://your-transcribe-endpoint
-TRANSCRIBE_API_KEY=optional
-TRANSCRIBE_TIMEOUT_MS=45000
-```
-
-### 4) Media Cache Cleanup
-
-```env
-# Every 6 hours
-MEDIA_CLEANUP_INTERVAL_MS=21600000
-
-# Delete cached media older than 72 hours
-MEDIA_RETENTION_HOURS=72
-```
-
-### 5) Fixture Dump Path (Optional)
-
-```env
-# Used during graceful shutdown to export parser fixtures.
-# In production defaults to ./data/fixtures/wa_messages
-# In non-production defaults to ./test/fixtures/wa_messages
-FIXTURE_DUMP_DIR=./data/fixtures/wa_messages
-```
-
-## Backups
-
-Two complementary options, both safe to run while the bot is live:
-
-**On-demand snapshots** — consistent `VACUUM INTO` copies with keep-N pruning:
 ```bash
-bun run db:backup          # writes ./data/backups/<name>-backup-<timestamp>.db (keeps 7)
+curl --fail-with-body http://127.0.0.1:3500/webhook \
+  -H 'Content-Type: application/json' \
+  -H "X-Webhook-Secret: $WEBHOOK_SECRET" \
+  -H 'X-Webhook-Id: alert-123' \
+  --data '{
+    "room_id": "120363xxxxxx@g.us",
+    "title": "Production alert",
+    "message": "HTTP 5xx ratio exceeded 5%",
+    "priority": "critical",
+    "source": "prometheus",
+    "tags": ["production", "api"]
+  }'
 ```
-Tune via `BACKUP_DIR` / `BACKUP_KEEP` in `.env`. Schedule it from host cron/systemd timers.
 
-**Continuous replication** — optional Litestream sidecar:
+JSON-body and query-string secrets are disabled by default. They can be enabled only inside separate, explicit RFC3339 expiry windows. Media routes use independent secrets and fail closed. GitHub routes use `X-Hub-Signature-256`; `X-GitHub-Delivery` provides replay detection.
+
+Exact routes, limits, replay behavior, and the optional durable-outbox `202` contract are documented in [docs/api.md](docs/api.md).
+
+## Operations
+
+- `GET /health` and `GET /live` return minimal liveness only.
+- `GET /ready` is a compatibility readiness hook.
+- `GET /metrics` is hidden unless `METRICS_AUTH_TOKEN` is configured and protected with a Bearer token.
+- Native startup binds loopback by default. Never publish the webhook port directly to the Internet.
+- Unknown paths return `404`; wrong methods and non-JSON webhook posts fail explicitly.
+
+## Docker
+
+The image uses a digest-pinned Bun base, checksum-verified yt-dlp/FFmpeg downloads, a non-root user, a read-only root filesystem, a writable named data volume, dropped capabilities, and no public host port.
+
 ```bash
-cp litestream.yml.example litestream.yml   # then edit bucket/region/credentials
-docker compose --profile backup up -d      # starts the litestream service
-# Restore on a fresh host (bot stopped):
-docker compose --profile backup run --rm litestream restore -o /data/bot.db /data/bot.db
+docker network create proxy
+cp .env.example .env
+docker compose build --pull
+docker compose up -d
 ```
 
-Both read only from the database file; neither requires stopping the bot. Snapshots are standalone files (no WAL sidecars) and can be copied off-site directly.
+Compose publishes only `127.0.0.1:${WEBHOOK_PORT:-3500}`. Terminate TLS at a trusted reverse proxy and expose only `/webhook` and `/webhook/*`; do not expose liveness or metrics publicly. See [docs/deployment.md](docs/deployment.md) for the Caddy example and operational gates.
 
-## Testing
+## Development
 
-Run unit tests via `bun`:
 ```bash
-bun test                  # runs all tests
-bun test test/migration.test.ts   # isolated run
+bun run check
+bun run test:webhooks
+bun run test:coverage
 ```
 
-**Test count**: 860 tests, 0 failures (859 original + new coverage).
+`bun run check` runs lint, typecheck, and the full test suite. Database commands are:
 
-**Recent additions** (from 2026-09-12 audit):
-- `test/migration.test.ts` — verifies the migration journal (`_journal.json`) is in sync with SQL files on disk, and that all 20 migrations apply cleanly on a fresh in-memory database.
-- `test/config.llm.test.ts` — verifies the shared LLM provider resolution module (`src/config/llm.ts`) handles both legacy single-provider and multi-provider failover configs with 100% parity between `HealthMonitor` and `ModelRouter`.
-- `test/HealthMonitor.test.ts` — tests the `HealthMonitor` lifecycle (`start`/`stop`, interval management) and LLM target resolution.
-- `test/ToolSearchIndex.test.ts` — tests the `ToolSearchIndex` keyword search/ranking for the `find_tools` agent capability.
-- `test/registry.reload.test.ts` — tests the `ToolRegistry.reloadRegistry()` function for atomic tool loading, plugin discovery, and category mapping.
-
-**Typecheck & lint**:
 ```bash
-bun x tsc --noEmit      # 0 errors
-bun x eslint src test   # 0 errors (warnings are @typescript-eslint/no-explicit-any in test mocks)
+bun run db:generate
+bun run db:check
+bun run db:migrate
+bun run db:backup
+bun run db:restore
 ```
 
-## Recent Fixes (2026-09-12)
+`db:generate` must not create an uncommitted migration during CI; schema and `drizzle/` drift is a fatal release failure. Back up SQLite before migration or restore.
 
-| Area | Fix |
-|---|---|
-| **Migrations** | `_journal.json` was missing entry 0019 (`reminder_language`), causing fresh DB deploys to fail. Added the missing journal entry. |
-| **ESLint** | `eslint` was missing from `devDependencies`; `bun x eslint` resolved v6. Added `^9.20.0` and fixed lint script to `eslint src test --max-warnings=50`. |
-| **LLM Config Dedup** | Both `ModelRouter.ts` and `HealthMonitor.ts` had identical `buildCloudflareBaseUrl()`, `parseTier()`, `parseBool()`, and `defaultMediaSupport()` logic. Extracted to shared `src/config/llm.ts` with `resolveLLMProviders()`, `resolveLLMTargets()`, and `buildCloudflareBaseUrl()`. |
-| **HealthMonitor DI** | `healthMonitor` was a hardcoded singleton import in `AppRuntime`. Made it injectable via `AppRuntimeDeps.healthMonitor` for proper test isolation. |
-| **WAL Growth** | SQLite WAL file could grow unbounded. Added `PRAGMA wal_autocheckpoint = 1000` to `src/db/index.ts`. |
-| **Docs** | `docs/api.md` said "Express server" (now "Buna native HTTP"); `docs/setup.md` said "Alpine container" (now "Debian"). |
-| **Test Comments** | `test/agent.test.ts` had a stale comment "This fails currently" on a passing group @mention test. Corrected to explain actual `isBotMentioned` behavior (defaults to `false`, mentions checked explicitly). |
+## CI and releases
+
+CI performs frozen installation, secret scanning, fatal migration-drift detection, migration smoke, lint, typecheck, tests, Compose validation, a pinned Docker build, and a non-root/read-only webhook smoke. The image publish workflow supports `linux/amd64` and `linux/arm64` and attaches an SBOM and provenance. It publishes artifacts only and does not deploy.
+
+## Configuration
+
+[.env.example](.env.example) is the complete annotated configuration reference. Important groups include:
+
+- single-provider and multi-provider AI routing;
+- WhatsApp and Discord credentials;
+- tools, flows, scheduler, memory, and media limits;
+- Ollama, SearXNG, and transcription;
+- Seerr and Jellyfin integrations;
+- bounded webhook, replay, rate, and metrics settings.
+
+## Architecture
+
+- `src/runtime` starts and stops providers, the message queue, jobs, health monitoring, webhooks, and cleanup.
+- `src/agent` resolves providers and executes permissioned AI/tool loops.
+- `src/flows` contains schema-validated automation flows.
+- `src/db` owns Drizzle, forward migrations, repositories, and backup support.
+- `src/webhooks` contains exact route handling, auth, adapters, limits, and delivery contracts.
+- `src/providers` contains WhatsApp, Discord, media, and outbound integrations.
+- `src/utils` contains shared infrastructure and services.
+- `src/plugins` contains runtime plugin tooling; user flow files are stored in the data directory.
+
+See [docs/architecture.md](docs/architecture.md), [docs/flows.md](docs/flows.md), [docs/tools.md](docs/tools.md), and [docs/setup.md](docs/setup.md) for subsystem details.
+
+## Security notes
+
+- Do not commit `.env`, databases, backups, or Litestream credentials.
+- Generate at least 24 random bytes for every webhook/metrics secret.
+- Keep the listener private and use a reverse proxy for TLS and access controls.
+- Do not grant `allow_all` tool permissions; use owner/admin/user/allowed-user scopes.
+- Keep generated backups out of the Git working tree.
