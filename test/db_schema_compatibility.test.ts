@@ -37,6 +37,7 @@ describe('Schema Compatibility', () => {
         auto_reply_all INTEGER,
         summarize INTEGER,
         long_term_memory INTEGER,
+        room_key TEXT,
         created_at INTEGER NOT NULL
       )
     `);

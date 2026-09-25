@@ -27,6 +27,26 @@ const LEGACY_MIGRATION_HASHES = new Map<number, Set<string>>([
   [7, new Set(['84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d'])],
 ]);
 
+/** Tag of the migration that introduced canonical room identity. */
+export const ROOM_KEY_MIGRATION_TAG = '0022_room_keys';
+/** `when` value of the canonical room identity migration in the journal. */
+export const ROOM_KEY_MIGRATION_WHEN = 23;
+/** Zero-based position of the canonical room identity migration in the journal. */
+export const ROOM_KEY_MIGRATION_INDEX = 22;
+
+/** Tables/columns the canonical room identity migration adds. */
+const ROOM_KEY_COLUMN_TARGETS: Array<[string, string]> = [
+  ['chat_rooms', 'room_key'],
+  ['messages', 'room_key'],
+  ['reminders', 'room_key'],
+  ['notification_subscriptions', 'room_key'],
+  ['message_inbox', 'room_key'],
+  ['message_outbox', 'room_key'],
+  ['scheduled_deliveries', 'room_key'],
+  ['user_roles', 'scope_room_key'],
+  ['flow_sessions', 'room_key'],
+];
+
 const FINGERPRINT_IGNORED_TABLES = new Set([
   '__drizzle_migrations',
   'database_leases',
@@ -48,6 +68,8 @@ const REQUIRED_TABLES = [
   'notification_subscriptions',
   'reminders',
   'role_privileges',
+  'room_key_conflicts',
+  'room_keys',
   'scheduled_deliveries',
   'service_bindings',
   'user_identities',
@@ -58,28 +80,46 @@ const REQUIRED_TABLES = [
 const REQUIRED_INDEXES = [
   'canonical_identities_platform_primary_idx',
   'chat_rooms_platform_idx',
+  'chat_rooms_room_key_idx',
+  'chat_rooms_room_key_unique_idx',
+  'flow_sessions_room_key_idx',
   'flow_sessions_updated_idx',
   'identity_aliases_canonical_idx',
   'identity_aliases_platform_alias_unique_idx',
   'message_inbox_platform_event_unique_idx',
   'message_inbox_platform_provider_unique_idx',
+  'message_inbox_room_key_idx',
   'message_inbox_work_idx',
   'message_outbox_platform_idempotency_unique_idx',
   'message_outbox_platform_provider_unique_idx',
+  'message_outbox_room_key_idx',
   'message_outbox_work_idx',
   'memories_owner_idx',
   'messages_chat_room_id_created_at_idx',
   'messages_chat_room_id_idx',
   'messages_platform_provider_message_id_unique',
+  'messages_room_key_created_at_idx',
   'reminders_due_idx',
   'reminders_remind_at_idx',
+  'reminders_room_key_idx',
   'reminders_sender_id_idx',
+  'room_key_conflicts_fingerprint_unique_idx',
+  'room_key_conflicts_platform_remote_idx',
+  'room_key_conflicts_type_detected_idx',
+  'room_key_conflicts_unresolved_idx',
+  'room_keys_legacy_room_idx',
+  'room_keys_platform_created_idx',
+  'room_keys_platform_legacy_room_unique_idx',
+  'room_keys_platform_remote_room_unique_idx',
   'scheduled_deliveries_platform_job_unique_idx',
   'scheduled_deliveries_platform_provider_unique_idx',
   'scheduled_deliveries_room_idx',
+  'scheduled_deliveries_room_key_idx',
   'scheduled_deliveries_work_idx',
   'notification_subs_service_idx',
   'notification_subs_user_room_idx',
+  'notification_subs_room_key_idx',
+  'notification_subs_room_key_unique_idx',
   'service_bindings_email_idx',
   'service_bindings_external_idx',
   'service_bindings_user_service_idx',
@@ -89,13 +129,22 @@ const REQUIRED_INDEXES = [
   'user_identities_platform_pn_unique_idx',
   'user_roles_platform_user_scope_unique_idx',
   'user_roles_scope_idx',
+  'user_roles_scope_room_key_idx',
 ];
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
-  messages: ['platform', 'provider_message_id'],
-  reminders: ['claimed_at', 'language', 'remind_at', 'sender_id'],
+  messages: ['platform', 'provider_message_id', 'room_key'],
+  reminders: ['claimed_at', 'language', 'remind_at', 'room_key', 'sender_id'],
   user_identities: ['canonical_id', 'lid', 'platform', 'pn'],
-  user_roles: ['platform', 'scope', 'user_id'],
+  user_roles: ['platform', 'scope', 'scope_room_key', 'user_id'],
+  chat_rooms: ['room_key'],
+  flow_sessions: ['room_key'],
+  message_inbox: ['room_key'],
+  message_outbox: ['room_key'],
+  notification_subscriptions: ['room_key'],
+  scheduled_deliveries: ['room_key'],
+  room_keys: ['created_at', 'legacy_room_id', 'platform', 'remote_room_id', 'room_key'],
+  room_key_conflicts: ['conflict_type', 'detected_at', 'detected_by', 'fingerprint', 'platform'],
 };
 
 export function getMigrationsFolder(projectRoot: string = getProjectRoot()): string {
@@ -215,6 +264,28 @@ function validateKnownUpgradeState(sqlite: Database, state: MigrationState): voi
   }
   if (appliedCount === 19 && tableColumns(sqlite, 'reminders').has('language')) {
     throw new Error('Migration 0019 is unapplied but reminders.language already exists; explicit adoption is required');
+  }
+
+  // 0022 (canonical room identity) is all-or-nothing: the registry and every
+  // room_key column land in one transaction, so a half-applied shape is a
+  // corrupted database rather than a legitimate upgrade state.
+  if (appliedCount > ROOM_KEY_MIGRATION_INDEX) {
+    if (!tableExists(sqlite, 'room_keys') || !tableExists(sqlite, 'room_key_conflicts')) {
+      throw new Error('Migration 0022 is recorded as applied but the room key registry is missing');
+    }
+    const missing = ROOM_KEY_COLUMN_TARGETS.filter(
+      ([table, column]) => !tableColumns(sqlite, table).has(column),
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `Migration 0022 is recorded as applied but room key columns are missing: ${missing
+          .map(([table, column]) => `${table}.${column}`)
+          .join(', ')}`,
+      );
+    }
+  }
+  if (appliedCount === ROOM_KEY_MIGRATION_INDEX && tableExists(sqlite, 'room_keys')) {
+    throw new Error('Migration 0022 is unapplied but room_keys already exists; explicit adoption is required');
   }
 }
 

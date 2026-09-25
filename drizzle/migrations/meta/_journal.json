@@ -115,6 +115,13 @@
       "when": 22,
       "tag": "0021_database_safety",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 23,
+      "tag": "0022_room_keys",
+      "breakpoints": true
     }
   ]
 }
