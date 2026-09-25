@@ -49,6 +49,27 @@ export function setDepsForTesting(overrides: Partial<IdentityServiceDeps> | null
   deps = next;
 }
 
+const identityAliasLocks = new Map<string, Promise<void>>();
+
+async function withIdentityAliasLocks<T>(
+  platform: string,
+  aliases: string[],
+  operation: () => Promise<T>,
+): Promise<T> {
+  const keys = [...new Set(aliases.map(alias => `${platform}:${alias}`))].sort();
+  const previous = keys.map(key => identityAliasLocks.get(key) ?? Promise.resolve());
+  const start = Promise.all(previous).then(operation);
+  const lock = start.then(() => {}, () => {});
+  for (const key of keys) identityAliasLocks.set(key, lock);
+  try {
+    return await start;
+  } finally {
+    for (const key of keys) {
+      if (identityAliasLocks.get(key) === lock) identityAliasLocks.delete(key);
+    }
+  }
+}
+
 function normalized(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
@@ -193,12 +214,17 @@ export const IdentityService = {
     const normalizedPn = normalized(pn);
     if (!normalizedLid && !normalizedPn) return;
     const aliases = aliasKinds(normalizedLid, normalizedPn);
+    return withIdentityAliasLocks(platform, aliases.map(alias => alias.value), async () => {
     const nowMs = Date.now();
     const now = new Date();
 
     if (deps.canonicalIdentities && deps.identityAliases) {
       const existingRows = await Promise.all(aliases.map(alias => canonicalForAlias(alias.value, platform)));
-      const existing = existingRows.find((row: CanonicalRow | undefined): row is CanonicalRow => Boolean(row));
+      const primaryRows = await deps.db.select().from(deps.canonicalIdentities).where(and(
+        eq(deps.canonicalIdentities.platform, platform),
+        inArray(deps.canonicalIdentities.primaryAlias, aliases.map(alias => alias.value)),
+      ));
+      const existing = [...primaryRows, ...existingRows].find((row: CanonicalRow | undefined): row is CanonicalRow => Boolean(row));
       const canonicalId = existing?.id ?? randomUUID();
       const primaryAlias = existing?.primaryAlias ?? aliases[0]!.value;
 
@@ -298,6 +324,7 @@ export const IdentityService = {
         ),
       ))
       .run();
+    });
   },
 
   async setDisplayName(jid: string, displayName: string): Promise<void> {

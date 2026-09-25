@@ -125,6 +125,22 @@ describe('IdentityService', () => {
     expect(identity!.displayName).toBe('Merged');
   });
 
+  test('concurrent upserts of the same identity are serialized safely', async () => {
+    const calls = Array.from({ length: 64 }, (_, index) => IdentityService.upsert(
+      'race@lid',
+      'race@s.whatsapp.net',
+      `Race ${index}`,
+    ));
+    await expect(Promise.all(calls)).resolves.toBeDefined();
+
+    const canonical = await database.db.select().from(canonicalIdentities);
+    expect(canonical).toHaveLength(1);
+    const aliases = await database.db.select().from(identityAliases);
+    expect(aliases).toHaveLength(2);
+    expect(new Set(aliases.map(row => row.canonicalId)).size).toBe(1);
+    expect(await database.db.select().from(userIdentities)).toHaveLength(1);
+  });
+
   test('upsert keeps platforms isolated for the same alias', async () => {
     await IdentityService.upsertIdentity(null, 'shared@example.com', 'WhatsApp', 'whatsapp');
     await IdentityService.upsertIdentity(null, 'shared@example.com', 'Discord', 'discord');
