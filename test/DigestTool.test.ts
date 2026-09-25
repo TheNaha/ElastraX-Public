@@ -115,9 +115,16 @@ describe('DigestTool', () => {
   test('defaults to 24h and uses the room language for summarization', async () => {
     summarizeResult = { text: '• stuff happened', messageCount: 10 };
     const result = await tool.execute({}, createMockCtx());
-    expect(summarizeCalls[0]).toMatchObject({ roomId: 'chat-1', hours: 24, lang: 'en' });
+    // The digest is room scoped, so DigestService receives the canonical key.
+    expect(summarizeCalls[0]).toMatchObject({ roomId: 'room:whatsapp:chat-1', hours: 24, lang: 'en' });
     expect(result).toContain('Summary of the last 24h');
     expect(result).toContain('stuff happened');
+  });
+
+  test('passes a context room key through unchanged', async () => {
+    summarizeResult = { text: 'x', messageCount: 1 };
+    await tool.execute({}, createMockCtx({ roomKey: 'room:whatsapp:alias-1' }));
+    expect(summarizeCalls[0]).toMatchObject({ roomId: 'room:whatsapp:alias-1' });
   });
 
   test('parses string hours and clamps to [1..168]', async () => {

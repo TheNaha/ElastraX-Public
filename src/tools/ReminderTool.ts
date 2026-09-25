@@ -19,11 +19,21 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
-import { reminders } from '../db/schema';
+import { chatRooms, reminders } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { isValidRecurrence } from '../utils/Scheduler';
+import {
+  chatRoomKeyInsertValues,
+  chatRoomsRoomColumns,
+  hasCanonicalRoomKeyColumns,
+  pickPreferredRoomRow,
+  remindersRoomColumns,
+  resolveRoomIdentity,
+  roomIdentityCondition,
+  roomKeyWriteValues,
+} from '../agent/roomKey';
 
 const log = logger.child({ module: 'ReminderTool' });
 const MIN_REMINDER_DELAY_MS = 1_000;
@@ -176,6 +186,8 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     let { action, time, message } = args;
     const { number, recurrence } = args;
     const lang = ctx.language ?? 'en';
+    const roomIdentity = resolveRoomIdentity(ctx);
+    const reminderRoomCondition = roomIdentityCondition(remindersRoomColumns(), roomIdentity);
 
     log.debug({ action, chatId: ctx.chatId, senderId: ctx.senderId }, 'Reminder action requested');
 
@@ -213,6 +225,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
             eq(reminders.senderId, ctx.senderId),
             eq(reminders.platform, ctx.platform),
             eq(reminders.isSent, false),
+            reminderRoomCondition,
           ))
           .orderBy(reminders.remindAt),
         MAX_ACTIVE_REMINDERS,
@@ -254,6 +267,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
             eq(reminders.senderId, ctx.senderId),
             eq(reminders.platform, ctx.platform),
             eq(reminders.isSent, false),
+            reminderRoomCondition,
           ))
           .orderBy(reminders.remindAt),
         MAX_ACTIVE_REMINDERS,
@@ -294,6 +308,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
           eq(reminders.senderId, ctx.senderId),
           eq(reminders.platform, ctx.platform),
           eq(reminders.isSent, false),
+          reminderRoomCondition,
         )),
       MAX_ACTIVE_REMINDERS + 1,
     ) as Array<{ id: number }>;
@@ -302,8 +317,33 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     }
 
     try {
+      const roomQuery = db.select().from(chatRooms)
+        .where(roomIdentityCondition(chatRoomsRoomColumns(), roomIdentity)) as unknown as {
+          then?: (resolve: (value: Array<typeof chatRooms.$inferSelect>) => unknown) => unknown;
+          all?: () => Array<typeof chatRooms.$inferSelect> | Promise<Array<typeof chatRooms.$inferSelect>>;
+        };
+      const resolvedRoomRows = await (roomQuery as unknown as Promise<Array<typeof chatRooms.$inferSelect>>);
+      const roomRows = Array.isArray(resolvedRoomRows)
+        ? resolvedRoomRows
+        : typeof roomQuery.all === 'function'
+          ? await roomQuery.all()
+          : [];
+      let room = pickPreferredRoomRow(roomRows, roomIdentity.roomKey);
+      if (!room) {
+        const canonicalRoomId = hasCanonicalRoomKeyColumns() ? roomIdentity.roomKey : roomIdentity.roomId;
+        await db.insert(chatRooms).values({
+          id: canonicalRoomId,
+          ...chatRoomKeyInsertValues(roomIdentity.roomKey),
+          platform: roomIdentity.platform,
+          language: 'en',
+          created_at: new Date(),
+        }).onConflictDoNothing();
+        room = { id: canonicalRoomId } as typeof chatRooms.$inferSelect;
+      }
+      if (!room) return t(lang, 'reminder.error', { msg: 'Chat room not found' });
       db.insert(reminders).values({
-        chatRoomId: ctx.chatId,
+        chatRoomId: room.id,
+        ...roomKeyWriteValues(remindersRoomColumns().canonical, roomIdentity.roomKey),
         senderId: ctx.senderId,
         senderName: ctx.senderName,
         message: reminderMessage,
@@ -315,7 +355,10 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         created_at: new Date(),
       }).run();
 
-      log.info({ senderId: ctx.senderId, chatId: ctx.chatId, remindAt: fireAt.toISOString(), recurrence: recurrence || null }, 'Reminder set');
+      log.info(
+        { senderId: ctx.senderId, chatId: ctx.chatId, roomKey: roomIdentity.roomKey, remindAt: fireAt.toISOString(), recurrence: recurrence || null },
+        'Reminder set',
+      );
 
       if (recurrence) {
         return t(lang, 'reminder.recurrence_set', {

@@ -13,6 +13,7 @@ import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
 import { t } from '../utils/i18n';
+import { getCanonicalRoomKey, isSameRoom, toRoomKey } from '../agent/roomKey';
 
 const log = logger.child({ module: 'MediaBindTool' });
 
@@ -20,8 +21,20 @@ export interface NotificationDestinationContext extends MessageContext {
   verifyRoomMembership?: (roomId: string, platform?: string) => Promise<boolean>;
 }
 
+/**
+ * True when a destination reference denotes the context's own room.
+ * The reference may be a raw provider room id or a canonical room key, so both
+ * forms are compared.
+ */
+function isCurrentRoom(ctx: MessageContext, roomId: string): boolean {
+  return (
+    isSameRoom(ctx.platform, roomId, ctx.chatId) ||
+    isSameRoom(ctx.platform, roomId, getCanonicalRoomKey(ctx))
+  );
+}
+
 export async function authorizeNotificationDestination(ctx: NotificationDestinationContext, roomId: string): Promise<boolean> {
-  if (roomId === ctx.chatId) return true;
+  if (isCurrentRoom(ctx, roomId)) return true;
   if (!(await ctx.checkPermissions('owner'))) return false;
   if (typeof ctx.verifyRoomMembership !== 'function') return false;
   try {
@@ -272,8 +285,10 @@ export class MediaBindTool extends BaseTool {
   private async handleNotify(args: MediaBindArgs, ctx: MessageContext): Promise<ToolResult> {
     const notifyAction = args.notify_action ?? 'here';
     const currentRoom = ctx.chatId;
+    const currentRoomKey = getCanonicalRoomKey(ctx);
     const requestedRoom = args.room_id?.trim();
     let foreignAuthorized = false;
+    const isForeignRoom = requestedRoom ? !isCurrentRoom(ctx, requestedRoom) : false;
 
     if ((notifyAction === 'add' || notifyAction === 'remove') && !requestedRoom) {
       return notifyAction === 'add'
@@ -281,7 +296,7 @@ export class MediaBindTool extends BaseTool {
         : (t(ctx.language, 'media.notify_not_found') || 'No notification subscription found for that room.');
     }
 
-    if (requestedRoom && requestedRoom !== currentRoom) {
+    if (requestedRoom && isForeignRoom) {
       const authorized = await authorizeNotificationDestination(ctx as NotificationDestinationContext, requestedRoom);
       foreignAuthorized = authorized;
       if (!authorized) return '❌ Foreign notification rooms require owner permission and verified platform membership.';
@@ -296,9 +311,11 @@ export class MediaBindTool extends BaseTool {
           platform: ctx.platform,
           serviceType: 'all',
           chatRoomId: roomId,
+          roomKey: isCurrentRoom(ctx, roomId) ? currentRoomKey : toRoomKey(ctx.platform, roomId),
           currentRoomId: currentRoom,
-          isOwner: requestedRoom !== currentRoom && await ctx.checkPermissions('owner'),
-          roomVerified: foreignAuthorized || roomId === currentRoom,
+          currentRoomKey,
+          isOwner: isForeignRoom && await ctx.checkPermissions('owner'),
+          roomVerified: foreignAuthorized || !isForeignRoom,
         });
         return notifyAction === 'here'
           ? (t(ctx.language, 'media.notify_here') || '✅ This chat will now receive media notifications.')
@@ -306,8 +323,9 @@ export class MediaBindTool extends BaseTool {
       case 'remove': {
         const removed = await MediaService.notificationService.unsubscribe(ctx.senderId, ctx.platform, 'all', roomId, {
           currentRoomId: currentRoom,
-          isOwner: requestedRoom !== currentRoom && await ctx.checkPermissions('owner'),
-          roomVerified: foreignAuthorized || roomId === currentRoom,
+          currentRoomKey,
+          isOwner: isForeignRoom && await ctx.checkPermissions('owner'),
+          roomVerified: foreignAuthorized || !isForeignRoom,
         });
         return removed
           ? (t(ctx.language, 'media.notify_removed', { room: roomId }) || `✅ Room ${roomId} will no longer receive media notifications.`)
@@ -318,7 +336,7 @@ export class MediaBindTool extends BaseTool {
         const owner = await ctx.checkPermissions('owner');
         const visibleSubs = [];
         for (const [index, sub] of subs.entries()) {
-          if (sub.chatRoomId === ctx.chatId) {
+          if (isCurrentRoom(ctx, sub.chatRoomId) || isSameRoom(ctx.platform, sub.roomKey, currentRoomKey)) {
             visibleSubs.push({ sub, index });
             continue;
           }
@@ -369,7 +387,7 @@ export class MediaBindTool extends BaseTool {
     const verifier = (ctx as NotificationDestinationContext).verifyRoomMembership;
     const visibleSubs = [];
     for (const sub of subs) {
-      if (sub.chatRoomId === ctx.chatId || (owner && typeof verifier === 'function' && await verifier(sub.chatRoomId, ctx.platform))) visibleSubs.push(sub);
+      if (isCurrentRoom(ctx, sub.chatRoomId) || isSameRoom(ctx.platform, sub.roomKey, getCanonicalRoomKey(ctx)) || (owner && typeof verifier === 'function' && await verifier(sub.chatRoomId, ctx.platform))) visibleSubs.push(sub);
     }
     const subLines = visibleSubs.length > 0
       ? visibleSubs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')

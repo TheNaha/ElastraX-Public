@@ -22,6 +22,7 @@ import { count, eq } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import type { ModelTier } from '../types/ai';
+import { isSameRoom, roomRemoteId } from '../agent/roomKey';
 
 const log = logger.child({ module: 'OwnerTool' });
 type OwnerArgs = ToolArgs & {
@@ -108,10 +109,9 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
       return t(lang, 'owner.broadcast_no_message');
     }
 
-    const rooms = db.select({ id: chatRooms.id, platform: chatRooms.platform })
-      .from(chatRooms)
-      .where(eq(chatRooms.platform, ctx.platform))
-      .all();
+    // Full rows are selected so the canonical `room_key` column is read when it
+    // exists; delivery still uses the raw provider room id below.
+    const rooms = db.select().from(chatRooms).where(eq(chatRooms.platform, ctx.platform)).all();
 
     if (rooms.length === 0) {
       return t(lang, 'owner.broadcast_no_rooms');
@@ -119,31 +119,45 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
 
     let sent = 0;
     let failed = 0;
+    let skipped = 0;
     const broadcastText = `📢 *Broadcast from Bot Owner:*\n\n${message}`;
 
     log.info({ roomCount: rooms.length, platform: ctx.platform }, 'Broadcast initiated');
 
     for (const room of rooms) {
-      if (room.id === ctx.chatId) continue;
+      // Never broadcast into the room the command came from. The comparison is
+      // canonical so a stored room key and a raw chat id both match.
+      if (isSameRoom(ctx.platform, room.roomKey ?? room.id, ctx.chatId)) {
+        skipped++;
+        continue;
+      }
+      // Provider sends always use the raw remote room id, never a room key.
+      const remoteRoomId = roomRemoteId(room, ctx.platform);
+      if (!remoteRoomId) {
+        skipped++;
+        log.warn({ roomId: room.id, roomKey: room.roomKey }, 'Broadcast skipped: room has no usable provider id');
+        continue;
+      }
       try {
         if (ctx.sendToChat) {
-          await ctx.sendToChat(room.id, broadcastText);
+          await ctx.sendToChat(remoteRoomId, broadcastText);
         } else {
-          await ctx.forwardMessage(room.id, broadcastText);
+          await ctx.forwardMessage(remoteRoomId, broadcastText);
         }
         sent++;
         // Small delay to avoid rate limits
         await new Promise(resolve => setTimeout(resolve, 200));
       } catch (err) {
         failed++;
-        log.warn({ err, roomId: room.id }, 'Broadcast failed for room');
+        log.warn({ err, roomId: remoteRoomId }, 'Broadcast failed for room');
       }
     }
 
+    log.info({ sent, failed, skipped }, 'Broadcast finished');
     return t(lang, 'owner.broadcast_done', {
       sent: String(sent),
       failed: String(failed),
-      total: String(rooms.length - 1),
+      total: String(sent + failed),
     });
   }
 

@@ -1,9 +1,20 @@
+import { or } from 'drizzle-orm';
 import { db } from '../db';
 import { chatRooms, messages } from '../db/schema';
 import { logger } from './logger';
 import type { MessageContext } from '../core/MessageContext';
 import { ConfigService } from './ConfigService';
 import { sanitizeRawMessage } from './rawMessage';
+import {
+  chatRoomKeyInsertValues,
+  chatRoomsRoomColumns,
+  getCanonicalRoomKey,
+  hasCanonicalRoomKeyColumns,
+  messageRoomKeyInsertValues,
+  pickPreferredRoomRow,
+  resolveRoomIdentity,
+  roomIdentityCondition,
+} from '../agent/roomKey';
 
 const ROOM_BATCH_SIZE = 100;
 const MESSAGE_BATCH_SIZE = 100;
@@ -85,31 +96,93 @@ export async function syncHistoricalDatabase(
   };
   if (selected.length === 0) return result;
 
-  const knownRooms = new Map<string, typeof chatRooms.$inferInsert>();
-  const payloads: (typeof messages.$inferInsert)[] = [];
-
+  const contextsByRoomKey = new Map<string, MessageContext>();
   for (const ctx of selected) {
-    const roomKey = `${ctx.platform}:${ctx.chatId}`;
-    if (!knownRooms.has(roomKey)) {
-      const defaults = roomDefaults(ctx.isGroup);
-      knownRooms.set(ctx.chatId, {
-        id: ctx.chatId,
-        platform: ctx.platform,
-        language: 'en',
-        systemPrompt: defaults.systemPrompt,
-        contextLimit: defaults.contextLimit,
-        temperature: defaults.temperature,
-        maxTokens: defaults.maxTokens,
-        allowTools: defaults.allowTools,
-        autoReplyAll: defaults.autoReplyAll,
-        summarize: defaults.summarize,
-        longTermMemory: defaults.longTermMemory,
-        created_at: new Date(),
-      });
+    const roomKey = getCanonicalRoomKey(ctx);
+    if (!contextsByRoomKey.has(roomKey)) contextsByRoomKey.set(roomKey, ctx);
+  }
+
+  const identities = new Map<string, ReturnType<typeof resolveRoomIdentity>>();
+  for (const [roomKey, ctx] of contextsByRoomKey) {
+    identities.set(roomKey, resolveRoomIdentity({ ...ctx, roomKey }));
+  }
+  const roomConditions = [...identities.values()].map(identity =>
+    roomIdentityCondition(chatRoomsRoomColumns(), identity),
+  );
+  const roomQuery = db.select().from(chatRooms) as unknown as {
+    where?: (condition: unknown) => Promise<typeof chatRooms.$inferSelect[]> | typeof chatRooms.$inferSelect[];
+    then?: (resolve: (value: typeof chatRooms.$inferSelect[]) => unknown) => unknown;
+  };
+  let existingRoomRows: Array<typeof chatRooms.$inferSelect> = [];
+  if (roomConditions.length === 1 && typeof roomQuery.where === 'function') {
+    existingRoomRows = await roomQuery.where(roomConditions[0]);
+  } else if (roomConditions.length > 1 && typeof roomQuery.where === 'function') {
+    existingRoomRows = await roomQuery.where(or(...roomConditions)!);
+  } else {
+    const resolved = await (roomQuery as unknown as Promise<Array<typeof chatRooms.$inferSelect>>);
+    existingRoomRows = Array.isArray(resolved) ? resolved : [];
+  }
+
+  const knownRooms = new Map<string, typeof chatRooms.$inferInsert>();
+  const internalRoomIds = new Map<string, string>();
+  const canonicalRoomIdsEnabled = hasCanonicalRoomKeyColumns();
+
+  for (const [roomKey, ctx] of contextsByRoomKey) {
+    const identity = identities.get(roomKey)!;
+    const matches = existingRoomRows.filter(row =>
+      row.roomKey === roomKey
+      || (row.id === identity.roomId && row.platform === identity.platform),
+    );
+    const existing = pickPreferredRoomRow(matches, roomKey);
+    if (existing) {
+      internalRoomIds.set(roomKey, existing.id);
+      continue;
     }
+
+    const defaults = roomDefaults(ctx.isGroup);
+    const internalRoomId = canonicalRoomIdsEnabled ? roomKey : identity.roomId;
+    const room: typeof chatRooms.$inferInsert = {
+      id: internalRoomId,
+      ...chatRoomKeyInsertValues(roomKey),
+      platform: identity.platform,
+      language: 'en',
+      systemPrompt: defaults.systemPrompt,
+      contextLimit: defaults.contextLimit,
+      temperature: defaults.temperature,
+      maxTokens: defaults.maxTokens,
+      allowTools: defaults.allowTools,
+      autoReplyAll: defaults.autoReplyAll,
+      summarize: defaults.summarize,
+      longTermMemory: defaults.longTermMemory,
+      created_at: new Date(),
+    };
+    knownRooms.set(roomKey, room);
+    internalRoomIds.set(roomKey, internalRoomId);
+  }
+  result.roomsSeen = contextsByRoomKey.size;
+
+  const failedRoomIds = new Set<string>();
+  const rooms = [...knownRooms.values()];
+  for (let offset = 0; offset < rooms.length && offset / ROOM_BATCH_SIZE < MAX_BATCHES; offset += ROOM_BATCH_SIZE) {
+    const chunk = rooms.slice(offset, offset + ROOM_BATCH_SIZE);
+    try {
+      await withRetry(() => db.insert(chatRooms).values(chunk).onConflictDoNothing().run());
+    } catch (error) {
+      result.failedBatches++;
+      for (const room of chunk) failedRoomIds.add(room.id);
+      logger.error({ err: error, batch: offset / ROOM_BATCH_SIZE }, 'Historical room batch failed');
+    }
+  }
+
+  const payloads: (typeof messages.$inferInsert)[] = [];
+  for (const ctx of selected) {
+    const roomKey = getCanonicalRoomKey(ctx);
+    const roomId = internalRoomIds.get(roomKey);
+    if (!roomId || failedRoomIds.has(roomId)) continue;
     const isFromMe = ctx.rawMessage?.key?.fromMe === true;
     payloads.push({
-      chatRoomId: ctx.chatId,
+      chatRoomId: roomId,
+      ...messageRoomKeyInsertValues(roomKey),
       platform: ctx.platform,
       providerMessageId: ctx.messageId,
       senderId: ctx.senderId,
@@ -120,20 +193,6 @@ export async function syncHistoricalDatabase(
       mimeType: ctx.text ? null : 'application/octet-stream',
       created_at: historicalTimestamp(ctx),
     });
-  }
-  result.roomsSeen = knownRooms.size;
-
-  const failedRoomIds = new Set<string>();
-  const rooms = Array.from(knownRooms.values());
-  for (let offset = 0; offset < rooms.length && offset / ROOM_BATCH_SIZE < MAX_BATCHES; offset += ROOM_BATCH_SIZE) {
-    const chunk = rooms.slice(offset, offset + ROOM_BATCH_SIZE);
-    try {
-      await withRetry(() => db.insert(chatRooms).values(chunk).onConflictDoNothing().run());
-    } catch (error) {
-      result.failedBatches++;
-      for (const room of chunk) failedRoomIds.add(room.id);
-      logger.error({ err: error, batch: offset / ROOM_BATCH_SIZE }, 'Historical room batch failed');
-    }
   }
 
   for (let offset = 0; offset < payloads.length && offset / MESSAGE_BATCH_SIZE < MAX_BATCHES; offset += MESSAGE_BATCH_SIZE) {

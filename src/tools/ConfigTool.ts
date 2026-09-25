@@ -30,11 +30,17 @@ import { BaseTool } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms, type ChatRoom } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { ConfigService } from '../utils/ConfigService';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 import { getErrorMessage } from '../utils/errorUtils';
+import {
+  chatRoomsRoomColumns,
+  pickPreferredRoomRow,
+  resolveRoomIdentity,
+  roomIdentityCondition,
+  roomKeyBackfill,
+} from '../agent/roomKey';
 
 const log = logger.child({ module: 'ConfigTool' });
 const CONFIG_KEYS = ['systemPrompt', 'contextLimit', 'temperature', 'maxTokens', 'allowTools', 'autoReplyAll', 'summarize', 'longTermMemory'] as const;
@@ -147,8 +153,13 @@ export class ConfigTool extends BaseTool {
     const { action, key, value } = args;
     log.debug({ action, key, chatId: ctx.chatId, senderId: ctx.senderId }, 'Config tool invoked');
 
-    // Fetch current room
-    const room = (await db.select().from(chatRooms).where(eq(chatRooms.id, ctx.chatId)))[0];
+    // Room config lookup prefers the canonical room key and falls back to the
+    // legacy chat-room id so a pre-migration room row stays editable.
+    const roomIdentity = resolveRoomIdentity(ctx);
+    const roomColumns = chatRoomsRoomColumns();
+    const roomCondition = roomIdentityCondition(roomColumns, roomIdentity);
+    const rows = await db.select().from(chatRooms).where(roomCondition);
+    const room = pickPreferredRoomRow(rows, roomIdentity.roomKey);
     if (!room) return 'Error: Chat room not found in database.';
 
     const resolved = ConfigService.getResolvedConfig(room, ctx.isGroup);
@@ -178,7 +189,10 @@ export class ConfigTool extends BaseTool {
         return `Please provide a valid key to reset to global default.${suggestionStr}\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
       }
       const updateData: RoomConfigUpdate = { [key]: null };
-      await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
+      // Dual write: adopt the canonical key on rows the migration has not
+      // backfilled yet, so the next lookup resolves through room_key.
+      const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
+      await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
       log.info({ chatId: ctx.chatId, key, resetBy: ctx.senderId }, 'Config key reset to default');
       return `Configuration \`${key}\` has been reset to its global fallback value.`;
     }
@@ -195,8 +209,9 @@ export class ConfigTool extends BaseTool {
       try {
         const parsedValue = parseConfigValue(key, value);
         const updateData = buildConfigUpdate(key, parsedValue);
+        const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
 
-        await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
+        await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
         log.info({ chatId: ctx.chatId, key, setBy: ctx.senderId }, 'Config key updated');
         return `Successfully updated \`${key}\` for this room.`;
 

@@ -56,6 +56,9 @@ mock.module('../src/db', () => ({
     insert: () => ({
       values: (vals: any) => ({
         run: () => { lastInsertedValues = vals; },
+        onConflictDoNothing: () => ({
+          run: () => { lastInsertedValues = vals; },
+        }),
       }),
     }),
     delete: () => ({

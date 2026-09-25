@@ -20,9 +20,14 @@ import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
+import {
+  chatRoomsRoomColumns,
+  resolveRoomIdentity,
+  roomIdentityCondition,
+  roomKeyWriteValues,
+} from '../agent/roomKey';
 
 const log = logger.child({ module: 'LanguageTool' });
 type LanguageToolArgs = ToolArgs & {
@@ -71,12 +76,15 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
 
     try {
       await ctx.react?.('⏳');
-      // Update the database for the active chat room
+      // Update the database for the active chat room, addressed by the canonical
+      // room key (legacy id still accepted) and dual-writing that key.
+      const roomIdentity = resolveRoomIdentity(ctx);
+      const roomColumns = chatRoomsRoomColumns();
       await db.update(chatRooms)
-        .set({ language: lang_code })
-        .where(eq(chatRooms.id, ctx.chatId));
+        .set({ language: lang_code, ...roomKeyWriteValues(roomColumns.canonical, roomIdentity.roomKey) })
+        .where(roomIdentityCondition(roomColumns, roomIdentity));
 
-      log.info({ chatId: ctx.chatId, lang_code, changedBy: ctx.senderId }, 'Room language updated');
+      log.info({ chatId: ctx.chatId, roomKey: roomIdentity.roomKey, lang_code, changedBy: ctx.senderId }, 'Room language updated');
 
       const key = lang_code === 'id' ? 'language.success_id' : 'language.success_en';
       return t(lang_code, key);

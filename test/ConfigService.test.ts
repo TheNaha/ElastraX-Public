@@ -14,6 +14,7 @@ const baseRoom = (): ChatRoom => ({
   autoReplyAll: null,
   summarize: null,
   longTermMemory: null,
+  roomKey: null,
   created_at: new Date(),
 });
 
@@ -276,6 +277,7 @@ describe('ConfigService', () => {
         autoReplyAll: true,
         summarize: false,
         longTermMemory: null,
+        roomKey: null,
         created_at: new Date(),
       };
       const config = ConfigService.getResolvedConfig(room);

@@ -175,6 +175,16 @@ export class FlowHandler {
     this.memorySessions.set(key, session);
     const serialized = JSON.stringify(session);
     try {
+    const roomKey = session.roomId && session.platform
+      ? `room:${session.platform}:${session.roomId}`
+      : null;
+    const roomKeyColumn = (flowSessions as unknown as { roomKey?: unknown }).roomKey;
+    const values = {
+      id: key,
+      data: serialized,
+      updated_at: new Date(),
+      ...(roomKeyColumn && roomKey ? { roomKey } : {}),
+    };
     const builder = (db.insert(flowSessions) as unknown as {
       values: (values: unknown) => {
         onConflictDoUpdate?: (options: unknown) => { run?: () => Promise<unknown> } | Promise<unknown>;
@@ -182,7 +192,7 @@ export class FlowHandler {
         then?: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) => Promise<unknown>;
         onConflictDoNothing?: () => Promise<unknown>;
       };
-    }).values({ id: key, data: serialized, updated_at: new Date() });
+    }).values(values);
     const upsert = builder.onConflictDoUpdate;
     if (typeof upsert === 'function') {
       const result = upsert.call(builder, { target: flowSessions.id, set: { data: serialized, updated_at: new Date() } });

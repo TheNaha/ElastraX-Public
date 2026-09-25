@@ -70,6 +70,16 @@ import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { sanitizeRawMessage } from '../utils/rawMessage';
 import { OutboxService } from '../messaging/OutboxService';
 import { getInlineMediaEligibility } from '../providers/media';
+import {
+  chatRoomKeyInsertValues,
+  chatRoomsRoomColumns,
+  hasCanonicalRoomKeyColumns,
+  messageRoomKeyInsertValues,
+  messagesRoomColumns,
+  pickPreferredRoomRow,
+  resolveRoomIdentity,
+  roomIdentityCondition,
+} from './roomKey';
 
 const modelRouter = getModelRouter();
 const persistentSummaryService = createPersistentSummaryService();
@@ -340,15 +350,28 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
   // Fetch or create the chat room early so that ctx.language is available to all
   // tools and flow handlers before any routing takes place.
-  let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
+  //
+  // Room identity is the platform-scoped canonical key
+  // (`room:<platform>:<chatId>`). Existing rows keep the raw provider id during
+  // the migration window; new rows use the canonical key as the internal primary
+  // key so identical remote ids on different platforms can coexist. Provider
+  // delivery always continues to use `ctx.chatId`.
+  const roomIdentity = resolveRoomIdentity(ctx);
+  const roomRows = await db
+    .select()
+    .from(chatRooms)
+    .where(roomIdentityCondition(chatRoomsRoomColumns(), roomIdentity));
+  let room = pickPreferredRoomRow(roomRows, roomIdentity.roomKey);
   if (room && room.platform !== platform) {
-    throw new Error(`Room ID collision between ${room.platform} and ${platform}`);
+    throw new Error(`Room identity resolves to platform ${room.platform}, expected ${platform}`);
   }
   if (!room) {
     const defaults = ConfigService.getDefaults(isGroup);
-    log.info({ chatId, platform }, 'New chat room created');
+    const internalRoomId = hasCanonicalRoomKeyColumns() ? roomIdentity.roomKey : chatId;
+    log.info({ chatId, roomKey: roomIdentity.roomKey, platform }, 'New chat room created');
     const newRoom: typeof chatRooms.$inferInsert = {
-      id: chatId,
+      id: internalRoomId,
+      ...chatRoomKeyInsertValues(roomIdentity.roomKey),
       platform,
       language: 'en',
       systemPrompt: defaults.systemPrompt,
@@ -362,13 +385,20 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       created_at: new Date(),
     };
     await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
-    room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0] ?? {
+    room = (pickPreferredRoomRow(
+      await db.select().from(chatRooms).where(roomIdentityCondition(chatRoomsRoomColumns(), roomIdentity)),
+      roomIdentity.roomKey,
+    ) ?? {
       ...newRoom,
-      id: chatId,
+      id: internalRoomId,
       created_at: newRoom.created_at ?? new Date(),
-    };
+    }) as typeof chatRooms.$inferSelect;
   }
+  if (!room) throw new Error(`Unable to resolve room ${roomIdentity.roomKey}`);
   ctx.language = room.language;
+  // Stored id of the resolved room row: used for every foreign-key write below so
+  // the row keeps pointing at the same room regardless of the id convention.
+  const roomId = room.id;
 
   // V7.11: Resolve user roles once and compute privilege-based rate limits.
   const { roles: userRoles, privileges } = await AuthService.getAccessProfile(await ctx.resolveRoles());
@@ -533,7 +563,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     const inboundInsert = await db.insert(messages).values({
-      chatRoomId: chatId,
+      chatRoomId: roomId,
+      ...messageRoomKeyInsertValues(roomIdentity.roomKey),
       senderId: ctx.senderId,
       senderName,
       role: 'user',
@@ -561,7 +592,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               .set({ mediaPath: ctx.mediaPath, mimeType: ctx.mimeType })
               .where(and(
                 eq(messages.platform, platform),
-                eq(messages.chatRoomId, chatId),
+                eq(messages.chatRoomId, roomId),
                 eq(messages.providerMessageId, ctx.messageId),
               ));
           }
@@ -571,7 +602,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               .set({ mediaPath: ctx.quoted.mediaPath, mimeType: ctx.quoted.mimeType })
               .where(and(
                 eq(messages.platform, platform),
-                eq(messages.chatRoomId, chatId),
+                eq(messages.chatRoomId, roomId),
                 eq(messages.providerMessageId, ctx.quoted.stanzaId),
               ));
           }
@@ -627,7 +658,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       providerMessageId: messages.providerMessageId,
     })
       .from(messages)
-      .where(eq(messages.chatRoomId, chatId))
+      .where(roomIdentityCondition(messagesRoomColumns(), roomIdentity))
       .orderBy(desc(messages.created_at), desc(messages.id))
       .limit(historyFetchLimit);
 
@@ -754,7 +785,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         message,
       }));
       const summaryRun = await persistentSummaryService.summarize({
-        scope: `${platform}:${chatId}`,
+        scope: roomIdentity.roomKey,
         entries,
         keepCount: effectiveContextLimit,
         callLLM: async summaryMessages => {
@@ -1061,7 +1092,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // 4. Save Final AI Response
     await db.insert(messages).values({
-      chatRoomId: chatId,
+      chatRoomId: roomId,
+      ...messageRoomKeyInsertValues(roomIdentity.roomKey),
       senderId: 'bot',
       senderName: 'ElastraX',
       role: 'assistant',

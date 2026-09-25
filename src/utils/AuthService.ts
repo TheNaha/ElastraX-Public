@@ -5,7 +5,7 @@
 
 import { db } from '../db';
 import { userRoles, rolePrivileges } from '../db/schema';
-import { eq, and, inArray } from 'drizzle-orm';
+import { eq, and, inArray, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
 
@@ -107,6 +107,23 @@ function mergeMin(values: number[]): number {
   return Math.min(...finite);
 }
 
+function roomKeyFor(platform: string, scope: string): string {
+  return `room:${platform}:${scope}`;
+}
+
+function legacyScopeFor(platform: string, scope: string): string {
+  const prefix = `room:${platform}:`;
+  return scope.startsWith(prefix) ? scope.slice(prefix.length) : scope;
+}
+
+function normalizeRoleScope(platform: string, scope: string): { scope: string; scopeRoomKey: string | null } {
+  const legacyScope = legacyScopeFor(platform, scope);
+  return {
+    scope: legacyScope,
+    scopeRoomKey: legacyScope === 'global' ? null : roomKeyFor(platform, legacyScope),
+  };
+}
+
 export function isPrivilegeField(value: string | undefined): value is PrivilegeField {
   return value !== undefined && PRIVILEGE_FIELDS.includes(value as PrivilegeField);
 }
@@ -153,7 +170,8 @@ export class AuthService {
       }
 
       let userIds: string[];
-      let roleRows: Array<{ scope: string; role: string }>;
+      let roleRows: Array<{ scope: string; role: string; scopeRoomKey?: string | null }>;
+      const canonicalChatRoomKey = chatId ? roomKeyFor(platform, chatId) : null;
 
       try {
         const resolved = await IdentityService.getJidsAndRoles(userId, chatId, platform);
@@ -170,7 +188,11 @@ export class AuthService {
 
       const appliedRoles: string[] = [];
       for (const row of roleRows) {
-        if (BUILTIN_ROLES.includes(row.role) && (row.scope === 'global' || row.scope === chatId)) {
+        if (BUILTIN_ROLES.includes(row.role) && (
+          row.scope === 'global'
+          || (chatId !== undefined && row.scope === chatId)
+          || (canonicalChatRoomKey !== null && (row.scope === canonicalChatRoomKey || row.scopeRoomKey === canonicalChatRoomKey))
+        )) {
           roles.add(row.role);
           appliedRoles.push(row.role);
         }
@@ -194,13 +216,16 @@ export class AuthService {
     }
   }
 
-  static canManageScope(actorRoles: readonly string[], targetScope: string, currentScope?: string): boolean {
+  static canManageScope(actorRoles: readonly string[], targetScope: string, currentScope?: string, platform = 'whatsapp'): boolean {
     if (actorRoles.includes('owner')) return true;
-    return actorRoles.includes('admin') && currentScope !== undefined && targetScope === currentScope;
+    if (!actorRoles.includes('admin') || currentScope === undefined) return false;
+    const target = legacyScopeFor(platform, targetScope);
+    const current = legacyScopeFor(platform, currentScope);
+    return target === current;
   }
 
-  static assertRoleScopeAllowed(actorRoles: readonly string[], targetScope: string, currentScope?: string): void {
-    if (!this.canManageScope(actorRoles, targetScope, currentScope)) {
+  static assertRoleScopeAllowed(actorRoles: readonly string[], targetScope: string, currentScope?: string, platform = 'whatsapp'): void {
+    if (!this.canManageScope(actorRoles, targetScope, currentScope, platform)) {
       throw new Error('You are not allowed to manage roles in that scope');
     }
   }
@@ -237,6 +262,8 @@ export class AuthService {
     if (!platform.trim()) {
       throw new Error('Role platform is required');
     }
+    const normalizedScope = normalizeRoleScope(platform, scope);
+    scope = normalizedScope.scope;
 
     const { db, userRoles } = this.deps;
     logger.info({ role, scope, platform }, '[AuthService] setRole - start');
@@ -254,7 +281,7 @@ export class AuthService {
       const current = existing[0]!;
       await db
         .update(userRoles)
-        .set({ role, grantedBy })
+        .set({ role, grantedBy, scopeRoomKey: normalizedScope.scopeRoomKey })
         .where(and(
           eq(userRoles.userId, userId),
           eq(userRoles.platform, platform),
@@ -266,6 +293,7 @@ export class AuthService {
         userId,
         platform,
         scope,
+        scopeRoomKey: normalizedScope.scopeRoomKey,
         role,
         grantedBy,
         created_at: new Date(),
@@ -281,12 +309,13 @@ export class AuthService {
     platform: string = 'whatsapp',
   ): Promise<boolean> {
     const { db, userRoles } = this.deps;
-    logger.info({ scope, role, platform }, '[AuthService] removeRole - start');
+    const normalizedScope = normalizeRoleScope(platform, scope);
+    logger.info({ scope: normalizedScope.scope, role, platform }, '[AuthService] removeRole - start');
 
     const conditions = and(
       eq(userRoles.userId, userId),
       eq(userRoles.platform, platform),
-      eq(userRoles.scope, scope),
+      eq(userRoles.scope, normalizedScope.scope),
       eq(userRoles.role, role),
     );
 
@@ -305,25 +334,30 @@ export class AuthService {
   static async listRoles(
     scope: string,
     platform?: string,
-  ): Promise<Array<{ userId: string; role: string; platform: string; grantedBy: string }>> {
+  ): Promise<Array<{ userId: string; role: string; platform: string; scopeRoomKey?: string | null; grantedBy: string }>> {
     const { db, userRoles } = this.deps;
-    return db
+    const rows = await db
       .select({
         userId: userRoles.userId,
         role: userRoles.role,
         platform: userRoles.platform,
+        scopeRoomKey: userRoles.scopeRoomKey,
         grantedBy: userRoles.grantedBy,
       })
       .from(userRoles)
       .where(platform
-        ? and(eq(userRoles.scope, scope), eq(userRoles.platform, platform))
-        : eq(userRoles.scope, scope));
+        ? and(
+            or(eq(userRoles.scope, scope), eq(userRoles.scopeRoomKey, scope)),
+            eq(userRoles.platform, platform),
+          )
+        : or(eq(userRoles.scope, scope), eq(userRoles.scopeRoomKey, scope)));
+    return rows.map(row => row.scopeRoomKey ? row : ({ userId: row.userId, role: row.role, platform: row.platform, grantedBy: row.grantedBy }));
   }
 
   static async getUserRoles(
     userId: string,
     platform?: string,
-  ): Promise<Array<{ scope: string; role: string; platform?: string }>> {
+  ): Promise<Array<{ scope: string; scopeRoomKey?: string | null; role: string; platform?: string }>> {
     const { db, userRoles } = this.deps;
     let userIds: string[];
     try {
@@ -334,9 +368,10 @@ export class AuthService {
 
     const roleLookupCondition = userIds.length === 1 ? eq(userRoles.userId, userIds[0]!) : inArray(userRoles.userId, userIds);
 
-    return db
+    const rows = await db
       .select({
         scope: userRoles.scope,
+        scopeRoomKey: userRoles.scopeRoomKey,
         role: userRoles.role,
         platform: userRoles.platform,
       })
@@ -344,6 +379,7 @@ export class AuthService {
       .where(platform
         ? and(roleLookupCondition, eq(userRoles.platform, platform))
         : roleLookupCondition);
+    return rows.map(row => row.scopeRoomKey ? row : { scope: row.scope, role: row.role, platform: row.platform });
   }
 
   // ── Privileges API ──────────────────────────────────────────────────────────

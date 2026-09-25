@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 import { NotificationSubscriptionService } from '../src/utils/NotificationSubscriptionService';
 import { ServiceBindingService } from '../src/utils/ServiceBindingService';
 
@@ -47,15 +48,31 @@ function createFakeDb(selectResults: unknown[]) {
   return { db, inserts, updates, deletes };
 }
 
-const subscriptionsTable = {
-  id: 'id',
-  userId: 'userId',
-  platform: 'platform',
-  serviceType: 'serviceType',
-  chatRoomId: 'chatRoomId',
-  notifyTypes: 'notifyTypes',
-} as any;
+// A real drizzle table so the service can detect its canonical `roomKey` column;
+// a plain object double would deliberately exercise the pre-migration path.
+const subscriptionsTable = sqliteTable('notification_subscriptions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull(),
+  platform: text('platform').notNull(),
+  serviceType: text('service_type').notNull(),
+  chatRoomId: text('chat_room_id').notNull(),
+  roomKey: text('room_key'),
+  notifyTypes: text('notify_types'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
 
+/** The same shape without a `roomKey` column: a pre-migration table. */
+const legacySubscriptionsTable = sqliteTable('notification_subscriptions', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  userId: text('user_id').notNull(),
+  platform: text('platform').notNull(),
+  serviceType: text('service_type').notNull(),
+  chatRoomId: text('chat_room_id').notNull(),
+  notifyTypes: text('notify_types'),
+  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
+});
+
+type SubscriptionTable = typeof import('../src/db/schema').notificationSubscriptions;
 type SubscriptionRow = typeof import('../src/db/schema').notificationSubscriptions.$inferSelect;
 
 describe('NotificationSubscriptionService', () => {
@@ -86,7 +103,64 @@ describe('NotificationSubscriptionService', () => {
     });
 
     expect(fake.inserts).toHaveLength(1);
-    expect(fake.updates).toEqual([{ notifyTypes: '["updated"]' }]);
+    // The insert dual-writes the canonical key next to the legacy raw room id.
+    expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a', roomKey: 'room:discord:room-a' });
+    // A row the migration has not backfilled yet is repaired on update.
+    expect(fake.updates).toEqual([{ notifyTypes: '["updated"]', roomKey: 'room:discord:room-a' }]);
+  });
+
+  test('subscribe keeps working on a table without a room_key column', async () => {
+    const fake = createFakeDb([[]]);
+    NotificationSubscriptionService.setDepsForTesting({
+      db: fake.db as any,
+      notificationSubscriptions: legacySubscriptionsTable as unknown as SubscriptionTable,
+    });
+
+    await NotificationSubscriptionService.subscribe({
+      userId: 'user-1',
+      platform: 'discord',
+      serviceType: 'all',
+      chatRoomId: 'room-a',
+    });
+
+    expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a' });
+    expect(fake.inserts[0]).not.toHaveProperty('roomKey');
+  });
+
+  test('subscribe normalises a canonical key back to the raw provider room id', async () => {
+    const fake = createFakeDb([[]]);
+    NotificationSubscriptionService.setDepsForTesting({
+      db: fake.db as any,
+      notificationSubscriptions: subscriptionsTable,
+    });
+
+    await NotificationSubscriptionService.subscribe({
+      userId: 'user-1',
+      platform: 'discord',
+      serviceType: 'all',
+      chatRoomId: 'room:discord:room-a',
+      roomKey: 'room:discord:room-a',
+    });
+
+    expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a', roomKey: 'room:discord:room-a' });
+  });
+
+  test('subscribe refuses a canonical key from another platform without owner permission', async () => {
+    const fake = createFakeDb([[]]);
+    NotificationSubscriptionService.setDepsForTesting({
+      db: fake.db as any,
+      notificationSubscriptions: subscriptionsTable,
+    });
+
+    await expect(NotificationSubscriptionService.subscribe({
+      userId: 'user-1',
+      platform: 'discord',
+      serviceType: 'all',
+      chatRoomId: 'room:whatsapp:room-a',
+      currentRoomId: 'room-a',
+      currentRoomKey: 'room:discord:room-a',
+    })).rejects.toThrow('Foreign notification rooms require owner permission.');
+    expect(fake.inserts).toHaveLength(0);
   });
 
   test('unsubscribe returns false for missing rows and true when a row exists', async () => {
@@ -129,10 +203,12 @@ describe('NotificationSubscriptionService', () => {
     });
 
     const rooms = await NotificationSubscriptionService.getNotificationRooms('user-1', 'discord', 'seerr');
+    // `chatRoomId` stays the raw provider room id; `roomKey` is derived when the
+    // legacy row has not been backfilled yet.
     expect(rooms).toEqual([
-      { chatRoomId: 'room-a', platform: 'discord' },
-      { chatRoomId: 'shared', platform: 'discord' },
-      { chatRoomId: 'room-b', platform: 'discord' },
+      { chatRoomId: 'room-a', roomKey: 'room:discord:room-a', platform: 'discord' },
+      { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord' },
+      { chatRoomId: 'room-b', roomKey: 'room:discord:room-b', platform: 'discord' },
     ]);
   });
 
@@ -145,22 +221,22 @@ describe('NotificationSubscriptionService', () => {
       expect(serviceType).toBe('seerr');
       if (userId === 'admin-1') {
         return [
-          { chatRoomId: 'room-a', platform: 'discord' },
-          { chatRoomId: 'shared', platform: 'discord' },
+          { chatRoomId: 'room-a', roomKey: 'room:discord:room-a', platform: 'discord' },
+          { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord' },
         ];
       }
 
       return [
-        { chatRoomId: 'shared', platform: 'discord' },
-        { chatRoomId: 'room-b', platform: 'discord' },
+        { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord' },
+        { chatRoomId: 'room-b', roomKey: 'room:discord:room-b', platform: 'discord' },
       ];
     });
 
     const rooms = await NotificationSubscriptionService.getAdminNotificationRooms('seerr');
     expect(rooms).toEqual([
-      { chatRoomId: 'room-a', platform: 'discord', userId: 'admin-1' },
-      { chatRoomId: 'shared', platform: 'discord', userId: 'admin-1' },
-      { chatRoomId: 'room-b', platform: 'discord', userId: 'admin-2' },
+      { chatRoomId: 'room-a', roomKey: 'room:discord:room-a', platform: 'discord', userId: 'admin-1' },
+      { chatRoomId: 'shared', roomKey: 'room:discord:shared', platform: 'discord', userId: 'admin-1' },
+      { chatRoomId: 'room-b', roomKey: 'room:discord:room-b', platform: 'discord', userId: 'admin-2' },
     ]);
     expect(adminSpy).toHaveBeenCalledWith('seerr');
     expect(roomsSpy).toHaveBeenCalledTimes(2);

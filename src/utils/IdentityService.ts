@@ -183,20 +183,26 @@ export const IdentityService = {
     return [...new Set([...jids, ...aliases.map(row => row.alias)])].filter(Boolean);
   },
 
-  async getJidsAndRoles(userId: string, chatId?: string, platform?: string): Promise<{ jids: string[]; roles: Array<{ scope: string; role: string }> }> {
+  async getJidsAndRoles(userId: string, chatId?: string, platform?: string): Promise<{ jids: string[]; roles: Array<{ scope: string; scopeRoomKey?: string | null; role: string }> }> {
     const jids = await this.getAllJids(userId);
     if (jids.length === 0) return { jids, roles: [] };
+    const roomKey = chatId && platform ? `room:${platform}:${chatId}` : null;
     const scopeCondition = chatId
-      ? or(eq(deps.userRoles.scope, 'global'), eq(deps.userRoles.scope, chatId))
+      ? or(
+          eq(deps.userRoles.scope, 'global'),
+          eq(deps.userRoles.scope, chatId),
+          ...(roomKey ? [eq(deps.userRoles.scopeRoomKey, roomKey)] : []),
+        )
       : eq(deps.userRoles.scope, 'global');
+    const selection = { scope: deps.userRoles.scope, scopeRoomKey: deps.userRoles.scopeRoomKey, role: deps.userRoles.role };
     const rows = platform
-      ? await deps.db.select({ scope: deps.userRoles.scope, role: deps.userRoles.role })
+      ? await deps.db.select(selection)
         .from(deps.userRoles)
         .where(and(inArray(deps.userRoles.userId, jids), eq(deps.userRoles.platform, platform), scopeCondition))
-      : await deps.db.select({ scope: deps.userRoles.scope, role: deps.userRoles.role })
+      : await deps.db.select(selection)
         .from(deps.userRoles)
         .where(and(inArray(deps.userRoles.userId, jids), scopeCondition));
-    return { jids, roles: rows };
+    return { jids, roles: rows.map(row => row.scopeRoomKey ? row : { scope: row.scope, role: row.role }) };
   },
 
   async getLidForPn(pn: string): Promise<string | undefined> {

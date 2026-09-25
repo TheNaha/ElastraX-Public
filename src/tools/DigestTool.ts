@@ -2,11 +2,11 @@ import { BaseTool, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { getErrorMessage } from '../utils/errorUtils';
 import { getModelRouter } from '../utils/ModelRouter';
 import { summarizeRoom } from '../utils/DigestService';
+import { chatRoomsRoomColumns, resolveRoomIdentity, roomIdentityCondition } from '../agent/roomKey';
 
 /** Injectable LLM callback (tests override this). */
 export const digestToolDeps: { callLLM?: (prompt: string) => Promise<string> } = {};
@@ -52,15 +52,18 @@ export class DigestTool extends BaseTool {
       : 24;
 
     const lang = ctx.language === 'id' ? 'id' : 'en';
+    // Room language and the digest itself are addressed by the canonical room
+    // key; DigestService keeps the legacy chat-room-id fallback readable.
+    const roomIdentity = resolveRoomIdentity(ctx);
 
     try {
       const room = db.select({ language: chatRooms.language })
         .from(chatRooms)
-        .where(eq(chatRooms.id, ctx.chatId))
+        .where(roomIdentityCondition(chatRoomsRoomColumns(), roomIdentity))
         .all()[0];
       const roomLang = room?.language ?? ctx.language;
 
-      const result = await summarizeRoom(ctx.chatId, {
+      const result = await summarizeRoom(roomIdentity.roomKey, {
         hours,
         maxMessages: 500,
         lang: roomLang,

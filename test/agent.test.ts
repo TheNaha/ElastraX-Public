@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll, afterEach, beforeEach, mock, spyOn } from 'bun:test';
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, or } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -18,6 +18,7 @@ import * as toolsModule from '../src/tools';
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '../src/tools/BaseTool';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { chatRooms, messages } from '../src/db/schema';
+import { toRoomKey } from '../src/agent/roomKey';
 
 // ── Module mock backed by a real migrated temp database ──────────────────────
 // Bun module mocks are process-wide, so this fake must expose the full
@@ -221,9 +222,22 @@ async function seedHistory(chatId: string, rows: Array<{ role: string; content: 
   }
 }
 
-const roomRow = (id: string) => db.select().from(chatRooms).where(eq(chatRooms.id, id)).then(rows => rows[0]);
-const messagesFor = (chatId: string) =>
-  db.select().from(messages).where(eq(messages.chatRoomId, chatId)).orderBy(desc(messages.created_at));
+const roomRow = (id: string) => {
+  const roomKey = toRoomKey('whatsapp', id);
+  return db.select().from(chatRooms)
+    .where(or(eq(chatRooms.id, id), eq(chatRooms.id, roomKey), eq(chatRooms.roomKey, roomKey)))
+    .then(rows => rows[0]);
+};
+const messagesFor = (chatId: string) => {
+  const roomKey = toRoomKey('whatsapp', chatId);
+  return db.select().from(messages)
+    .where(or(
+      eq(messages.chatRoomId, chatId),
+      eq(messages.chatRoomId, roomKey),
+      eq(messages.roomKey, roomKey),
+    ))
+    .orderBy(desc(messages.created_at));
+};
 
 // ── Test suite ────────────────────────────────────────────────────────────────
 

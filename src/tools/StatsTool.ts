@@ -6,6 +6,7 @@ import { eq, count, min, sql, desc, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { messagesRoomColumns, resolveRoomIdentity, roomIdentityCondition } from '../agent/roomKey';
 
 const log = logger.child({ module: 'StatsTool' });
 
@@ -33,7 +34,11 @@ export class StatsTool extends BaseTool<ToolArgs> {
 
   async execute(_args: ToolArgs, ctx: MessageContext): Promise<string> {
     const lang = ctx.language ?? 'en';
-    log.debug({ chatId: ctx.chatId }, 'Fetching room stats');
+    // Stats are room-scoped: query the canonical room key and keep the legacy
+    // chat-room-id column readable so pre-migration history still counts.
+    const roomIdentity = resolveRoomIdentity(ctx);
+    const roomCondition = roomIdentityCondition(messagesRoomColumns(), roomIdentity);
+    log.debug({ chatId: ctx.chatId, roomKey: roomIdentity.roomKey }, 'Fetching room stats');
 
     try {
       const summary = db
@@ -43,7 +48,7 @@ export class StatsTool extends BaseTool<ToolArgs> {
           oldest: min(messages.created_at),
         })
         .from(messages)
-        .where(eq(messages.chatRoomId, ctx.chatId))
+        .where(roomCondition)
         .all()[0];
 
       const total = summary?.total ?? 0;
@@ -68,7 +73,7 @@ export class StatsTool extends BaseTool<ToolArgs> {
           msgCount: count(messages.id),
         })
         .from(messages)
-        .where(and(eq(messages.chatRoomId, ctx.chatId), eq(messages.role, 'user')))
+        .where(and(roomCondition, eq(messages.role, 'user')))
         .groupBy(messages.senderId, messages.senderName)
         .orderBy(desc(sql`count(${messages.id})`))
         .limit(1)

@@ -1,8 +1,9 @@
 import { describe, test, expect, mock, afterAll, beforeEach } from 'bun:test';
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { MessageContext } from '../src/core/MessageContext';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { chatRooms, messages } from '../src/db/schema';
+import { toRoomKey } from '../src/agent/roomKey';
 
 // A real, migrated temp database keeps this mock a strict superset of the
 // module's public surface, so a leaked mock can never break another test file.
@@ -112,9 +113,20 @@ const makeCtx = (overrides: Partial<MessageContext> & { messageId?: string } = {
   ...overrides,
 } as MessageContext);
 
-const roomRow = (id: string) => database.db.select().from(chatRooms).where(eq(chatRooms.id, id)).then(rows => rows[0]);
-const messageRowsFor = (chatId: string) =>
-  database.db.select().from(messages).where(eq(messages.chatRoomId, chatId));
+const roomRow = (id: string, platform: string = 'whatsapp') => {
+  const roomKey = toRoomKey(platform, id);
+  return database.db.select().from(chatRooms)
+    .where(or(eq(chatRooms.id, id), eq(chatRooms.id, roomKey), eq(chatRooms.roomKey, roomKey)))
+    .then(rows => rows[0]);
+};
+const messageRowsFor = (chatId: string, platform: string = 'whatsapp') => {
+  const roomKey = toRoomKey(platform, chatId);
+  return database.db.select().from(messages).where(or(
+    eq(messages.chatRoomId, chatId),
+    eq(messages.chatRoomId, roomKey),
+    eq(messages.roomKey, roomKey),
+  ));
+};
 
 describe('syncHistoricalDatabase', () => {
   beforeEach(() => {
@@ -170,8 +182,8 @@ describe('syncHistoricalDatabase', () => {
     ]);
 
     expect(result.roomsSeen).toBe(2);
-    expect((await roomRow(roomA))?.id).toBe(roomA);
-    expect((await roomRow(roomB))?.id).toBe(roomB);
+    expect((await roomRow(roomA))?.id).toBe(toRoomKey('whatsapp', roomA));
+    expect((await roomRow(roomB))?.id).toBe(toRoomKey('whatsapp', roomB));
   });
 
   test('should assign role "user" when rawMessage.key.fromMe is false', async () => {
@@ -245,10 +257,11 @@ describe('syncHistoricalDatabase', () => {
   test('should store the providerMessageId and platform on the message insert', async () => {
     const ctx = makeCtx({ messageId: 'provider-abc-123', platform: 'discord' });
     await syncHistoricalDatabase([ctx]);
-    const stored = (await messageRowsFor(ctx.chatId))[0];
+
+    const stored = (await messageRowsFor(ctx.chatId, 'discord'))[0];
     expect(stored?.providerMessageId).toBe('provider-abc-123');
     expect(stored?.platform).toBe('discord');
-    expect((await roomRow(ctx.chatId))?.platform).toBe('discord');
+    expect((await roomRow(ctx.chatId, 'discord'))?.platform).toBe('discord');
   });
 
   test('should store only the sanitised projection of rawMessage', async () => {

@@ -114,7 +114,7 @@ afterAll(() => {
 });
 
 describe('MemoryTool inert/private helpers', () => {
-  test('private memories are owned by the sender and group memories by the room', () => {
+  test('private memories are owned by the sender and group memories by the canonical room key', () => {
     const privateCtx = createMockCtx({ senderId: 'user-9', chatId: 'room-9' });
     expect(getMemoryOwnerId(privateCtx)).toBe('user-9');
     expect(getMemoryOwnerId(privateCtx, 'group')).toBe('user-9');
@@ -122,7 +122,12 @@ describe('MemoryTool inert/private helpers', () => {
 
     const groupCtx = createMockCtx({ senderId: 'user-9', chatId: 'room-9', isGroup: true });
     expect(getMemoryOwnerId(groupCtx)).toBe('user-9');
-    expect(getMemoryOwnerId(groupCtx, 'group')).toBe('room-9');
+    expect(getMemoryOwnerId(groupCtx, 'group')).toBe('room:whatsapp:room-9');
+  });
+
+  test('an explicit context room key wins over the derived key for the group scope', () => {
+    const groupCtx = createMockCtx({ senderId: 'user-9', chatId: 'room-9', isGroup: true, roomKey: 'room:whatsapp:alias-9' });
+    expect(getMemoryOwnerId(groupCtx, 'group')).toBe('room:whatsapp:alias-9');
   });
 
   test('stored content is wrapped as inert data and never treated as instructions', () => {
@@ -191,8 +196,20 @@ describe('MemoryTool consent gate', () => {
 
   test('consent is scoped per platform', async () => {
     const senderId = nextSender();
+    // Room lookup is platform scoped, so the Discord room is a separate room.
+    await db.insert(chatRooms).values({
+      id: 'chat-discord',
+      platform: 'discord',
+      language: 'en',
+      longTermMemory: true,
+      created_at: new Date(),
+    }).onConflictDoNothing().run();
+
     await tool.execute({ action: 'consent' }, createMockCtx({ senderId, platform: 'whatsapp' }));
-    const result = await tool.execute({ action: 'store', content: 'likes tea' }, createMockCtx({ senderId, platform: 'discord' }));
+    const result = await tool.execute(
+      { action: 'store', content: 'likes tea' },
+      createMockCtx({ senderId, platform: 'discord', chatId: 'chat-discord' }),
+    );
     expect(result).toContain('explicit consent is required');
   });
 });
@@ -246,14 +263,20 @@ describe('MemoryTool semantic dedupe integration', () => {
     expect(embedCalls[0]).toContain(`:${INERT_DATA_MARKER} likes pineapple pizza`);
   });
 
-  test('group store uses the room as owner and requires admin permission', async () => {
+  test('group store uses the canonical room key as owner and requires admin permission', async () => {
     const senderId = nextSender();
     await tool.execute(
       { action: 'store', content: 'group fact', consent: true, scope: 'group' },
       createMockCtx({ senderId, chatId: 'chat-1', isGroup: true }),
     );
-    expect(await storedMemoryFor('chat-1')).toHaveLength(1);
+    expect(await storedMemoryFor('room:whatsapp:chat-1')).toHaveLength(1);
     expect(await storedMemoryFor(senderId)).toHaveLength(0);
+    // The tool still reads the pre-migration raw chat id, so nothing is orphaned.
+    const listed = await tool.execute(
+      { action: 'retrieve', scope: 'group' },
+      createMockCtx({ senderId, chatId: 'chat-1', isGroup: true }),
+    );
+    expect(listed).toContain('group fact');
 
     const deniedSender = nextSender();
     const denied = await tool.execute(
@@ -262,6 +285,31 @@ describe('MemoryTool semantic dedupe integration', () => {
     );
     expect(denied).toContain('Group memory requires admin permission');
     expect(await storedMemoryFor(deniedSender)).toHaveLength(0);
+  });
+
+  test('group retrieve and forget also reach pre-migration rows keyed by the raw chat id', async () => {
+    await db.insert(memories).values({
+      id: 'legacy-group-mem',
+      ownerId: 'chat-legacy',
+      content: `${INERT_DATA_MARKER} legacy group fact`,
+      category: 'inert',
+      created_at: new Date(),
+    }).run();
+    await db.insert(chatRooms).values({
+      id: 'chat-legacy',
+      platform: 'whatsapp',
+      language: 'en',
+      longTermMemory: true,
+      created_at: new Date(),
+    }).onConflictDoNothing().run();
+
+    const ctx = createMockCtx({ senderId: nextSender(), chatId: 'chat-legacy', isGroup: true });
+    const listed = await tool.execute({ action: 'retrieve', scope: 'group' }, ctx);
+    expect(listed).toContain('legacy group fact');
+
+    const forgotten = await tool.execute({ action: 'forget', id: 'legacy-group-mem', scope: 'group' }, ctx);
+    expect(forgotten).toContain('Forgot memory legacy-group-mem');
+    expect(await storedMemoryFor('chat-legacy')).toHaveLength(0);
   });
 
   test('group scope is unavailable in a direct message', async () => {

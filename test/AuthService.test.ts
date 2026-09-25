@@ -20,6 +20,7 @@ describe('AuthService', () => {
         user_id TEXT NOT NULL,
         platform TEXT NOT NULL DEFAULT 'whatsapp',
         scope TEXT NOT NULL DEFAULT 'global',
+        scope_room_key TEXT,
         role TEXT NOT NULL DEFAULT 'user',
         granted_by TEXT NOT NULL,
         created_at INTEGER NOT NULL

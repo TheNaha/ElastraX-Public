@@ -39,6 +39,21 @@ import { jidBareId as bareNumber } from '../utils/jid';
 
 const log = logger.child({ module: 'RoleTool' });
 
+function scopeMatches(entryScope: string, entryRoomKey: string | null | undefined, currentScope: string, platform = 'whatsapp'): boolean {
+  const currentKey = `room:${platform}:${currentScope}`;
+  const legacyCurrent = currentScope.startsWith(`room:${platform}:`)
+    ? currentScope.slice(`room:${platform}:`.length)
+    : currentScope;
+  const legacyEntry = entryScope.startsWith(`room:${platform}:`)
+    ? entryScope.slice(`room:${platform}:`.length)
+    : entryScope;
+  return entryScope === 'global'
+    || entryScope === currentScope
+    || entryScope === currentKey
+    || entryRoomKey === currentKey
+    || legacyEntry === legacyCurrent;
+}
+
 type RoleToolArgs = {
   action?: string;
   user?: string;
@@ -58,6 +73,7 @@ export interface RoleViewEntry {
   userId: string;
   role: string;
   scope: string;
+  scopeRoomKey?: string | null;
   platform?: string;
   grantedBy?: string;
 }
@@ -85,7 +101,7 @@ export function createRoleAccessAdapter(service: Pick<typeof AuthService, 'listR
   return {
     async listRoles(scope, platform) {
       const rows = await service.listRoles(scope, platform);
-      return rows.map((row) => ({ ...row, scope, platform: platform ?? 'whatsapp' }));
+      return rows.map((row) => ({ ...row, scope, scopeRoomKey: row.scopeRoomKey, platform: platform ?? row.platform ?? 'whatsapp' }));
     },
     async setRole(input) {
       await service.setRole(input.userId, input.role, input.scope, input.platform, input.actorId);
@@ -101,8 +117,11 @@ export function canManageRoleScope(actorRoles: readonly string[], targetScope: s
   return actorRoles.includes('admin') && targetScope === currentScope;
 }
 
-export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform?: string): ScopedRoleView {
-  return { scope: currentScope, entries: entries.filter((entry) => (entry.scope === 'global' || entry.scope === currentScope) && (!platform || !entry.platform || entry.platform === platform)) };
+export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform = 'whatsapp'): ScopedRoleView {
+  return {
+    scope: currentScope,
+    entries: entries.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, currentScope, platform) && (!platform || !entry.platform || entry.platform === platform)),
+  };
 }
 
 export function assertRoleMutationAllowed(actorRoles: readonly string[], targetScope: string, currentScope: string): void {
@@ -187,7 +206,7 @@ export class RoleTool extends BaseTool {
     if (!scope || scope === 'here') scope = ctx.chatId;
     const scopeLabel = scope === 'global' ? 'global' : scope === ctx.chatId ? 'this chat' : scope;
     const callerRoles = await ctx.resolveRoles();
-    if (scope !== 'global' && scope !== ctx.chatId && !callerRoles.includes('owner')) {
+    if (scope !== 'global' && !scopeMatches(scope, null, ctx.chatId, ctx.platform) && !callerRoles.includes('owner')) {
       return t(lang, 'role.insufficient', { callerRole: callerRoles.filter((role) => role !== 'user').join(',') || 'user', targetRole: scope });
     }
     if (scope === 'global' && !callerRoles.includes('owner') && ['grant', 'revoke', 'list'].includes(String(action))) {
@@ -392,14 +411,14 @@ function formatExplicitRoles(
 
 async function buildTargetRoleSummary(targetId: string, chatId: string, platform = 'whatsapp', targetPn?: string): Promise<RoleSummary> {
   const allDbRoles = await AuthService.getUserRoles(targetId, platform);
-  const visibleRoles = allDbRoles.filter((entry) => (entry.scope === 'global' || entry.scope === chatId) && (!entry.platform || entry.platform === platform));
+  const visibleRoles = allDbRoles.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, chatId, platform) && (!entry.platform || entry.platform === platform));
   const effectiveRoles = new Set<string>(['user']);
   const ownerJid = process.env.BOT_OWNER_JID;
   const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
 
   if (isEnvOwner) effectiveRoles.add('owner');
   for (const row of visibleRoles) {
-    if (row.scope === 'global' || row.scope === chatId) effectiveRoles.add(row.role);
+    if (scopeMatches(row.scope, row.scopeRoomKey, chatId, platform)) effectiveRoles.add(row.role);
   }
 
   return {
@@ -412,7 +431,7 @@ async function buildTargetRoleSummary(targetId: string, chatId: string, platform
 
 async function buildSenderRoleSummary(ctx: MessageContext): Promise<RoleSummary> {
   const allDbRoles = await AuthService.getUserRoles(ctx.senderId, ctx.platform);
-  const visibleRoles = allDbRoles.filter((entry) => (entry.scope === 'global' || entry.scope === ctx.chatId) && (!entry.platform || entry.platform === ctx.platform));
+  const visibleRoles = allDbRoles.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, ctx.chatId, ctx.platform) && (!entry.platform || entry.platform === ctx.platform));
   return {
     explicitRoles: formatExplicitRoles(visibleRoles),
     effectiveRoles: await ctx.resolveRoles(),
