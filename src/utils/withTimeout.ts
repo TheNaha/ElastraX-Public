@@ -1,38 +1,93 @@
-/**
- * @file src/utils/withTimeout.ts
- * @description Shared timeout wrapper for promises.
- *
- * Races a promise against a timeout that rejects after a given number of
- * milliseconds, ensuring timers are cleaned up on both resolve and reject.
- *
- * Used by the agent loop, Scheduler, DigestService, and WebhookServer to
- * enforce send/receive deadlines without code duplication.
- */
+export class TimeoutError extends Error {
+  readonly code = 'TIMEOUT';
 
-/**
- * Wait for `promise` to settle, but reject if it takes longer than `timeoutMs`.
- *
- * @param promise   The promise to race against the timeout.
- * @param timeoutMs Timeout in milliseconds.
- * @param label     Optional label included in the timeout error message for
- *                  diagnostics. Defaults to `'operation'`.
- * @returns The resolved value of `promise` on success.
- * @throws  If the timeout fires or if `promise` rejects.
- */
+  constructor(label: string, timeoutMs: number) {
+    super(`${label} timed out after ${timeoutMs}ms`);
+    this.name = 'TimeoutError';
+  }
+}
+
+export interface WithTimeoutOptions {
+  signal?: AbortSignal;
+  abortController?: AbortController;
+  onTimeout?: (error: TimeoutError) => void;
+}
+
 export function withTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
-  label: string = 'operation',
+  label = 'operation',
+  options: WithTimeoutOptions = {},
 ): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+  return raceWithTimeout(Promise.resolve(promise), timeoutMs, label, options);
+}
+
+export async function withCancellableTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  label = 'operation',
+  signal?: AbortSignal,
+): Promise<T> {
+  validateTimeout(timeoutMs);
+  if (signal?.aborted) throw abortReason(signal);
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  signal?.addEventListener('abort', abortFromCaller, { once: true });
+  try {
+    return await raceWithTimeout(
+      Promise.resolve().then(() => operation(controller.signal)),
       timeoutMs,
+      label,
+      {
+        signal,
+        abortController: controller,
+        onTimeout: error => controller.abort(error),
+      },
+    );
+  } finally {
+    signal?.removeEventListener('abort', abortFromCaller);
+  }
+}
+
+function raceWithTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+  options: WithTimeoutOptions,
+): Promise<T> {
+  validateTimeout(timeoutMs);
+  if (options.signal?.aborted) return Promise.reject(abortReason(options.signal));
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onAbort);
+      callback();
+    };
+    const fail = (error: unknown) => finish(() => reject(error));
+    const onAbort = () => fail(abortReason(options.signal!));
+    const timer = setTimeout(() => {
+      const error = new TimeoutError(label, timeoutMs);
+      options.onTimeout?.(error);
+      options.abortController?.abort(error);
+      fail(error);
+    }, timeoutMs);
+    options.signal?.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      value => finish(() => resolve(value)),
+      error => fail(error),
     );
   });
+}
 
-  return Promise.race([promise, timeout]).finally(() => {
-    if (timer) clearTimeout(timer);
-  });
+function validateTimeout(timeoutMs: number): void {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('Timeout must be a positive safe integer.');
+  }
+}
+
+function abortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error('Operation aborted.');
 }

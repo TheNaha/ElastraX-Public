@@ -1,67 +1,49 @@
-/**
- * @file src/providers/whatsapp.ts
- * @description WhatsApp messaging provider for ElastraX, built on top of the
- *              Baileys library (@whiskeysockets/baileys).
- *
- * Responsibilities:
- *  - Manage the WhatsApp WebSocket connection lifecycle (connect, auto-reconnect, disconnect).
- *  - Display a QR code in the terminal on first run so the user can link their phone.
- *  - Persist Baileys authentication credentials to the SQLite `wa_auth_state` table via
- *    `useDBAuthState` — no file-system sessions folder required.
- *  - Sync historical messages sent before the bot started into the database.
- *  - For each incoming `notify` message, parse the raw Baileys WAMessage into a
- *    normalised `MessageContext` and forward it to the registered message handler.
- *  - Handle WhatsApp V7 LID (Linked ID) sessions where participant JIDs are in
- *    "@lid" format rather than the classic phone-number "@s.whatsapp.net" format.
- *  - Download and cache attached media to `./data/media/` asynchronously so
- *    tools can access the file without hitting the CDN again.
- *
- * Key concepts:
- *  - `botLid` — The bot's own LID JID, resolved once after connection.  Used to
- *    correctly mark quoted messages as "from the bot" in LID sessions.
- *  - `mediaReady` — A Promise exposed on every `MessageContext` that resolves once
- *    background media download is complete; tools `await ctx.mediaReady` before reading
- *    `ctx.mediaPath`.
- */
-
 import makeWASocket, {
   DisconnectReason,
-  WAMessage,
-  proto,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  type WAMessage,
+  proto,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
-import { BotProvider } from './BotProvider';
-import { MessageContext, SendMediaOptions, ReplyOptions, RawProviderMessage } from '../core/MessageContext';
+import { eq } from 'drizzle-orm';
+import type { BotProvider, BotProviderStatus } from './BotProvider';
+import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
+import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
+import { getMessageMediaInfo, parseWhatsAppMessage, type WhatsAppMediaInfo } from './whatsappParser';
+import {
+  deleteSavedMedia,
+  readMediaBuffer,
+  saveMediaStream,
+} from '../utils/MediaStorage';
+import type {
+  MediaAttachmentDescriptor,
+  MessageContext,
+  RawProviderMessage,
+  ReplyOptions,
+  SendMediaOptions,
+} from '../core/MessageContext';
 import { logger } from '../utils/logger';
-import { checkPermissions, resolveUserRoles } from '../utils/permissions';
+import { checkPermissions, invalidateNativeAdminCache, resolveUserRoles } from '../utils/permissions';
 import { useDBAuthState } from '../utils/useDBAuthState';
-import { saveMediaBuffer } from '../utils/MediaStorage';
 import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
-import { parseWhatsAppMessage, getFileLength } from './whatsappParser';
 import { db } from '../db';
 import { messages } from '../db/schema';
-import { eq } from 'drizzle-orm';
 import { IdentityService } from '../utils/IdentityService';
 import { AuthService } from '../utils/AuthService';
-import { readFileSync } from 'fs';
-
-/** Maximum file size in bytes that the bot will attempt to download (200 MB). */
-const MAX_MEDIA_SIZE = 200 * 1024 * 1024; // 200MB
 
 type BaileysSocket = ReturnType<typeof makeWASocket>;
 type SocketLogger = Parameters<typeof makeWASocket>[0]['logger'];
 type MediaDownloadOptions = NonNullable<Parameters<typeof downloadMediaMessage>[3]>;
-type LidMappingStore = {
-  getLIDForPN(targetJid: string): Promise<string | null | undefined>;
-};
 type SocketWithSignalRepository = BaileysSocket & {
   signalRepository?: {
-    lidMapping?: LidMappingStore;
+    lidMapping?: {
+      getLIDForPN(targetJid: string): Promise<string | null | undefined>;
+    };
   };
 };
+type LidMapping = NonNullable<NonNullable<SocketWithSignalRepository['signalRepository']>['lidMapping']>;
 type ExtendedMessageKey = WAMessage['key'] & {
   participantPn?: string;
   senderLid?: string;
@@ -70,34 +52,23 @@ type ExtendedMessageKey = WAMessage['key'] & {
 type ProviderMessageKey = proto.IMessageKey & {
   remoteJid?: string | null;
 };
+type MediaSource = {
+  descriptor: MediaAttachmentDescriptor;
+  message: WAMessage;
+  info: WhatsAppMediaInfo;
+};
 
-function getLidMapping(sock: BaileysSocket): LidMappingStore | undefined {
-  return (sock as unknown as SocketWithSignalRepository).signalRepository?.lidMapping;
-}
+export const WHATSAPP_TEXT_LIMIT = 65_536;
 
-async function resolveLidForPn(sock: BaileysSocket, targetJid: string): Promise<string | null> {
-  const lid = await getLidMapping(sock)?.getLIDForPN(targetJid);
-  return lid ?? null;
-}
-
-function createMediaDownloadOptions(sock: BaileysSocket): MediaDownloadOptions {
-  return {
-    logger: logger as unknown as MediaDownloadOptions['logger'],
-    reuploadRequest: sock.updateMediaMessage,
-  };
-}
-
-function isProviderMessageKey(value: unknown): value is ProviderMessageKey {
-  if (typeof value !== 'object' || value === null) {
-    return false;
+export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
+  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('WhatsApp chunk limit must be positive.');
+  const characters = Array.from(text);
+  if (characters.length === 0) return [''];
+  const chunks: string[] = [];
+  for (let offset = 0; offset < characters.length; offset += limit) {
+    chunks.push(characters.slice(offset, offset + limit).join(''));
   }
-
-  if (!('remoteJid' in value)) {
-    return false;
-  }
-
-  const remoteJid = (value as { remoteJid?: unknown }).remoteJid;
-  return typeof remoteJid === 'string' || remoteJid === null || remoteJid === undefined;
+  return chunks;
 }
 
 export const whatsAppProviderDeps = {
@@ -105,496 +76,476 @@ export const whatsAppProviderDeps = {
   fetchLatestVersion: fetchLatestBaileysVersion,
   createSocket: (options: Parameters<typeof makeWASocket>[0]) => makeWASocket(options),
   renderQr: (qr: string) => qrcode.generate(qr, { small: true }),
+  lookupStoredMessage: async (messageId: string): Promise<string | null> => {
+    const rows = await db
+      .select({ rawMessage: messages.rawMessage })
+      .from(messages)
+      .where(eq(messages.providerMessageId, messageId))
+      .limit(1);
+    return rows[0]?.rawMessage ?? null;
+  },
 };
 
-/**
- * WhatsApp platform provider.  Implements the `BotProvider` interface and manages
- * the full Baileys WebSocket session from QR-code login to graceful shutdown.
- */
 export class WhatsAppProvider implements BotProvider {
-  name = 'whatsapp' as const;
+  readonly name = 'whatsapp' as const;
   private sock: BaileysSocket | null = null;
   private messageHandler: ((ctx: MessageContext) => Promise<void>) | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  /** Consecutive failed reconnects — drives exponential backoff. Reset on 'open'. */
   private reconnectAttempts = 0;
-  private starting = false;
-  /**
-   * The bot's own LID JID (e.g. "265841933336713@lid"), resolved once the
-   * connection is open via sock.signalRepository.lidMapping.getLIDForPN().
-   * Used to correctly detect `fromMe` in V7 LID-based sessions where
-   * contextInfo.participant is a LID rather than a phone-number JID.
-   */
+  private desiredRunning = false;
+  private generation = 0;
+  private startPromise: Promise<void> | null = null;
+  private providerStatus: BotProviderStatus = 'stopped';
+  private providerError: Error | null = null;
   private botLid: string | null = null;
+  private readonly mediaControllers = new Set<AbortController>();
 
-  /** Convert sock.user.id (e.g. "628xxx:0@s.whatsapp.net") to a bare PN JID. */
-  private static botPnJid(userId: string): string {
-    return userId.split(':')[0].split('@')[0] + '@s.whatsapp.net';
+  get status(): BotProviderStatus {
+    return this.providerStatus;
   }
 
-  private scheduleReconnect(): void {
-    if (this.reconnectTimer) return;
-    // Exponential backoff: 1.5s, 3s, 6s, ... capped at 5 minutes. Prevents
-    // hammering WA servers (and flooding logs) during long outages.
+  get lastError(): Error | null {
+    return this.providerError;
+  }
+
+  get isOperational(): boolean {
+    return this.providerStatus === 'running';
+  }
+
+  private static botPnJid(userId: string): string {
+    return `${userId.split(':')[0].split('@')[0]}@s.whatsapp.net`;
+  }
+
+  async start(): Promise<void> {
+    this.desiredRunning = true;
+    if (this.sock && (this.providerStatus === 'running' || this.providerStatus === 'starting')) return;
+    const generation = ++this.generation;
+    const run = this.startForGeneration(generation);
+    this.startPromise = run;
+    try {
+      await run;
+    } finally {
+      if (this.startPromise === run) this.startPromise = null;
+    }
+  }
+
+  async stop(): Promise<void> {
+    this.desiredRunning = false;
+    this.generation++;
+    this.providerStatus = 'stopped';
+    this.providerError = null;
+    for (const controller of this.mediaControllers) controller.abort(new ProviderLifecycleError('whatsapp', 'media download'));
+    this.mediaControllers.clear();
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    const sock = this.sock;
+    this.sock = null;
+    this.botLid = null;
+    sock?.end(new Error('Stop called'));
+  }
+
+  onMessage(handler: (ctx: MessageContext) => Promise<void>): void {
+    this.messageHandler = handler;
+  }
+
+  async sendMessage(chatId: string, text: string): Promise<void> {
+    const sock = this.requireRunningSocket('sendMessage');
+    for (const chunk of chunkWhatsAppText(text)) {
+      await sock.sendMessage(chatId, { text: chunk });
+    }
+  }
+
+  private scheduleReconnect(generation: number): void {
+    if (!this.desiredRunning || generation !== this.generation || this.reconnectTimer) return;
     const delay = Math.min(1500 * 2 ** this.reconnectAttempts, 300_000);
-    this.reconnectAttempts += 1;
+    this.reconnectAttempts++;
+    this.providerStatus = 'backoff';
     logger.info({ delayMs: delay, attempt: this.reconnectAttempts }, '[WhatsApp] Scheduling reconnect');
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      this.start().catch((err) => {
-        logger.error({ err }, '[WhatsApp] Reconnect start failed');
+      if (!this.desiredRunning || generation !== this.generation) return;
+      this.start().catch(error => {
+        logger.error({ err: error }, '[WhatsApp] Reconnect start failed');
       });
     }, delay);
+    this.reconnectTimer.unref?.();
   }
 
-  /**
-   * Initialises the Baileys WebSocket socket, registers all event handlers,
-   * and begins the WhatsApp connection handshake (QR code or cached session).
-   */
-  async start(): Promise<void> {
-    if (this.starting) return;
-    this.starting = true;
-
+  private async startForGeneration(generation: number): Promise<void> {
+    this.providerStatus = 'starting';
+    this.providerError = null;
     try {
       const { state, saveCreds } = await whatsAppProviderDeps.useAuthState();
+      this.ensureGeneration(generation);
       const { version, isLatest } = await whatsAppProviderDeps.fetchLatestVersion();
-
+      this.ensureGeneration(generation);
       const baileysLogger = logger.child({ module: 'baileys' });
       baileysLogger.level = 'warn';
-
       logger.info(`[WhatsApp] Using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
-      const existingSock = this.sock;
-      if (existingSock) {
-        // Detach BEFORE ending: Baileys emits connection.update{close}
-        // synchronously inside end(). If this.sock still pointed at the old
-        // socket, its own close-handler would pass the stale-guard, null
-        // this.sock and schedule a reconnect that kills the NEW socket —
-        // a connect/close churn loop.
+      const existingSocket = this.sock;
+      if (existingSocket) {
         this.sock = null;
         try {
-          existingSock.end(new Error('Restarting WhatsApp socket'));
-        } catch {
-          // no-op
+          existingSocket.end(new Error('Restarting WhatsApp socket'));
+        } catch (error) {
+          logger.debug({ err: error }, '[WhatsApp] Existing socket close failed');
         }
       }
 
-      const sock = whatsAppProviderDeps.createSocket({
+      const socket = whatsAppProviderDeps.createSocket({
         version,
         auth: state,
         printQRInTerminal: false,
         logger: baileysLogger as unknown as SocketLogger,
-        // Allows Baileys to decrypt messages whose Signal session key is not in memory
-        // by looking them up in the SQLite message store. Fixes "No session to decrypt" errors.
-        getMessage: async (key) => {
+        getMessage: async key => {
+          if (!this.desiredRunning || generation !== this.generation || !key.id) return undefined;
           try {
-            const row = await db.select()
-              .from(messages)
-              .where(eq(messages.providerMessageId, key.id ?? ''))
-              .limit(1);
-            if (row[0]?.rawMessage) {
-              return JSON.parse(row[0].rawMessage) as proto.IMessage;
-            }
-          } catch { /* ignore db errors */ }
-          return proto.Message.fromObject({});
+            return extractStoredMessage(await whatsAppProviderDeps.lookupStoredMessage(key.id));
+          } catch (error) {
+            logger.warn({ err: error, id: key.id }, '[WhatsApp] Failed to load message for retry');
+            return undefined;
+          }
         },
       });
-      this.sock = sock;
+      this.sock = socket;
+      this.attachSocketHandlers(socket, saveCreds, generation);
+    } catch (error) {
+      if (!this.desiredRunning || generation !== this.generation) return;
+      this.sock = null;
+      this.botLid = null;
+      this.providerStatus = 'backoff';
+      this.providerError = error instanceof Error ? error : new Error(String(error));
+      this.scheduleReconnect(generation);
+      throw new ProviderStartError('whatsapp', `WhatsApp startup failed: ${errorMessage(error)}`, error);
+    }
+  }
 
-      sock.ev.on('creds.update', saveCreds);
+  private attachSocketHandlers(
+    socket: BaileysSocket,
+    saveCreds: () => Promise<void>,
+    generation: number,
+  ): void {
+    socket.ev.on('creds.update', () => {
+      if (!this.isCurrent(socket, generation)) return;
+      Promise.resolve(saveCreds()).catch(error => {
+        this.providerError = error instanceof Error ? error : new Error(String(error));
+        logger.error({ err: error }, '[WhatsApp] Failed to persist credentials');
+      });
+    });
 
-      sock.ev.on('connection.update', async (update) => {
-      if (this.sock !== sock) return;
+    socket.ev.on('connection.update', async update => {
+      if (!this.isCurrent(socket, generation)) return;
       const { connection, lastDisconnect, qr } = update;
       if (qr) {
         logger.info('[WhatsApp] Scan this QR code to login:');
         whatsAppProviderDeps.renderQr(qr);
       }
       if (connection === 'close') {
-        const shouldReconnect =
-          (lastDisconnect?.error as Boom)?.output?.statusCode !==
-          DisconnectReason.loggedOut;
-
-        logger.warn(
-          { err: lastDisconnect?.error, shouldReconnect },
-          '[WhatsApp] Connection closed'
-        );
-
+        const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && this.desiredRunning && generation === this.generation;
+        logger.warn({ err: lastDisconnect?.error, shouldReconnect }, '[WhatsApp] Connection closed');
         this.sock = null;
-
-        if (shouldReconnect) {
-          this.scheduleReconnect();
-        }
+        this.botLid = null;
+        this.providerError = lastDisconnect?.error instanceof Error ? lastDisconnect.error : null;
+        this.providerStatus = shouldReconnect ? 'backoff' : statusCode === DisconnectReason.loggedOut ? 'error' : 'stopped';
+        if (shouldReconnect) this.scheduleReconnect(generation);
       } else if (connection === 'open') {
-        logger.info('[WhatsApp] Connected successfully!');
+        this.providerStatus = 'running';
+        this.providerError = null;
         this.reconnectAttempts = 0;
-        // Resolve the bot's LID via Baileys' LID-PN mapping store.
-        // In WA V7 sessions, contextInfo.participant uses LIDs so we need
-        // the bot's own LID to correctly set `fromMe` on quoted messages.
-        if (sock.user?.id) {
-          const botPn = WhatsAppProvider.botPnJid(sock.user.id);
+        logger.info('[WhatsApp] Connected successfully.');
+        if (socket.user?.id) {
           try {
-            this.botLid = await resolveLidForPn(sock, botPn);
-            if (this.botLid) {
-              logger.info({ botLid: this.botLid }, '[WhatsApp] Resolved bot LID');
-            }
-          } catch (err) {
-            logger.debug({ err }, '[WhatsApp] Could not resolve bot LID (will retry per-message)');
+            const botLid = await resolveLidForPn(socket, WhatsAppProvider.botPnJid(socket.user.id));
+            if (!this.isCurrent(socket, generation)) return;
+            this.botLid = botLid;
+            if (botLid) logger.info({ botLid }, '[WhatsApp] Resolved bot LID');
+          } catch (error) {
+            logger.debug({ err: error }, '[WhatsApp] Could not resolve bot LID');
           }
         }
+        if (!this.isCurrent(socket, generation)) return;
+        await this.seedOwner(socket, generation);
+      }
+    });
 
-        // ── Seed bot owner in DB at startup ─────────────────────────────────
-        // BOT_OWNER_JID is a phone-number JID.  We persist it as an `owner`
-        // role in user_roles so it's visible via /role check and DB queries.
-        // Also seed the identity mapping so AuthService can resolve LID↔PN.
-        const ownerJid = process.env.BOT_OWNER_JID;
-        if (ownerJid) {
-          try {
-            // Try to resolve the owner's LID via Baileys signal store
-            let ownerLid: string | undefined;
-            try {
-              ownerLid = (await resolveLidForPn(sock, ownerJid)) ?? undefined;
-            } catch { /* LID mapping may not exist yet — that's OK */ }
+    socket.ev.on('group-participants.update', update => {
+      if (update.id) invalidateNativeAdminCache(update.id, 'whatsapp');
+    });
 
-            // Seed identity mapping
-            await IdentityService.upsert(ownerLid, ownerJid, undefined, 'whatsapp');
-
-            // Seed owner role in DB (global scope) — prefer LID for consistency
-            // if available, otherwise fallback to the PN JID.
-            const primaryId = ownerLid && ownerLid !== ownerJid ? ownerLid : ownerJid;
-            await AuthService.setRole(primaryId, 'owner', 'global', 'whatsapp', 'system:startup');
-
-            logger.info(
-              { ownerJid, ownerLid },
-              '[WhatsApp] Owner role seeded in DB at startup',
-            );
-          } catch (err) {
-            logger.error({ err, ownerJid }, '[WhatsApp] Failed to seed owner role at startup');
+    socket.ev.on('messages.upsert', async event => {
+      if (!this.isCurrent(socket, generation) || event.type !== 'notify') return;
+      await Promise.all(event.messages.map(async message => {
+        if (!message.message || message.key.fromMe) return;
+        if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
+        try {
+          const ctx = await this.createContext(message, generation);
+          if (ctx && this.isCurrent(socket, generation)) {
+            await this.messageHandler(ctx);
+            await socket.readMessages([message.key]);
           }
+        } catch (error) {
+          logger.error({ err: error, key: message.key }, '[WhatsApp] Error processing message');
         }
+      }));
+    });
+
+    socket.ev.on('messaging-history.set', async event => {
+      if (!this.isCurrent(socket, generation)) return;
+      logger.info(`[WhatsApp] Received history sync with ${event.messages.length} messages.`);
+      const contexts = (await Promise.all(event.messages.map(async message => {
+        if (!message.message || message.key.fromMe) return null;
+        try {
+          return await this.createContext(message, generation, true);
+        } catch {
+          return null;
+        }
+      }))).filter((context): context is MessageContext => context !== null);
+      if (this.isCurrent(socket, generation)) {
+        syncHistoricalDatabase(contexts).catch(error => logger.error({ err: error }, 'Background history sync failed'));
       }
-      });
+    });
+  }
 
-      sock.ev.on('messages.upsert', async (m) => {
-      if (this.sock !== sock) return;
-      if (m.type !== 'notify') return;
-
-      try {
-        await Promise.all(m.messages.map(async (msg) => {
-          if (!msg.message || msg.key.fromMe) return;
-
-          try {
-            await sock.readMessages([msg.key]);
-          } catch (err) {
-            logger.warn({ err, key: msg.key }, '[WhatsApp] Failed to mark message as read');
-          }
-
-          try {
-            if (this.messageHandler) {
-              const ctx = await this.createContext(msg);
-              if (ctx) {
-                await this.messageHandler(ctx);
-              }
-            }
-          } catch (err) {
-            logger.error({ err, key: msg.key }, '[WhatsApp] Error processing message');
-          }
-        }));
-      } catch (err) {
-        logger.error({ err }, '[WhatsApp] Unhandled error in messages.upsert handler');
-      }
-      });
-
-      sock.ev.on('messaging-history.set', async ({ messages: histMsgs }) => {
-      if (this.sock !== sock) return;
-      logger.info(`[WhatsApp] Received history sync with ${histMsgs.length} messages.`);
-
-      const contexts = (await Promise.all(
-        histMsgs.map(async (msg) => {
-          if (!msg.message || msg.key.fromMe) return null;
-          try {
-            return await this.createContext(msg, true); // true = skipMediaDownload
-          } catch {
-            logger.warn({ id: msg.key.id }, 'Failed to parse historical message context');
-            return null;
-          }
-        })
-      )).filter((ctx): ctx is MessageContext => ctx !== null);
-
-      syncHistoricalDatabase(contexts).catch(err => {
-        logger.error(err, 'Background history sync failed');
-      });
-      });
-    } catch (err) {
-      logger.error({ err }, '[WhatsApp] Failed to start provider');
-      this.scheduleReconnect();
-    } finally {
-      this.starting = false;
+  private async seedOwner(socket: BaileysSocket, generation: number): Promise<void> {
+    const ownerJid = process.env.BOT_OWNER_JID;
+    if (!ownerJid) return;
+    try {
+      const ownerLid = await resolveLidForPn(socket, ownerJid);
+      if (!this.isCurrent(socket, generation)) return;
+      await IdentityService.upsertIdentity(ownerLid, ownerJid, undefined, 'whatsapp');
+      if (!this.isCurrent(socket, generation)) return;
+      const primaryId = ownerLid && ownerLid !== ownerJid ? ownerLid : ownerJid;
+      await AuthService.setRole(primaryId, 'owner', 'global', 'whatsapp', 'system:startup');
+      logger.info({ ownerJid, ownerLid }, '[WhatsApp] Owner role seeded');
+    } catch (error) {
+      logger.error({ err: error, ownerJid }, '[WhatsApp] Failed to seed owner role');
     }
   }
 
-  /** Closes the Baileys WebSocket connection gracefully. */
-  async stop(): Promise<void> {
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    this.starting = false;
-    const sock = this.sock;
-    this.sock = null;
-    sock?.end(new Error('Stop called'));
-  }
-
-  /** Register the application-level callback that will receive every parsed MessageContext. */
-  onMessage(handler: (ctx: MessageContext) => Promise<void>): void {
-    this.messageHandler = handler;
-  }
-
-  async sendMessage(chatId: string, text: string): Promise<void> {
-    if (!this.sock) {
-      throw new Error('WhatsApp socket is not initialized.');
-    }
-    await this.sock.sendMessage(chatId, { text });
-  }
-
-  /**
-   * Converts a raw Baileys `WAMessage` into the normalised `MessageContext` used by
-   * the agent and tools.
-   *
-   * Steps performed:
-   *  1. Lazy-resolve the bot's LID JID if not already cached.
-   *  2. Parse the raw message with the pure `parseWhatsAppMessage` function.
-   *  3. Determine the sender JID (LID-first, then phone-number fallback).
-   *  4. Reconstruct any quoted/replied-to message into a `quoted` sub-context.
-   *  5. Kick off background media downloads (main message and quoted message).
-   *  6. Assemble and return the full `MessageContext` with all action methods bound.
-   *
-   * @param msg               Raw WAMessage from Baileys.
-   * @param skipMediaDownload If true, skip background media download (used for history sync).
-   * @returns                 Populated `MessageContext`, or `null` if the message cannot be parsed.
-   */
-  private async createContext(msg: WAMessage, skipMediaDownload: boolean = false): Promise<MessageContext | null> {
-    const sock = this.sock;
-    if (!sock) return null;
-    const jid = msg.key.remoteJid;
+  private async createContext(
+    message: WAMessage,
+    generation: number = this.generation,
+    skipMediaDownload = false,
+  ): Promise<MessageContext | null> {
+    const socket = this.sock;
+    if (!socket || !this.desiredRunning || generation !== this.generation) return null;
+    const jid = message.key.remoteJid;
     if (!jid) return null;
-
-    // ── Parse the raw message (pure, testable) ──────────────────────────────
-    // If botLid hasn't been resolved yet (e.g. very first message before
-    // the mapping was available), attempt a lazy lookup now.
-    if (!this.botLid && sock.user?.id) {
-      const botPn = WhatsAppProvider.botPnJid(sock.user.id);
+    if (!this.botLid && socket.user?.id) {
       try {
-        this.botLid = await resolveLidForPn(sock, botPn);
-      } catch { /* best-effort; PN comparison still works for non-LID sessions */ }
+        const botLid = await resolveLidForPn(socket, WhatsAppProvider.botPnJid(socket.user.id));
+        this.ensureSocket(socket, generation, 'createContext');
+        this.botLid = botLid;
+      } catch (error) {
+        if (!this.isCurrent(socket, generation)) throw error;
+        this.botLid = null;
+      }
     }
+    this.ensureSocket(socket, generation, 'createContext');
 
     const resolveLid = async (targetJid: string): Promise<string> => {
-      if (!targetJid) return targetJid;
-      if (targetJid.includes('@lid') || targetJid.includes('@g.us') || targetJid.includes('@broadcast')) {
+      if (!targetJid || targetJid.includes('@lid') || targetJid.includes('@g.us') || targetJid.includes('@broadcast')) return targetJid;
+      try {
+        return await resolveLidForPn(socket, targetJid) || targetJid;
+      } catch {
         return targetJid;
       }
-      try {
-        const lid = await resolveLidForPn(sock, targetJid);
-        if (lid) return lid;
-      } catch { /* ignore */ }
-      return targetJid; // fallback to PN
     };
-
-    const parsed = await parseWhatsAppMessage(msg, sock.user?.id, this.botLid, resolveLid);
-
+    const parsed = await parseWhatsAppMessage(message, socket.user?.id, this.botLid, resolveLid);
+    this.ensureSocket(socket, generation, 'createContext');
     const isGroup = jid.endsWith('@g.us');
+    const key = message.key as ExtendedMessageKey;
+    const rawSender = isGroup
+      ? message.key.participant || message.key.remoteJid || jid
+      : key.senderLid || jid;
+    const senderId = await resolveLid(rawSender);
+    const senderPn = isGroup ? key.participantPn : (!senderId.includes('@lid') ? jid : key.remoteJidAlt);
+    this.ensureSocket(socket, generation, 'createContext');
 
-    // ── V7 LID-first sender resolution ──────────────────────────────────────
-    // Groups: key.participant   = @lid JID (preferred), key.participantPn = PN fallback
-    // DMs:    key.senderLid     = @lid JID (preferred), key.remoteJid     = PN fallback
-    const keyAny = msg.key as ExtendedMessageKey;
-    const rawSender: string = isGroup
-      ? (msg.key.participant ?? msg.key.remoteJid ?? jid)
-      : (keyAny.senderLid ?? jid);
-
-    // Mandate LID for sender
-    const senderId: string = await resolveLid(rawSender);
-
-    // Best-effort phone number — may be absent for LID-only sessions
-    const _senderPn: string | undefined = isGroup
-      ? (keyAny.participantPn ?? undefined)
-      : (!senderId.includes('@lid') ? senderId : (keyAny.remoteJidAlt ?? undefined));
-
-    logger.debug(
-      { jid, isGroup, rawSender, senderId, _senderPn, keyParticipant: msg.key.participant, keyParticipantPn: keyAny.participantPn, senderLid: keyAny.senderLid },
-      '[WhatsApp] Sender resolution — LID/PN mapping',
-    );
-
-    // ── Build quoted context object (adds socket-dependent WAMessage key) ───
-    let quoted: MessageContext['quoted'] = undefined;
+    let quoted: MessageContext['quoted'];
+    let quotedSource: MediaSource | null = null;
     if (parsed.quoted) {
       const q = parsed.quoted;
-      const reconstructedKey = {
-        remoteJid: jid,
-        fromMe: q.fromMe,
-        id: q.stanzaId,
-        participant: q.senderId,
-      };
+      quotedSource = q.hasMedia ? {
+        descriptor: {
+          id: `quoted:${q.stanzaId || 'unknown'}`,
+          index: 0,
+          origin: 'quoted',
+          providerId: q.stanzaId || undefined,
+          mimeType: getMessageMediaInfo(q.rawMessage)?.mimeType,
+          sizeBytes: getMessageMediaInfo(q.rawMessage)?.sizeBytes,
+          state: q.hasMedia ? 'pending' : 'pending',
+        },
+        message: {
+          key: {
+            remoteJid: jid,
+            fromMe: q.fromMe,
+            id: q.stanzaId || undefined,
+            participant: q.senderId,
+          },
+          message: q.rawMessage,
+        } as WAMessage,
+        info: getMessageMediaInfo(q.rawMessage) || {
+          messageType: q.messageType,
+          mimeType: undefined,
+          fileName: undefined,
+          sizeBytes: undefined,
+          ptt: false,
+        },
+      } : null;
       quoted = {
         messageType: q.messageType,
         body: q.body,
-        text: q.body,       // backwards compat alias
+        text: q.body,
         senderId: q.senderId,
         hasMedia: q.hasMedia,
-        stanzaId: q.stanzaId ?? undefined,
+        stanzaId: q.stanzaId || undefined,
         rawMessage: {
-          key: reconstructedKey as unknown as RawProviderMessage['key'],
-          message: q.rawMessage as unknown as Record<string, unknown>,
+          key: quotedSource!.message.key as RawProviderMessage['key'],
+          message: q.rawMessage as Record<string, unknown>,
         },
       };
     }
 
-    // ── Media saving helper ──────────────────────────────────────────────────
-    const saveBuffer = async (buffer: Buffer): Promise<{ path: string; mime: string } | null> => {
-      return saveMediaBuffer(buffer);
-    };
-
-    // ── Background media download ────────────────────────────────────────────
-    // Kicked off immediately — does NOT block context creation.
-    // Callers use `await ctx.mediaReady` then read ctx.mediaPath / ctx.mimeType.
+    const currentInfo = getMessageMediaInfo(message.message);
+    const currentSource: MediaSource | null = currentInfo ? {
+      descriptor: {
+        id: `current:${message.key.id || 'unknown'}`,
+        index: 0,
+        origin: 'current',
+        providerId: message.key.id || undefined,
+        mimeType: currentInfo.mimeType,
+        filename: currentInfo.fileName,
+        sizeBytes: currentInfo.sizeBytes,
+        state: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? 'skipped' : 'pending',
+        error: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? `WhatsApp media exceeds ${HARD_MEDIA_MAX_BYTES} bytes.` : undefined,
+      },
+      message,
+      info: currentInfo,
+    } : null;
+    const sources = [currentSource, quotedSource].filter((source): source is MediaSource => !!source);
+    const descriptors = sources.map(source => source.descriptor);
+    const sourceById = new Map(sources.map(source => [source.descriptor.id, source]));
+    const defaultSource = currentSource || (!parsed.hasMedia ? quotedSource : null);
+    let selectedAttachmentId = defaultSource?.descriptor.id;
     let mediaPath: string | undefined;
-    let mimeType: string | undefined;
+    let mimeType = defaultSource?.descriptor.mimeType;
 
-    const mediaReadyPromise: Promise<void> = (async () => {
-      if (skipMediaDownload) return;
-      const tasks: Promise<void>[] = [];
+    if (skipMediaDownload) {
+      for (const descriptor of descriptors) {
+        descriptor.state = 'skipped';
+        descriptor.error = 'Historical media is loaded on demand.';
+      }
+    }
 
-      if (parsed.hasMedia) {
-        const size = getFileLength(msg.message);
-        if (size && size > MAX_MEDIA_SIZE) {
-          logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large media download');
+    const assertSocket = () => this.ensureSocket(socket, generation, 'message action');
+    const updateSelected = (descriptor: MediaAttachmentDescriptor) => {
+      selectedAttachmentId = descriptor.id;
+      mediaPath = descriptor.mediaPath;
+      mimeType = descriptor.mimeType;
+      if (descriptor.origin === 'quoted' && quoted) {
+        quoted.mediaPath = descriptor.mediaPath;
+        quoted.mimeType = descriptor.mimeType;
+      }
+    };
+
+    const downloadDescriptor = async (descriptor: MediaAttachmentDescriptor, throwOnFailure: boolean): Promise<MediaAttachmentDescriptor | null> => {
+      if (descriptor.state === 'ready' && descriptor.mediaPath) return descriptor;
+      if (descriptor.state === 'skipped') {
+        if (skipMediaDownload) {
+          descriptor.state = 'pending';
+          descriptor.error = undefined;
         } else {
-          tasks.push(
-            downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))
-              .then(async (buf) => {
-                const buffer = buf as Buffer | null;
-                if (buffer) {
-                  const saved = await saveBuffer(buffer);
-                  if (saved) { mediaPath = saved.path; mimeType = saved.mime; }
-                }
-              })
-              .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download message media'))
-          );
+          if (throwOnFailure) throw new ProviderOperationError('whatsapp', 'downloadMedia', descriptor.error || 'Media is unavailable.');
+          return null;
         }
       }
-
-      if (quoted?.hasMedia) {
-        const size = getFileLength((quoted.rawMessage as unknown as WAMessage).message);
-        if (size && size > MAX_MEDIA_SIZE) {
-          logger.warn({ size, max: MAX_MEDIA_SIZE }, '[WhatsApp] Skipped large quoted media download');
-        } else {
-          tasks.push(
-            downloadMediaMessage(quoted.rawMessage as unknown as WAMessage, 'buffer', {}, createMediaDownloadOptions(sock))
-              .then(async (buf) => {
-                const buffer = buf as Buffer | null;
-                if (buffer) {
-                  const saved = await saveBuffer(buffer);
-                  if (saved && quoted) { quoted.mediaPath = saved.path; quoted.mimeType = saved.mime; }
-                }
-              })
-              .catch((err) => logger.warn({ err }, '[WhatsApp] Failed to download quoted media'))
-          );
-        }
-      }
-
-      await Promise.allSettled(tasks);
-    })();
-
-    // ── Legacy downloadMedia() shim ─────────────────────────────────────────
-    const downloadMedia = async (): Promise<Buffer | null> => {
+      const source = sourceById.get(descriptor.id);
+      if (!source) return null;
+      const controller = new AbortController();
+      this.mediaControllers.add(controller);
+      let savedPath: string | undefined;
       try {
-        await mediaReadyPromise;
-        if (parsed.hasMedia && mediaPath) {
-          try { return readFileSync(mediaPath); } catch { /* ignore */ }
-        } else if (quoted?.hasMedia && quoted.mediaPath) {
-          try { return readFileSync(quoted.mediaPath); } catch { /* ignore */ }
-        }
-
-        if (parsed.hasMedia) {
-          return (await downloadMediaMessage(msg, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
-        } else if (quoted?.hasMedia) {
-          return (await downloadMediaMessage(quoted.rawMessage as unknown as WAMessage, 'buffer', {}, createMediaDownloadOptions(sock))) as Buffer;
-        }
+        const stream = await downloadMediaMessage(
+          source.message,
+          'stream',
+          { options: { signal: controller.signal } },
+          createMediaDownloadOptions(socket),
+        );
+        const saved = await saveMediaStream(stream, {
+          maxBytes: HARD_MEDIA_MAX_BYTES,
+          contentLength: source.info.sizeBytes ?? null,
+          fallbackMime: source.info.mimeType,
+          signal: controller.signal,
+        });
+        savedPath = saved.path;
+        this.ensureSocket(socket, generation, 'downloadMedia');
+        descriptor.mediaPath = saved.path;
+        descriptor.mimeType = saved.mime;
+        descriptor.state = 'ready';
+        descriptor.error = undefined;
+        if (selectedAttachmentId === descriptor.id) updateSelected(descriptor);
+        return descriptor;
+      } catch (error) {
+        if (savedPath) await deleteSavedMedia(savedPath).catch(() => false);
+        descriptor.state = 'error';
+        descriptor.error = errorMessage(error).slice(0, 500);
+        logger.warn({ err: error, attachmentId: descriptor.id }, '[WhatsApp] Failed to download media');
+        if (throwOnFailure) throw new ProviderOperationError('whatsapp', 'downloadMedia', descriptor.error, error);
         return null;
-      } catch (err) {
-        logger.error(err, 'Failed to download WhatsApp media');
-        return null;
+      } finally {
+        this.mediaControllers.delete(controller);
       }
     };
 
-    // ── sendMedia helper ────────────────────────────────────────────────────
-    const sendMedia = async (buffer: Buffer, options: SendMediaOptions = {}): Promise<void> => {
-      const { caption, mimetype, filename, ptt } = options;
-      const mime = mimetype ?? 'application/octet-stream';
+    const mediaReady = createLazyPromise(async () => {
+      if (skipMediaDownload) return;
+      if (defaultSource) await downloadDescriptor(defaultSource.descriptor, false);
+    });
 
-      if (ptt || mime.startsWith('audio')) {
-        await sock.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: !!ptt }, { quoted: msg });
-      } else if (mime.startsWith('video')) {
-        await sock.sendMessage(jid, { video: buffer, caption: caption ?? '', mimetype: mime }, { quoted: msg });
-      } else if (mime.startsWith('image')) {
-        await sock.sendMessage(jid, { image: buffer, caption: caption ?? '', mimetype: mime }, { quoted: msg });
-      } else {
-        await sock.sendMessage(jid, {
-          document: buffer,
-          mimetype: mime,
-          fileName: filename ?? 'file',
-          caption: caption,
-        }, { quoted: msg });
-      }
+    const selectMediaAttachment = async (attachmentId: string): Promise<MediaAttachmentDescriptor> => {
+      const descriptor = descriptors.find(candidate => candidate.id === attachmentId);
+      if (!descriptor) throw new ProviderOperationError('whatsapp', 'selectMediaAttachment', `Unknown WhatsApp attachment: ${attachmentId}.`, undefined, 'INVALID_TARGET');
+      const downloaded = await downloadDescriptor(descriptor, true);
+      if (!downloaded) throw new ProviderOperationError('whatsapp', 'selectMediaAttachment', 'WhatsApp attachment could not be downloaded.');
+      updateSelected(downloaded);
+      return { ...downloaded };
     };
 
-    // ── Assemble the full MessageContext ────────────────────────────────────
-    let _rolesCache: string[] | null = null;
+    const downloadMedia = async (attachmentId?: string): Promise<Buffer | null> => {
+      const id = attachmentId ?? selectedAttachmentId;
+      if (!id) return null;
+      const descriptor = await selectMediaAttachment(id);
+      return descriptor.mediaPath ? readMediaBuffer(descriptor.mediaPath) : null;
+    };
 
-    // Sender phone-number JID for owner/role matching (LID ≠ PN).
-    // In DMs, jid IS the phone-number JID.  In groups, use _senderPn.
-    const senderPn: string | undefined = isGroup ? _senderPn : jid;
-
-    logger.debug(
-      { senderId, senderPn, isGroup, jid },
-      '[WhatsApp] Context senderPn resolved — will use for role/owner matching',
-    );
-
-    // ── Persist identity mapping (fire-and-forget) ──────────────────────────
-    // Upsert LID ↔ PN mapping so AuthService can resolve all JIDs for this user.
+    const senderIdForRoles = senderId;
+    let rolesCache: string[] | null = null;
     const identityLid = senderId.includes('@lid') ? senderId : undefined;
     const identityPn = senderPn && !senderPn.includes('@lid') ? senderPn : undefined;
     if (identityLid || identityPn) {
-      IdentityService.upsert(identityLid, identityPn, msg.pushName ?? undefined, 'whatsapp').catch((err) => {
-        logger.warn({ err }, '[WhatsApp] Identity upsert failed (non-fatal)');
+      IdentityService.upsertIdentity(identityLid ?? null, identityPn ?? null, message.pushName ?? undefined, 'whatsapp').catch((error: unknown) => {
+        logger.warn({ err: error }, '[WhatsApp] Identity upsert failed');
       });
     }
-
-    // Determine if bot is mentioned.
-    // Check both PN (remoteJid) and LID (if resolved).
-    const botPn = sock.user?.id ? WhatsAppProvider.botPnJid(sock.user.id) : '';
-    const isBotMentioned = parsed.mentionedIds.some((m) => {
-      // Compare LIDs directly
-      if (this.botLid && m === this.botLid) return true;
-      // Compare Phone Number JIDs strictly (user part match)
-      if (botPn) {
-        const mUser = m.split('@')[0];
-        const botUser = botPn.split('@')[0];
-        // Ensure exact match of the user part (phone number)
-        return mUser === botUser;
-      }
-      return false;
+    const botPn = socket.user?.id ? WhatsAppProvider.botPnJid(socket.user.id) : '';
+    const isBotMentioned = parsed.mentionedIds.some(mentioned => {
+      if (this.botLid && mentioned === this.botLid) return true;
+      return !!botPn && mentioned.split('@')[0] === botPn.split('@')[0];
     });
 
     return {
       platform: 'whatsapp',
       receivedAt: Date.now(),
-      messageId: msg.key.id ?? 'unknown',
+      messageId: message.key.id || 'unknown',
       chatId: jid,
       senderId,
       senderPn,
-      senderName: msg.pushName ?? 'Unknown',
+      senderName: message.pushName || 'Unknown',
       text: parsed.text,
       messageType: parsed.messageType,
       isGroup,
@@ -603,91 +554,198 @@ export class WhatsAppProvider implements BotProvider {
       hasMedia: parsed.hasMedia,
       get mediaPath() { return mediaPath; },
       get mimeType() { return mimeType; },
-      mediaReady: mediaReadyPromise,
+      mediaReady,
+      mediaAttachments: descriptors,
+      get selectedAttachmentId() { return selectedAttachmentId; },
+      selectMediaAttachment,
+      getMediaAttachment: id => descriptors.find(descriptor => descriptor.id === id),
       quoted,
-      rawMessage: msg as unknown as RawProviderMessage,
+      rawMessage: message as unknown as RawProviderMessage,
 
-      // ── Methods ──────────────────────────────────────────────────────────
       downloadMedia,
-      sendMedia,
+
+      sendMedia: async (buffer: Buffer, options: SendMediaOptions = {}) => {
+        assertSocket();
+        const mime = options.mimetype || 'application/octet-stream';
+        if (options.ptt || mime.startsWith('audio/')) {
+          await socket.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: !!options.ptt }, { quoted: message });
+        } else if (mime.startsWith('video/')) {
+          await socket.sendMessage(jid, { video: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+        } else if (mime.startsWith('image/')) {
+          await socket.sendMessage(jid, { image: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+        } else {
+          await socket.sendMessage(jid, {
+            document: buffer,
+            mimetype: mime,
+            fileName: options.filename || 'file',
+            caption: options.caption,
+          }, { quoted: message });
+        }
+      },
 
       reply: async (replyText: string, options?: ReplyOptions) => {
-        await sock.sendMessage(jid, { text: replyText, mentions: options?.mentions }, { quoted: msg });
+        assertSocket();
+        const chunks = chunkWhatsAppText(replyText);
+        for (let index = 0; index < chunks.length; index++) {
+          options?.signal?.throwIfAborted();
+          await socket.sendMessage(jid, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined }, { quoted: message });
+        }
       },
 
       sendTyping: async () => {
-        try {
-          await sock.sendPresenceUpdate('composing', jid);
-        } catch { /* best-effort */ }
+        if (!this.isCurrent(socket, generation)) return;
+        await socket.sendPresenceUpdate('composing', jid).catch(() => undefined);
       },
 
       sendMessage: async (text: string, options?: ReplyOptions) => {
-        const sent = await sock.sendMessage(jid, { text, mentions: options?.mentions }, { quoted: msg });
+        assertSocket();
+        const chunks = chunkWhatsAppText(text);
+        let sent: WAMessage | undefined;
+        for (let index = 0; index < chunks.length; index++) {
+          sent = await socket.sendMessage(jid, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined }, { quoted: message });
+        }
+        return sent?.key;
+      },
+
+      sendToChat: async (targetChatId: string, text: string, options?: ReplyOptions) => {
+        assertSocket();
+        const chunks = chunkWhatsAppText(text);
+        let sent: WAMessage | undefined;
+        for (const chunk of chunks) {
+          options?.signal?.throwIfAborted();
+          sent = await socket.sendMessage(targetChatId, { text: chunk });
+        }
         return sent?.key;
       },
 
       editMessage: async (key: unknown, text: string) => {
-        try {
-          await sock.sendMessage(jid, { text, edit: key as proto.IMessageKey });
-        } catch (err) {
-          logger.warn({ err }, '[WhatsApp] Failed to edit message');
-        }
+        assertSocket();
+        const chunks = chunkWhatsAppText(text);
+        await socket.sendMessage(jid, { text: chunks[0], edit: key as proto.IMessageKey });
+        for (const chunk of chunks.slice(1)) await socket.sendMessage(jid, { text: chunk });
       },
 
       react: async (emoji: string) => {
-        await sock.sendMessage(jid, { react: { text: emoji, key: msg.key } });
+        assertSocket();
+        await socket.sendMessage(jid, { react: { text: emoji, key: message.key } });
       },
 
       sendSticker: async (buffer: Buffer) => {
-        await sock.sendMessage(jid, { sticker: buffer }, { quoted: msg });
+        assertSocket();
+        await socket.sendMessage(jid, { sticker: buffer }, { quoted: message });
       },
 
       deleteMessage: async (key?: unknown) => {
-        const target: ProviderMessageKey = isProviderMessageKey(key) ? key : msg.key;
-        await sock.sendMessage(target.remoteJid ?? jid, { delete: target });
+        assertSocket();
+        const target = isProviderMessageKey(key) ? key : message.key;
+        await socket.sendMessage(target.remoteJid || jid, { delete: target });
       },
 
-
       forwardMessage: async (targetJid: string, text?: string) => {
-        if (text) {
-          // Send a custom text message to the target, not the original message
-          await sock.sendMessage(targetJid, { text });
+        assertSocket();
+        if (text !== undefined) {
+          for (const chunk of chunkWhatsAppText(text)) await socket.sendMessage(targetJid, { text: chunk });
         } else {
-          await sock.sendMessage(targetJid, { forward: msg });
+          await socket.sendMessage(targetJid, { forward: message });
         }
       },
 
-      updateGroupParticipants: async (action: 'add' | 'remove' | 'promote' | 'demote', userIds: string[]) => {
-        if (!isGroup) throw new Error('Not inside a group.');
-        await sock.groupParticipantsUpdate(jid, userIds, action);
+      updateGroupParticipants: async (action, userIds) => {
+        assertSocket();
+        if (!isGroup) throw new ProviderOperationError('whatsapp', 'updateGroupParticipants', 'Not inside a group.');
+        await socket.groupParticipantsUpdate(jid, userIds, action);
       },
 
       getGroupInviteLink: async (chatId: string) => {
-        const code = await sock.groupInviteCode(chatId);
-        return `https://chat.whatsapp.com/${code}`;
+        assertSocket();
+        return `https://chat.whatsapp.com/${await socket.groupInviteCode(chatId)}`;
       },
 
       setGroupSettings: async (chatId: string, setting: 'announcement' | 'not_announcement') => {
-        await sock.groupSettingUpdate(chatId, setting);
+        assertSocket();
+        await socket.groupSettingUpdate(chatId, setting);
       },
 
       leaveGroup: async () => {
-        if (!isGroup) throw new Error('Not inside a group.');
-        await sock.groupLeave(jid);
+        assertSocket();
+        if (!isGroup) throw new ProviderOperationError('whatsapp', 'leaveGroup', 'Not inside a group.');
+        await socket.groupLeave(jid);
       },
 
       checkPermissions: async (required: string) => {
-        return checkPermissions(sock, jid, senderId, isGroup, required, senderPn);
+        assertSocket();
+        return checkPermissions(socket, jid, senderIdForRoles, isGroup, required, senderPn);
       },
 
       resolveRoles: async () => {
-        if (!_rolesCache) {
-          logger.debug({ senderId, senderPn, chatId: jid, isGroup }, '[WhatsApp] resolveRoles invoked — cache miss');
-          _rolesCache = await resolveUserRoles(sock, jid, senderId, isGroup, senderPn);
-          logger.info({ senderId, senderPn, roles: _rolesCache }, '[WhatsApp] resolveRoles — cached result');
-        }
-        return _rolesCache;
+        assertSocket();
+        if (!rolesCache) rolesCache = await resolveUserRoles(socket, jid, senderIdForRoles, isGroup, senderPn);
+        return rolesCache;
       },
     };
   }
+
+  private requireRunningSocket(operation: string): BaileysSocket {
+    if (!this.sock || this.providerStatus !== 'running') throw new ProviderLifecycleError('whatsapp', operation);
+    return this.sock;
+  }
+
+  private ensureGeneration(generation: number): void {
+    if (!this.desiredRunning || generation !== this.generation) throw new ProviderLifecycleError('whatsapp', 'start');
+  }
+
+  private ensureSocket(socket: BaileysSocket, generation: number, operation: string): void {
+    if (!this.desiredRunning || generation !== this.generation || this.sock !== socket) {
+      throw new ProviderLifecycleError('whatsapp', operation);
+    }
+  }
+
+  private isCurrent(socket: BaileysSocket, generation: number): boolean {
+    return this.desiredRunning && generation === this.generation && this.sock === socket;
+  }
+}
+
+function getLidMapping(socket: BaileysSocket): LidMapping | undefined {
+  return (socket as unknown as SocketWithSignalRepository).signalRepository?.lidMapping;
+}
+
+async function resolveLidForPn(socket: BaileysSocket, targetJid: string): Promise<string | null> {
+  return getLidMapping(socket)?.getLIDForPN(targetJid) ?? null;
+}
+
+function createMediaDownloadOptions(socket: BaileysSocket): MediaDownloadOptions {
+  return {
+    logger: logger as unknown as MediaDownloadOptions['logger'],
+    reuploadRequest: socket.updateMediaMessage,
+  };
+}
+
+function isProviderMessageKey(value: unknown): value is ProviderMessageKey {
+  if (typeof value !== 'object' || value === null || !('remoteJid' in value)) return false;
+  const remoteJid = (value as { remoteJid?: unknown }).remoteJid;
+  return typeof remoteJid === 'string' || remoteJid === null || remoteJid === undefined;
+}
+
+function extractStoredMessage(rawMessage: string | null): proto.IMessage | undefined {
+  if (!rawMessage) return undefined;
+  try {
+    const parsed = JSON.parse(rawMessage) as Record<string, unknown>;
+    if (parsed.message && typeof parsed.message === 'object' && !Array.isArray(parsed.message)) {
+      return parsed.message as proto.IMessage;
+    }
+    const messageKeys = [
+      'conversation', 'imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage',
+      'extendedTextMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'documentWithCaptionMessage',
+    ];
+    return messageKeys.some(key => key in parsed) ? parsed as proto.IMessage : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return Array.from(error instanceof Error ? error.message : String(error), character => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127 ? ' ' : character;
+  }).join('').slice(0, 500);
 }

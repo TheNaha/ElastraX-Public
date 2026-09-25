@@ -4,6 +4,23 @@ export interface SendMediaOptions {
   filename?: string;
   /** If true, audio is sent as a WhatsApp voice note (PTT) */
   ptt?: boolean;
+  durationSeconds?: number;
+}
+
+export type MediaAttachmentOrigin = 'current' | 'quoted';
+export type MediaAttachmentState = 'pending' | 'ready' | 'skipped' | 'error';
+
+export interface MediaAttachmentDescriptor {
+  id: string;
+  index: number;
+  origin: MediaAttachmentOrigin;
+  providerId?: string;
+  filename?: string;
+  mimeType?: string;
+  sizeBytes?: number;
+  mediaPath?: string;
+  state: MediaAttachmentState;
+  error?: string;
 }
 
 /**
@@ -17,6 +34,7 @@ export interface ReplyOptions {
    * (e.g. `['628xxx@s.whatsapp.net']`).
    */
   mentions?: string[];
+  signal?: AbortSignal;
 }
 
 /**
@@ -96,12 +114,18 @@ export interface MessageContext {
   mimeType?: string;
 
   /**
-   * A Promise that resolves once background media download has completed.
-   * Tools that require the media buffer should `await ctx.mediaReady` before
-   * reading `ctx.mediaPath` / `ctx.mimeType`. Resolves immediately if there
-   * is nothing to download.
+   * A Promise that resolves once lazy media acquisition has completed.
+   * Merely constructing a context does not start provider downloads.
    */
   mediaReady: Promise<void>;
+
+  mediaAttachments?: MediaAttachmentDescriptor[];
+
+  selectedAttachmentId?: string;
+
+  selectMediaAttachment?(attachmentId: string): Promise<MediaAttachmentDescriptor>;
+
+  getMediaAttachment?(attachmentId: string): MediaAttachmentDescriptor | undefined;
 
   /**
    * If this message is a reply to another message, this contains the quoted message context
@@ -145,6 +169,7 @@ export interface MessageContext {
    * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
   sendMessage(text: string, options?: ReplyOptions): Promise<unknown>;
+  sendToChat?(chatId: string, text: string, options?: ReplyOptions): Promise<unknown>;
 
   /**
    * Edit a previously sent message by its key/handle.
@@ -161,7 +186,7 @@ export interface MessageContext {
    * Download the media buffer from the current OR quoted message (if applicable).
    * Prefer using mediaReady + mediaPath when possible to avoid re-downloading.
    */
-  downloadMedia(): Promise<Buffer | null>;
+  downloadMedia(attachmentId?: string): Promise<Buffer | null>;
 
   /**
    * Send a binary media file back to the same chat (image, audio, video, document).
@@ -228,4 +253,6 @@ export interface MessageContext {
    * Useful for provider-specific edge cases.
    */
   rawMessage: RawProviderMessage;
+
+  signal?: AbortSignal;
 }

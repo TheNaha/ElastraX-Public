@@ -28,6 +28,10 @@ type MessageContent = {
   contentText?: string | null;
   selectedDisplayText?: string | null;
   title?: string | null;
+  mimetype?: string | null;
+  fileName?: string | null;
+  fileLength?: number | string | null;
+  ptt?: boolean | null;
   contextInfo?: proto.IContextInfo | null;
   singleSelectReply?: { selectedRowId?: string | null } | null;
   selectedButtonId?: string | null;
@@ -86,6 +90,30 @@ function unwrapMessage(message: proto.IMessage | null | undefined): { type: stri
   }
 
   return { type: currentType, content: currentContent };
+}
+
+export interface WhatsAppMediaInfo {
+  messageType: string;
+  mimeType?: string;
+  fileName?: string;
+  sizeBytes?: number;
+  ptt?: boolean;
+}
+
+export function getMessageMediaInfo(msgObj: proto.IMessage | null | undefined): WhatsAppMediaInfo | null {
+  if (!msgObj) return null;
+  const { type, content } = unwrapMessage(msgObj);
+  if (!MEDIA_TYPES.has(type)) return null;
+  const data = asMessageContent(content);
+  const rawLength = data?.fileLength;
+  const parsedLength = rawLength === undefined || rawLength === null || rawLength === '' ? undefined : Number(rawLength);
+  return {
+    messageType: type,
+    mimeType: data?.mimetype || undefined,
+    fileName: data?.fileName || undefined,
+    sizeBytes: Number.isSafeInteger(parsedLength) && (parsedLength as number) > 0 ? parsedLength : undefined,
+    ptt: data?.ptt === true,
+  };
 }
 
 export function getFileLength(msgObj: proto.IMessage | null | undefined): number | null {

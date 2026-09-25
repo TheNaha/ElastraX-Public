@@ -27,7 +27,10 @@ export function buildGenericMessage(body: WebhookBody): string {
         : '📨';
 
   if (!title && !text && !source && !event && tags.length === 0 && !link) {
-    return `📨 Webhook payload:\n${JSON.stringify(body, null, 2).slice(0, 500)}`;
+    const keys = Object.keys(body).slice(0, 20);
+    return keys.length > 0
+      ? `📨 Webhook payload received\nFields: ${keys.join(', ')}`
+      : '📨 Webhook payload received';
   }
 
   const lines: string[] = [];

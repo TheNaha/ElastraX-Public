@@ -4,93 +4,161 @@ import { getErrorMessage } from './errorUtils';
 import { resolveLLMTargets } from '../config/llm';
 
 const log = logger.child({ module: 'HealthMonitor' });
-
 const PING_INTERVAL_MS = 60_000;
-const PING_TIMEOUT_MS = 5_000;
+const PING_TIMEOUT_MS = 5000;
+
+type HealthCheck = () => Promise<void>;
+
+function endpoint(baseUrl: string, path: string): string {
+  const url = new URL(baseUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Health-check URL must use HTTP or HTTPS');
+  }
+  if (url.username || url.password) {
+    throw new Error('Health-check URL must not contain credentials');
+  }
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
+function openAiModelsUrl(baseUrl: string): string {
+  const url = new URL(baseUrl);
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('LLM health-check URL must use HTTP or HTTPS');
+  }
+  if (url.username || url.password) {
+    throw new Error('LLM health-check URL must not contain credentials');
+  }
+  url.pathname = url.pathname
+    .replace(/\/chat\/completions\/?$/i, '')
+    .replace(/\/+$/, '');
+  url.pathname = `${url.pathname}/models`;
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
 
 export class HealthMonitor {
   private timers: ReturnType<typeof setInterval>[] = [];
+  private readonly controllers = new Set<AbortController>();
+  private readonly inFlight = new Map<string, Promise<void>>();
+  private started = false;
 
-  start() {
-    log.info('Starting HealthMonitor...');
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    log.info('Starting HealthMonitor');
 
-    // Ping Jellyfin
-    const jellyfinUrl = process.env.JELLYFIN_API_URL || process.env.JELLYFIN_URL;
-    if (jellyfinUrl) {
-      this.timers.push(setInterval(() => void this.pingJellyfin(jellyfinUrl), PING_INTERVAL_MS));
-      void this.pingJellyfin(jellyfinUrl);
-    }
+    this.schedule('jellyfin', () => {
+      const baseUrl = process.env.JELLYFIN_API_URL || process.env.JELLYFIN_URL;
+      return baseUrl ? this.pingJellyfin(baseUrl) : Promise.resolve();
+    });
 
-    // Ping Seerr
-    const seerrUrl = process.env.SEERR_API_URL || process.env.SEERR_URL;
-    if (seerrUrl) {
-      this.timers.push(setInterval(() => void this.pingSeerr(seerrUrl), PING_INTERVAL_MS));
-      void this.pingSeerr(seerrUrl);
-    }
+    this.schedule('seerr', () => {
+      const baseUrl = process.env.SEERR_API_URL || process.env.SEERR_URL;
+      return baseUrl ? this.pingSeerr(baseUrl) : Promise.resolve();
+    });
 
-    // Ping every configured LLM provider
     for (const target of resolveLLMTargets()) {
-      this.timers.push(setInterval(() => void this.pingLLM(target), PING_INTERVAL_MS));
-      void this.pingLLM(target);
+      this.schedule(target.key, () => this.pingLLM(target));
     }
   }
 
-  stop() {
-    this.timers.forEach(clearInterval);
+  stop(): void {
+    for (const timer of this.timers) clearInterval(timer);
     this.timers = [];
-    log.info('HealthMonitor stopped.');
+    for (const controller of this.controllers) controller.abort();
+    this.controllers.clear();
+    this.started = false;
+    log.info('HealthMonitor stopped');
   }
 
-  private async pingJellyfin(baseUrl: string) {
+  isStarted(): boolean {
+    return this.started;
+  }
+
+  pendingChecks(): number {
+    return this.inFlight.size;
+  }
+
+  private schedule(name: string, check: HealthCheck): void {
+    const run = () => {
+      if (this.inFlight.has(name)) return;
+      const promise = check()
+        .catch((error: unknown) => {
+          log.warn({ check: name, err: getErrorMessage(error) }, 'Health check failed');
+        })
+        .finally(() => {
+          this.inFlight.delete(name);
+        });
+      this.inFlight.set(name, promise);
+    };
+
+    run();
+    const timer = setInterval(run, PING_INTERVAL_MS);
+    timer.unref?.();
+    this.timers.push(timer);
+  }
+
+  private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+    const controller = new AbortController();
+    this.controllers.add(controller);
+    const timeout = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
     try {
-      const res = await fetch(`${baseUrl}/System/Info/Public`, {
-        signal: AbortSignal.timeout(PING_TIMEOUT_MS)
-      });
-      if (res.ok) {
-        healthMetrics.setServiceHealth('jellyfin', 'healthy');
-      } else {
-        healthMetrics.setServiceHealth('jellyfin', 'unhealthy', `HTTP ${res.status}`);
-      }
-    } catch (err: unknown) {
-      healthMetrics.setServiceHealth('jellyfin', 'unhealthy', getErrorMessage(err));
+      return await fetch(url, { ...init, redirect: 'error', signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+      this.controllers.delete(controller);
     }
   }
 
-  private async pingSeerr(baseUrl: string) {
+  private async pingJellyfin(baseUrl: string): Promise<void> {
     try {
-      const res = await fetch(`${baseUrl}/api/v1/status`, {
-        headers: { 'X-Api-Key': process.env.SEERR_API_KEY || '' },
-        signal: AbortSignal.timeout(PING_TIMEOUT_MS)
-      });
-      if (res.ok) {
-        healthMetrics.setServiceHealth('seerr', 'healthy');
-      } else {
-        healthMetrics.setServiceHealth('seerr', 'unhealthy', `HTTP ${res.status}`);
-      }
-    } catch (err: unknown) {
-      healthMetrics.setServiceHealth('seerr', 'unhealthy', getErrorMessage(err));
+      const response = await this.fetchWithTimeout(endpoint(baseUrl, 'System/Info/Public'));
+      healthMetrics.setServiceHealth(
+        'jellyfin',
+        response.ok ? 'healthy' : 'unhealthy',
+        response.ok ? undefined : `HTTP ${response.status}`,
+      );
+    } catch (error) {
+      healthMetrics.setServiceHealth('jellyfin', 'unhealthy', getErrorMessage(error));
     }
   }
 
-  /** Hits the OpenAI-compatible /models endpoint of the given base URL. */
-  private async pingLLM(target: { key: string; baseUrl: string; apiKey: string }) {
+  private async pingSeerr(baseUrl: string): Promise<void> {
+    const apiKey = process.env.SEERR_API_KEY?.trim();
+    if (!apiKey) {
+      healthMetrics.setServiceHealth('seerr', 'unhealthy', 'SEERR_API_KEY is not configured');
+      return;
+    }
     try {
-      let modelsBase = target.baseUrl;
-      if (!modelsBase.endsWith('/v1')) {
-        modelsBase = modelsBase.replace(/\/chat\/completions\/?$/, '').replace(/\/$/, '');
-        if (!modelsBase.endsWith('/v1')) modelsBase += '/v1';
-      }
-      const res = await fetch(`${modelsBase}/models`, {
-         headers: { Authorization: `Bearer ${target.apiKey}` },
-         signal: AbortSignal.timeout(PING_TIMEOUT_MS)
+      const response = await this.fetchWithTimeout(endpoint(baseUrl, 'status'), {
+        headers: { 'X-Api-Key': apiKey },
       });
-      if (res.ok) {
-        healthMetrics.setServiceHealth(target.key, 'healthy');
-      } else {
-        healthMetrics.setServiceHealth(target.key, 'unhealthy', `HTTP ${res.status}`);
-      }
-    } catch (err: unknown) {
-      healthMetrics.setServiceHealth(target.key, 'unhealthy', getErrorMessage(err));
+      healthMetrics.setServiceHealth(
+        'seerr',
+        response.ok ? 'healthy' : 'unhealthy',
+        response.ok ? undefined : `HTTP ${response.status}`,
+      );
+    } catch (error) {
+      healthMetrics.setServiceHealth('seerr', 'unhealthy', getErrorMessage(error));
+    }
+  }
+
+  private async pingLLM(target: { key: string; baseUrl: string; apiKey: string }): Promise<void> {
+    try {
+      const headers: Record<string, string> = {};
+      if (target.apiKey) headers.Authorization = `Bearer ${target.apiKey}`;
+      const response = await this.fetchWithTimeout(openAiModelsUrl(target.baseUrl), { headers });
+      healthMetrics.setServiceHealth(
+        target.key,
+        response.ok ? 'healthy' : 'unhealthy',
+        response.ok ? undefined : `HTTP ${response.status}`,
+      );
+    } catch (error) {
+      healthMetrics.setServiceHealth(target.key, 'unhealthy', getErrorMessage(error));
     }
   }
 }

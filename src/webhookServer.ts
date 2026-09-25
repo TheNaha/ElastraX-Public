@@ -14,6 +14,13 @@
  * imports from this path, which also keeps the public surface pinned.
  */
 export { WebhookServer } from './webhooks/WebhookServer';
+export { parseWebhookConfig } from './webhooks/config';
+export type {
+  WebhookDeliveryJob,
+  WebhookEnqueueResult,
+  WebhookEnqueuer,
+  WebhookReadinessCheck,
+} from './webhooks/types';
 export { buildWebhookMessage } from './webhooks/adapters/index';
 export {
   readRequestBodyWithLimit,

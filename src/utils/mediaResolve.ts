@@ -31,6 +31,7 @@ export interface ResolveMediaOptions {
   useDownloader?: boolean;
   /** Hook invoked right before an on-demand download (e.g. a reaction emoji). */
   beforeDownload?: () => void | Promise<void>;
+  attachmentId?: string;
 }
 
 type MediaCarrier = { mediaPath?: string; mimeType?: string };
@@ -57,6 +58,12 @@ export async function resolveTargetMedia(
   ctx: MessageContext,
   opts: ResolveMediaOptions = {},
 ): Promise<ResolvedMedia | null> {
+  if (opts.attachmentId) {
+    const attachment = ctx.mediaAttachments?.find(candidate => candidate.id === opts.attachmentId);
+    if (!attachment) throw new Error(`Attachment not found: ${opts.attachmentId}`);
+    await ctx.selectMediaAttachment?.(opts.attachmentId);
+  }
+
   const direct = await findOnDisk(ctx);
   if (direct) return direct;
 
@@ -67,7 +74,7 @@ export async function resolveTargetMedia(
 
   if (opts.useDownloader && ctx.downloadMedia) {
     await opts.beforeDownload?.();
-    const buffer = await ctx.downloadMedia();
+    const buffer = await ctx.downloadMedia(opts.attachmentId);
     if (!buffer) return null;
     return { mime: ctx.mimeType || ctx.quoted?.mimeType || '', buffer };
   }

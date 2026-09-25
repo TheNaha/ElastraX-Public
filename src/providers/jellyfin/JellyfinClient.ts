@@ -97,7 +97,7 @@ export class JellyfinClient extends BaseHttpClient {
   // ── Users ─────────────────────────────────────────────────────────────────
 
   async getUserById(userId: string): Promise<JellyfinUser> {
-    return this.get(`/Users/${userId}`);
+    return this.get(`/Users/${encodeURIComponent(userId)}`);
   }
 
   // ── Library ───────────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ export class JellyfinClient extends BaseHttpClient {
   }
 
   async getItem(itemId: string): Promise<JellyfinItem> {
-    return this.get(`/Items/${itemId}`);
+    return this.get(`/Items/${encodeURIComponent(itemId)}`);
   }
 
   async getLatestMedia(opts?: { userId?: string; limit?: number; includeTypes?: string[] }): Promise<JellyfinItem[]> {
@@ -130,8 +130,8 @@ export class JellyfinClient extends BaseHttpClient {
 
   /** Build a user-facing watch link for an item. */
   getWatchLink(itemId: string): string {
-    const base = this.externalUrl || this.baseUrl;
-    return `${base}/web/index.html#!/details?id=${itemId}`;
+    if (!this.externalUrl) throw new Error('JELLYFIN_EXTERNAL_URL is not configured.');
+    return `${this.externalUrl}/web/index.html#!/details?id=${encodeURIComponent(itemId)}`;
   }
 
   // ── System ────────────────────────────────────────────────────────────────

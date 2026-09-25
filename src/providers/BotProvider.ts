@@ -15,11 +15,25 @@
 import { MessageContext } from '../core/MessageContext';
 
 /** Implemented by every messaging-platform adapter (WhatsApp, Discord, etc.). */
+export type BotProviderStatus =
+  | 'stopped'
+  | 'starting'
+  | 'running'
+  | 'backoff'
+  | 'not_configured'
+  | 'error';
+
 export interface BotProvider {
   /**
    * Name of the provider ('whatsapp' or 'discord')
    */
   name: 'whatsapp' | 'discord';
+
+  readonly status?: BotProviderStatus;
+
+  readonly lastError?: Error | null;
+
+  readonly isOperational?: boolean;
 
   /**
    * Start the bot connection
@@ -40,5 +54,5 @@ export interface BotProvider {
    * Send a plain text message to a specific chat/channel ID.
    * Used by scheduler jobs and webhook inbound delivery.
    */
-  sendMessage(chatId: string, text: string): Promise<void>;
+  sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<unknown>;
 }
