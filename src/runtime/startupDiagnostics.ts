@@ -2,6 +2,7 @@ import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { db } from '../db';
+import { desc, eq } from 'drizzle-orm';
 import { messages } from '../db/schema';
 import { scanParserCoverage, logCoverageSummary, type CoverageResult } from '../utils/parserCoverage';
 import { logger } from '../utils/logger';
@@ -29,13 +30,8 @@ function getDefaultRows(limit?: number): MessageRow[] {
   const query = db.select({
     rawMessage: messages.rawMessage,
     providerMessageId: messages.providerMessageId,
-  }).from(messages);
-
-  if (typeof limit === 'number') {
-    return query.limit(limit).all();
-  }
-
-  return query.all();
+  }).from(messages).where(eq(messages.platform, 'whatsapp')).orderBy(desc(messages.id));
+  return query.limit(Math.max(1, Math.min(2_000, limit ?? 500))).all();
 }
 
 function getErrorCode(err: unknown): string | undefined {
@@ -50,9 +46,7 @@ export function resolveFixtureDir(env: NodeJS.ProcessEnv = process.env): string 
   const configuredDir = env.FIXTURE_DUMP_DIR?.trim();
   if (configuredDir) return configuredDir;
 
-  return env.NODE_ENV === 'production'
-    ? join(ROOT_DIR, 'data/fixtures/wa_messages')
-    : join(ROOT_DIR, 'test/fixtures/wa_messages');
+  return join(ROOT_DIR, 'test/fixtures/wa_messages');
 }
 
 export function stripFixtureBlobs(raw: unknown): unknown {
@@ -75,6 +69,9 @@ export async function dumpFixtures(
   botUserId: string | null,
   deps: StartupDiagnosticsDeps = {},
 ): Promise<void> {
+  if (process.env.NODE_ENV === 'production' || process.env.ALLOW_FIXTURE_DUMP !== 'true') {
+    throw new Error('Fixture dumping is disabled outside an explicit development environment');
+  }
   logger.info('[FixtureDumper] Reading messages from database...');
 
   const loadMessages = deps.loadMessages ?? getDefaultRows;
@@ -95,7 +92,7 @@ export async function dumpFixtures(
   logCoverage(result);
 
   try {
-    await makeDirectory(fixtureDir, { recursive: true });
+    await makeDirectory(fixtureDir, { recursive: true, mode: 0o700 });
   } catch (err: unknown) {
     const code = getErrorCode(err);
     if (code === 'EACCES' || code === 'EROFS') {
@@ -111,7 +108,7 @@ export async function dumpFixtures(
     if (fileExists(filepath)) continue;
 
     try {
-      await writeTextFile(filepath, JSON.stringify(stripFixtureBlobs(raw), null, 2), 'utf-8');
+      await writeTextFile(filepath, JSON.stringify(stripFixtureBlobs(raw), null, 2), { encoding: 'utf-8', mode: 0o600 });
     } catch (err: unknown) {
       const code = getErrorCode(err);
       if (code === 'EACCES' || code === 'EROFS') {

@@ -1,72 +1,91 @@
-/**
- * @file src/index.ts
- * @description Application entry point for ElastraX v7.
- *
- * Responsibilities:
- *  1. Validate required environment variables (fail fast on misconfiguration).
- *  2. Run Drizzle ORM database migrations on startup.
- *  3. Instantiate and start all messaging platform providers (WhatsApp, Discord).
- *  4. Wire each provider's incoming-message event to the core AI agent handler.
- *  5. On graceful shutdown (SIGINT / Ctrl-C):
- *       - Dump representative WAMessage fixture files to test/fixtures/wa_messages/
- *         so the parser test suite can grow automatically over time.
- *       - Stop all providers cleanly.
- *  6. Run a lightweight parser-coverage scan 5 seconds after startup so that
- *     any message-type gaps are surfaced in the logs without blocking boot.
- */
-
-import { logger } from './utils/logger';
-import { ensureDatabaseSchema } from './db';
 import { validateEnv } from './config/env';
-import { FlowHandler } from './core/FlowHandler';
-import { AppRuntime } from './runtime/AppRuntime';
-import { dumpFixtures, runStartupCoverageScan } from './runtime/startupDiagnostics';
+import { logger } from './utils/logger';
 
-async function main() {
-  validateEnv();
-  logger.info('Starting ElastraX v7...');
+const log = logger.child({ module: 'Bootstrap' });
 
-  try {
-    logger.info('Running database migrations...');
-    await ensureDatabaseSchema();
-    logger.info('Database migrations applied successfully.');
-  } catch (err: unknown) {
-    logger.error(err, 'Failed to run database migrations');
-    process.exit(1);
-  }
+export type BootstrapHandle = {
+  runtime: import('./runtime/AppRuntime').AppRuntime;
+  shutdown(reason?: string): Promise<void>;
+};
 
-  // Restore persisted flow sessions from SQLite so multi-step wizards survive restarts.
+export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<BootstrapHandle> {
+  validateEnv(env);
+
+  const database = await import('./db') as typeof import('./db') & {
+    closeDatabase?: () => void | Promise<void>;
+  };
+  await database.ensureDatabaseSchema();
+
+  const [{ FlowHandler }, { AppRuntime }] = await Promise.all([
+    import('./core/FlowHandler'),
+    import('./runtime/AppRuntime'),
+  ]);
   await FlowHandler.initialize();
 
-  const runtime = new AppRuntime({
-    runStartupCoverageScan: async () => runStartupCoverageScan(null),
-  });
-  await runtime.start();
-
+  let runtime: InstanceType<typeof AppRuntime> | undefined;
+  let shutdownPromise: Promise<void> | undefined;
   let shuttingDown = false;
-  const shutdown = async (signal: 'SIGINT' | 'SIGTERM') => {
-    if (shuttingDown) return;
+
+  const shutdown = (reason = 'shutdown'): Promise<void> => {
+    if (shutdownPromise) return shutdownPromise;
     shuttingDown = true;
-    logger.info('Shutting down gracefully...');
-
-    // Dump fixtures before exit so the test suite grows automatically
-    await Promise.race([
-      dumpFixtures(null),
-      new Promise<void>((_, reject) => setTimeout(() => reject(new Error('Timeout')), 2000))
-    ]).catch(err => {
-      logger.error(err, `[FixtureDumper] Failed during ${signal} — fixtures may be incomplete`);
-    });
-
-    await runtime.stop();
-    process.exit(0);
+    shutdownPromise = (async () => {
+      log.info({ reason }, 'Shutdown requested');
+      removeSignalHandlers();
+      try {
+        await runtime?.stop();
+      } catch (err) {
+        log.error({ err, reason }, 'Runtime shutdown failed');
+      }
+      try {
+        await database.closeDatabase?.();
+      } catch (err) {
+        log.error({ err, reason }, 'Database shutdown failed');
+      }
+    })();
+    return shutdownPromise;
   };
 
-  // Handle graceful shutdown
-  process.on('SIGINT', () => void shutdown('SIGINT'));
-  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  const onSignal = (signal: NodeJS.Signals) => {
+    void shutdown(signal).finally(() => {
+      process.exitCode = 0;
+    });
+  };
+  const onFatalError = (error: unknown) => {
+    log.fatal({ err: error }, 'Fatal process error');
+    void shutdown('fatal').finally(() => {
+      process.exitCode = 1;
+    });
+  };
+  const removeSignalHandlers = (): void => {
+    process.off('SIGINT', onSignal);
+    process.off('SIGTERM', onSignal);
+    process.off('uncaughtException', onFatalError);
+    process.off('unhandledRejection', onFatalError);
+  };
+
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  process.once('uncaughtException', onFatalError);
+  process.once('unhandledRejection', onFatalError);
+
+  try {
+    runtime = new AppRuntime();
+    await runtime.start();
+    if (shuttingDown) await shutdown('startup-interrupted');
+  } catch (error) {
+    removeSignalHandlers();
+    await runtime?.stop().catch(() => {});
+    await database.closeDatabase?.();
+    throw error;
+  }
+
+  return { runtime, shutdown };
 }
 
-main().catch((err) => {
-  logger.error(err, 'Fatal error during startup');
-  process.exit(1);
-});
+if (import.meta.main) {
+  void bootstrap().catch(error => {
+    log.fatal({ err: error }, 'Bot startup failed');
+    process.exitCode = 1;
+  });
+}

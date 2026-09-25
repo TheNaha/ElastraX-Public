@@ -3,7 +3,7 @@ import { MessageContext } from '../core/MessageContext';
 import { BotProvider } from '../providers/BotProvider';
 import { DiscordProvider } from '../providers/discord';
 import { WhatsAppProvider } from '../providers/whatsapp';
-import { MessageQueue } from '../utils/MessageQueue';
+import { MessageQueue, type MessageQueueStats } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
 import { RateLimiter } from '../utils/RateLimiter';
 import { Scheduler } from '../utils/Scheduler';
@@ -12,19 +12,37 @@ import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { healthMonitor, type HealthMonitor } from '../utils/HealthMonitor';
-import { getMediaCleanupIntervalMs } from '../config/runtime';
+import { getMediaCleanupIntervalMs, getQueueConfig } from '../config/runtime';
 import { registryReady } from '../tools';
 import { safeRegisterFlows } from '../flows/registry';
+import { isSchemaReady, sqlite } from '../db';
+import { runRetentionMaintenance } from '../db/maintenance';
+import { InboxService } from '../messaging/InboxService';
+import { OutboxService } from '../messaging/OutboxService';
+import type {
+  WebhookEnqueuer,
+  WebhookReadinessCheck,
+} from '../webhooks/types';
+import { withCancellableTimeout } from '../utils/withTimeout';
+import { randomUUID } from 'node:crypto';
 
-type SenderFn = (chatId: string, text: string, platform?: string) => Promise<void>;
+type SenderFn = (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
 
 type SenderRegistry = {
-  registerSender(platform: string, fn: SenderFn): void;
+  registerSender(platform: string, send: SenderFn): void | (() => void);
   start(): void;
   stop(): void;
+  registerReadinessCheck?(check: WebhookReadinessCheck): () => void;
+  registerEnqueuer?(enqueuer: WebhookEnqueuer): () => void;
+  unregisterSender?(platform: string): void;
 };
 
-type QueueController = Pick<MessageQueue, 'enqueue' | 'stop'> & Partial<Pick<MessageQueue, 'getStats'>>;
+type QueueController = {
+  enqueue(roomId: string, task: (signal?: AbortSignal) => Promise<void>): unknown;
+  stop(): void;
+  closeAndDrain?(graceMs?: number): Promise<void>;
+  getStats?(): Partial<MessageQueueStats>;
+};
 
 type TimerApi = {
   setInterval: typeof globalThis.setInterval;
@@ -52,6 +70,15 @@ export function resolveMediaCleanupIntervalMs(rawMediaCleanupInterval: string | 
   return getMediaCleanupIntervalMs({ MEDIA_CLEANUP_INTERVAL_MS: rawMediaCleanupInterval });
 }
 
+function hasDurableMessagingStore(): boolean {
+  const candidate = sqlite as unknown as { query?: unknown };
+  return typeof candidate.query === 'function';
+}
+
+function isTestRuntime(): boolean {
+  return process.env.NODE_ENV === 'test';
+}
+
 export class AppRuntime {
   private readonly providers: BotProvider[];
   private readonly messageQueue: QueueController;
@@ -66,16 +93,25 @@ export class AppRuntime {
   private readonly startupCoverageDelayMs: number;
   private readonly healthMon: HealthMonitor;
 
+  private readonly inboxOwner = `runtime:${process.pid}:${randomUUID()}`;
+  private readonly outboxOwner = `runtime:${process.pid}:${randomUUID()}`;
   private rateLimiterTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private outboxTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private outboxPromise: Promise<void> | null = null;
   private mediaCleanupTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private retentionTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private startupCoverageTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private mediaCleanupPromise: Promise<void> | null = null;
+  private retentionPromise: Promise<void> | null = null;
+  private activeProviders: BotProvider[] = [];
+  private unregisterWebhookHooks: Array<() => void> = [];
+  private unregisterSenderHooks: Array<() => void> = [];
   private started = false;
   private stopping = false;
 
   constructor(deps: AppRuntimeDeps = {}) {
     this.providers = deps.providers ?? [new WhatsAppProvider(), new DiscordProvider()];
-    this.messageQueue = deps.messageQueue ?? new MessageQueue();
+    this.messageQueue = deps.messageQueue ?? new MessageQueue(1, 5 * 60 * 1000, getQueueConfig());
     this.webhookServer = deps.webhookServer ?? new WebhookServer();
     this.scheduler = deps.scheduler ?? Scheduler;
     this.digestService = deps.digestService ?? DigestService;
@@ -89,7 +125,15 @@ export class AppRuntime {
 
     const getStats = this.messageQueue.getStats?.bind(this.messageQueue);
     if (getStats) {
-      healthMetrics.registerQueueStats(() => getStats());
+      healthMetrics.registerQueueStats(() => ({
+        totalRooms: 0,
+        totalPending: 0,
+        totalRunning: 0,
+        oldestPendingAgeMs: 0,
+        droppedTasks: 0,
+        stopped: false,
+        ...getStats(),
+      }));
     }
   }
 
@@ -101,72 +145,193 @@ export class AppRuntime {
     await registryReady;
 
     // Register all flow processors in a centralized location.
-    safeRegisterFlows();
+    await safeRegisterFlows();
 
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
-      this.messageQueue.enqueue(ctx.chatId, () => this.messageHandler(ctx));
+      if (!hasDurableMessagingStore()) {
+        this.messageQueue.enqueue(ctx.chatId, async signal => {
+          signal?.throwIfAborted();
+          if (!ctx.signal && signal) Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
+          await this.messageHandler(ctx);
+        });
+        return;
+      }
+      let admission: ReturnType<typeof InboxService.admit>;
+      try {
+        admission = InboxService.admit(ctx);
+      } catch (error) {
+        if (!isTestRuntime()) throw error;
+        this.messageQueue.enqueue(ctx.chatId, async signal => {
+          signal?.throwIfAborted();
+          if (!ctx.signal && signal) Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
+          await this.messageHandler(ctx);
+        });
+        return;
+      }
+      if (!admission.accepted) {
+        logger.info({ chatId: ctx.chatId, platform: ctx.platform, reason: admission.reason }, 'Provider event already completed');
+        return;
+      }
+      const task = async (signal?: AbortSignal): Promise<void> => {
+        signal?.throwIfAborted();
+        if (!ctx.signal && signal) {
+          Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
+        }
+        if (!InboxService.claim(admission.id, this.inboxOwner)) return;
+        try {
+          await this.messageHandler(ctx);
+          InboxService.complete(admission.id, this.inboxOwner);
+        } catch (error) {
+          InboxService.fail(admission.id, this.inboxOwner, error);
+          throw error;
+        }
+      };
+
+      let accepted = false;
+      for (let attempt = 0; attempt < 80; attempt++) {
+        accepted = this.messageQueue.enqueue(ctx.chatId, task) !== false;
+        if (accepted) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      if (!accepted) {
+        InboxService.deferUnclaimed(admission.id, new Error('Message queue remained at capacity'));
+        logger.warn({ chatId: ctx.chatId, platform: ctx.platform }, 'Message rejected after queue backpressure timeout');
+      }
     };
 
     for (const provider of this.providers) {
       provider.onMessage(queuedHandler);
     }
 
-    const startedProviders: BotProvider[] = [];
-    await Promise.all(this.providers.map(async (provider) => {
-      try {
-        await provider.start();
-        startedProviders.push(provider);
-      } catch (err) {
-        logger.error({ err, provider: provider.name }, 'Failed to start provider (non-fatal)');
+    const results = await Promise.allSettled(this.providers.map(provider => provider.start()));
+    this.activeProviders = results.flatMap((result, index) => {
+      const provider = this.providers[index]!;
+      if (result.status === 'fulfilled') {
+        if (provider.isOperational !== false) return [provider];
+        logger.error({ provider: provider.name, status: provider.status }, 'Provider did not become operational');
+        return [];
       }
-    }));
+      logger.error({ err: result.reason, provider: provider.name }, 'Provider failed to start; continuing in degraded mode');
+      return [];
+    });
 
-    this.registerProviderSenders();
-    this.webhookServer.start();
-    this.scheduler.start();
-    this.digestService.start();
-    this.healthMon.start();
-    this.startBackgroundTasks();
+    if (this.activeProviders.length === 0) {
+      logger.error('No messaging provider is ready');
+    }
 
     this.started = true;
-    logger.info('Bot is running. Press Ctrl+C to stop.');
+    try {
+      this.registerProviderSenders();
+      const unregisterReadiness = this.webhookServer.registerReadinessCheck?.(() => this.getReadiness().ready);
+      if (unregisterReadiness) this.unregisterWebhookHooks.push(unregisterReadiness);
+      const unregisterEnqueuer = this.webhookServer.registerEnqueuer?.(this.enqueueWebhook);
+      if (unregisterEnqueuer) this.unregisterWebhookHooks.push(unregisterEnqueuer);
+      await Promise.resolve(this.webhookServer.start());
+      await Promise.resolve(this.scheduler.start());
+      await Promise.resolve(this.digestService.start());
+      this.healthMon.start();
+      this.startBackgroundTasks();
+    } catch (err) {
+      await this.stop();
+      throw err;
+    }
+
+    logger.info({ readyProviders: this.activeProviders.map(provider => provider.name) }, 'Bot is running');
+  }
+
+  getReadiness(): {
+    ready: boolean;
+    checks: { database: boolean; queue: boolean; providers: Record<string, boolean> };
+  } {
+    const providers = Object.fromEntries(this.providers.map(provider => [provider.name, provider.isOperational === true]));
+    const queueStats = this.messageQueue.getStats?.() ?? {};
+    const databaseReady = isSchemaReady();
+    const queueReady = queueStats.stopped !== true;
+    return {
+      ready: this.started && databaseReady && queueReady && Object.values(providers).some(Boolean),
+      checks: { database: databaseReady, queue: queueReady, providers },
+    };
   }
 
   async stop(): Promise<void> {
     if (!this.started || this.stopping) return;
     this.stopping = true;
-
-    await this.stopBackgroundTasks();
-    this.digestService.stop();
-    this.scheduler.stop();
-    this.webhookServer.stop();
-    this.healthMon.stop();
-    this.messageQueue.stop();
-
-    // Stop providers with a timeout so a hung provider can't block shutdown forever
-    const SHUTDOWN_TIMEOUT_MS = 10_000;
-    for (const provider of this.providers) {
+    for (const unregister of [...this.unregisterWebhookHooks.splice(0), ...this.unregisterSenderHooks.splice(0)]) {
       try {
-        await Promise.race([
-          provider.stop(),
-          new Promise<void>((_, reject) =>
-            setTimeout(() => reject(new Error(`Provider ${provider.name} stop timed out`)), SHUTDOWN_TIMEOUT_MS)
-          ),
-        ]);
-      } catch (err) {
-        logger.warn({ err, provider: provider.name }, 'Provider stop error during shutdown (non-fatal)');
+        unregister();
+      } catch (error) {
+        logger.warn({ err: error }, 'Webhook hook unregistration failed');
       }
     }
 
-    this.started = false;
-    this.stopping = false;
-    logger.info('Graceful shutdown complete.');
+    for (const provider of this.activeProviders) {
+      this.scheduler.unregisterSender?.(provider.name);
+      this.digestService.unregisterSender?.(provider.name);
+    }
+    try {
+      await this.stopBackgroundTasks();
+      this.digestService.stop();
+      this.scheduler.stop();
+      this.webhookServer.stop();
+      this.healthMon.stop();
+      if (this.messageQueue.closeAndDrain) {
+        await this.messageQueue.closeAndDrain();
+      } else {
+        this.messageQueue.stop();
+      }
+      this.processOutbox();
+      if (this.outboxPromise) await this.outboxPromise;
+
+      await Promise.allSettled(this.providers.map(async provider => {
+        await Promise.race([
+          provider.stop(),
+          new Promise<void>((_, reject) => {
+            const timer = setTimeout(() => reject(new Error(`Provider ${provider.name} stop timed out`)), 10_000);
+            timer.unref?.();
+          }),
+        ]);
+      }));
+    } finally {
+      this.activeProviders = [];
+      this.started = false;
+      this.stopping = false;
+      logger.info('Graceful shutdown complete');
+    }
   }
 
+  private inferWebhookPlatform(chatRoomId: string): string {
+    if (chatRoomId.includes('@g.us') || chatRoomId.includes('@s.whatsapp.net')) return 'whatsapp';
+    if (/^\d+$/.test(chatRoomId)) return 'discord';
+    return this.activeProviders[0]?.name ?? 'whatsapp';
+  }
+
+  private readonly enqueueWebhook: WebhookEnqueuer = async (job, signal) => {
+    if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
+    if (job.destinations.length === 0) throw new Error('Webhook job has no destinations');
+    const acceptedAt = new Date().toISOString();
+    const eventKey = job.eventId ?? `${job.route}:${job.source}:${job.receivedAt}:${job.text}`;
+    const deliveryIds = job.destinations.map(destination => OutboxService.enqueueText(
+      destination.platform ?? this.inferWebhookPlatform(destination.chatRoomId),
+      destination.chatRoomId,
+      job.text,
+      ['webhook', job.route, eventKey, destination.platform ?? '', destination.chatRoomId],
+    ));
+    if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
+    return {
+      accepted: true,
+      deliveryId: deliveryIds.join(','),
+      acceptedAt,
+    };
+  };
+
   private registerProviderSenders(): void {
-    for (const provider of this.providers) {
-      const send = async (chatId: string, text: string, _platform?: string): Promise<void> => provider.sendMessage(chatId, text);
-      this.webhookServer.registerSender(provider.name, send);
+    for (const provider of this.activeProviders) {
+      const send: SenderFn = async (chatId: string, text: string, signal?: AbortSignal) => {
+        if (signal) await provider.sendMessage(chatId, text, signal);
+        else await provider.sendMessage(chatId, text);
+      };
+      const unregister = this.webhookServer.registerSender(provider.name, send);
+      if (unregister) this.unregisterSenderHooks.push(unregister);
       this.scheduler.registerSender(provider.name, send);
       this.digestService.registerSender(provider.name, send);
     }
@@ -174,6 +339,15 @@ export class AppRuntime {
 
   private startBackgroundTasks(): void {
     this.rateLimiterTimer = this.timers.setInterval(() => this.rateLimiter.prune(), 10 * 60 * 1000);
+    if (hasDurableMessagingStore()) {
+      this.processOutbox();
+      this.outboxTimer = this.timers.setInterval(() => this.processOutbox(), 1_000);
+      this.runRetention();
+      this.retentionTimer = this.timers.setInterval(() => this.runRetention(), 24 * 60 * 60 * 1000);
+    }
+    this.mediaCleanupPromise = this.mediaCleanup.pruneOldFiles()
+      .catch((err) => logger.warn({ err }, '[MediaCleanup] Initial prune failed'))
+      .finally(() => { this.mediaCleanupPromise = null; });
 
     const rawMediaCleanupInterval = process.env.MEDIA_CLEANUP_INTERVAL_MS;
     const mediaCleanupIntervalMs = resolveMediaCleanupIntervalMs(rawMediaCleanupInterval);
@@ -201,11 +375,63 @@ export class AppRuntime {
     }
   }
 
+  private runRetention(): void {
+    if (!hasDurableMessagingStore() || this.retentionPromise) return;
+    this.retentionPromise = Promise.resolve()
+      .then(() => {
+        runRetentionMaintenance();
+      })
+      .catch(error => logger.error({ err: error }, 'Retention maintenance failed'))
+      .finally(() => { this.retentionPromise = null; });
+  }
+
+  private processOutbox(): void {
+    if (!hasDurableMessagingStore() || this.outboxPromise) return;
+    const providers = new Map<string, BotProvider>(this.activeProviders.map(provider => [provider.name, provider]));
+    if (providers.size === 0) return;
+    this.outboxPromise = (async () => {
+      const claimed = OutboxService.claim(this.outboxOwner, [...providers.keys()], 10);
+      for (const message of claimed) {
+        const provider = providers.get(message.platform);
+        try {
+          if (!provider) throw new Error(`No provider for ${message.platform}`);
+          const result = await withCancellableTimeout(
+            signal => provider.sendMessage(message.chatRoomId, message.text, signal),
+            15_000,
+            'outbox delivery',
+          );
+          const providerMessageId = typeof result === 'string' ? result : null;
+          if (!OutboxService.markSent(message.id, this.outboxOwner, providerMessageId)) {
+            logger.warn({ id: message.id }, 'Outbox message was not owned during completion');
+          }
+        } catch (error) {
+          OutboxService.fail(message.id, this.outboxOwner, error);
+          logger.error({ err: error, id: message.id, platform: message.platform }, 'Outbox delivery failed');
+        }
+      }
+    })().catch(error => {
+      logger.error({ err: error }, 'Outbox worker failed');
+    }).finally(() => {
+      this.outboxPromise = null;
+    });
+  }
+
   private async stopBackgroundTasks(): Promise<void> {
     if (this.rateLimiterTimer) {
       this.timers.clearInterval(this.rateLimiterTimer);
       this.rateLimiterTimer = null;
     }
+
+    if (this.outboxTimer) {
+      this.timers.clearInterval(this.outboxTimer);
+      this.outboxTimer = null;
+    }
+    if (this.retentionTimer) {
+      this.timers.clearInterval(this.retentionTimer);
+      this.retentionTimer = null;
+    }
+    if (this.outboxPromise) await this.outboxPromise;
+    if (this.retentionPromise) await this.retentionPromise;
 
     if (this.mediaCleanupTimer) {
       this.timers.clearInterval(this.mediaCleanupTimer);
