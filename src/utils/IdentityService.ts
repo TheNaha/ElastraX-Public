@@ -225,6 +225,11 @@ export const IdentityService = {
         inArray(deps.canonicalIdentities.primaryAlias, aliases.map(alias => alias.value)),
       ));
       const existing = [...primaryRows, ...existingRows].find((row: CanonicalRow | undefined): row is CanonicalRow => Boolean(row));
+      const aliasMappingComplete = existingRows.every(Boolean)
+        && new Set(existingRows.map(row => row?.id)).size === 1;
+      if (existing && aliasMappingComplete && (!displayName || displayName === existing.displayName)) {
+        return;
+      }
       const canonicalId = existing?.id ?? randomUUID();
       const primaryAlias = existing?.primaryAlias ?? aliases[0]!.value;
 
