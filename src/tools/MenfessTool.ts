@@ -40,7 +40,11 @@ type MenfessArgs = {
 
 type MenfessFlowData = {
   targetChatId: string;
+  targetLabel: string;
   message: string;
+  sourceRoomId: string;
+  platform: string;
+  directSend: true;
 };
 
 function isMenfessFlowData(value: unknown): value is MenfessFlowData {
@@ -49,44 +53,40 @@ function isMenfessFlowData(value: unknown): value is MenfessFlowData {
     && 'targetChatId' in value
     && typeof (value as { targetChatId?: unknown }).targetChatId === 'string'
     && 'message' in value
-    && typeof (value as { message?: unknown }).message === 'string';
+    && typeof (value as { message?: unknown }).message === 'string'
+    && 'sourceRoomId' in value
+    && typeof (value as { sourceRoomId?: unknown }).sourceRoomId === 'string'
+    && (value as { directSend?: unknown }).directSend === true;
 }
 
-/** Parse MENFESS_TARGETS env var into a name->chatId map. */
-function loadTargetAliases(): Map<string, string> {
+export function loadTargetAliases(): Map<string, string> {
   const map = new Map<string, string>();
   const raw = process.env.MENFESS_TARGETS || '';
-
   for (const pair of raw.split(',')) {
     const trimmed = pair.trim();
     if (!trimmed) continue;
-
-    const [name, chatId] = trimmed.split(':').map((segment) => segment.trim());
-    if (name && chatId) {
-      map.set(name.toLowerCase(), chatId);
+    if (/^\d+@(g\.us|s\.whatsapp\.net)$/i.test(trimmed)) {
+      map.set(trimmed.toLowerCase(), trimmed);
       continue;
     }
-
-    if (trimmed.includes('@g.us') || trimmed.includes('@s.whatsapp.net')) {
-      map.set(trimmed.toLowerCase(), trimmed);
+    const separator = trimmed.indexOf(':');
+    if (separator > 0) {
+      const name = trimmed.slice(0, separator).trim().toLowerCase();
+      const chatId = trimmed.slice(separator + 1).trim();
+      if (name && chatId) map.set(name, chatId);
     }
   }
-
   return map;
 }
 
-const targetAliases = loadTargetAliases();
+export function isMenfessTargetAllowed(input: string): boolean {
+  return loadTargetAliases().has(input.trim().toLowerCase());
+}
 
-/** Resolve target: check alias map first, then treat input as raw chat ID. */
-function resolveTarget(input: string): string | null {
-  const alias = targetAliases.get(input.toLowerCase().trim());
-  if (alias) return alias;
+export const isTargetAllowed = isMenfessTargetAllowed;
 
-  if (input.includes('@g.us') || input.includes('@s.whatsapp.net')) {
-    return input.trim();
-  }
-
-  return null;
+export function resolveTarget(input: string, aliases = loadTargetAliases()): string | null {
+  return aliases.get(input.trim().toLowerCase()) ?? null;
 }
 
 // ── Flow Processor ──────────────────────────────────────────────────
@@ -96,31 +96,41 @@ export const menfessConfirmFlowProcessor = async (ctx: MessageContext, flowData:
   const response = ctx.text.trim().toLowerCase();
 
   if (!isMenfessFlowData(flowData.data)) {
-    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
+    await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
     await ctx.reply(t(lang, 'flow.error', { msg: 'Invalid menfess confirmation state.' }));
+    return;
+  }
+  if (flowData.data.sourceRoomId !== ctx.chatId || flowData.data.platform !== ctx.platform) {
+    await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
+    await ctx.reply(t(lang, 'menfess.error', { msg: 'The confirmation must be sent in the original chat.' }));
     return;
   }
 
   if (['yes', 'y', 'ya', 'iya', 'yep', 'yup', 'send', 'kirim'].includes(response)) {
-    const { targetChatId, message } = flowData.data;
-    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
-
+    const { targetChatId, message, targetLabel } = flowData.data;
+    const resolvedTarget = resolveTarget(targetLabel);
+    if (!resolvedTarget || resolvedTarget !== targetChatId) {
+      await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
+      await ctx.reply(t(lang, 'menfess.error', { msg: 'The destination is no longer allowlisted.' }));
+      return;
+    }
     if (!ctx.forwardMessage) {
+      await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
       await ctx.reply(t(lang, 'menfess.not_supported'));
       return;
     }
-
     try {
       await ctx.forwardMessage(targetChatId, `[Anonymous Message]\n\n${message}`);
+      await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
       log.info({ targetChatId, senderId: ctx.senderId }, 'Anonymous message sent');
-      await ctx.reply(t(lang, 'menfess.sent'));
+      await ctx.reply(`${t(lang, 'menfess.sent')}\nDestination: ${targetChatId}\nThe platform may still identify the sender; anonymity is not guaranteed.`);
     } catch (err: unknown) {
+      await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
       log.error({ err, targetChatId }, 'Failed to send anonymous message');
-      const errMessage = getErrorMessage(err);
-      await ctx.reply(t(lang, 'menfess.error', { msg: errMessage }));
+      await ctx.reply(t(lang, 'menfess.error', { msg: getErrorMessage(err) }));
     }
   } else {
-    FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform);
+    await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
     await ctx.reply(t(lang, 'menfess.cancelled'));
   }
 };
@@ -133,6 +143,7 @@ export class MenfessTool extends BaseTool {
   readonly aliases = ['menfess', 'anon'];
   readonly category = 'fun';
   readonly permissions = 'user';
+  override readonly mutability = 'external-mutation' as const;
   override readonly triggerPatterns = [/\b(menfess|confess|rahasia|anonymous)\b/i];
 
   get definition(): ToolDefinition {
@@ -163,26 +174,27 @@ export class MenfessTool extends BaseTool {
     const lang = ctx.language ?? 'en';
     const targetInput = String(args.target || '').trim();
     const message = String(args.message || '').trim();
-
-    log.debug({ targetInput, senderId: ctx.senderId }, 'Menfess initiated');
+    const aliases = loadTargetAliases();
 
     if (!targetInput) return t(lang, 'menfess.no_target');
     if (!message) return t(lang, 'menfess.no_message');
+    if (message.length > 4000) return 'Menfess messages are limited to 4000 characters.';
 
-    const targetChatId = resolveTarget(targetInput);
+    const targetChatId = resolveTarget(targetInput, aliases);
     if (!targetChatId) {
-      return `Unknown target "${targetInput}". Use a valid chat ID or a configured alias. Available aliases: ${Array.from(targetAliases.keys()).join(', ') || 'none configured'}.`;
+      return `Unknown target or non-allowlisted destination "${targetInput}". Available destinations: ${Array.from(aliases.keys()).join(', ') || 'none configured'}.`;
     }
 
-    FlowHandler.setSession(
+    await FlowHandler.setSession(
       ctx.senderId,
       'menfess_confirm',
-      { flow: 'menfess_confirm', step: 'confirm', data: { targetChatId, message } },
+      { flow: 'menfess_confirm', step: 'confirm', roomId: ctx.chatId, data: { targetChatId, targetLabel: targetInput, message, sourceRoomId: ctx.chatId, platform: ctx.platform, directSend: true } },
       ctx.platform,
       60,
+      ctx.chatId,
     );
 
-    return t(lang, 'menfess.preview', { message });
+    return `${t(lang, 'menfess.preview', { message })}\nDestination: ${targetInput} (${targetChatId})\nThe message will be sent as a new direct message only after you confirm. Anonymity is not guaranteed by the platform.`;
   }
 }
 

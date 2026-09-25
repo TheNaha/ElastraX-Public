@@ -6,7 +6,7 @@
  * Uses FlowHandler for the multi-step connect flow (username/password collection).
  */
 
-import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
+import { BaseTool, type ToolDefinition, type ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler, type FlowProcessor } from '../core/FlowHandler';
 import { MediaService } from '../utils/MediaService';
@@ -15,6 +15,22 @@ import { getErrorMessage } from '../utils/errorUtils';
 import { t } from '../utils/i18n';
 
 const log = logger.child({ module: 'MediaBindTool' });
+
+export interface NotificationDestinationContext extends MessageContext {
+  verifyRoomMembership?: (roomId: string, platform?: string) => Promise<boolean>;
+}
+
+export async function authorizeNotificationDestination(ctx: NotificationDestinationContext, roomId: string): Promise<boolean> {
+  if (roomId === ctx.chatId) return true;
+  if (!(await ctx.checkPermissions('owner'))) return false;
+  if (typeof ctx.verifyRoomMembership !== 'function') return false;
+  try {
+    return await ctx.verifyRoomMembership(roomId, ctx.platform) === true;
+  } catch (error: unknown) {
+    log.warn({ err: error, roomId, platform: ctx.platform }, 'Foreign notification room membership verification failed');
+    return false;
+  }
+}
 
 type MediaBindArgs = {
   action: 'connect' | 'disconnect' | 'notify' | 'status';
@@ -31,18 +47,25 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
   const { step, data } = flowData;
   const flowId = 'media_connect';
 
+  if (ctx.isGroup) {
+    await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+    await ctx.reply('❌ Media account linking is only available in a direct message.');
+    return;
+  }
+
   if (step === 'username') {
     const username = ctx.text.trim();
     if (!username) {
       await ctx.reply(t(ctx.language, 'media.username_prompt') || 'Please enter your username for the streaming service.');
       return;
     }
-    FlowHandler.setSession(
+    await FlowHandler.setSession(
       ctx.senderId,
       'media_connect',
-      { flow: 'media_connect', step: 'password', data: { ...data, username } },
+      { flow: 'media_connect', step: 'password', data: { ...data, username }, roomId: ctx.chatId },
       ctx.platform,
       120,
+      ctx.chatId,
     );
     await ctx.reply(t(ctx.language, 'media.password_prompt') || 'Now enter your password. (Your message will be processed securely.)');
     return;
@@ -63,77 +86,51 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
       const seerrClient = MediaService.createSeerrClient();
       const jellyfinClient = MediaService.createJellyfinClient();
 
-      // Try Seerr Jellyfin auth first (handles both)
-      let jellyfinUserId: string;
-      let jellyfinUsername: string;
+      let jellyfinUserId = '';
+      let jellyfinUsername = username;
       let isAdmin = false;
       let seerrUserId: number | undefined;
       let seerrEmail: string | undefined;
 
-      if (seerrClient.isConfigured && seerrClient.authenticateJellyfin) {
+      if (seerrClient.isConfigured && typeof seerrClient.authenticateJellyfin === 'function') {
         const seerrAuth = await seerrClient.authenticateJellyfin(username, password);
-        seerrUserId = seerrAuth.id;
+        const verifiedSeerrId = Number(seerrAuth?.id);
+        if (!Number.isInteger(verifiedSeerrId) || verifiedSeerrId <= 0) throw new Error('The service returned an invalid verified user id.');
+        seerrUserId = verifiedSeerrId;
         seerrEmail = seerrAuth.email;
         jellyfinUserId = seerrAuth.jellyfinUserId ?? '';
         jellyfinUsername = seerrAuth.displayName ?? username;
-
-        // If we got a Jellyfin user ID, check admin status via Jellyfin API
-        if (jellyfinUserId && jellyfinClient.isConfigured) {
-          try {
-            const jfUser = await jellyfinClient.getUserById(jellyfinUserId);
-            isAdmin = jfUser.Policy?.IsAdministrator === true;
-          } catch {
-            log.warn({ jellyfinUserId }, 'Could not fetch Jellyfin user for admin check');
-          }
+        if (jellyfinUserId && jellyfinClient.isConfigured && typeof jellyfinClient.getUserById === 'function') {
+          const jfUser = await jellyfinClient.getUserById(jellyfinUserId);
+          if (jfUser.Id && jfUser.Id !== jellyfinUserId) throw new Error('The verified Jellyfin identity did not match.');
+          isAdmin = jfUser.Policy?.IsAdministrator === true;
         }
-      } else if (seerrClient.isConfigured) {
-        // Seerr configured but no Jellyfin auth — try direct Seerr auth
-        const seerrAuth = await seerrClient.authenticateJellyfin(username, password);
-        seerrUserId = seerrAuth.id;
-        seerrEmail = seerrAuth.email;
-        jellyfinUserId = seerrAuth.jellyfinUserId ?? '';
-        jellyfinUsername = seerrAuth.displayName ?? username;
       } else if (jellyfinClient.isConfigured) {
-        // Fallback: direct Jellyfin auth
         const authResult = await jellyfinClient.authenticateUser(username, password);
+        if (!authResult?.User?.Id) throw new Error('The service returned an invalid verified user id.');
         jellyfinUserId = authResult.User.Id;
-        jellyfinUsername = authResult.User.Name;
+        jellyfinUsername = authResult.User.Name || username;
         isAdmin = authResult.User.Policy?.IsAdministrator === true;
       } else {
-        FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
+        await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
         await ctx.reply(t(ctx.language, 'media.not_configured') || '❌ Media services are not configured. Please contact the bot admin.');
         return;
       }
 
-      const metadata = JSON.stringify({ isAdmin, seerrUserId });
-
-      // Bind Jellyfin
-      if (jellyfinUserId && jellyfinUserId.length > 0) {
-        await MediaService.bindingService.bind({
-          userId: ctx.senderId,
-          platform: ctx.platform,
-          serviceType: 'jellyfin',
-          externalUserId: jellyfinUserId,
-          externalUsername: jellyfinUsername ?? username,
-          externalEmail: seerrEmail,
-          metadata,
-        });
+      if (!jellyfinUserId && seerrUserId === undefined) throw new Error('No verified service identity was returned.');
+      const metadata = JSON.stringify({ isAdmin, seerrUserId, verified: true, verifiedAt: new Date().toISOString(), authMethod: seerrUserId !== undefined ? 'jellyfin-via-seerr' : 'jellyfin' });
+      let bound = 0;
+      if (jellyfinUserId) {
+        await MediaService.bindingService.bind({ userId: ctx.senderId, platform: ctx.platform, serviceType: 'jellyfin', externalUserId: jellyfinUserId, externalUsername: jellyfinUsername || username, externalEmail: seerrEmail, metadata });
+        bound++;
       }
-
-      // Bind Seerr
       if (seerrUserId !== undefined) {
-        await MediaService.bindingService.bind({
-          userId: ctx.senderId,
-          platform: ctx.platform,
-          serviceType: 'seerr',
-          externalUserId: String(seerrUserId),
-          externalUsername: jellyfinUsername ?? username,
-          externalEmail: seerrEmail,
-          metadata,
-        });
+        await MediaService.bindingService.bind({ userId: ctx.senderId, platform: ctx.platform, serviceType: 'seerr', externalUserId: String(seerrUserId), externalUsername: jellyfinUsername || username, externalEmail: seerrEmail, metadata });
+        bound++;
       }
+      if (bound === 0) throw new Error('No verified service binding could be created.');
 
-      FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
+      await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
 
       const adminLabel = isAdmin ? ' 👑 ' : '';
       const adminText = adminLabel + (isAdmin ? t(ctx.language, 'media.admin_label') || '(Admin)' : '');
@@ -143,7 +140,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
         `${t(ctx.language, 'media.notify_hint') || 'Would you like to receive media notifications in this chat? Use the notify command to manage notification preferences.'}`,
       );
     } catch (err: unknown) {
-      FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform);
+      await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
       const msg = getErrorMessage(err);
       log.error({ err, username }, 'Media connect authentication failed');
       await ctx.reply(`${t(ctx.language, 'media.auth_failed') || '❌ Authentication failed:'} ${msg}\n${t(ctx.language, 'media.auth_retry') || 'Please check your credentials and try again.'}`);
@@ -160,6 +157,19 @@ export class MediaBindTool extends BaseTool {
   readonly aliases = ['connect', 'disconnect', 'notify'];
   readonly category = 'media';
   readonly permissions = 'user';
+  override readonly noArgAliases = ['connect', 'disconnect', 'notify'];
+  override readonly dmOnlyAliases = ['connect'];
+  override readonly mutability = 'external-mutation' as const;
+  override readonly requiresBinding: boolean = false;
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'connect', arguments: [] },
+      { value: 'disconnect', arguments: [] },
+      { value: 'notify', arguments: [{ name: 'notify_action', kind: 'string' }, { name: 'room_id', kind: 'string' }] },
+      { value: 'status', arguments: [] },
+    ],
+  };
 
   get definition(): ToolDefinition {
     return {
@@ -220,6 +230,7 @@ export class MediaBindTool extends BaseTool {
   }
 
   private async handleConnect(ctx: MessageContext): Promise<ToolResult> {
+    if (ctx.isGroup) return '❌ Media account linking is only available in a direct message.';
     const seerrClient = MediaService.createSeerrClient();
     const jellyfinClient = MediaService.createJellyfinClient();
 
@@ -235,12 +246,13 @@ export class MediaBindTool extends BaseTool {
     }
 
     // Start the flow
-    FlowHandler.setSession(
+    await FlowHandler.setSession(
       ctx.senderId,
       'media_connect',
-      { flow: 'media_connect', step: 'username', data: {} },
+      { flow: 'media_connect', step: 'username', data: {}, roomId: ctx.chatId },
       ctx.platform,
       120,
+      ctx.chatId,
     );
 
     return t(ctx.language, 'media.connect_start') || 'Let\'s link your media account. Please enter your username:';
@@ -259,52 +271,75 @@ export class MediaBindTool extends BaseTool {
 
   private async handleNotify(args: MediaBindArgs, ctx: MessageContext): Promise<ToolResult> {
     const notifyAction = args.notify_action ?? 'here';
+    const currentRoom = ctx.chatId;
+    const requestedRoom = args.room_id?.trim();
+    let foreignAuthorized = false;
 
+    if ((notifyAction === 'add' || notifyAction === 'remove') && !requestedRoom) {
+      return notifyAction === 'add'
+        ? (t(ctx.language, 'media.notify_add_prompt') || 'Please specify a room ID.')
+        : (t(ctx.language, 'media.notify_not_found') || 'No notification subscription found for that room.');
+    }
+
+    if (requestedRoom && requestedRoom !== currentRoom) {
+      const authorized = await authorizeNotificationDestination(ctx as NotificationDestinationContext, requestedRoom);
+      foreignAuthorized = authorized;
+      if (!authorized) return '❌ Foreign notification rooms require owner permission and verified platform membership.';
+    }
+
+    const roomId = requestedRoom || currentRoom;
     switch (notifyAction) {
-      case 'here': {
-        await MediaService.notificationService.subscribe({
-          userId: ctx.senderId,
-          platform: ctx.platform,
-          serviceType: 'all',
-          chatRoomId: ctx.chatId,
-        });
-        return t(ctx.language, 'media.notify_here') || '✅ This chat will now receive media notifications.';
-      }
-
-      case 'add': {
-        const roomId = args.room_id?.trim();
-        if (!roomId) return t(ctx.language, 'media.notify_add_prompt') || 'Please specify a room ID.';
+      case 'here':
+      case 'add':
         await MediaService.notificationService.subscribe({
           userId: ctx.senderId,
           platform: ctx.platform,
           serviceType: 'all',
           chatRoomId: roomId,
+          currentRoomId: currentRoom,
+          isOwner: requestedRoom !== currentRoom && await ctx.checkPermissions('owner'),
+          roomVerified: foreignAuthorized || roomId === currentRoom,
         });
-        return t(ctx.language, 'media.notify_added', { room: roomId })
-          || `✅ Room ${roomId} will now receive media notifications.`;
-      }
-
+        return notifyAction === 'here'
+          ? (t(ctx.language, 'media.notify_here') || '✅ This chat will now receive media notifications.')
+          : (t(ctx.language, 'media.notify_added', { room: roomId }) || `✅ Room ${roomId} will now receive media notifications.`);
       case 'remove': {
-        const roomId = args.room_id?.trim() || ctx.chatId;
-        const removed = await MediaService.notificationService.unsubscribe(
-          ctx.senderId, ctx.platform, 'all', roomId,
-        );
+        const removed = await MediaService.notificationService.unsubscribe(ctx.senderId, ctx.platform, 'all', roomId, {
+          currentRoomId: currentRoom,
+          isOwner: requestedRoom !== currentRoom && await ctx.checkPermissions('owner'),
+          roomVerified: foreignAuthorized || roomId === currentRoom,
+        });
         return removed
           ? (t(ctx.language, 'media.notify_removed', { room: roomId }) || `✅ Room ${roomId} will no longer receive media notifications.`)
-          : (t(ctx.language, 'media.notify_not_found') || `No notification subscription found for that room.`);
+          : (t(ctx.language, 'media.notify_not_found') || 'No notification subscription found for that room.');
       }
-
       case 'list': {
         const subs = await MediaService.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
-        if (subs.length === 0) return t(ctx.language, 'media.notify_list_empty') || 'You have no notification subscriptions.';
-
-        const lines = subs.map((sub, i) => {
-          const types = sub.notifyTypes ? JSON.parse(sub.notifyTypes).join(', ') : t(ctx.language, 'media.notify_types_all') || 'all';
-          return ` • ${sub.chatRoomId} (${sub.serviceType}) — ${types} (ID: ${i + 1})`;
+        const owner = await ctx.checkPermissions('owner');
+        const visibleSubs = [];
+        for (const [index, sub] of subs.entries()) {
+          if (sub.chatRoomId === ctx.chatId) {
+            visibleSubs.push({ sub, index });
+            continue;
+          }
+          const verifier = (ctx as NotificationDestinationContext).verifyRoomMembership;
+          if (owner && typeof verifier === 'function' && await verifier(sub.chatRoomId, ctx.platform)) visibleSubs.push({ sub, index });
+        }
+        if (visibleSubs.length === 0) return t(ctx.language, 'media.notify_list_empty') || 'You have no notification subscriptions.';
+        const lines = visibleSubs.map(({ sub, index }) => {
+          let types = t(ctx.language, 'media.notify_types_all') || 'all';
+          if (sub.notifyTypes) {
+            try {
+              const parsed = JSON.parse(sub.notifyTypes);
+              if (Array.isArray(parsed) && parsed.length > 0) types = parsed.join(', ');
+            } catch {
+              types = t(ctx.language, 'media.notify_types_all') || 'all';
+            }
+          }
+          return ` • ${sub.chatRoomId} (${sub.serviceType}) — ${types} (ID: ${index + 1})`;
         });
         return `${t(ctx.language, 'media.notify_list_header') || '📋 *Your notification subscriptions:*'}\n${lines.join('\n\n')}`;
       }
-
       default:
         return t(ctx.language, 'media.notify_actions_list') || 'Available notify actions: here, add, remove, list';
     }
@@ -330,8 +365,14 @@ export class MediaBindTool extends BaseTool {
     });
 
     const subs = await MediaService.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
-    const subLines = subs.length > 0
-      ? subs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')
+    const owner = await ctx.checkPermissions('owner');
+    const verifier = (ctx as NotificationDestinationContext).verifyRoomMembership;
+    const visibleSubs = [];
+    for (const sub of subs) {
+      if (sub.chatRoomId === ctx.chatId || (owner && typeof verifier === 'function' && await verifier(sub.chatRoomId, ctx.platform))) visibleSubs.push(sub);
+    }
+    const subLines = visibleSubs.length > 0
+      ? visibleSubs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')
       : '_None_';
 
     return `${t(ctx.language, 'media.status_header') || '📋 *Linked Accounts:*'}\n${lines.join('\n\n')}\n\n${t(ctx.language, 'media.status_notify_header') || '📬 *Notification Rooms:*'}\n${subLines}`;

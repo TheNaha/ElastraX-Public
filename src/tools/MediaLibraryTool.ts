@@ -3,7 +3,7 @@
  * @description Browse and search the media streaming library (Jellyfin).
  */
 
-import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
+import { BaseTool, type ToolDefinition, type ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { type JellyfinItem } from '../providers/jellyfin/JellyfinClient';
 import { MediaService } from '../utils/MediaService';
@@ -36,12 +36,49 @@ type MediaLibraryArgs = {
   __command?: string;
 };
 
+export function isPublicLibraryEnabled(): boolean {
+  return [process.env.JELLYFIN_PUBLIC_LIBRARY, process.env.MEDIA_PUBLIC_LIBRARY, process.env.ENABLE_MEDIA_LIBRARY, process.env.JELLYFIN_PUBLIC_MODE]
+    .some((value) => /^(1|true|yes|on)$/i.test(String(value ?? '').trim()));
+}
+
+export async function getOwnedJellyfinUser(ctx: MessageContext): Promise<string | null> {
+  try {
+    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
+    if (!binding) return null;
+    if ((binding as { platform?: string }).platform && (binding as { platform: string }).platform !== ctx.platform) return null;
+    if (binding.metadata) {
+      try {
+        const metadata = JSON.parse(binding.metadata) as { verified?: unknown };
+        if (metadata.verified !== true) return null;
+      } catch {
+        return null;
+      }
+    }
+    const userId = String(binding.externalUserId ?? '').trim();
+    return userId || null;
+  } catch {
+    return null;
+  }
+}
+
 export class MediaLibraryTool extends BaseTool {
   readonly name = 'media_library';
   readonly description = 'Browse the streaming media library: search content, see latest additions, or get watch links.';
   readonly aliases = ['library', 'watching'];
   readonly category = 'media';
   readonly permissions = 'user';
+  override readonly mutability = 'read';
+  override readonly requiresBinding: boolean = true;
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'search', arguments: [{ name: 'query', kind: 'string', required: true }] },
+      { value: 'latest', arguments: [] },
+      { value: 'link', arguments: [{ name: 'item_id', kind: 'string', required: true }] },
+      { value: 'info', arguments: [{ name: 'item_id', kind: 'string', required: true }] },
+    ],
+  };
+  override readonly noArgAliases = ['library', 'watching'];
 
   get definition(): ToolDefinition {
     return {
@@ -78,79 +115,52 @@ export class MediaLibraryTool extends BaseTool {
 
   async execute(args: MediaLibraryArgs, ctx: MessageContext): Promise<ToolResult> {
     const jellyfin = MediaService.createJellyfinClient();
-
-    if (!jellyfin.isConfigured) {
-      return '❌ Streaming library service is not configured.';
-    }
+    if (!jellyfin.isConfigured) return '❌ Streaming library service is not configured.';
 
     const action = args.action || 'search';
-    const limit = args.limit ?? 10;
+    const limit = Math.max(1, Math.min(50, Math.floor(Number(args.limit) || 10)));
+    const ownedUserId = await getOwnedJellyfinUser(ctx);
+    if (!ownedUserId && !isPublicLibraryEnabled()) return '❌ Link your Jellyfin account in a direct message before using the library.';
+    if ((action === 'link' || action === 'info') && !ownedUserId) return '❌ A verified Jellyfin binding is required for this action.';
 
-    log.debug({ action, query: args.query, itemId: args.item_id }, 'MediaLibrary action');
+    log.debug({ action, query: args.query, itemId: args.item_id, ownedUserId: !!ownedUserId }, 'MediaLibrary action');
 
     try {
-      // Get user's Jellyfin userId for personalized results (optional)
-      const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
-      const jellyfinUserId = binding?.externalUserId;
-
       switch (action) {
         case 'search': {
           if (!args.query?.trim()) return 'Please provide a search query.';
-          const result = await jellyfin.searchItems(args.query.trim(), {
-            userId: jellyfinUserId,
-            limit,
-            includeTypes: ['Movie', 'Series', 'Episode'],
-          });
-
+          const result = await jellyfin.searchItems(args.query.trim(), { userId: ownedUserId ?? undefined, limit, includeTypes: ['Movie', 'Series', 'Episode'] });
           if (result.Items.length === 0) return `No results found for "${args.query}" in the library.`;
-
-          const lines = result.Items.slice(0, limit).map((item, i) =>
-            formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)),
-          );
+          const lines = result.Items.slice(0, limit).map((item, i) => formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)));
           return `🔍 *Library search for "${args.query}":*\n\n${lines.join('\n\n')}\n\n(${result.TotalRecordCount} total)`;
         }
-
         case 'latest': {
-          const items = await jellyfin.getLatestMedia({
-            userId: jellyfinUserId,
-            limit,
-            includeTypes: ['Movie', 'Series'],
-          });
-
+          const items = await jellyfin.getLatestMedia({ userId: ownedUserId ?? undefined, limit, includeTypes: ['Movie', 'Series'] });
           if (items.length === 0) return 'No recent additions found.';
-
-          const lines = items.slice(0, limit).map((item, i) =>
-            formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)),
-          );
+          const lines = items.slice(0, limit).map((item, i) => formatItem(item, i + 1, jellyfin.getWatchLink(item.Id)));
           return `📥 *Recently Added:*\n\n${lines.join('\n\n')}`;
         }
-
         case 'link': {
           if (!args.item_id) return 'Please provide an item_id.';
+          if (typeof (jellyfin as unknown as { searchItems?: unknown }).searchItems === 'function') {
+            const visible = await jellyfin.searchItems(args.item_id, { userId: ownedUserId ?? undefined, limit: 10, includeTypes: ['Movie', 'Series', 'Episode'] });
+            if (!visible.Items.some((item) => item.Id === args.item_id)) return '❌ That item is not available to your Jellyfin account.';
+          }
           const link = jellyfin.getWatchLink(args.item_id);
           return `🔗 Watch link: ${link}`;
         }
-
         case 'info': {
           if (!args.item_id) return 'Please provide an item_id.';
+          if (typeof (jellyfin as unknown as { searchItems?: unknown }).searchItems === 'function') {
+            const visible = await jellyfin.searchItems(args.item_id, { userId: ownedUserId ?? undefined, limit: 10, includeTypes: ['Movie', 'Series', 'Episode'] });
+            if (!visible.Items.some((item) => item.Id === args.item_id)) return '❌ That item is not available to your Jellyfin account.';
+          }
           const item = await jellyfin.getItem(args.item_id);
           const genres = item.Genres?.join(', ') || 'N/A';
-          const runtime = item.RunTimeTicks
-            ? `${Math.round(item.RunTimeTicks / 600_000_000)} min`
-            : 'N/A';
+          const runtime = item.RunTimeTicks ? `${Math.round(item.RunTimeTicks / 600_000_000)} min` : 'N/A';
           const year = item.ProductionYear ?? 'N/A';
-          const link = jellyfin.getWatchLink(item.Id);
-
-          return [
-            `🎬 *${item.Name}* (${year})`,
-            `📁 Type: ${item.Type}`,
-            `🎭 Genres: ${genres}`,
-            `⏱️ Runtime: ${runtime}`,
-            item.Overview ? `\n📝 ${item.Overview}` : '',
-            `\n🔗 Watch: ${link}`,
-          ].filter(Boolean).join('\n');
+          return [`🎬 *${item.Name}* (${year})`, `📁 Type: ${item.Type}`, `🎭 Genres: ${genres}`, `⏱️ Runtime: ${runtime}`, item.Overview ? `\n📝 ${item.Overview}` : '', `\n🔗 Watch: ${jellyfin.getWatchLink(item.Id)}`].filter(Boolean).join('\n');
         }
-
         default:
           return 'Available actions: search, latest, link, info';
       }

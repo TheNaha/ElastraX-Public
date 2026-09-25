@@ -26,13 +26,14 @@
  * Slash aliases: /role, /roles, /permission, /perm
  */
 
-import { BaseTool, ToolDefinition, ToolResult } from './BaseTool';
+import { BaseTool, ToolDefinition, ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { AuthService, BUILTIN_ROLES, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/AuthService';
 import type { RolePrivileges } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { t } from '../utils/i18n';
+import { invalidateNativeAdminCache } from '../utils/permissions';
 import { logger } from '../utils/logger';
 import { jidBareId as bareNumber } from '../utils/jid';
 
@@ -53,12 +54,82 @@ type RoleSummary = {
   effectiveRoles: string[];
 };
 
+export interface RoleViewEntry {
+  userId: string;
+  role: string;
+  scope: string;
+  platform?: string;
+  grantedBy?: string;
+}
+
+export interface ScopedRoleView {
+  scope: string;
+  entries: RoleViewEntry[];
+}
+
+export interface RoleMutation {
+  userId: string;
+  role: string;
+  scope: string;
+  platform: string;
+  actorId: string;
+}
+
+export interface RoleAccessAdapter {
+  listRoles(scope: string, platform?: string): Promise<RoleViewEntry[]>;
+  setRole(input: RoleMutation): Promise<void>;
+  removeRole(input: Pick<RoleMutation, 'userId' | 'scope' | 'role' | 'platform'>): Promise<boolean>;
+}
+
+export function createRoleAccessAdapter(service: Pick<typeof AuthService, 'listRoles' | 'setRole' | 'removeRole'> = AuthService): RoleAccessAdapter {
+  return {
+    async listRoles(scope, platform) {
+      const rows = await service.listRoles(scope, platform);
+      return rows.map((row) => ({ ...row, scope, platform: platform ?? 'whatsapp' }));
+    },
+    async setRole(input) {
+      await service.setRole(input.userId, input.role, input.scope, input.platform, input.actorId);
+    },
+    async removeRole(input) {
+      return service.removeRole(input.userId, input.scope, input.role, input.platform);
+    },
+  };
+}
+
+export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string): boolean {
+  if (actorRoles.includes('owner')) return targetScope === 'global' || targetScope === currentScope;
+  return actorRoles.includes('admin') && targetScope === currentScope;
+}
+
+export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform?: string): ScopedRoleView {
+  return { scope: currentScope, entries: entries.filter((entry) => (entry.scope === 'global' || entry.scope === currentScope) && (!platform || !entry.platform || entry.platform === platform)) };
+}
+
+export function assertRoleMutationAllowed(actorRoles: readonly string[], targetScope: string, currentScope: string): void {
+  if (!canManageRoleScope(actorRoles, targetScope, currentScope)) throw new Error('You are not allowed to manage roles in that scope');
+}
+
 export class RoleTool extends BaseTool {
   readonly name = 'role';
   readonly description = 'Manage user roles and privileges: grant, revoke, check, list, or modify quotas.';
   readonly aliases = ['roles', 'permission', 'perm'];
   readonly category = 'admin';
-  readonly permissions = 'user'; // check/list available to everyone; grant/revoke enforced internally
+  readonly permissions = 'user';
+  override readonly mutability = 'admin' as const;
+  override readonly noArgAliases = ['role'];
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'check', arguments: [{ name: 'user', kind: 'string' }] },
+      { value: 'list', arguments: [{ name: 'scope', kind: 'string' }] },
+      { value: 'grant', arguments: [{ name: 'user', kind: 'string', required: true }, { name: 'role', kind: 'string', required: true }, { name: 'scope', kind: 'string' }] },
+      { value: 'revoke', arguments: [{ name: 'user', kind: 'string', required: true }, { name: 'role', kind: 'string', required: true }, { name: 'scope', kind: 'string' }] },
+      { value: 'privs', arguments: [{ name: 'role', kind: 'string' }] },
+      { value: 'setpriv', arguments: [{ name: 'role', kind: 'string', required: true }, { name: 'field', kind: 'string', required: true }, { name: 'value', kind: 'string', required: true }] },
+      { value: 'resetpriv', arguments: [{ name: 'role', kind: 'string', required: true }] },
+    ],
+    defaultVariant: 'check',
+  };
 
   get definition(): ToolDefinition {
     return {
@@ -93,8 +164,8 @@ export class RoleTool extends BaseTool {
               description: 'Privilege field to modify (for setpriv action).',
             },
             value: {
-              type: 'string',
-              description: 'New numeric value for the privilege field. Use -1 for unlimited, "null" to reset to default.',
+              type: ['string', 'number', 'boolean'],
+              description: 'New privilege value. Use -1 for unlimited, "null" to reset to default.',
             },
           },
           required: ['action'],
@@ -107,15 +178,21 @@ export class RoleTool extends BaseTool {
     const lang = ctx.language ?? 'en';
     let { action, scope } = args;
     const { user, role, field, value } = args;
-    const cmd = String(args.__command || '').toLowerCase();
 
     log.debug({ action, role, scope, senderId: ctx.senderId, chatId: ctx.chatId }, 'Role action requested');
 
-    if (!action && cmd) action = 'check';
+    if (!action) action = 'check';
 
     // Normalise scope
     if (!scope || scope === 'here') scope = ctx.chatId;
     const scopeLabel = scope === 'global' ? 'global' : scope === ctx.chatId ? 'this chat' : scope;
+    const callerRoles = await ctx.resolveRoles();
+    if (scope !== 'global' && scope !== ctx.chatId && !callerRoles.includes('owner')) {
+      return t(lang, 'role.insufficient', { callerRole: callerRoles.filter((role) => role !== 'user').join(',') || 'user', targetRole: scope });
+    }
+    if (scope === 'global' && !callerRoles.includes('owner') && ['grant', 'revoke', 'list'].includes(String(action))) {
+      return t(lang, 'role.insufficient', { callerRole: callerRoles.filter((role) => role !== 'user').join(',') || 'user', targetRole: 'global' });
+    }
 
     logger.info(
       { action, user, role, scope, senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId },
@@ -131,7 +208,7 @@ export class RoleTool extends BaseTool {
 
       const summary = targetId === ctx.senderId
         ? await buildSenderRoleSummary(ctx)
-        : await buildTargetRoleSummary(targetId, ctx.chatId);
+        : await buildTargetRoleSummary(targetId, ctx.chatId, ctx.platform);
       const accessProfile = await AuthService.getAccessProfile(summary.effectiveRoles);
       const privsStr = formatPrivileges(accessProfile.privileges);
 
@@ -159,18 +236,19 @@ export class RoleTool extends BaseTool {
 
     // ── LIST ───────────────────────────────────────────────────────────────
     if (action === 'list') {
-      const roles = await AuthService.listRoles(scope);
-      if (roles.length === 0) {
+      const roles = await AuthService.listRoles(scope, ctx.platform);
+      const visibleRoles = getScopedRoleView(roles.map((entry) => ({ ...entry, scope: scope, platform: ctx.platform })), ctx.chatId, ctx.platform).entries;
+      if (visibleRoles.length === 0) {
         return t(lang, 'role.list_empty', { scope: scopeLabel });
       }
 
       const mentions: string[] = [];
       const itemLines: string[] = [];
 
-      for (let i = 0; i < roles.length; i++) {
-        const r = roles[i];
+      for (let i = 0; i < visibleRoles.length; i++) {
+        const r = visibleRoles[i];
         const userRes = await resolveUserTag(r.userId);
-        const byRes = await resolveUserTag(r.grantedBy);
+        const byRes = await resolveUserTag(r.grantedBy ?? 'unknown');
         if (userRes.mentionJid) mentions.push(userRes.mentionJid);
         if (byRes.mentionJid) mentions.push(byRes.mentionJid);
         itemLines.push(` • *\`${r.role}\`* — ${userRes.tag} (by ${byRes.tag})`);
@@ -208,7 +286,8 @@ export class RoleTool extends BaseTool {
       if (!isPrivilegeField(field)) {
         return `❌ Invalid field. Must be one of: ${PRIVILEGE_FIELDS.join(', ')}`;
       }
-      const numValue = value === 'null' || value === undefined ? null : parseInt(String(value), 10);
+      const numericValue = value === 'null' || value === undefined ? null : Number(value);
+      const numValue = numericValue === null || Number.isInteger(numericValue) ? numericValue : NaN;
       if (numValue !== null && Number.isNaN(numValue)) {
         return '❌ Value must be a number or "null" to reset to default.';
       }
@@ -250,6 +329,7 @@ export class RoleTool extends BaseTool {
       }
 
       await AuthService.setRole(targetId, role, scope, ctx.platform, ctx.senderId);
+      invalidateNativeAdminCache(ctx.chatId, ctx.platform);
       logger.info({ targetId, role, scope, grantedBy: ctx.senderId }, '[RoleTool] Role granted');
 
       const { tag, mentionJid } = await resolveUserTag(targetId);
@@ -280,7 +360,8 @@ export class RoleTool extends BaseTool {
         return t(lang, 'role.insufficient', { callerRole: callerLabel, targetRole: revokeRole });
       }
 
-      const removed = await AuthService.removeRole(targetId, scope, revokeRole);
+      const removed = await AuthService.removeRole(targetId, scope, revokeRole, ctx.platform);
+      invalidateNativeAdminCache(ctx.chatId, ctx.platform);
       if (!removed) {
         const { tag } = await resolveUserTag(targetId);
         return `❌ No matching role found for ${tag} in *${scopeLabel}*.`;
@@ -309,19 +390,20 @@ function formatExplicitRoles(
     : '_No explicit roles assigned_';
 }
 
-async function buildTargetRoleSummary(targetId: string, chatId: string, targetPn?: string): Promise<RoleSummary> {
-  const allDbRoles = await AuthService.getUserRoles(targetId);
+async function buildTargetRoleSummary(targetId: string, chatId: string, platform = 'whatsapp', targetPn?: string): Promise<RoleSummary> {
+  const allDbRoles = await AuthService.getUserRoles(targetId, platform);
+  const visibleRoles = allDbRoles.filter((entry) => (entry.scope === 'global' || entry.scope === chatId) && (!entry.platform || entry.platform === platform));
   const effectiveRoles = new Set<string>(['user']);
   const ownerJid = process.env.BOT_OWNER_JID;
   const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
 
   if (isEnvOwner) effectiveRoles.add('owner');
-  for (const row of allDbRoles) {
+  for (const row of visibleRoles) {
     if (row.scope === 'global' || row.scope === chatId) effectiveRoles.add(row.role);
   }
 
   return {
-    explicitRoles: formatExplicitRoles(allDbRoles),
+    explicitRoles: formatExplicitRoles(visibleRoles),
     effectiveRoles: Array.from(effectiveRoles),
   };
 }
@@ -329,9 +411,10 @@ async function buildTargetRoleSummary(targetId: string, chatId: string, targetPn
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 async function buildSenderRoleSummary(ctx: MessageContext): Promise<RoleSummary> {
-  const allDbRoles = await AuthService.getUserRoles(ctx.senderId);
+  const allDbRoles = await AuthService.getUserRoles(ctx.senderId, ctx.platform);
+  const visibleRoles = allDbRoles.filter((entry) => (entry.scope === 'global' || entry.scope === ctx.chatId) && (!entry.platform || entry.platform === ctx.platform));
   return {
-    explicitRoles: formatExplicitRoles(allDbRoles),
+    explicitRoles: formatExplicitRoles(visibleRoles),
     effectiveRoles: await ctx.resolveRoles(),
   };
 }

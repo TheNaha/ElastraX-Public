@@ -1,53 +1,59 @@
-/**
- * @file src/utils/ConfigService.ts
- * @description Merges global defaults with per-room database overrides to produce a
- *              fully resolved runtime configuration for a chat room.
- *
- * Resolution priority (highest to lowest):
- *  1. Per-room value stored in the `chat_rooms` table (set via `/config set …`).
- *  2. Environment variable (AI_TEMPERATURE, CONTEXT_MESSAGE_LIMIT, etc.).
- *  3. Hardcoded default constant (e.g., DEFAULT_SYSTEM_PROMPT, temperature = 0.7).
- *
- * Having all config resolution in one place ensures that the agent, tools, and any
- * future modules consistently observe the same effective settings for a room.
- */
-
-import { ChatRoom } from '../db/schema';
+import type { ChatRoom } from '../db/schema';
 import { getDefaultSystemPrompt } from '../core/prompts';
-import { getAIRequestConfig, readBooleanEnv, readFloatEnv, readIntegerEnv, readStringEnv } from '../config/runtime';
+import {
+  getAIRequestConfig,
+  readBooleanEnv,
+  readFloatEnv,
+  readIntegerEnv,
+  readStringEnv,
+} from '../config/runtime';
 
-/**
- * Service to manage the dynamic merging of hardcoded/ENV defaults
- * with database-level overrides for a specific chat room.
- */
+export type ResolvedRoomConfig = {
+  systemPrompt: string;
+  contextLimit: number;
+  temperature: number;
+  maxTokens: number;
+  allowTools: boolean;
+  autoReplyAll: boolean;
+  summarize: boolean;
+  longTermMemory: boolean;
+};
+
 export class ConfigService {
-  /**
-   * Returns the fully resolved configuration for a given chat room.
-   * If a field in the DB is null, it falls back to the .env variable or hardcoded default.
-   */
-  static getResolvedConfig(room: ChatRoom, isGroup: boolean = false) {
-    const defaultSystemPrompt = readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt());
-    const aiRequestConfig = getAIRequestConfig();
+  static getDefaults(isGroup: boolean = false): ResolvedRoomConfig {
+    return {
+      systemPrompt: readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt()),
+      contextLimit: readIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10, { min: -1, max: 10_000 }),
+      temperature: readFloatEnv(process.env.AI_TEMPERATURE, 0.7, { min: 0, max: 2 }),
+      maxTokens: getAIRequestConfig().maxTokens,
+      allowTools: readBooleanEnv(process.env.ALLOW_TOOLS, true),
+      autoReplyAll: readBooleanEnv(process.env.AUTO_REPLY_ALL, false),
+      summarize: readBooleanEnv(process.env.CONTEXT_SUMMARIZE, true),
+      longTermMemory: readBooleanEnv(process.env.LONG_TERM_MEMORY, !isGroup),
+    };
+  }
 
-    const envContextLimit = readIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10, { min: 1 });
-    const envTemperature = readFloatEnv(process.env.AI_TEMPERATURE, 0.7, { min: 0, max: 2 });
-    const envMaxTokens = aiRequestConfig.maxTokens;
-    const envAutoReplyAll = readBooleanEnv(process.env.AUTO_REPLY_ALL, false);
-    // V7.13: Global summarization toggle. When false, no LLM summarization call is made
-    // and only the most recent contextLimit messages are sent to the LLM.
-    const envSummarize = readBooleanEnv(process.env.CONTEXT_SUMMARIZE, true);
+  static getResolvedConfig(room: Partial<ChatRoom>, isGroup: boolean = false): ResolvedRoomConfig {
+    const defaults = this.getDefaults(isGroup);
+    const contextLimit = room.contextLimit === 0 ? defaults.contextLimit : room.contextLimit;
+    const maxTokens = room.maxTokens === 0 ? defaults.maxTokens : room.maxTokens;
+    const temperature = room.temperature ?? defaults.temperature;
 
     return {
-      systemPrompt: room.systemPrompt || defaultSystemPrompt,
-      contextLimit: room.contextLimit ?? envContextLimit,
-      temperature: room.temperature ?? envTemperature,
-      maxTokens: room.maxTokens ?? envMaxTokens,
-      allowTools: room.allowTools ?? true, // allow tools by default unless explicitly disabled in DB
-      autoReplyAll: room.autoReplyAll ?? envAutoReplyAll,
-      // V7.13: Per-room summarization. null in DB → fall back to env default.
-      summarize: room.summarize ?? envSummarize,
-      // V7.16: LongTermMemory ON for private chats, OFF for groups by default.
-      longTermMemory: room.longTermMemory ?? !isGroup,
+      systemPrompt: room.systemPrompt?.trim() || defaults.systemPrompt,
+      contextLimit: contextLimit !== undefined && contextLimit !== null
+        ? Math.max(-1, Math.min(10_000, Math.trunc(contextLimit)))
+        : defaults.contextLimit,
+      temperature: temperature !== undefined && temperature !== null
+        ? Math.max(0, Math.min(2, temperature))
+        : defaults.temperature,
+      maxTokens: maxTokens !== undefined && maxTokens !== null
+        ? Math.max(1, Math.min(1_000_000, Math.trunc(maxTokens)))
+        : defaults.maxTokens,
+      allowTools: room.allowTools ?? defaults.allowTools,
+      autoReplyAll: room.autoReplyAll ?? defaults.autoReplyAll,
+      summarize: room.summarize ?? defaults.summarize,
+      longTermMemory: room.longTermMemory ?? defaults.longTermMemory,
     };
   }
 }

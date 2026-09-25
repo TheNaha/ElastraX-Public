@@ -3,7 +3,7 @@
  * @description Request media and manage requests via the request service (Seerr).
  */
 
-import { BaseTool, type ToolDefinition, type ToolResult } from './BaseTool';
+import { BaseTool, type ToolDefinition, type ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { SeerrClient, type SeerrRequest } from '../providers/seerr/SeerrClient';
 import { MediaService } from '../utils/MediaService';
@@ -39,12 +39,42 @@ type MediaRequestArgs = {
   __command?: string;
 };
 
+export async function getOwnedSeerrUserId(ctx: MessageContext): Promise<number | null> {
+  try {
+    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
+    if (!binding) return null;
+    if ((binding as { platform?: string }).platform && (binding as { platform: string }).platform !== ctx.platform) return null;
+    if (binding.metadata) {
+      try {
+        const metadata = JSON.parse(binding.metadata) as { verified?: unknown };
+        if (metadata.verified !== true) return null;
+      } catch {
+        return null;
+      }
+    }
+    const id = Number.parseInt(String(binding.externalUserId ?? ''), 10);
+    return Number.isInteger(id) && id > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
+
 export class MediaRequestTool extends BaseTool {
   readonly name = 'media_request';
   readonly description = 'Request movies or TV shows to be added to the media library, or check request status.';
   readonly aliases = ['request-media', 'request'];
   readonly category = 'media';
   readonly permissions = 'user';
+  override readonly requiresBinding: boolean = true;
+  override readonly mutability = 'external-mutation' as const;
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'request', arguments: [{ name: 'media_type', kind: 'string', required: true }, { name: 'media_id', kind: 'integer', required: true }, { name: 'seasons', kind: 'string' }] },
+      { value: 'status', arguments: [{ name: 'request_id', kind: 'integer', required: true }] },
+      { value: 'my-requests', arguments: [] },
+    ],
+  };
 
   get definition(): ToolDefinition {
     return {
@@ -66,7 +96,8 @@ export class MediaRequestTool extends BaseTool {
               description: 'Type of media. Required for request action.',
             },
             media_id: {
-              type: 'number',
+              type: 'integer',
+              minimum: 1,
               description: 'TMDB ID of the media to request. Required for request action.',
             },
             seasons: {
@@ -74,7 +105,8 @@ export class MediaRequestTool extends BaseTool {
               description: 'For TV: comma-separated season numbers (e.g., "1,2,3") or "all".',
             },
             request_id: {
-              type: 'number',
+              type: 'integer',
+              minimum: 1,
               description: 'Request ID for status action.',
             },
           },
@@ -99,7 +131,7 @@ export class MediaRequestTool extends BaseTool {
         case 'request':
           return this.handleRequest(seerr, args, ctx);
         case 'status':
-          return this.handleStatus(seerr, args);
+          return this.handleStatus(seerr, args, ctx);
         case 'my-requests':
           return this.handleMyRequests(seerr, ctx);
         default:
@@ -114,15 +146,13 @@ export class MediaRequestTool extends BaseTool {
 
   private async handleRequest(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
     if (!args.media_type) return 'Please specify media_type: movie or tv.';
-    if (!args.media_id) return 'Please specify media_id (TMDB ID).';
+    const mediaId = args.media_id;
+    if (!Number.isInteger(mediaId) || (mediaId ?? 0) <= 0) return 'Please specify a valid media_id (TMDB ID).';
 
-    // Check user has a binding
-    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
-    if (!binding) {
-      return '❌ You need to link your account first. Use the connect command.';
+    const seerrUserId = await getOwnedSeerrUserId(ctx);
+    if (seerrUserId === null) {
+      return '❌ You need to link your account first. Use the connect command in a direct message.';
     }
-
-    const seerrUserId = parseInt(binding.externalUserId, 10);
     let seasons: number[] | 'all' | undefined;
     if (args.media_type === 'tv' && args.seasons) {
       if (args.seasons === 'all') {
@@ -132,7 +162,7 @@ export class MediaRequestTool extends BaseTool {
       }
     }
 
-    const request = await seerr.createRequest(args.media_type, args.media_id, {
+    const request = await seerr.createRequest(args.media_type, mediaId as number, {
       seasons,
       userId: seerrUserId,
     });
@@ -141,21 +171,20 @@ export class MediaRequestTool extends BaseTool {
     return `✅ *Request Submitted!*\n${type} (TMDB: ${args.media_id})\nRequest #${request.id} — ${requestStatusLabel(request.status)}`;
   }
 
-  private async handleStatus(seerr: SeerrClient, args: MediaRequestArgs): Promise<ToolResult> {
-    if (!args.request_id) return 'Please specify a request_id.';
-
-    const request = await seerr.getRequestById(args.request_id);
+  private async handleStatus(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
+    if (!Number.isInteger(args.request_id) || (args.request_id ?? 0) <= 0) return 'Please specify a valid request_id.';
+    const ownerId = await getOwnedSeerrUserId(ctx);
+    if (ownerId === null) return '❌ You need to link your account first. Use the connect command in a direct message.';
+    const request = await seerr.getRequestById(args.request_id as number);
+    const requestedBy = request.requestedBy as { id?: number; displayName?: string; email?: string } | undefined;
+    if (!requestedBy || Number(requestedBy.id) !== ownerId) return '❌ You can only view your own media requests.';
     const type = request.type === 'tv' ? '📺' : '🎬';
-    return `${type} *Request #${request.id}*\nTMDB: ${request.media.tmdbId}\nStatus: ${requestStatusLabel(request.status)}\nRequested by: ${request.requestedBy.displayName}\nCreated: ${new Date(request.createdAt).toLocaleDateString()}`;
+    return `${type} *Request #${request.id}*\nTMDB: ${request.media.tmdbId}\nStatus: ${requestStatusLabel(request.status)}\nRequested by: ${requestedBy.displayName ?? 'you'}\nCreated: ${new Date(request.createdAt).toLocaleDateString()}`;
   }
 
   private async handleMyRequests(seerr: SeerrClient, ctx: MessageContext): Promise<ToolResult> {
-    const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
-    if (!binding) {
-      return '❌ You need to link your account first. Use the connect command.';
-    }
-
-    const seerrUserId = parseInt(binding.externalUserId, 10);
+    const seerrUserId = await getOwnedSeerrUserId(ctx);
+    if (seerrUserId === null) return '❌ You need to link your account first. Use the connect command in a direct message.';
     const result = await seerr.getRequests({ requestedBy: seerrUserId, take: 15, sort: 'added' });
 
     if (result.results.length === 0) return 'You have no media requests.';

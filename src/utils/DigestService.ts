@@ -27,26 +27,28 @@
 
 import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
-import { and, asc, eq, gte, inArray } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 import { getErrorMessage } from './errorUtils';
 import { getModelRouter } from './ModelRouter';
 import { MediaService } from './MediaService';
 import { t, type Locale } from './i18n';
 
-import { withTimeout } from './withTimeout.js';
+import { withCancellableTimeout } from './withTimeout.js';
 
 const log = logger.child({ module: 'DigestService' });
 
-type SendFn = (chatRoomId: string, text: string) => Promise<void>;
+type SendFn = (chatRoomId: string, text: string, signal?: AbortSignal) => Promise<void>;
 type CallLLM = (prompt: string) => Promise<string>;
+type JellyfinClient = ReturnType<typeof MediaService.createJellyfinClient>;
+type JellyfinMediaItem = Awaited<ReturnType<JellyfinClient['getLatestMedia']>>[number];
 const SEND_TIMEOUT_MS = 15_000;
 
 /** Injectable dependencies for tests (all optional). */
 export interface DigestDeps {
   callLLM?: CallLLM;
   now?: () => Date;
-  send?: (platform: string, chatRoomId: string, text: string) => Promise<void>;
+  send?: (platform: string, chatRoomId: string, text: string, signal?: AbortSignal) => Promise<void>;
 }
 
 interface DigestConfig {
@@ -59,9 +61,9 @@ interface DigestConfig {
 }
 
 function readDigestConfig(): DigestConfig {
-  const hourRaw = parseInt(process.env.DIGEST_HOUR_UTC ?? '', 10);
-  const lookbackRaw = parseInt(process.env.DIGEST_LOOKBACK_HOURS ?? '', 10);
-  const maxRaw = parseInt(process.env.DIGEST_MAX_MESSAGES ?? '', 10);
+  const hourRaw = Number(process.env.DIGEST_HOUR_UTC);
+  const lookbackRaw = Number(process.env.DIGEST_LOOKBACK_HOURS);
+  const maxRaw = Number(process.env.DIGEST_MAX_MESSAGES);
   return {
     enabled: process.env.DIGEST_ENABLED === 'true',
     mediaEnabled: process.env.DIGEST_MEDIA_ENABLED === 'true',
@@ -70,8 +72,8 @@ function readDigestConfig(): DigestConfig {
       .split(',')
       .map(r => r.trim())
       .filter(Boolean),
-    lookbackHours: Number.isFinite(lookbackRaw) && lookbackRaw > 0 ? lookbackRaw : 24,
-    maxMessages: Number.isFinite(maxRaw) && maxRaw > 0 ? maxRaw : 500,
+    lookbackHours: Number.isInteger(lookbackRaw) && lookbackRaw > 0 && lookbackRaw <= 720 ? lookbackRaw : 24,
+    maxMessages: Number.isInteger(maxRaw) && maxRaw > 0 && maxRaw <= 1_000 ? maxRaw : 500,
   };
 }
 
@@ -120,18 +122,24 @@ export function fetchRoomTranscript(
   })
     .from(messages)
     .where(and(eq(messages.chatRoomId, roomId), gte(messages.created_at, opts.since)))
-    .orderBy(asc(messages.created_at))
-    .limit(opts.limit)
-    .all();
+    .orderBy(desc(messages.created_at))
+    .limit(Math.max(1, Math.min(1_000, opts.limit)))
+    .all()
+    .reverse();
 
   const lines: string[] = [];
+  let totalBytes = 0;
   for (const r of rows) {
-    const text = (r.content ?? '').trim();
+    const text = (r.content ?? '').trim().slice(0, 2_000);
     if (!text) continue;
     const hh = String(r.created_at.getHours()).padStart(2, '0');
     const mm = String(r.created_at.getMinutes()).padStart(2, '0');
-    const who = r.role === 'assistant' ? 'Bot' : r.senderName;
-    lines.push(`[${hh}:${mm}] ${who}: ${text}`);
+    const who = r.role === 'assistant' ? 'Bot' : 'Sender';
+    const line = `[${hh}:${mm}] ${who}: ${text}`;
+    const bytes = Buffer.byteLength(line, 'utf8');
+    if (totalBytes + bytes > 500_000) break;
+    totalBytes += bytes;
+    lines.push(line);
   }
   return lines;
 }
@@ -154,9 +162,10 @@ function localeFor(lang: string | null | undefined): Locale {
  */
 export async function summarizeRoom(
   roomId: string,
-  opts: { hours: number; maxMessages: number; lang?: string | null; deps?: DigestDeps },
+  opts: { hours: number; maxMessages: number; lang?: string | null; now?: Date; deps?: DigestDeps },
 ): Promise<{ text: string; messageCount: number } | null> {
-  const since = new Date(Date.now() - opts.hours * 3_600_000);
+  const now = opts.now ?? new Date();
+  const since = new Date(now.getTime() - opts.hours * 3_600_000);
   const transcript = fetchRoomTranscript(roomId, { since, limit: opts.maxMessages });
   if (transcript.length === 0) return null;
 
@@ -216,6 +225,7 @@ export class DigestService {
   private static senders = new Map<string, SendFn>();
   private static timer: ReturnType<typeof setInterval> | null = null;
   private static running = false;
+  private static mediaCache: { weekStart: number; items: Promise<JellyfinMediaItem[]> } | null = null;
 
   /** Register a send callback for a given platform. */
   static registerSender(platform: string, fn: SendFn): void {
@@ -224,6 +234,10 @@ export class DigestService {
   }
 
   /** Start the hourly-check polling loop (every 60 seconds). */
+  static unregisterSender(platform: string): void {
+    this.senders.delete(platform);
+  }
+
   static start(): void {
     const cfg = readDigestConfig();
     if (!cfg.enabled && !cfg.mediaEnabled) return;
@@ -261,7 +275,7 @@ export class DigestService {
     const cfg = readDigestConfig();
     if (!cfg.enabled || cfg.rooms.length === 0) return 0;
     const now = deps?.now?.() ?? new Date();
-    if (now.getUTCHours() !== cfg.hourUtc) return 0;
+    if (now.getUTCHours() < cfg.hourUtc) return 0;
 
     let sent = 0;
     for (const roomId of cfg.rooms) {
@@ -273,6 +287,7 @@ export class DigestService {
           hours: cfg.lookbackHours,
           maxMessages: cfg.maxMessages,
           lang,
+          now,
           deps,
         });
         if (!result) {
@@ -300,7 +315,7 @@ export class DigestService {
     const cfg = readDigestConfig();
     if (!cfg.mediaEnabled) return 0;
     const now = deps?.now?.() ?? new Date();
-    if (now.getUTCHours() !== cfg.hourUtc) return 0;
+    if (now.getUTCHours() < cfg.hourUtc) return 0;
 
     const wk = weekKey(now);
     const weekStart = new Date(`${wk}T00:00:00.000Z`);
@@ -312,7 +327,7 @@ export class DigestService {
       notifyTypes: notificationSubscriptions.notifyTypes,
     })
       .from(notificationSubscriptions)
-      .where(inArray(notificationSubscriptions.serviceType, ['jellyfin', 'seerr']))
+      .where(inArray(notificationSubscriptions.serviceType, ['all', 'jellyfin', 'seerr']))
       .all()
       .filter(s => wantsDigest(s.notifyTypes));
 
@@ -347,42 +362,62 @@ export class DigestService {
    * or nothing new was added (marker kept → silent).
    */
   static async buildMediaRollup(weekStart: Date, _deps?: DigestDeps, lang: Locale = 'en'): Promise<string | null> {
+    const items = await this.loadWeeklyMedia(weekStart);
+    return this.renderMediaRollup(items, lang);
+  }
+
+  private static loadWeeklyMedia(weekStart: Date): Promise<JellyfinMediaItem[]> {
+    const key = weekStart.getTime();
+    if (this.mediaCache?.weekStart === key) return this.mediaCache.items;
     const client = MediaService.createJellyfinClient();
     if (!client.isConfigured) {
-      throw new Error('Jellyfin is not configured (JELLYFIN_API_URL/JELLYFIN_API_KEY)');
+      return Promise.reject(new Error('Jellyfin is not configured'));
     }
+    const items = client.getLatestMedia({ limit: 15 })
+      .then(media => media.filter(item => {
+        const created = item.DateCreated ? new Date(String(item.DateCreated)) : null;
+        return !created || created.getTime() >= weekStart.getTime();
+      }))
+      .catch(error => {
+        this.mediaCache = null;
+        throw error;
+      });
+    this.mediaCache = { weekStart: key, items };
+    return items;
+  }
 
-    const items = await client.getLatestMedia({ limit: 15 });
-    const fresh = items.filter(item => {
-      const created = item.DateCreated ? new Date(String(item.DateCreated)) : null;
-      return !created || created.getTime() >= weekStart.getTime();
-    });
-    if (fresh.length === 0) return null;
-
-    const emojiFor = (itemType: unknown): string => {
-      const typeStr = String(itemType ?? '');
-      if (typeStr === 'Movie') return '🎬';
-      if (typeStr.startsWith('Episode') || typeStr === 'Series') return '📺';
-      if (typeStr.startsWith('Music') || typeStr === 'Audio') return '🎵';
-      return '•';
+  private static renderMediaRollup(items: JellyfinMediaItem[], lang: Locale): string | null {
+    if (items.length === 0) return null;
+    const client = MediaService.createJellyfinClient();
+    const typeLabel = (itemType: unknown): string => {
+      const value = String(itemType ?? '');
+      if (value === 'Movie') return 'Film';
+      if (value.startsWith('Episode') || value === 'Series') return 'Series';
+      if (value.startsWith('Music') || value === 'Audio') return 'Audio';
+      return 'Media';
     };
-
-    const lines = fresh.map(item => {
+    const lines = items.map(item => {
       const year = item.ProductionYear ? ` (${item.ProductionYear})` : '';
-      const link = client.getWatchLink(item.Id);
-      return `${emojiFor(item.Type)} ${item.Name}${year}\n   ${link}`;
+      return `- ${typeLabel(item.Type)}: ${item.Name}${year}\n  ${client.getWatchLink(item.Id)}`;
     });
-
     return `${t(lang, 'digest.media_header')}\n\n${lines.join('\n')}`;
   }
 
   private static async deliver(platform: string, roomId: string, text: string, deps?: DigestDeps): Promise<void> {
     if (deps?.send) {
-      await withTimeout(deps.send(platform, roomId, text), SEND_TIMEOUT_MS, 'digest send');
+      await withCancellableTimeout(
+        signal => deps.send!(platform, roomId, text, signal),
+        SEND_TIMEOUT_MS,
+        'digest send',
+      );
       return;
     }
     const sender = this.senders.get(platform);
     if (!sender) throw new Error(`no sender registered for platform '${platform}'`);
-    await withTimeout(sender(roomId, text), SEND_TIMEOUT_MS, 'digest send');
+    await withCancellableTimeout(
+      signal => sender(roomId, text, signal),
+      SEND_TIMEOUT_MS,
+      'digest send',
+    );
   }
 }

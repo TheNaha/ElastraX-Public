@@ -11,6 +11,7 @@ const log = logger.child({ module: 'MakeStickerTool' });
 type StickerArgs = ToolArgs & {
   packname?: string;
   author?: string;
+  attachment_id?: string;
 };
 
 type RawMediaMessage = {
@@ -48,6 +49,7 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
           properties: {
             packname: { type: 'string', description: 'Optional name of the sticker pack' },
             author: { type: 'string', description: 'Optional author of the sticker' },
+            attachment_id: { type: 'string', description: 'Optional attachment identifier for multi-attachment messages' },
           },
           required: [],
         },
@@ -68,6 +70,7 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
       const media = await resolveTargetMedia(ctx, {
         useDownloader: canDownload,
         beforeDownload: () => ctx.react?.('\u23F3'),
+        attachmentId: typeof args.attachment_id === 'string' ? args.attachment_id : undefined,
       });
       if (!media) {
         return t(ctx.language, canDownload ? 'sticker.download_failed' : 'sticker.download_not_supported');

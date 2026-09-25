@@ -1,4 +1,4 @@
-import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { FlowHandler, type FlowProcessor } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
@@ -19,7 +19,29 @@ type PDFAction = (typeof ACTIONS)[number];
 
 const DONE_WORDS = ['done', 'selesai', 'finish', 'ok', 'beres', 'jadi'];
 const MAX_COLLECT_FILES = 20;
-const COLLECT_TTL = 300; // 5 minutes
+const COLLECT_TTL = 300;
+export const MAX_PDF_BYTES = 100 * 1024 * 1024;
+
+export function validatePdfPageRange(total: number, startValue: unknown, endValue: unknown): { start: number; end: number } | null {
+  if (!Number.isInteger(total) || total < 1) return null;
+  const start = Number(startValue);
+  const end = Number(endValue);
+  if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start || end > total) return null;
+  return { start, end };
+}
+
+export const parsePageRange = validatePdfPageRange;
+
+export function parsePdfPageList(value: unknown, total: number): number[] | null {
+  if (typeof value !== 'string' || value.trim() === '' || !Number.isInteger(total) || total < 1) return null;
+  const parts = value.split(',').map((entry) => Number(entry.trim()));
+  if (parts.length === 0 || parts.some((page) => !Number.isInteger(page) || page < 1 || page > total)) return null;
+  return [...new Set(parts)].sort((a, b) => a - b);
+}
+
+function hasPdfSignature(bytes: Uint8Array): boolean {
+  return bytes.length >= 5 && new TextDecoder().decode(bytes.slice(0, 5)) === '%PDF-';
+}
 
 type PDFArgs = ToolArgs & {
   action?: PDFAction | string;
@@ -41,6 +63,25 @@ export class PDFTool extends BaseTool<PDFArgs> {
   override readonly triggerPatterns = [/application\/pdf/i, /\b(pdf|merge|gabung|gambar ke pdf)\b/i];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly mutability = 'local-write' as const;
+  override readonly cost = 2;
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'info', arguments: [] },
+      { value: 'compress', arguments: [] },
+      { value: 'merge', arguments: [] },
+      { value: 'split', arguments: [{ name: 'start_page', kind: 'integer', required: true }, { name: 'end_page', kind: 'integer', required: true }] },
+      { value: 'rotate', arguments: [{ name: 'degrees', kind: 'integer', required: true }] },
+      { value: 'remove_pages', arguments: [{ name: 'pages', kind: 'string', required: true }] },
+      { value: 'add_page_numbers', arguments: [] },
+      { value: 'add_watermark', arguments: [{ name: 'watermark_text', kind: 'string', required: true }] },
+      { value: 'img_to_pdf', arguments: [] },
+      { value: 'to_text', arguments: [] },
+      { value: 'flatten', arguments: [] },
+      { value: 'edit_metadata', arguments: [{ name: 'author', kind: 'string' }, { name: 'title', kind: 'string' }, { name: 'subject', kind: 'string' }] },
+    ],
+  };
 
   get definition(): ToolDefinition {
     return {
@@ -57,13 +98,13 @@ export class PDFTool extends BaseTool<PDFArgs> {
               description:
                 'Operation: info | compress | merge (quote one PDF, attach another) | split (start_page, end_page) | rotate (degrees) | remove_pages (pages) | add_page_numbers | add_watermark (watermark_text) | img_to_pdf (attach image) | to_text | flatten | edit_metadata (title, author, subject)',
             },
-            start_page: { type: 'number', description: 'split: first page (1-based inclusive)' },
-            end_page: { type: 'number', description: 'split: last page (1-based inclusive)' },
+            start_page: { type: 'integer', minimum: 1, description: 'split: first page (1-based inclusive)' },
+            end_page: { type: 'integer', minimum: 1, description: 'split: last page (1-based inclusive)' },
             pages: {
               type: 'string',
               description: 'remove_pages: comma-separated 1-based page numbers, e.g. "1,3,5"',
             },
-            degrees: { type: 'number', description: 'rotate: clockwise degrees (90, 180, or 270)' },
+            degrees: { type: 'integer', enum: [90, 180, 270], description: 'rotate: clockwise degrees (90, 180, or 270)' },
             watermark_text: { type: 'string', description: 'add_watermark: diagonal text overlay' },
             title: { type: 'string', description: 'edit_metadata: document title' },
             author: { type: 'string', description: 'edit_metadata: document author' },
@@ -109,10 +150,11 @@ export class PDFTool extends BaseTool<PDFArgs> {
       const { PDFDocument, StandardFonts, degrees: degreesOf, rgb } = await import('pdf-lib');
 
       const pdfBytes = await readFile(media.path);
-      const sizeKb = Math.round(pdfBytes.length / 1024);
-      if (sizeKb > 100000) {
+      if (pdfBytes.byteLength > MAX_PDF_BYTES) {
         return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' }) || 'PDF file is too large to process safely (max 100MB).';
       }
+      if (!hasPdfSignature(pdfBytes)) return t(lang, 'pdf.not_pdf');
+      const sizeKb = Math.round(pdfBytes.length / 1024);
 
       log.debug({ action, sizeKb, chatId: ctx.chatId }, 'PDF loaded');
 
@@ -147,8 +189,9 @@ export class PDFTool extends BaseTool<PDFArgs> {
           if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
           const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
           const total = doc.getPageCount();
-          const start = Math.max(1, Math.min(Number(args.start_page) || 1, total));
-          const end = Math.max(start, Math.min(Number(args.end_page) || total, total));
+          const range = validatePdfPageRange(total, args.start_page, args.end_page);
+          if (!range) return t(lang, 'pdf.invalid_pages');
+          const { start, end } = range;
           await ctx.react?.('⏳');
           const newDoc = await PDFDocument.create();
           const indices = Array.from({ length: end - start + 1 }, (_, i) => start - 1 + i);
@@ -165,9 +208,8 @@ export class PDFTool extends BaseTool<PDFArgs> {
 
         case 'rotate': {
           if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
-          const deg = [90, 180, 270].includes(Number(args.degrees))
-            ? Number(args.degrees)
-            : 90;
+          const deg = Number(args.degrees);
+          if (![90, 180, 270].includes(deg)) return t(lang, 'pdf.invalid_pages');
           await ctx.react?.('⏳');
           const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
           for (const page of doc.getPages()) {
@@ -182,14 +224,11 @@ export class PDFTool extends BaseTool<PDFArgs> {
           if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
           const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
           const total = doc.getPageCount();
-          const toRemove = String(args.pages || '')
-            .split(',')
-            .map((s) => Number(s.trim()))
-            .filter((n) => n >= 1 && n <= total);
-          if (toRemove.length === 0) return t(lang, 'pdf.invalid_pages');
+          const toRemove = parsePdfPageList(args.pages, total);
+          if (!toRemove) return t(lang, 'pdf.invalid_pages');
           if (toRemove.length >= total) return t(lang, 'pdf.cannot_remove_all');
           await ctx.react?.('⏳');
-          const sorted = [...new Set(toRemove)].sort((a, b) => b - a);
+          const sorted = [...toRemove].sort((a, b) => b - a);
           for (const pageNum of sorted) doc.removePage(pageNum - 1);
           const result = await doc.save();
           await this.sendPdf(ctx, result, 'pages_removed.pdf');
@@ -251,20 +290,22 @@ export class PDFTool extends BaseTool<PDFArgs> {
 
         case 'to_text': {
           await ctx.react?.('⏳');
-          let PDFParse: typeof import('pdf-parse').PDFParse;
+          let parser: { getText: () => Promise<{ text?: string }>; destroy?: () => Promise<void> | void } | undefined;
           try {
-            ({ PDFParse } = await import('pdf-parse'));
-          } catch {
-            return t(lang, 'pdf.parse_not_installed') || 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.';
+            let PDFParse: typeof import('pdf-parse').PDFParse;
+            try {
+              ({ PDFParse } = await import('pdf-parse'));
+            } catch {
+              return t(lang, 'pdf.parse_not_installed') || 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.';
+            }
+            parser = new PDFParse({ data: Buffer.from(pdfBytes) });
+            const data = await parser.getText();
+            const text = data.text?.trim();
+            if (!text) return t(lang, 'pdf.no_text');
+            return text.length > 4000 ? text.slice(0, 4000) + '\n\n[... truncated]' : text;
+          } finally {
+            await parser?.destroy?.();
           }
-          const parser = new PDFParse({ data: Buffer.from(pdfBytes) });
-          const data = await parser.getText();
-          const text = data.text?.trim();
-          if (!text) return t(lang, 'pdf.no_text');
-          // Truncate for WhatsApp readability
-          return text.length > 4000
-            ? text.slice(0, 4000) + '\n\n[... truncated]'
-            : text;
         }
 
         case 'flatten': {
@@ -323,12 +364,13 @@ export class PDFTool extends BaseTool<PDFArgs> {
     if (singleFile && existsSync(singleFile)) files.push(singleFile);
 
     // Start collection flow
-    FlowHandler.setSession(
+    await FlowHandler.setSession(
       ctx.senderId,
       'pdf_merge_collect',
-      { flow: 'pdf_merge_collect', step: 'collecting', data: { files, chatId: ctx.chatId } },
+      { flow: 'pdf_merge_collect', step: 'collecting', roomId: ctx.chatId, data: { files, chatId: ctx.chatId } },
       ctx.platform,
       COLLECT_TTL,
+      ctx.chatId,
     );
 
     const countMsg = files.length === 1
@@ -343,12 +385,16 @@ export class PDFTool extends BaseTool<PDFArgs> {
       const { PDFDocument } = await import('pdf-lib');
       await ctx.react?.('⏳');
       const merged = await PDFDocument.create();
+      if (filePaths.length > MAX_COLLECT_FILES) return t(lang, 'pdf.error', { msg: 'Too many files selected.' });
       for (const fp of filePaths) {
         const bytes = await readFile(fp);
+        if (bytes.byteLength > MAX_PDF_BYTES || !hasPdfSignature(bytes)) throw new Error('One or more files is not a valid PDF within the size limit.');
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        if (src.getPageCount() < 1) throw new Error('A selected PDF has no pages.');
         const pages = await merged.copyPages(src, src.getPageIndices());
         for (const p of pages) merged.addPage(p);
       }
+      if (merged.getPageCount() < 1) throw new Error('The merged PDF has no pages.');
       const mergedBytes = await merged.save();
       await this.sendPdf(ctx, mergedBytes, 'merged.pdf');
       return t(lang, 'pdf.merge_done', { pages: String(merged.getPageCount()) });
@@ -372,12 +418,13 @@ export class PDFTool extends BaseTool<PDFArgs> {
     }
 
     // No image attached → start collection flow
-    FlowHandler.setSession(
+    await FlowHandler.setSession(
       ctx.senderId,
       'pdf_img_collect',
-      { flow: 'pdf_img_collect', step: 'collecting', data: { files: [], mimes: [], chatId: ctx.chatId } },
+      { flow: 'pdf_img_collect', step: 'collecting', roomId: ctx.chatId, data: { files: [], mimes: [], chatId: ctx.chatId } },
       ctx.platform,
       COLLECT_TTL,
+      ctx.chatId,
     );
     return t(lang, 'pdf.img_collect_started');
   }
@@ -429,11 +476,17 @@ function isPdf(mime: string, path: string): boolean {
 // ── Image collection flow ──────────────────────────────────────────────
 export const pdfImgCollectFlowProcessor: FlowProcessor = async (ctx, flowData, flowId) => {
   const lang = ctx.language ?? 'en';
+  const boundRoom = flowData.roomId ?? (typeof flowData.data.chatId === 'string' ? flowData.data.chatId : undefined);
+  if (boundRoom && boundRoom !== ctx.chatId) {
+    await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+    await ctx.reply(t(lang, 'flow.stale_cleared'));
+    return;
+  }
   const files = (flowData.data.files ?? []) as string[];
   const mimes = (flowData.data.mimes ?? []) as string[];
 
   if (isDone(ctx.text) && files.length > 0) {
-    FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform);
+    await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
     const tool = new PDFTool();
     const result = await tool['doImgToPdf'](ctx, lang, files, mimes);
     await ctx.reply(result);
@@ -458,12 +511,13 @@ export const pdfImgCollectFlowProcessor: FlowProcessor = async (ctx, flowData, f
 
   files.push(media.path);
   mimes.push(media.mime);
-  FlowHandler.setSession(
+  await FlowHandler.setSession(
     ctx.senderId,
     flowId,
-    { flow: 'pdf_img_collect', step: 'collecting', data: { ...flowData.data, files, mimes } },
+    { flow: 'pdf_img_collect', step: 'collecting', roomId: ctx.chatId, data: { ...flowData.data, files, mimes } },
     ctx.platform,
     COLLECT_TTL,
+    ctx.chatId,
   );
   await ctx.react?.('📄');
   await ctx.reply(t(lang, 'pdf.img_collect_added', { count: String(files.length) }));
@@ -472,10 +526,16 @@ export const pdfImgCollectFlowProcessor: FlowProcessor = async (ctx, flowData, f
 // ── PDF merge collection flow ──────────────────────────────────────────
 export const pdfMergeCollectFlowProcessor: FlowProcessor = async (ctx, flowData, flowId) => {
   const lang = ctx.language ?? 'en';
+  const boundRoom = flowData.roomId ?? (typeof flowData.data.chatId === 'string' ? flowData.data.chatId : undefined);
+  if (boundRoom && boundRoom !== ctx.chatId) {
+    await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+    await ctx.reply(t(lang, 'flow.stale_cleared'));
+    return;
+  }
   const files = (flowData.data.files ?? []) as string[];
 
   if (isDone(ctx.text) && files.length >= 2) {
-    FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform);
+    await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
     const tool = new PDFTool();
     const result = await tool['doMerge'](ctx, lang, files);
     await ctx.reply(result);
@@ -499,12 +559,13 @@ export const pdfMergeCollectFlowProcessor: FlowProcessor = async (ctx, flowData,
   }
 
   files.push(media.path);
-  FlowHandler.setSession(
+  await FlowHandler.setSession(
     ctx.senderId,
     flowId,
-    { flow: 'pdf_merge_collect', step: 'collecting', data: { ...flowData.data, files } },
+    { flow: 'pdf_merge_collect', step: 'collecting', roomId: ctx.chatId, data: { ...flowData.data, files } },
     ctx.platform,
     COLLECT_TTL,
+    ctx.chatId,
   );
   await ctx.react?.('📄');
   await ctx.reply(t(lang, 'pdf.merge_collect_added', { count: String(files.length) }));

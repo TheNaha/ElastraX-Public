@@ -1,54 +1,25 @@
-/**
- * @file src/agent/ToolSearchIndex.ts
- * @description In-memory search index over registered tools for on-demand discovery.
- *
- * The agent sends only a small set of "always-loaded" tools to the LLM.
- * When the model calls `find_tools`, this index is queried to locate matching
- * tools by name, alias, category, and description keywords.
- *
- * No external dependencies — simple normalised keyword matching is sufficient
- * for the expected scale (20-100 tools).
- */
-
 import type { BaseTool } from '../tools/BaseTool';
 
 export interface ToolSearchEntry {
   name: string;
   description: string;
   category: string;
-  /** All searchable tokens (lowercased): name parts, aliases, category, description words. */
   tokens: string[];
   tool: BaseTool;
 }
 
 export class ToolSearchIndex {
   private entries: ToolSearchEntry[] = [];
+  private inverted = new Map<string, Set<number>>();
 
-  /** Build the index from a list of discoverable tools. */
   build(tools: BaseTool[]): void {
-    this.entries = tools.map((tool) => {
+    const entries = tools.map(tool => {
       const tokens = new Set<string>();
-
-      // Tool name parts (e.g. "download_media" → ["download", "media"])
-      for (const part of tool.name.split(/[_\-\s]+/)) {
-        if (part) tokens.add(part.toLowerCase());
-      }
-
-      // Aliases
-      for (const alias of tool.aliases) {
-        for (const part of alias.split(/[_\-\s]+/)) {
-          if (part) tokens.add(part.toLowerCase());
+      for (const value of [tool.name, ...tool.aliases, tool.category, tool.description]) {
+        for (const token of value.toLowerCase().split(/\W+/)) {
+          if (token.length > 2) tokens.add(token);
         }
       }
-
-      // Category
-      tokens.add(tool.category.toLowerCase());
-
-      // Description keywords (skip very short words)
-      for (const word of tool.description.split(/\W+/)) {
-        if (word.length > 2) tokens.add(word.toLowerCase());
-      }
-
       return {
         name: tool.name,
         description: tool.description,
@@ -57,39 +28,41 @@ export class ToolSearchIndex {
         tool,
       };
     });
+    const inverted = new Map<string, Set<number>>();
+    entries.forEach((entry, index) => {
+      for (const token of entry.tokens) {
+        const matches = inverted.get(token) ?? new Set<number>();
+        matches.add(index);
+        inverted.set(token, matches);
+      }
+    });
+    this.entries = entries;
+    this.inverted = inverted;
   }
 
-  /**
-   * Search for tools matching a free-text query.
-   * Returns entries ranked by number of matching tokens (descending).
-   */
   search(query: string, limit = 5): ToolSearchEntry[] {
-    const queryTokens = query
-      .toLowerCase()
-      .split(/\W+/)
-      .filter((t) => t.length > 1);
-
+    const queryTokens = [...new Set(query.toLowerCase().split(/\W+/).filter(token => token.length > 1))];
     if (queryTokens.length === 0) return [];
 
-    const scored: { entry: ToolSearchEntry; score: number }[] = [];
-
-    for (const entry of this.entries) {
-      let score = 0;
-      for (const qt of queryTokens) {
-        // Exact token match (highest weight)
-        if (entry.tokens.includes(qt)) {
-          score += 3;
-          continue;
-        }
-        // Substring match (partial)
-        if (entry.tokens.some((t) => t.includes(qt) || qt.includes(t))) {
-          score += 1;
-        }
+    const scores = new Map<number, number>();
+    for (const token of queryTokens) {
+      for (const index of this.inverted.get(token) ?? []) {
+        scores.set(index, (scores.get(index) ?? 0) + 3);
       }
-      if (score > 0) scored.push({ entry, score });
     }
 
-    scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit).map((s) => s.entry);
+    if (scores.size < limit) {
+      for (let index = 0; index < this.entries.length; index++) {
+        if (scores.has(index)) continue;
+        const entry = this.entries[index]!;
+        const partial = queryTokens.some(queryToken => entry.tokens.some(token => token.includes(queryToken) || queryToken.includes(token)));
+        if (partial) scores.set(index, 1);
+      }
+    }
+
+    return [...scores.entries()]
+      .sort((left, right) => right[1] - left[1] || this.entries[left[0]]!.name.localeCompare(this.entries[right[0]]!.name))
+      .slice(0, Math.max(1, limit))
+      .map(([index]) => this.entries[index]!);
   }
 }

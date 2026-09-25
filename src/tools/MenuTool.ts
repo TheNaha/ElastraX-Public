@@ -41,6 +41,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
   readonly aliases = ['help', 'h', '?'];
   readonly category = 'utility';
   readonly permissions = 'user';
+  override readonly noArgAliases = ['menu', 'help', 'commands'];
   override readonly alwaysLoad = true;
 
   get definition(): ToolDefinition {
@@ -66,7 +67,12 @@ export class MenuTool extends BaseTool<MenuArgs> {
   async execute(args: MenuArgs, ctx: MessageContext): Promise<string> {
     const { command_name } = args;
     const lang = ctx.language;
-    const tools = this.getTools();
+    const tools = (await Promise.all(this.getTools().map(async (tool) => {
+      if (!tool.isEnabled() || (tool.groupOnly && !ctx.isGroup) || (tool.dmOnly && ctx.isGroup)) return null;
+      if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) return null;
+      if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) return null;
+      return tool;
+    }))).filter((tool): tool is BaseTool => tool !== null);
 
     log.debug({ command_name: command_name || null, chatId: ctx.chatId }, 'Menu requested');
 

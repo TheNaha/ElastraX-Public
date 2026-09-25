@@ -18,11 +18,10 @@ import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms } from '../db/schema';
-import { eq } from 'drizzle-orm';
+import { count, eq } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import type { ModelTier } from '../types/ai';
-import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'OwnerTool' });
 type OwnerArgs = ToolArgs & {
@@ -127,7 +126,11 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
     for (const room of rooms) {
       if (room.id === ctx.chatId) continue;
       try {
-        await ctx.forwardMessage?.(room.id, broadcastText);
+        if (ctx.sendToChat) {
+          await ctx.sendToChat(room.id, broadcastText);
+        } else {
+          await ctx.forwardMessage(room.id, broadcastText);
+        }
         sent++;
         // Small delay to avoid rate limits
         await new Promise(resolve => setTimeout(resolve, 200));
@@ -160,12 +163,13 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
       return '';
     } catch (error: unknown) {
       log.error({ err: error, chatId: ctx.chatId }, 'Failed to leave group');
-      return t(lang, 'owner.leave_error', { msg: getErrorMessage(error) });
+      return t(lang, 'owner.leave_error', { msg: 'Unable to leave group' });
     }
   }
 
   private async handleSystemInfo(_ctx: MessageContext): Promise<string> {
-    const roomCount = db.select({ id: chatRooms.id }).from(chatRooms).all().length;
+    const [roomCountRow] = db.select({ value: count() }).from(chatRooms).all();
+    const roomCount = roomCountRow?.value ?? 0;
     const memUsage = process.memoryUsage();
     return [
       '🤖 *ElastraX System Info*',

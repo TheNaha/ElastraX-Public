@@ -23,10 +23,26 @@ import { reminders } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
-import { getErrorMessage } from '../utils/errorUtils';
 import { isValidRecurrence } from '../utils/Scheduler';
 
 const log = logger.child({ module: 'ReminderTool' });
+const MIN_REMINDER_DELAY_MS = 1_000;
+const MAX_REMINDER_HORIZON_MS = 5 * 365 * 86_400_000;
+const MAX_ACTIVE_REMINDERS = 100;
+const MAX_REMINDER_MESSAGE_LENGTH = 1_000;
+
+type ActiveReminder = typeof reminders.$inferSelect;
+
+type QueryRows = {
+  limit?: (value: number) => QueryRows;
+  all: () => unknown[];
+};
+
+function collectRows(query: unknown, limit: number): unknown[] {
+  const typed = query as QueryRows;
+  const bounded = typeof typed.limit === 'function' ? typed.limit(limit) : typed;
+  return bounded.all();
+}
 type ReminderArgs = ToolArgs & {
   action?: 'set' | 'list' | 'cancel' | string;
   time?: string;
@@ -47,60 +63,61 @@ type ReminderArgs = ToolArgs & {
  *   ISO strings
  */
 export function parseRelativeTime(input: string): Date | null {
-  const now = new Date();
+  const now = Date.now();
   const lower = input.toLowerCase().trim();
-
-  // "in X minutes / hours / days"
   const relativeMatch = lower.match(/^(?:in\s+)?(\d+(?:\.\d+)?)\s*(minute|min|hour|hr|day|second|sec)s?$/);
   if (relativeMatch) {
-    const amount = parseFloat(relativeMatch[1]);
-    const unit = relativeMatch[2];
-    const ms =
-      unit.startsWith('sec') ? amount * 1000 :
-      unit.startsWith('min') ? amount * 60_000 :
-      unit.startsWith('hour') || unit === 'hr' ? amount * 3_600_000 :
-      amount * 86_400_000; // days
-    return new Date(now.getTime() + ms);
+    const amount = Number(relativeMatch[1]);
+    const unit = relativeMatch[2]!;
+    const duration = unit.startsWith('sec')
+      ? amount * 1_000
+      : unit.startsWith('min')
+        ? amount * 60_000
+        : unit.startsWith('hour') || unit === 'hr'
+          ? amount * 3_600_000
+          : amount * 86_400_000;
+    if (!Number.isFinite(duration) || duration < MIN_REMINDER_DELAY_MS || duration > MAX_REMINDER_HORIZON_MS) return null;
+    return new Date(now + duration);
   }
 
-  // "tomorrow [at HH:MM]"
   if (lower.startsWith('tomorrow')) {
     const timeMatch = lower.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/);
-    const d = new Date(now);
-    d.setDate(d.getDate() + 1);
+    const date = new Date(now);
+    date.setDate(date.getDate() + 1);
     if (timeMatch) {
-      let hours = parseInt(timeMatch[1], 10);
-      const minutes = parseInt(timeMatch[2], 10);
-      if (timeMatch[3] === 'pm' && hours < 12) hours += 12;
-      if (timeMatch[3] === 'am' && hours === 12) hours = 0;
-      d.setHours(hours, minutes, 0, 0);
+      let hours = Number(timeMatch[1]);
+      const minutes = Number(timeMatch[2]);
+      const hasMeridiem = Boolean(timeMatch[3]);
+    if ((hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
+      if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
+      if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
+      date.setHours(hours, minutes, 0, 0);
     } else {
-      d.setHours(9, 0, 0, 0); // default 9am tomorrow
+      date.setHours(9, 0, 0, 0);
     }
-    return d;
+    const delay = date.getTime() - now;
+    return delay >= MIN_REMINDER_DELAY_MS && delay <= MAX_REMINDER_HORIZON_MS ? date : null;
   }
 
-  // "at HH:MM [am/pm]" or "HH:MM [am/pm]"
-  const timeMatch = lower.match(/^(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?$/i);
+  const timeMatch = lower.match(/^(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?$/);
   if (timeMatch) {
-    let hours = parseInt(timeMatch[1], 10);
-    const minutes = parseInt(timeMatch[2], 10);
+    let hours = Number(timeMatch[1]);
+    const minutes = Number(timeMatch[2]);
+    const hasMeridiem = Boolean(timeMatch[3]);
+    if ((hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
     if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
     if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
-    const d = new Date(now);
-    d.setHours(hours, minutes, 0, 0);
-    // If the time is already past for today, schedule for tomorrow
-    if (d.getTime() <= now.getTime()) d.setDate(d.getDate() + 1);
-    return d;
+    const date = new Date(now);
+    date.setHours(hours, minutes, 0, 0);
+    if (date.getTime() <= now) date.setDate(date.getDate() + 1);
+    const delay = date.getTime() - now;
+    return delay >= MIN_REMINDER_DELAY_MS && delay <= MAX_REMINDER_HORIZON_MS ? date : null;
   }
 
-  // Try ISO / absolute date fallback
-  const ts = Date.parse(input);
-  if (!isNaN(ts) && ts > now.getTime()) {
-    return new Date(ts);
-  }
-
-  return null;
+  const timestamp = Date.parse(input);
+  if (!Number.isFinite(timestamp)) return null;
+  const delay = timestamp - now;
+  return delay >= MIN_REMINDER_DELAY_MS && delay <= MAX_REMINDER_HORIZON_MS ? new Date(timestamp) : null;
 }
 
 function formatTime(date: Date): string {
@@ -189,11 +206,17 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
 
     // ── LIST ───────────────────────────────────────────────────────────────────
     if (action === 'list') {
-      const active = db.select()
-        .from(reminders)
-        .where(and(eq(reminders.senderId, ctx.senderId), eq(reminders.isSent, false)))
-        .orderBy(reminders.remindAt)
-        .all();
+      const active = collectRows(
+        db.select()
+          .from(reminders)
+          .where(and(
+            eq(reminders.senderId, ctx.senderId),
+            eq(reminders.platform, ctx.platform),
+            eq(reminders.isSent, false),
+          ))
+          .orderBy(reminders.remindAt),
+        MAX_ACTIVE_REMINDERS,
+      ) as ActiveReminder[];
 
       log.debug({ senderId: ctx.senderId, activeCount: active.length }, 'Listing reminders');
 
@@ -219,14 +242,22 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     // ── CANCEL ─────────────────────────────────────────────────────────────────
     if (action === 'cancel') {
       // Accept either the list position or the stable reminder id shown as "(#<id>)".
-      const n = parseInt(String(number || '').replace(/^#/, '').trim(), 10);
-      if (isNaN(n) || n < 1) return t(lang, 'reminder.cancel_invalid');
+      const normalizedNumber = String(number || '').replace(/^#/, '').trim();
+      if (!/^\d+$/.test(normalizedNumber)) return t(lang, 'reminder.cancel_invalid');
+      const n = Number(normalizedNumber);
+      if (!Number.isSafeInteger(n) || n < 1) return t(lang, 'reminder.cancel_invalid');
 
-      const active = db.select()
-        .from(reminders)
-        .where(and(eq(reminders.senderId, ctx.senderId), eq(reminders.isSent, false)))
-        .orderBy(reminders.remindAt)
-        .all();
+      const active = collectRows(
+        db.select()
+          .from(reminders)
+          .where(and(
+            eq(reminders.senderId, ctx.senderId),
+            eq(reminders.platform, ctx.platform),
+            eq(reminders.isSent, false),
+          ))
+          .orderBy(reminders.remindAt),
+        MAX_ACTIVE_REMINDERS,
+      ) as ActiveReminder[];
 
       // Exact id match wins (stable across list changes); fall back to position.
       const target = active.find(r => r.id === n)
@@ -241,6 +272,10 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     // ── SET ────────────────────────────────────────────────────────────────────
     if (!time) return t(lang, 'reminder.invalid_time');
     if (!message) return t(lang, 'reminder.no_message', {});
+    const reminderMessage = String(message).trim();
+    if (!reminderMessage || reminderMessage.length > MAX_REMINDER_MESSAGE_LENGTH) {
+      return t(lang, 'reminder.error', { msg: 'Message must contain 1-1000 characters' });
+    }
 
     const fireAt = parseRelativeTime(time);
     if (!fireAt) {
@@ -248,8 +283,22 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     }
 
     // Reject recurrence patterns the Scheduler would silently retire at fire time.
-    if (recurrence && !isValidRecurrence(String(recurrence).trim())) {
-      return t(lang, 'reminder.invalid_recurrence', { recurrence: String(recurrence) });
+    if (recurrence && (!isValidRecurrence(String(recurrence).trim()) || String(recurrence).length > 64)) {
+      return t(lang, 'reminder.invalid_recurrence', { recurrence: String(recurrence).slice(0, 64) });
+    }
+
+    const active = collectRows(
+      db.select({ id: reminders.id })
+        .from(reminders)
+        .where(and(
+          eq(reminders.senderId, ctx.senderId),
+          eq(reminders.platform, ctx.platform),
+          eq(reminders.isSent, false),
+        )),
+      MAX_ACTIVE_REMINDERS + 1,
+    ) as Array<{ id: number }>;
+    if (active.length >= MAX_ACTIVE_REMINDERS) {
+      return t(lang, 'reminder.error', { msg: `Maximum ${MAX_ACTIVE_REMINDERS} active reminders reached` });
     }
 
     try {
@@ -257,7 +306,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         chatRoomId: ctx.chatId,
         senderId: ctx.senderId,
         senderName: ctx.senderName,
-        message: String(message),
+        message: reminderMessage,
         remindAt: fireAt,
         isSent: false,
         platform: ctx.platform,
@@ -271,18 +320,18 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       if (recurrence) {
         return t(lang, 'reminder.recurrence_set', {
           time: formatTime(fireAt),
-          message: String(message),
+          message: reminderMessage,
           recurrence: String(recurrence),
         });
       }
 
       return t(lang, 'reminder.set', {
         time: formatTime(fireAt),
-        message: String(message),
+        message: reminderMessage,
       });
     } catch (error: unknown) {
       log.error({ err: error, senderId: ctx.senderId }, 'Failed to insert reminder');
-      return t(lang, 'reminder.error', { msg: getErrorMessage(error) });
+      return t(lang, 'reminder.error', { msg: 'Unable to create reminder' });
     }
   }
 }

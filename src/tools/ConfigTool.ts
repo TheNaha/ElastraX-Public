@@ -75,7 +75,7 @@ function parseFloatValue(value: string, min: number, max: number): number {
 function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
   switch (key) {
     case 'systemPrompt':
-      if (value.length > 50000) throw new Error('System prompt too long (max 50000 chars).');
+      if (value.length > 20_000) throw new Error('System prompt too long (max 20000 chars).');
       return value;
     case 'contextLimit':
       return parseIntegerValue(value, 1, 50);
@@ -197,12 +197,12 @@ export class ConfigTool extends BaseTool {
         const updateData = buildConfigUpdate(key, parsedValue);
 
         await db.update(chatRooms).set(updateData).where(eq(chatRooms.id, ctx.chatId));
-        log.info({ chatId: ctx.chatId, key, value: parsedValue, setBy: ctx.senderId }, 'Config key updated');
+        log.info({ chatId: ctx.chatId, key, setBy: ctx.senderId }, 'Config key updated');
         return `Successfully updated \`${key}\` for this room.`;
 
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'Unknown validation error.');
-        log.warn({ chatId: ctx.chatId, key, value, err: message }, 'Invalid config value rejected');
+        log.warn({ chatId: ctx.chatId, key, err: message }, 'Invalid config value rejected');
         return `Invalid value for ${key}: ${message}`;
       }
     }

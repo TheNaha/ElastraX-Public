@@ -32,6 +32,7 @@ const log = logger.child({ module: 'MediaConvertTool' });
 type ConvertFormat = 'mp3' | 'mp4' | 'ogg' | 'aac' | 'opus' | 'm4a' | 'wav' | 'webm' | 'mkv' | 'gif' | 'png' | 'jpg' | 'webp';
 type MediaConvertArgs = ToolArgs & {
   format?: string;
+  attachment_id?: string;
 };
 
 const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
@@ -76,6 +77,10 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
               enum: Object.keys(FORMAT_ARGS),
               description: 'Target output format to convert to.',
             },
+            attachment_id: {
+              type: 'string',
+              description: 'Optional attachment identifier when the message contains multiple attachments.',
+            },
           },
           required: ['format'],
         },
@@ -83,7 +88,7 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
     };
   }
 
-  async execute(args: MediaConvertArgs, ctx: MessageContext): Promise<string> {
+  async execute(args: MediaConvertArgs, ctx: MessageContext, signal?: AbortSignal): Promise<string> {
     const lang = ctx.language ?? 'en';
     const targetFmt = (args.format || '').toLowerCase() as ConvertFormat;
 
@@ -98,6 +103,7 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
     const media = await resolveTargetMedia(ctx, {
       useDownloader: Boolean(ctx.downloadMedia),
       beforeDownload: () => ctx.react?.('📥'),
+      attachmentId: typeof args.attachment_id === 'string' ? args.attachment_id : undefined,
     });
     if (!media) return t(lang, 'convert.no_media');
 
@@ -111,7 +117,9 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
 
       log.info({ from: extIn, to: targetFmt, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
 
-      const outputBuffer = await FFmpegConverter.convert(inputBuffer, ffmpegArgs, extIn, targetFmt);
+      const outputBuffer = await FFmpegConverter.convert(inputBuffer, ffmpegArgs, extIn, targetFmt, {
+        signal: signal ?? ctx.signal,
+      });
 
       log.debug({ from: extIn, to: targetFmt, outputSize: outputBuffer.length }, 'Media conversion completed');
 

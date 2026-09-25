@@ -32,13 +32,22 @@ import { db } from '../db';
 import { chatRooms, messages, memories } from '../db/schema';
 import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
-import { AIChatMessage } from '../ai/client';
+import { AIChatMessage, StreamingToolCallAccumulator } from '../ai/client';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { getToolByName, getToolByAliasOrName, getAlwaysLoadedDefinitions, getTriggeredTools, tools, toolSearchIndex } from '../tools';
+import {
+  getToolByName,
+  getAuthorizedTool,
+  getAlwaysLoadedDefinitions,
+  getToolDefinitions,
+  getTriggeredTools,
+  getToolsForContext,
+  toolSearchIndex,
+  executeAuthorizedCommand,
+  validateToolArguments,
+} from '../tools';
 
 const log = logger.child({ module: 'Agent' });
-import { ParameterValidator } from '../utils/ParameterValidator';
 import { FlowHandler } from '../core/FlowHandler';
 import { MAX_INJECTED_MEMORIES, UNLIMITED } from '../core/constants';
 import { t } from '../utils/i18n';
@@ -50,24 +59,31 @@ import { getModelRouter } from '../utils/ModelRouter';
 import { rankMemoriesForInjection } from '../utils/semanticMemory';
 import { RateLimiter } from '../utils/RateLimiter';
 import { AuthService } from '../utils/AuthService';
-import { summarizeHistory } from '../utils/ConversationSummarizer';
+import { createPersistentSummaryService } from '../ai/summaryStore';
+import { createTurnBudget, type TurnBudget } from '../ai/turnBudget';
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
-import type { BaseTool, ToolResult, ToolDefinition } from '../tools/BaseTool';
+import type { BaseTool, ToolArgs, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
-import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs } from '../config/runtime';
+import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs, getTurnBudgetConfig } from '../config/runtime';
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
-import { withTimeout } from '../utils/withTimeout.js';
+import { withCancellableTimeout } from '../utils/withTimeout.js';
+import { sanitizeRawMessage } from '../utils/rawMessage';
+import { OutboxService } from '../messaging/OutboxService';
+import { getInlineMediaEligibility } from '../providers/media';
 
 const modelRouter = getModelRouter();
+const persistentSummaryService = createPersistentSummaryService();
 
 function getToolTimeoutMs(): number {
   return getConfiguredToolTimeoutMs();
 }
 
-function getAllowedTools(roles: string[], isGroup: boolean): BaseTool[] {
-  return tools.filter((tool) => {
-    if (tool.groupOnly && !isGroup) return false;
-    return AuthService.hasPermission(roles, tool.permissions);
+function getAllowedTools(roles: string[], isGroup: boolean, platform = 'whatsapp'): BaseTool[] {
+  return getToolsForContext({
+    roles,
+    isGroup,
+    platform,
+    isOwner: roles.includes('owner'),
   });
 }
 
@@ -77,19 +93,39 @@ function resolveToolResultText(result: ToolResult): string {
     : result;
 }
 
+async function deliverDurableText(ctx: MessageContext, text: string, source: string, mentions?: string[]): Promise<void> {
+  if (!text.trim()) return;
+  const deliveryId = OutboxService.enqueueText(
+    ctx.platform,
+    ctx.chatId,
+    text,
+    [ctx.messageId, source],
+  );
+  try {
+    const replyOptions = {
+      ...(mentions?.length ? { mentions } : {}),
+      ...(ctx.signal ? { signal: ctx.signal } : {}),
+    };
+    const result = await ctx.reply(text, replyOptions);
+    OutboxService.markEnqueuedSent(deliveryId, typeof result === 'string' ? result : null);
+  } catch (error) {
+    log.warn({ err: error, deliveryId, source }, 'Immediate delivery failed; outbox will retry');
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function parseToolArgs(rawArgs: string, toolName: string, logMalformed: boolean): Record<string, unknown> {
+function parseToolArgs(rawArgs: string, toolName: string, logMalformed: boolean): Record<string, unknown> | null {
   try {
-    const parsed = JSON.parse(rawArgs);
-    return isRecord(parsed) ? parsed : {};
+    const parsed: unknown = JSON.parse(rawArgs || '{}');
+    if (isRecord(parsed)) return parsed;
+    if (logMalformed) log.warn({ toolName }, 'Tool arguments must be a JSON object');
+    return null;
   } catch {
-    if (logMalformed) {
-      log.warn({ raw: rawArgs, toolName }, 'Failed to parse tool arguments');
-    }
-    return {};
+    if (logMalformed) log.warn({ toolName }, 'Failed to parse tool arguments');
+    return null;
   }
 }
 
@@ -129,72 +165,80 @@ async function executeRequestedToolCalls(
     toolLoadingMode: 'all' | 'search';
     preferredTier?: ModelTier;
     logMalformedArgs: boolean;
+    turnBudget: TurnBudget;
     mode?: 'stream';
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
-  const toolResults = await Promise.all(toolCalls.map(async (tc: ToolCall) => {
-    const toolName = tc.function.name;
-    const args = parseToolArgs(tc.function.arguments, toolName, options.logMalformedArgs);
+  options.turnBudget.claimToolCalls(toolCalls.length);
+
+  const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
+  let preferredTier = options.preferredTier;
+
+  for (const toolCall of toolCalls) {
+    const toolName = toolCall.function.name;
     const tool = getToolByName(toolName);
-    let toolResultStr = '';
+    let toolResultText = '';
     let resultTier: ModelTier | undefined;
 
-    if (tool && (options.allowedToolNames.has(tool.name) || options.dynamicToolNames.has(tool.name))) {
-      log.info({ toolName, args, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) }, 'Tool call invoked');
-      healthMetrics.recordToolInvocation(toolName);
-      await options.ctx.react?.('🔧');
-      try {
-        const rawResult = await executeToolWithTimeout(tool, args, options.ctx);
-        toolResultStr = resolveToolResultText(rawResult);
-        resultTier = tool.modelTier;
-      } catch (err: unknown) {
-        log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
-        toolResultStr = `Error executing tool ${toolName}: ${getErrorMessage(err)}`;
-      }
-
-      if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
-        const query = typeof args.query === 'string' ? args.query : '';
-        const discovered = discoverMatchingTools(
-          query,
-          options.allowedToolNames,
-          options.dynamicToolNames,
-          options.availableTools,
-        );
-        log.info({ chatId: options.chatId, discovered }, '[Agent] Tools discovered via find_tools');
-      }
-    } else if (tool) {
-      log.warn({ toolName, chatId: options.chatId, senderId: options.ctx.senderId }, 'LLM requested unauthorized tool');
-      toolResultStr = `Error: You do not have permission to use tool ${toolName}.`;
-    } else {
+    if (!tool) {
+      toolResultText = `Error: Tool ${toolName} not found.`;
       log.error({ toolName, chatId: options.chatId }, 'LLM requested unknown tool');
-      toolResultStr = `Error: Tool ${toolName} not found.`;
+    } else if (!(options.allowedToolNames.has(tool.name) || options.dynamicToolNames.has(tool.name))) {
+      toolResultText = `Error: You do not have permission to use tool ${toolName}.`;
+      log.warn({ toolName, chatId: options.chatId, senderId: options.ctx.senderId }, 'LLM requested unauthorized tool');
+    } else {
+      const args = parseToolArgs(toolCall.function.arguments, toolName, options.logMalformedArgs);
+      if (!args) {
+        toolResultText = `Error: Arguments for ${toolName} must be a valid JSON object.`;
+      } else {
+        const validation = validateToolArguments(tool, args);
+        if (!validation.valid || !isRecord(validation.value)) {
+          toolResultText = `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}`;
+        } else {
+          const validArgs = validation.value;
+          log.info(
+            { toolName, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) },
+            'Tool call invoked',
+          );
+          healthMetrics.recordToolInvocation(toolName);
+          await options.ctx.react?.('🔧').catch(() => {});
+          try {
+            const rawResult = await executeToolWithTimeout(tool, validArgs, options.ctx);
+            toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
+            resultTier = tool.modelTier;
+          } catch (err: unknown) {
+            log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
+            toolResultText = options.turnBudget.constrainTextResult(
+              `Error executing tool ${toolName}: ${getErrorMessage(err)}`,
+            ).value;
+          }
+
+          if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
+            const query = typeof validArgs.query === 'string' ? validArgs.query : '';
+            const discovered = discoverMatchingTools(
+              query,
+              options.allowedToolNames,
+              options.dynamicToolNames,
+              options.availableTools,
+            );
+            log.info({ chatId: options.chatId, discovered }, '[Agent] Tools discovered via find_tools');
+          }
+        }
+      }
     }
 
-    return {
-      role: 'tool' as const,
-      tool_call_id: tc.id,
+    if (resultTier && !preferredTier) preferredTier = resultTier;
+    toolResults.push({
+      role: 'tool',
+      tool_call_id: toolCall.id,
       name: toolName,
-      content: toolResultStr,
-      resultTier,
-    };
-  }));
+      content: toolResultText,
+    });
+  }
 
-  // Deterministic tier selection: first tool (by call order) that declared a
-  // tier wins; otherwise keep the caller's existing preference. The previous
-  // last-finisher-wins closure assignment was nondeterministic under
-  // Promise.all concurrency.
-  const preferredTier = toolResults.find(r => r.resultTier !== undefined)?.resultTier ?? options.preferredTier;
-
-  return {
-    toolResults: toolResults.map(({ resultTier: _tier, ...rest }) => rest),
-    preferredTier,
-  };
+  return { toolResults, preferredTier };
 }
 
-/**
- * Strip Qwen3-style `<think>…</think>` reasoning blocks from model output,
- * returning only the user-visible portion of the response.
- */
 function stripThinkTags(text: string): string {
   // Remove one or more <think>…</think> blocks (greedy, dotall via [\s\S])
   return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
@@ -243,17 +287,18 @@ function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
 
 async function executeToolWithTimeout(
   tool: BaseTool,
-  args: Record<string, unknown>,
+  args: ToolArgs,
   ctx: MessageContext,
 ): Promise<ToolResult> {
   const startMs = Date.now();
   const timeoutMs = getToolTimeoutMs();
 
   try {
-    const result = await withTimeout(
-      Promise.resolve().then(() => tool.execute(args, ctx)),
+    const result = await withCancellableTimeout(
+      signal => tool.execute(args, ctx, signal),
       timeoutMs,
       `Tool ${tool.name}`,
+      ctx.signal,
     );
     healthMetrics.recordToolDuration(tool.name, Date.now() - startMs);
     return result;
@@ -265,15 +310,9 @@ async function executeToolWithTimeout(
 }
 
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
-  const modelName = process.env.AI_MODEL_NAME?.toLowerCase() || '';
-  const nativeAudioModels = ['inkling', 'gemini-1.5', 'qwen-audio', 'gpt-4o-audio'];
-  
-  if (nativeAudioModels.some(m => modelName.includes(m))) {
-    log.debug({ modelName }, '[Transcription] Bypassing whisper transcription; model natively supports audio');
-    return null;
-  }
-
-  if (!isTranscriptionConfigured() || !isAudioMimeType(ctx.mimeType)) return null;
+  if (!isTranscriptionConfigured()) return null;
+  await ctx.mediaReady;
+  if (!isAudioMimeType(ctx.mimeType)) return null;
 
   try {
     const source = await resolveTranscriptionSource(ctx, false);
@@ -302,25 +341,31 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // Fetch or create the chat room early so that ctx.language is available to all
   // tools and flow handlers before any routing takes place.
   let room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0];
+  if (room && room.platform !== platform) {
+    throw new Error(`Room ID collision between ${room.platform} and ${platform}`);
+  }
   if (!room) {
+    const defaults = ConfigService.getDefaults(isGroup);
     log.info({ chatId, platform }, 'New chat room created');
-    const newRoom = {
+    const newRoom: typeof chatRooms.$inferInsert = {
       id: chatId,
       platform,
       language: 'en',
+      systemPrompt: defaults.systemPrompt,
+      contextLimit: defaults.contextLimit,
+      temperature: defaults.temperature,
+      maxTokens: defaults.maxTokens,
+      allowTools: defaults.allowTools,
+      autoReplyAll: defaults.autoReplyAll,
+      summarize: defaults.summarize,
+      longTermMemory: defaults.longTermMemory,
       created_at: new Date(),
     };
     await db.insert(chatRooms).values(newRoom).onConflictDoNothing();
-    // Re-fetch to get the authoritative DB row (handles concurrent insert race)
     room = (await db.select().from(chatRooms).where(eq(chatRooms.id, chatId)))[0] ?? {
       ...newRoom,
-      systemPrompt: null,
-      contextLimit: null,
-      temperature: null,
-      maxTokens: null,
-      allowTools: null,
-      autoReplyAll: null,
-      summarize: null,
+      id: chatId,
+      created_at: newRoom.created_at ?? new Date(),
     };
   }
   ctx.language = room.language;
@@ -387,36 +432,27 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const command = (spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx)).toLowerCase();
     const queryStr = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
 
-    log.info({ command, query: queryStr, chatId, senderId: ctx.senderId }, 'Slash command received');
+    log.info({ command, hasArguments: queryStr.length > 0, chatId }, 'Slash command received');
 
-    // Map explicit commands dynamically
-    const tool = getToolByAliasOrName(command);
+    // Map explicit commands through the shared authorization, grammar, validation,
+    // mutation-admission, and execution pipeline.
+    const tool = await getAuthorizedTool(command, ctx);
     if (tool) {
-      // Check permissions
-      const hasPermission = await ctx.checkPermissions(tool.permissions);
-      if (!hasPermission) {
-        log.debug({ command, senderId: ctx.senderId, requiredPermission: tool.permissions }, 'Permission denied for command');
-        await ctx.reply(t(ctx.language, 'agent.no_permission'));
-        return;
-      }
-
-      await ctx.react?.('🔍');
+      await ctx.react?.('🔧').catch(() => {});
       try {
-        const parsedArgs = ParameterValidator.parseArgs(tool, queryStr);
-        parsedArgs.__command = command;
-        log.debug({ command, toolName: tool.name, args: parsedArgs }, 'Executing slash command');
-        const result = await executeToolWithTimeout(tool, parsedArgs, ctx);
-        // Support structured ToolResponse with mentions
+        const result = await executeAuthorizedCommand(command, queryStr, ctx);
+        if (result === undefined) throw new Error('Command access denied');
+        log.debug({ command, toolName: tool.name }, 'Executing slash command');
         if (typeof result === 'object' && result !== null && 'text' in result) {
-          await ctx.reply(result.text, { mentions: result.mentions });
+          await deliverDurableText(ctx, result.text, `command:${command}`, result.mentions);
         } else {
-          await ctx.reply(result);
+          await deliverDurableText(ctx, String(result), `command:${command}`);
         }
-        await ctx.react?.('✅');
+        await ctx.react?.('✅').catch(() => {});
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: unknown) {
         log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
-        await ctx.reply(t(ctx.language, 'agent.internal_error')).catch(() => {});
+        await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), `command:${command}:error`);
         await ctx.react?.('❌').catch(() => {});
       }
       return;
@@ -429,7 +465,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let suggestion: string | null = null;
     let bestDistance = Infinity;
 
-    for (const tool of tools) {
+    for (const tool of getAllowedTools(userRoles, isGroup, platform)) {
       // Check tool name
       const nameDist = levenshtein(command, tool.name);
       if (nameDist <= 3 && nameDist < bestDistance) {
@@ -447,9 +483,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     if (suggestion) {
-      await ctx.reply(t(ctx.language, 'agent.did_you_mean', { cmd: command, suggestion }));
+      await deliverDurableText(ctx, t(ctx.language, 'agent.did_you_mean', { cmd: command, suggestion }), 'command:unknown');
     } else {
-      await ctx.reply(t(ctx.language, 'agent.unknown_command', { cmd: command }));
+      await deliverDurableText(ctx, t(ctx.language, 'agent.unknown_command', { cmd: command }), 'command:unknown');
     }
     return;
   }
@@ -468,21 +504,23 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     
     const mediaNote = ctx.quoted.hasMedia ? '<Media attached>' : '';
     const combinedQuoteText = quoteText ? `"${quoteText}"` : mediaNote;
-    
-    userContent = `[Replying to ${quoteSender}: ${combinedQuoteText}]\n${userContent}`;
+    userContent = `<quoted_message trust="untrusted">${JSON.stringify({
+      from: quoteSender,
+      text: combinedQuoteText,
+    })}</quoted_message>\n${userContent}`;
   }
 
   // /chat with no additional text in a group: prompt the user for input.
   if (!userContent && !ctx.hasMedia) {
     if (isGroup && text.toLowerCase().startsWith('/chat')) {
-      await ctx.reply(t(ctx.language, 'agent.chat_prompt') || 'What would you like to talk about?');
+      await deliverDurableText(ctx, t(ctx.language, 'agent.chat_prompt') || 'What would you like to talk about?', 'chat:prompt');
       return;
     }
     return;
   }
 
   const chatType = isGroup ? 'Group' : 'Private';
-  log.info({ chatType, senderName, chatId, platform, hasMedia: ctx.hasMedia, textPreview: (userContent || '<media only>').slice(0, 100) }, 'Incoming message received');
+  log.info({ chatType, chatId, platform, hasMedia: ctx.hasMedia, textLength: userContent.length }, 'Incoming message received');
 
   try {
     // Room is already fetched above; derive the language label for the system prompt.
@@ -494,18 +532,24 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       userContent = `${userContent}\n\n[Voice Transcript]\n${transcript}`;
     }
 
-    await db.insert(messages).values({
+    const inboundInsert = await db.insert(messages).values({
       chatRoomId: chatId,
       senderId: ctx.senderId,
       senderName,
       role: 'user',
       content: userContent,
+      platform,
       providerMessageId: ctx.messageId,
-      rawMessage: JSON.stringify(ctx.rawMessage),
-      mediaPath: ctx.mediaPath, // likely undefined at this moment
+      rawMessage: sanitizeRawMessage(ctx.rawMessage),
+      mediaPath: ctx.mediaPath,
       mimeType: ctx.mimeType,
       created_at: new Date(),
-    }).onConflictDoNothing();
+    }).onConflictDoNothing().run() as unknown as { changes: number };
+
+    if (Number(inboundInsert.changes) === 0) {
+      log.info({ chatId, messageId: ctx.messageId }, 'Duplicate provider event ignored');
+      return;
+    }
 
     // 1.5 Handle Async Media Downloading 
     // WhatsApp/Discord begin their downloads in the background when the message arrives.
@@ -515,13 +559,21 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           if (ctx.mediaPath) {
             await db.update(messages)
               .set({ mediaPath: ctx.mediaPath, mimeType: ctx.mimeType })
-              .where(eq(messages.providerMessageId, ctx.messageId));
+              .where(and(
+                eq(messages.platform, platform),
+                eq(messages.chatRoomId, chatId),
+                eq(messages.providerMessageId, ctx.messageId),
+              ));
           }
           if (ctx.quoted?.mediaPath && ctx.quoted.stanzaId) {
             // Also update the quoted message in DB if it was downloaded here
             await db.update(messages)
               .set({ mediaPath: ctx.quoted.mediaPath, mimeType: ctx.quoted.mimeType })
-              .where(eq(messages.providerMessageId, ctx.quoted.stanzaId));
+              .where(and(
+                eq(messages.platform, platform),
+                eq(messages.chatRoomId, chatId),
+                eq(messages.providerMessageId, ctx.quoted.stanzaId),
+              ));
           }
         } catch (err) {
           log.error({ err }, 'Failed to sync DB with downloaded media paths');
@@ -552,16 +604,23 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     // V7.11: Use the higher of room config vs role privilege context limit.
     // `-1` means unlimited (ROLE_PRIV_* convention) and always wins.
-    const effectiveContextLimit =
+    const turnBudgetConfig = getTurnBudgetConfig();
+    const requestedContextLimit =
       config.contextLimit === UNLIMITED || privileges.contextLimit === UNLIMITED
         ? UNLIMITED
         : Math.max(config.contextLimit, privileges.contextLimit);
+    const effectiveContextLimit = requestedContextLimit === UNLIMITED
+      ? turnBudgetConfig.operationalContextLimit
+      : Math.max(1, Math.min(requestedContextLimit, turnBudgetConfig.operationalContextLimit));
 
     // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
+    const historyFetchLimit = config.summarize
+      ? Math.min(effectiveContextLimit * 3, turnBudgetConfig.operationalContextLimit * 2)
+      : effectiveContextLimit;
     const historyDesc = await db.select({
+      id: messages.id,
       role: messages.role,
       content: messages.content,
-      senderName: messages.senderName,
       mediaPath: messages.mediaPath,
       mimeType: messages.mimeType,
       created_at: messages.created_at,
@@ -569,38 +628,38 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     })
       .from(messages)
       .where(eq(messages.chatRoomId, chatId))
-      .orderBy(desc(messages.created_at))
-      .limit(effectiveContextLimit);
+      .orderBy(desc(messages.created_at), desc(messages.id))
+      .limit(historyFetchLimit);
 
     // ⚡ Bolt: Reverse the descending array in O(N) instead of sorting in O(N log N)
     const history = historyDesc.reverse();
 
-    // V7.11: Inject user name + role info into the system prompt so the AI is role-aware.
-    const roleLabel = userRoles.filter(r => r !== 'user').join(', ') || 'user';
-    const userContextLine = `\nCurrent user: ${senderName} (roles: ${roleLabel}).`;
+    const roleLabel = userRoles.filter(role => role !== 'user').join(', ') || 'user';
+    const userContextLine = `\nCurrent user roles: ${roleLabel}.`;
 
     let memoryContext = '';
     if (config.longTermMemory) {
-      const ownerId = ctx.isGroup ? ctx.chatId : ctx.senderId;
-      // V8: semantic ranking against the current turn; falls back to pure
-      // recency (old behavior) when embeddings are unconfigured/failed.
+      const ownerId = ctx.senderId;
       const ranked = await rankMemoriesForInjection(ownerId, userContent);
       const mems = ranked
-        ? ranked.map(r => ({ id: r.id, content: r.content }))
+        ? ranked.map(memory => ({ id: memory.id, content: memory.content }))
         : (await db.select({ id: memories.id, content: memories.content }).from(memories).where(eq(memories.ownerId, ownerId))
           .orderBy(desc(memories.created_at))
           .limit(MAX_INJECTED_MEMORIES)).reverse();
       if (mems.length > 0) {
-        memoryContext = `\n\n<long_term_memory>\n${mems.map(m => `[${m.id}] ${m.content}`).join('\n')}\n</long_term_memory>\nYou must adapt your behavior and answers based on the long-term memory provided above.`;
+        const bounded = mems
+          .filter(memory => memory.content.length <= 2_000)
+          .slice(0, MAX_INJECTED_MEMORIES)
+          .map(memory => ({ id: memory.id, content: memory.content }));
+        memoryContext = `\n\n<untrusted_long_term_memory>${JSON.stringify(bounded)}</untrusted_long_term_memory>`;
       }
     }
 
-    // Assemble system prompt with localized injection
-    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull) + userContextLine + memoryContext;
+    const systemPromptText = config.systemPrompt.replace('{{LANGUAGE}}', langFull) + userContextLine;
     
-    // Assemble AI context
     const messagesForAI: AIChatMessage[] = [
-      { role: 'system', content: systemPromptText }
+      { role: 'system', content: systemPromptText },
+      ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
     ];
 
     /**
@@ -649,6 +708,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       }
 
       try {
+        const eligibility = await getInlineMediaEligibility(mediaPath, mimeType);
+        if (!eligibility.eligible) {
+          return `${textContext}\n[Image omitted from model context: ${eligibility.reason}]`;
+        }
         const fileBuffer = await readFile(mediaPath);
         const base64Data = fileBuffer.toString('base64');
         const dataUri = `data:${mimeType};base64,${base64Data}`;
@@ -666,7 +729,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // ⚡ Bolt: Use Promise.all to prevent sequential I/O bottlenecks when processing history with media
     const historyMessages = await Promise.all(history.map(async (m) => {
       const isCurrentMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
-      const textPrefix = m.role === 'user' ? `[${m.senderName}]: ` : '';
+      const textPrefix = m.role === 'user' ? '[Participant]: ' : '';
       const textContent = textPrefix + m.content;
 
       // V7.13: Only embed media inline for the current incoming message.
@@ -675,18 +738,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       let finalContent = await buildMediaParts(m.mediaPath || '', m.mimeType || '', textContent, embedInlet);
 
       // Inject quoted media inline into the context of the CURRENT message only
-      if (isCurrentMessage && ctx.quoted?.mediaPath) {
-        const quotedParts = await buildMediaParts(
-          ctx.quoted.mediaPath,
-          ctx.quoted.mimeType || '',
-          '[Quoted attachment context]',
-          true, // Always embed inline for the active quoted attachment
-        );
-
-        const currentArr = Array.isArray(finalContent) ? finalContent : [{ type: 'text', text: finalContent as string }];
-        const quotedArr = Array.isArray(quotedParts) ? quotedParts : [{ type: 'text', text: quotedParts as string }];
-
-        finalContent = [...quotedArr, ...currentArr] as AIChatMessage['content'];
+      if (isCurrentMessage && ctx.quoted?.hasMedia) {
+        finalContent = `${typeof finalContent === 'string' ? finalContent : textContent}\n[Quoted attachment omitted from inline model context]`;
       }
 
       return {
@@ -695,82 +748,35 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       };
     }));
 
-    messagesForAI.push(...historyMessages);
-
-    // V7.13: Summarize overflow history only when summarization is enabled for this room
-    // and the context limit is finite (`-1` = unlimited leaves nothing to trim).
-    if (config.summarize && effectiveContextLimit !== UNLIMITED) {
-      const nonSystemHistory = messagesForAI.slice(1);
-      const summaryResult = await summarizeHistory(
-        nonSystemHistory,
-        effectiveContextLimit,
-        async (summaryMessages) => {
-          const msg = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2);
-          return String(msg?.content || '');
-        }
+    if (config.summarize) {
+      const entries = historyMessages.map((message, index) => ({
+        id: String(history[index]?.id ?? index),
+        message,
+      }));
+      const summaryRun = await persistentSummaryService.summarize({
+        scope: `${platform}:${chatId}`,
+        entries,
+        keepCount: effectiveContextLimit,
+        callLLM: async summaryMessages => {
+          const response = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2, undefined, 'fast');
+          return typeof response.content === 'string' ? response.content : '';
+        },
+      });
+      const summaryContext: AIChatMessage[] = summaryRun.summary
+        ? [{
+            role: 'user',
+            content: `<conversation_summary trust="untrusted">${JSON.stringify(summaryRun.summary)}</conversation_summary>`,
+          }]
+        : [];
+      messagesForAI.splice(
+        1,
+        messagesForAI.length - 1,
+        ...summaryContext,
+        ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
+        ...summaryRun.activeHistory,
       );
-
-      if (summaryResult && summaryResult.summary) {
-        messagesForAI.splice(1, messagesForAI.length - 1,
-          {
-            role: 'system',
-            content: `Conversation memory summary:\n${summaryResult.summary}`,
-          },
-          ...summaryResult.activeHistory,
-        );
-      }
-    }
-
-    // ── Conversation Branching ─────────────────────────────────────────────────
-    // When the user replies to a message that is outside the current context
-    // window, load that message (and its neighbours) from the DB so the AI has
-    // the full conversational thread available.
-    if (ctx.quoted?.stanzaId) {
-      const quotedInWindow = history.some(
-        (m) => m.providerMessageId === ctx.quoted!.stanzaId,
-      );
-      if (!quotedInWindow) {
-        try {
-          const quotedRow = (
-            await db
-              .select({
-                role: messages.role,
-                content: messages.content,
-                senderName: messages.senderName,
-                created_at: messages.created_at,
-              })
-              .from(messages)
-              .where(
-                and(
-                  eq(messages.chatRoomId, chatId),
-                  eq(messages.providerMessageId, ctx.quoted.stanzaId),
-                ),
-              )
-              .limit(1)
-          )[0];
-
-          if (quotedRow) {
-            // Inject a synthetic context block right before the active history
-            // so the AI sees what the user is referring to.
-            const insertIdx = messagesForAI.findIndex((m) => m.role !== 'system');
-            const branchMsg: AIChatMessage = {
-              role: quotedRow.role as 'user' | 'assistant',
-              content: `[Referenced earlier message from ${quotedRow.senderName}]: ${quotedRow.content}`,
-            };
-            if (insertIdx >= 0) {
-              messagesForAI.splice(insertIdx, 0, branchMsg);
-            } else {
-              messagesForAI.push(branchMsg);
-            }
-            log.info(
-              { chatId, quotedId: ctx.quoted.stanzaId },
-              '[Agent] Injected branched context for out-of-window quoted message',
-            );
-          }
-        } catch (err) {
-          log.warn({ err }, '[Agent] Failed to load branched quoted context');
-        }
-      }
+    } else {
+      messagesForAI.push(...historyMessages.slice(-effectiveContextLimit));
     }
 
     // 4. Generate AI Response (Recursive for tools)
@@ -780,7 +786,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let finalAiResponseText = '';
     let streamedResponseSent = false;
     const internalErrorText = t(ctx.language, 'agent.internal_error');
-    const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup) : [];
+    const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup, platform) : [];
     const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
 
     // ── V7.14: Smart Tool Loading ──────────────────────────────────────────
@@ -799,7 +805,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       availableTools = undefined;
     } else if (toolLoadingMode === 'all') {
       // Legacy: send all permitted tool definitions
-      availableTools = allowedTools.map((tool) => tool.definition);
+      availableTools = getToolDefinitions({ roles: userRoles, isGroup, isOwner: userRoles.includes('owner'), platform });
     } else {
       // ⚡ Bolt: Eliminate multiple intermediate arrays and O(N) filter/map chains by processing
       // tool definitions in a single pass. This significantly reduces garbage collection pressure
@@ -810,7 +816,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       const seenNames = new Set<string>();
 
       // 1. Process always-loaded tools
-      for (const d of getAlwaysLoadedDefinitions()) {
+      for (const d of getAlwaysLoadedDefinitions({ roles: userRoles, isGroup, isOwner: userRoles.includes('owner'), platform })) {
         const toolName = d.function.name;
         if (allowedToolNames.has(toolName)) {
           availableTools.push(d);
@@ -821,7 +827,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
       // 2. Process trigger-matched tools
       const mimeHint = ctx.mimeType || ctx.quoted?.mimeType || '';
-      for (const t of getTriggeredTools(userContent, mimeHint)) {
+      for (const t of getTriggeredTools(userContent, mimeHint, { roles: userRoles, isGroup, isOwner: userRoles.includes('owner'), platform })) {
         const toolName = t.name;
         if (allowedToolNames.has(toolName) && !seenNames.has(toolName)) {
           availableTools.push(t.definition);
@@ -841,6 +847,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     const streamingConfig = getStreamingConfig();
     const maxToolIterations = getMaxToolIterations();
+    const toolTurnBudget = createTurnBudget({
+      maxToolCalls: turnBudgetConfig.maxToolCalls,
+      maxParallelToolCalls: turnBudgetConfig.maxParallelTools,
+      maxToolResultBytes: turnBudgetConfig.maxToolResultBytes,
+      maxTotalToolResultBytes: turnBudgetConfig.maxToolResultBytesTotal,
+    });
     const editInterval = platform === 'whatsapp' ? streamingConfig.waEditIntervalMs : streamingConfig.dcEditIntervalMs;
     let preferredTier: ModelTier | undefined;
 
@@ -852,12 +864,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         // ── Streaming path ──────────────────────────────────────────────────
         // We only use streaming for the *final* response (no tool definitions)
         // or when the model has exhausted tool iterations and we expect text.
-        const isLastChance = iteration === maxToolIterations - 1;
         const useStreaming =
           streamingConfig.enabled &&
-          (typeof ctx.sendMessage === 'function') &&
-          (typeof ctx.editMessage === 'function') &&
-          (!availableTools || isLastChance);
+          typeof ctx.sendMessage === 'function' &&
+          typeof ctx.editMessage === 'function';
 
         if (useStreaming) {
           // Accumulate chunks and do rate-limited edits of the live message
@@ -865,9 +875,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           let sentKey: unknown = null;
           let lastEditTime = 0;
           let streamingFailed = false;
-          const toolCallDeltas: Map<number, { id: string; name: string; args: string }> = new Map();
+          const toolCallAccumulator = new StreamingToolCallAccumulator();
 
-          const streamTools = isLastChance ? undefined : availableTools;
+          const streamTools = availableTools;
           for await (const chunk of modelRouter.chatCompletionStream(
             messagesForAI,
             streamTools,
@@ -878,22 +888,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             const delta = chunk.choices?.[0]?.delta;
             if (!delta) continue;
 
-            // Accumulate tool call deltas if the model decides to invoke tools
             if (delta.tool_calls) {
-              for (const tcDelta of delta.tool_calls) {
-                const existing = toolCallDeltas.get(tcDelta.index);
-                if (!existing) {
-                  toolCallDeltas.set(tcDelta.index, {
-                    id: tcDelta.id || '',
-                    name: tcDelta.function?.name || '',
-                    args: tcDelta.function?.arguments || '',
-                  });
-                } else {
-                  if (tcDelta.id) existing.id = (existing.id || '') + tcDelta.id;
-                  if (tcDelta.function?.name) existing.name += tcDelta.function.name;
-                  if (tcDelta.function?.arguments) existing.args += tcDelta.function.arguments;
-                }
-              }
+              toolCallAccumulator.consumeDelta(delta.tool_calls);
               continue;
             }
 
@@ -907,7 +903,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 if (!streamingFailed) {
                   if (!sentKey) {
                     try {
-                      sentKey = await ctx.sendMessage!(displayText);
+                        sentKey = await ctx.sendMessage!(displayText, ctx.signal ? { signal: ctx.signal } : undefined);
                       streamedResponseSent = true;
                     } catch (err: unknown) {
                       log.warn({ err: getErrorMessage(err), chatId, mode: 'stream' }, '[Agent] Streaming send failed, falling back');
@@ -928,7 +924,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           }
 
           // If the stream produced tool calls, we need to process them
-          if (toolCallDeltas.size > 0) {
+          const streamedToolCalls = toolCallAccumulator.finish();
+          if (streamedToolCalls.length > 0) {
             if (sentKey && !streamingFailed) {
               await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(() => {});
               // Keep streamedResponseSent === true: sentKey remains the live message
@@ -938,10 +935,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             }
 
             // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
-            const toolCalls: ToolCall[] = Array.from(toolCallDeltas.values(), (tc) => ({
-              id: tc.id,
+            const toolCalls: ToolCall[] = streamedToolCalls.map(call => ({
+              id: call.id,
               type: 'function' as const,
-              function: { name: tc.name, arguments: tc.args },
+              function: { name: call.function.name, arguments: call.function.arguments },
             }));
 
             messagesForAI.push({
@@ -961,6 +958,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               toolLoadingMode,
               preferredTier,
               logMalformedArgs: false,
+              turnBudget: toolTurnBudget,
               mode: 'stream',
             });
             preferredTier = execution.preferredTier;
@@ -1023,6 +1021,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             toolLoadingMode,
             preferredTier,
             logMalformedArgs: true,
+            turnBudget: toolTurnBudget,
           });
           preferredTier = execution.preferredTier;
           messagesForAI.push(...execution.toolResults);
@@ -1044,7 +1043,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         }
 
       } catch (e) {
-        log.error(e, 'Failed to get AI completion / execute tool');
+        log.error({ err: getErrorMessage(e), chatId }, 'Failed to get AI completion or execute tool');
         healthMetrics.recordMessageError();
         finalAiResponseText = t(ctx.language, 'agent.internal_error');
         isDone = true;
@@ -1067,19 +1066,29 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       senderName: 'ElastraX',
       role: 'assistant',
       content: finalAiResponseText,
-      // AI messages usually don't have a strict provider ID until sent, 
-      // but we can generate a unique local one or leave it null.
+      platform,
       created_at: new Date(),
     });
 
-    // 5. Send Response
-    // When streaming was used, the final text was already sent via edits.
-    // We only need ctx.reply for the non-streaming path or error fallback.
     const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
-    if (!replyAlreadyDelivered) {
-      await ctx.reply(finalAiResponseText);
+    if (replyAlreadyDelivered) {
+      OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, [ctx.messageId, 'assistant']);
+    } else {
+      const deliveryId = OutboxService.enqueueText(
+        platform,
+        chatId,
+        finalAiResponseText,
+        [ctx.messageId, 'assistant'],
+      );
+      try {
+        const result = await ctx.reply(finalAiResponseText, ctx.signal ? { signal: ctx.signal } : undefined);
+        const providerMessageId = typeof result === 'string' ? result : null;
+        OutboxService.markEnqueuedSent(deliveryId, providerMessageId);
+      } catch (error) {
+        log.warn({ err: error, deliveryId }, 'Immediate delivery failed; outbox will retry');
+      }
     }
-    await ctx.react?.('✅'); // show success
+    await ctx.react?.('✅').catch(() => {});
     healthMetrics.recordMessageProcessed();
 
     const duration_ms = Date.now() - startMs;
@@ -1090,7 +1099,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       chatId,
       platform,
       usedFallbackError,
-      replyPreview: finalAiResponseText.slice(0, 160),
       replyLength: finalAiResponseText.length,
       hasMedia: ctx.hasMedia,
       quotedMedia: !!ctx.quoted?.hasMedia,
@@ -1108,6 +1116,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     log.error(error, 'Error handling message');
     healthMetrics.recordMessageError();
     await ctx.react?.('❌').catch(() => {}); // show error
-    await ctx.reply(t(ctx.language, 'agent.internal_error')).catch(() => {});
+    await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), 'agent:fatal');
   }
 }

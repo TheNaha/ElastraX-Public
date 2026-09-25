@@ -57,7 +57,7 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
    * The agent loop detects that `find_tools` was called and uses
    * the ToolSearchIndex directly to inject full schemas of discovered tools.
    */
-  async execute(args: FindToolsArgs, _ctx: MessageContext): Promise<ToolResult> {
+  async execute(args: FindToolsArgs, ctx: MessageContext): Promise<ToolResult> {
     const query = typeof args.query === 'string' ? args.query.trim() : '';
     if (!query) {
       return 'Please provide a search query to find tools.';
@@ -67,7 +67,17 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
       return 'Tool search is not available.';
     }
 
-    const results = searchIndex.search(query, 7);
+    const candidates = searchIndex.search(query, 1000);
+    const results = [];
+    for (const candidate of candidates) {
+      const tool = candidate.tool;
+      if (tool.groupOnly && !ctx.isGroup) continue;
+      if (tool.dmOnly && ctx.isGroup) continue;
+      if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) continue;
+      if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) continue;
+      results.push(candidate);
+      if (results.length >= 7) break;
+    }
     if (results.length === 0) {
       return `No tools found matching "${query}". Try different keywords.`;
     }

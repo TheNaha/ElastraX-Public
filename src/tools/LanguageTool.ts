@@ -23,7 +23,6 @@ import { chatRooms } from '../db/schema';
 import { eq } from 'drizzle-orm';
 import { logger } from '../utils/logger';
 import { t } from '../utils/i18n';
-import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'LanguageTool' });
 type LanguageToolArgs = ToolArgs & {
@@ -66,6 +65,10 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
       return t(ctx.language, 'language.invalid');
     }
 
+    if (ctx.isGroup && !await ctx.checkPermissions('admin')) {
+      return t(ctx.language, 'agent.no_permission');
+    }
+
     try {
       await ctx.react?.('⏳');
       // Update the database for the active chat room
@@ -79,7 +82,7 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
       return t(lang_code, key);
     } catch (error: unknown) {
       log.error({ err: error, chatId: ctx.chatId, lang_code }, 'Failed to update language');
-      return t(ctx.language, 'language.error', { msg: getErrorMessage(error) });
+      return t(ctx.language, 'language.error', { msg: 'Unable to update language' });
     }
   }
 }

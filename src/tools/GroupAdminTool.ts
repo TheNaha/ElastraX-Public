@@ -1,4 +1,4 @@
-import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
+import { BaseTool, type ToolArgs, ToolDefinition, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
 import { logger } from '../utils/logger';
@@ -7,7 +7,7 @@ import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'GroupAdminTool' });
 
-type GroupAdminAction = 'add' | 'remove' | 'promote' | 'demote' | 'mute' | 'unmute' | 'link';
+type GroupAdminAction = 'add' | 'remove' | 'kick' | 'promote' | 'demote' | 'mute' | 'unmute' | 'link';
 type GroupParticipantAction = 'add' | 'remove' | 'promote' | 'demote';
 type GroupAdminArgs = ToolArgs & {
   action?: GroupAdminAction | string;
@@ -34,6 +34,23 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
   readonly aliases = ['group_admin', 'group-admin', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   readonly category = 'admin';
   readonly permissions = 'admin';
+  override readonly groupOnly = true;
+  override readonly mutability = 'external-mutation' as const;
+  override readonly commandGrammar: ToolCommandGrammar = {
+    discriminator: 'action',
+    variants: [
+      { value: 'add', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'remove', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'kick', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'promote', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'demote', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'mute', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'unmute', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      { value: 'link', arguments: [] },
+    ],
+  };
+  override readonly noArgAliases = ['mute', 'unmute', 'grouplink'];
+  override readonly groupOnlyAliases = ['group_admin', 'group-admin', 'kick', 'add', 'promote', 'demote', 'mute', 'unmute', 'grouplink'];
   override readonly triggerPatterns = [/\b(kick|ban|promote|demote|keluarkan|jadikan admin|turunkan)\b/i];
 
   get definition(): ToolDefinition {
@@ -47,7 +64,7 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
           properties: {
             action: {
               type: 'string',
-              enum: ['add', 'remove', 'promote', 'demote', 'mute', 'unmute', 'link'],
+              enum: ['add', 'remove', 'kick', 'promote', 'demote', 'mute', 'unmute', 'link'],
               description: 'The group action to perform.',
             },
             user: {
@@ -75,8 +92,10 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
       }
       action = inferredAction;
     }
+    if (action === 'kick') action = 'remove';
 
     if (!ctx.isGroup) return t(lang, 'group.not_in_group');
+    if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions('admin'))) return '';
 
     if (action === 'link') {
       if (!ctx.getGroupInviteLink) return t(lang, 'group.link_not_supported');
