@@ -1,4 +1,4 @@
-import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:test';
+import { expect, test, describe, mock, spyOn } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { MediaConvertTool } from '../src/tools/MediaConvertTool';
 import { FFmpegConverter } from '../src/utils/FFmpegConverter';

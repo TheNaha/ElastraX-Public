@@ -1,5 +1,6 @@
-import { describe, test, expect, mock } from 'bun:test';
+import { describe, expect, mock, test } from 'bun:test';
 import { createHmac } from 'crypto';
+import { withEnvironment } from './helpers/env';
 
 const _mockLogger = {
   trace: () => {},
@@ -14,210 +15,392 @@ mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 import { verifyGitHubSignature } from '../src/webhooks/utils';
 import { WebhookServer } from '../src/webhookServer';
+import type { WebhookDeliveryJob } from '../src/webhooks/types';
 
-describe('WebhookServer Security', () => {
-  const secret = 'test-secret';
-  const payload = JSON.stringify({ action: 'push', repository: { full_name: 'test/repo' } });
-  const validSignature = `sha256=${createHmac('sha256', secret).update(payload).digest('hex')}`;
+const SECRET = 'test-webhook-secret-0123456789abcdef';
+const METRICS_SECRET = 'test-metrics-secret-0123456789abcdef';
+const BASE_ENV = {
+  WEBHOOK_ENABLED: 'true',
+  WEBHOOK_HOST: '127.0.0.1',
+  WEBHOOK_PORT: '0',
+  WEBHOOK_SECRET: SECRET,
+  WEBHOOK_BODY_SECRET_COMPAT_ENABLED: undefined,
+  WEBHOOK_BODY_SECRET_COMPAT_UNTIL: undefined,
+  WEBHOOK_QUERY_SECRET_COMPAT_ENABLED: undefined,
+  WEBHOOK_QUERY_SECRET_COMPAT_UNTIL: undefined,
+  WEBHOOK_MAX_DESTINATIONS: undefined,
+  WEBHOOK_MAX_BODY_BYTES: undefined,
+  WEBHOOK_RATE_LIMIT_MAX: undefined,
+  SEERR_WEBHOOK_SECRET: undefined,
+  JELLYFIN_WEBHOOK_SECRET: undefined,
+  METRICS_AUTH_TOKEN: undefined,
+};
 
-  test('verifyGitHubSignature should accept a valid signature', () => {
-    expect(verifyGitHubSignature(payload, secret, validSignature)).toBe(true);
-  });
+function portOf(server: WebhookServer): number {
+  const port = (server as unknown as { server?: { port?: number } }).server?.port;
+  if (typeof port !== 'number') throw new Error('Webhook server did not start');
+  return port;
+}
 
-  test('verifyGitHubSignature should reject an empty signature', () => {
-    expect(verifyGitHubSignature(payload, secret, null)).toBe(false);
-    expect(verifyGitHubSignature(payload, secret, '')).toBe(false);
-  });
-
-  test('verifyGitHubSignature should reject a signature with wrong prefix', () => {
-    const wrongPrefix = validSignature.replace('sha256=', 'sha1=');
-    expect(verifyGitHubSignature(payload, secret, wrongPrefix)).toBe(false);
-  });
-
-  test('verifyGitHubSignature should reject an invalid signature of the same length', () => {
-    const invalidSignature = validSignature.replace(/.$/, validSignature.endsWith('0') ? '1' : '0');
-    expect(verifyGitHubSignature(payload, secret, invalidSignature)).toBe(false);
-  });
-
-  test('verifyGitHubSignature should reject a signature of different length', () => {
-    const shortSignature = 'sha256=abcd';
-    const longSignature = validSignature + ' extra';
-    expect(verifyGitHubSignature(payload, secret, shortSignature)).toBe(false);
-    expect(verifyGitHubSignature(payload, secret, longSignature)).toBe(false);
-  });
-
-  test('WebhookServer should safely reject non-string shared secrets', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_SECRET = secret;
-    process.env.WEBHOOK_PORT = '0';
-
+async function withServer(
+  overrides: Record<string, string | undefined>,
+  callback: (server: WebhookServer, baseUrl: string) => Promise<void>,
+  register?: (server: WebhookServer) => void,
+): Promise<void> {
+  await withEnvironment({ ...BASE_ENV, ...overrides }, async () => {
     const server = new WebhookServer();
-    server.registerSender('discord', async () => {});
+    register?.(server);
     server.start();
-
     try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-      expect(typeof port).toBe('number');
+      await callback(server, `http://127.0.0.1:${portOf(server)}`);
+    } finally {
+      server.stop();
+    }
+  });
+}
 
-      const res = await fetch(`http://127.0.0.1:${port}/webhook?room_id=123456`, {
+describe('WebhookServer security and HTTP contract', () => {
+  test('verifies only SHA-256 GitHub signatures', () => {
+    const payload = JSON.stringify({ action: 'push', repository: { full_name: 'test/repo' } });
+    const signature = `sha256=${createHmac('sha256', SECRET).update(payload).digest('hex')}`;
+    expect(verifyGitHubSignature(payload, SECRET, signature)).toBe(true);
+    expect(verifyGitHubSignature(payload, SECRET, null)).toBe(false);
+    expect(verifyGitHubSignature(payload, SECRET, signature.replace('sha256=', 'sha1='))).toBe(false);
+    expect(verifyGitHubSignature(`${payload}x`, SECRET, signature)).toBe(false);
+  });
+
+  test('rejects a non-string JSON secret without echoing it', async () => {
+    await withServer({}, async (_server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: '123456', text: 'hello', secret: { nested: true } }),
+      });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: 'Invalid or missing secret' });
+    });
+  });
+
+  test('enforces exact routes, methods, JSON content type, and minimal health responses', async () => {
+    await withServer({}, async (_server, baseUrl) => {
+      const method = await Bun.fetch(`${baseUrl}/webhook`);
+      expect(method.status).toBe(405);
+      expect(method.headers.get('allow')).toBe('POST');
+
+      const route = await Bun.fetch(`${baseUrl}/webhook/unknown`, { method: 'POST' });
+      expect(route.status).toBe(404);
+
+      const contentType = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain', 'X-Webhook-Secret': SECRET },
+        body: 'hello',
+      });
+      expect(contentType.status).toBe(415);
+      expect((await Bun.fetch(`${baseUrl}/metrics`)).status).toBe(404);
+
+      for (const path of ['/health', '/live']) {
+        const response = await Bun.fetch(`${baseUrl}${path}`);
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ status: 'ok' });
+      }
+
+      const ready = await Bun.fetch(`${baseUrl}/ready`);
+      expect(ready.status).toBe(200);
+      expect(await ready.json()).toEqual({ status: 'ready' });
+    });
+  });
+
+  test('exposes metrics only with the dedicated token', async () => {
+    await withServer({ METRICS_AUTH_TOKEN: METRICS_SECRET }, async (_server, baseUrl) => {
+      expect((await Bun.fetch(`${baseUrl}/metrics`)).status).toBe(401);
+      expect((await Bun.fetch(`${baseUrl}/metrics`, {
+        headers: { Authorization: `Bearer ${METRICS_SECRET}x` },
+      })).status).toBe(401);
+
+      const response = await Bun.fetch(`${baseUrl}/metrics`, {
+        headers: { Authorization: `Bearer ${METRICS_SECRET}` },
+      });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toContain('elastrax_uptime_seconds');
+    });
+  });
+
+  test('reports not ready without exposing dependency details', async () => {
+    await withServer({}, async (server, baseUrl) => {
+      const unregister = server.registerReadinessCheck(() => false);
+      try {
+        const response = await Bun.fetch(`${baseUrl}/ready`);
+        expect(response.status).toBe(503);
+        expect(await response.json()).toEqual({ status: 'not_ready' });
+      } finally {
+        unregister();
+      }
+    });
+  });
+
+  test('fails closed when the generic secret is missing', async () => {
+    await withServer({ WEBHOOK_SECRET: undefined }, async (_server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: '123456', text: 'hello' }),
+      });
+      expect(response.status).toBe(503);
+    });
+  });
+
+  test('validates destinations and source bounds', async () => {
+    await withServer({ WEBHOOK_MAX_DESTINATIONS: '2' }, async (_server, baseUrl) => {
+      const missing = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ text: 'hello' }),
+      });
+      expect(missing.status).toBe(400);
+
+      const tooMany = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_ids: ['100', '200', '300'], text: 'hello' }),
+      });
+      expect(tooMany.status).toBe(400);
+
+      const badSource = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'hello', source: 'not valid' }),
+      });
+      expect(badSource.status).toBe(400);
+    });
+  });
+
+  test('disables body and query secret compatibility by default', async () => {
+    await withServer({}, async (_server, baseUrl) => {
+      const body = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: '100', text: 'hello', secret: SECRET }),
+      });
+      expect(body.status).toBe(401);
+
+      const query = await Bun.fetch(`${baseUrl}/webhook?room_id=100&secret=${SECRET}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'hello' }),
+      });
+      expect(query.status).toBe(401);
+    });
+  });
+
+  test('accepts body and query secrets only inside an enabled future window', async () => {
+    const send = mock(async () => {});
+    const future = new Date(Date.now() + 60_000).toISOString();
+    await withServer({
+      WEBHOOK_BODY_SECRET_COMPAT_ENABLED: 'true',
+      WEBHOOK_BODY_SECRET_COMPAT_UNTIL: future,
+      WEBHOOK_QUERY_SECRET_COMPAT_ENABLED: 'true',
+      WEBHOOK_QUERY_SECRET_COMPAT_UNTIL: future,
+    }, async (_server, baseUrl) => {
+      const body = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ room_id: '100', text: 'body', secret: SECRET }),
+      });
+      expect(body.status).toBe(200);
+
+      const query = await Bun.fetch(`${baseUrl}/webhook?room_id=200&secret=${SECRET}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: 'query' }),
+      });
+      expect(query.status).toBe(200);
+    }, server => server.registerSender('discord', send));
+  });
+
+  test('never forwards authentication fields to chat', async () => {
+    const send = mock(async (_roomId: string, text: string) => {
+      expect(text).not.toContain(SECRET);
+      expect(text).not.toContain('nested-secret');
+    });
+    const future = new Date(Date.now() + 60_000).toISOString();
+    await withServer({
+      WEBHOOK_BODY_SECRET_COMPAT_ENABLED: 'true',
+      WEBHOOK_BODY_SECRET_COMPAT_UNTIL: future,
+    }, async (_server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          text: 'hello',
-          secret: { nested: true },
+          room_id: '100',
+          secret: SECRET,
+          message: `do not forward ${SECRET}`,
+          nested: { api_key: 'nested-secret', value: 1 },
         }),
       });
-
-      expect(res.status).toBe(401);
-      const body = await res.json();
-      expect(body.error).toContain('Invalid or missing secret');
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_SECRET;
-      delete process.env.WEBHOOK_PORT;
-    }
+      expect(response.status).toBe(200);
+      expect(send).toHaveBeenCalledTimes(1);
+    }, server => server.registerSender('discord', send));
   });
 
-  test('WebhookServer exposes health and metrics endpoints', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_SECRET = secret;
-    process.env.WEBHOOK_PORT = '0';
-
-    const server = new WebhookServer();
-    server.start();
-
-    try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-
-      const health = await fetch(`http://127.0.0.1:${port}/health`);
-      expect(health.status).toBe(200);
-
-      const metrics = await fetch(`http://127.0.0.1:${port}/metrics`);
-      expect(metrics.status).toBe(200);
-      expect(await metrics.text()).toContain('elastrax_');
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_SECRET;
-      delete process.env.WEBHOOK_PORT;
-    }
-  });
-
-  test('WebhookServer returns 503 when secret is not configured', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_PORT = '0';
-
-    const server = new WebhookServer();
-    server.start();
-
-    try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: 'hello', room_id: '123456' }),
-      });
-
-      expect(res.status).toBe(503);
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_PORT;
-    }
-  });
-
-  test('WebhookServer rejects missing room ids', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_SECRET = secret;
-    process.env.WEBHOOK_PORT = '0';
-
-    const server = new WebhookServer();
-    server.registerSender('discord', async () => {});
-    server.start();
-
-    try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: 'hello', secret }),
-      });
-
-      expect(res.status).toBe(400);
-      expect((await res.json()).error).toContain('room_id');
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_SECRET;
-      delete process.env.WEBHOOK_PORT;
-    }
-  });
-
-  test('WebhookServer returns 207 when only some deliveries succeed', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_SECRET = secret;
-    process.env.WEBHOOK_PORT = '0';
-
-    const server = new WebhookServer();
-    server.registerSender('discord', async (roomId) => {
-      if (roomId === '222') throw new Error('blocked');
+  test('preserves partial synchronous delivery semantics', async () => {
+    const send = mock(async (roomId: string) => {
+      if (roomId === '200') throw new Error('blocked');
     });
-    server.start();
-
-    try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook`, {
+    await withServer({}, async (_server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ room_ids: ['111', '222'], text: 'hello', secret, platform: 'discord' }),
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_ids: ['100', '200'], text: 'hello' }),
       });
-
-      expect(res.status).toBe(207);
-      const body = await res.json();
-      expect(body.ok).toBe(false);
-      expect(body.delivered).toBe(1);
-      expect(body.failed).toHaveLength(1);
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_SECRET;
-      delete process.env.WEBHOOK_PORT;
-    }
+      expect(response.status).toBe(207);
+      expect(await response.json()).toEqual({
+        ok: false,
+        delivered: 1,
+        failed: [{ roomId: '200', error: 'Delivery failed' }],
+      });
+    }, server => server.registerSender('discord', send));
   });
 
-  test('WebhookServer routes successful webhook deliveries to ok=true', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_SECRET = secret;
-    process.env.WEBHOOK_PORT = '0';
-
-    const sendDiscord = mock(async () => {});
-    const server = new WebhookServer();
-    server.registerSender('discord', sendDiscord);
-    server.start();
-
-    try {
-      const internalServer = server as unknown as { server?: { port?: number } };
-      const port = internalServer.server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook?room_id=123456&secret=${secret}`, {
+  test('deduplicates explicit replay IDs during the TTL', async () => {
+    const send = mock(async () => {});
+    await withServer({}, async (_server, baseUrl) => {
+      const request = () => Bun.fetch(`${baseUrl}/webhook`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: 'Alert', body: 'Something happened' }),
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': SECRET,
+          'X-Webhook-Id': 'request-123',
+        },
+        body: JSON.stringify({ room_id: '100', text: 'hello' }),
       });
+      expect((await request()).status).toBe(200);
+      const duplicate = await request();
+      expect(duplicate.status).toBe(200);
+      expect(await duplicate.json()).toEqual({ ok: true, duplicate: true, delivered: 0 });
+      expect(send).toHaveBeenCalledTimes(1);
+    }, server => server.registerSender('discord', send));
+  });
 
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, delivered: 1 });
-      expect(sendDiscord).toHaveBeenCalledTimes(1);
-    } finally {
-      server.stop();
-      delete process.env.WEBHOOK_ENABLED;
-      delete process.env.WEBHOOK_SECRET;
-      delete process.env.WEBHOOK_PORT;
-    }
+  test('returns 202 only after the enqueuer accepts a durable job', async () => {
+    let queued: WebhookDeliveryJob | null = null;
+    const enqueuer = mock(async (job: WebhookDeliveryJob) => {
+      queued = job;
+      return { accepted: true, deliveryId: 'delivery-123', acceptedAt: '2026-09-25T00:00:00.000Z' };
+    });
+    await withServer({}, async (server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': SECRET,
+          'X-Webhook-Id': 'event-123',
+        },
+        body: JSON.stringify({ room_id: '100', title: 'Alert', message: 'hello', secret: SECRET }),
+      });
+      expect(response.status).toBe(202);
+      expect(await response.json()).toEqual({
+        ok: true,
+        status: 'queued',
+        duplicate: false,
+        deliveryId: 'delivery-123',
+        acceptedAt: '2026-09-25T00:00:00.000Z',
+      });
+      expect(enqueuer).toHaveBeenCalledTimes(1);
+      expect(queued!.eventId).toBe('event-123');
+      expect(queued!.text).not.toContain(SECRET);
+    }, server => server.registerEnqueuer(enqueuer));
+  });
+
+  test('does not acknowledge when an enqueuer rejects a job', async () => {
+    const enqueuer = mock(async () => ({ accepted: false, deliveryId: 'rejected' }));
+    await withServer({}, async (server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'hello' }),
+      });
+      expect(response.status).toBe(503);
+      expect(enqueuer).toHaveBeenCalledTimes(1);
+    }, server => server.registerEnqueuer(enqueuer));
+  });
+
+  test('aborts an enqueuer that exceeds the durable acceptance deadline', async () => {
+    let enqueueSignal: AbortSignal | null = null;
+    const enqueuer = mock((_job, signal: AbortSignal) => new Promise<never>((_, reject) => {
+      enqueueSignal = signal;
+      signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }));
+    await withServer({ WEBHOOK_ENQUEUE_TIMEOUT_MS: '100' }, async (server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'hello' }),
+      });
+      expect(response.status).toBe(503);
+      expect(enqueueSignal!.aborted).toBe(true);
+    }, server => server.registerEnqueuer(enqueuer));
+  });
+
+  test('rate limits authenticated sources per IP', async () => {
+    const send = mock(async () => {});
+    await withServer({ WEBHOOK_RATE_LIMIT_MAX: '1' }, async (_server, baseUrl) => {
+      const send = async () => Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'hello' }),
+      });
+      expect((await send()).status).toBe(200);
+      const limited = await send();
+      expect(limited.status).toBe(429);
+      expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(0);
+    }, server => server.registerSender('discord', send));
+  });
+
+  test('enforces the configured request body limit', async () => {
+    await withServer({ WEBHOOK_MAX_BODY_BYTES: '1024' }, async (_server, baseUrl) => {
+      const response = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'x'.repeat(2048) }),
+      });
+      expect(response.status).toBe(413);
+    });
+  });
+
+  test('preserves signed GitHub delivery on both compatible routes', async () => {
+    const send = mock(async () => {});
+    const body = JSON.stringify({
+      room_id: '100',
+      ref: 'refs/heads/main',
+      repository: { full_name: 'owner/repo' },
+      commits: [],
+    });
+    const signature = `sha256=${createHmac('sha256', SECRET).update(body).digest('hex')}`;
+    await withServer({}, async (_server, baseUrl) => {
+      for (const path of ['/webhook', '/webhook/github']) {
+        const response = await Bun.fetch(`${baseUrl}${path}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-GitHub-Event': 'push',
+            'X-GitHub-Delivery': `delivery-${path.length}`,
+            'X-Hub-Signature-256': signature,
+          },
+          body,
+        });
+        expect(response.status).toBe(200);
+      }
+    }, server => server.registerSender('discord', send));
+  });
+
+  test('rejects invalid numeric and boolean webhook configuration at startup', async () => {
+    await withEnvironment({ ...BASE_ENV, WEBHOOK_RATE_LIMIT_MAX: '1.5' }, () => {
+      const server = new WebhookServer();
+      expect(() => server.start()).toThrow('WEBHOOK_RATE_LIMIT_MAX');
+    });
+    await withEnvironment({ ...BASE_ENV, WEBHOOK_ENABLED: 'yes' }, () => {
+      const server = new WebhookServer();
+      expect(() => server.start()).toThrow('WEBHOOK_ENABLED');
+    });
   });
 });

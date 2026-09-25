@@ -1,34 +1,34 @@
 {
   "key": {
-    "remoteJid": "120363418247447171@g.us",
+    "remoteJid": "synthetic-group-1@g.us",
     "fromMe": true,
-    "id": "3EB0DAD0B3520CC340B081"
+    "id": "synthetic-message-1"
   },
   "message": {
     "contactsArrayMessage": {
-      "displayName": "2 Contact",
+      "displayName": "Synthetic Contact 1",
       "contacts": [
         {
-          "vcard": "BEGIN:VCARD\nVERSION:3.0\nN:6289673129395\nFN:6289673129395\nitem1.TEL;waid=6289673129395:6289673129395\nitem1.X-ABLabel:Click here to chat\nitem2.EMAIL;type=INTERNET:\nitem2.X-ABLabel:YouTube\nitem3.URL:\nitem3.X-ABLabel:GitHub\nitem4.ADR:;;Indonesia;;;;\nitem4.X-ABLabel:Region\nEND:VCARD"
+          "vcard": ""
         },
         {
-          "vcard": "BEGIN:VCARD\nVERSION:3.0\nN:Naufal Hafizd Prayoga\nFN:Naufal Hafizd Prayoga\nitem1.TEL;waid=62895320460745:62895320460745\nitem1.X-ABLabel:Click here to chat\nitem2.EMAIL;type=INTERNET:\nitem2.X-ABLabel:YouTube\nitem3.URL:\nitem3.X-ABLabel:GitHub\nitem4.ADR:;;Indonesia;;;;\nitem4.X-ABLabel:Region\nEND:VCARD"
+          "vcard": ""
         }
       ],
       "contextInfo": {
-        "stanzaId": "AC4AE2ADAEB63F587749A4F7C0EC41AC",
-        "participant": "27870210576446@lid",
+        "stanzaId": "synthetic-stanza-1",
+        "participant": "synthetic-participant-1@lid",
         "quotedMessage": {
-          "conversation": ".owner"
+          "conversation": ""
         },
         "mentionedJid": [
-          "27870210576446@lid"
+          "synthetic-participant-1@lid"
         ],
         "quotedType": "EXPLICIT"
       }
     }
   },
-  "messageTimestamp": "1757865486",
+  "messageTimestamp": "1700000000",
   "status": "SERVER_ACK",
   "isMentionedInStatus": false
 }

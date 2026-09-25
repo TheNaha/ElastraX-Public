@@ -128,21 +128,38 @@ describe('resolveTargetUser', () => {
     expect(result).toBeNull();
   });
 
-  test('long non-JID non-digit string (>5 chars) with digits is treated as phone', () => {
+  test('long non-JID non-digit string (>5 chars) containing digits is rejected', () => {
     const ctx = createMockCtx();
-    // isPureDigits strips non-digits before checking, so 'someuser123' → '123' → phone
-    const result = resolveTargetUser({ user: 'someuser123' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.jid).toBe('123@s.whatsapp.net');
-    expect(result!.source).toBe('phone');
+    expect(resolveTargetUser({ user: 'someuser123' }, ctx)).toBeNull();
   });
 
-  test('long non-JID purely alpha string (>5 chars) returns with source jid', () => {
+  test('long non-JID purely alpha string (>5 chars) is rejected', () => {
     const ctx = createMockCtx();
-    const result = resolveTargetUser({ user: 'someuserhandle' }, ctx);
-    expect(result).not.toBeNull();
-    expect(result!.jid).toBe('someuserhandle');
-    expect(result!.source).toBe('jid');
+    expect(resolveTargetUser({ user: 'someuserhandle' }, ctx)).toBeNull();
+  });
+
+  test('rejects a JID on an unexpected domain instead of trusting the sender', () => {
+    const ctx = createMockCtx();
+    expect(resolveTargetUser({ user: '628444@s.example.com' }, ctx)).toBeNull();
+    expect(resolveTargetUser({ user: '628444@newsletter' }, ctx)).toBeNull();
+    expect(resolveTargetUser({ user: '628444@broadcast' }, ctx)).toBeNull();
+  });
+
+  test('rejects phone numbers outside the supported length window', () => {
+    const ctx = createMockCtx();
+    expect(resolveTargetUser({ user: '1234567' }, ctx)).toBeNull();
+    expect(resolveTargetUser({ user: '1'.repeat(21) }, ctx)).toBeNull();
+    expect(resolveTargetUser({ user: '0' }, ctx)).toBeNull();
+  });
+
+  test('accepts a discord snowflake but rejects non-numeric handles', () => {
+    const discordCtx = createMockCtx({ platform: 'discord' });
+    const resolved = resolveTargetUser({ user: '112233445566778899' }, discordCtx);
+    expect(resolved).not.toBeNull();
+    expect(resolved!.jid).toBe('112233445566778899');
+    expect(resolved!.source).toBe('discord');
+    expect(resolveTargetUser({ user: 'somehandle' }, discordCtx)).toBeNull();
+    expect(resolveTargetUser({ user: '628444@s.whatsapp.net' }, discordCtx)).toBeNull();
   });
 });
 

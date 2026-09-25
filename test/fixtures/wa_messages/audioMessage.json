@@ -1,8 +1,8 @@
 {
   "key": {
-    "remoteJid": "62895320460745-1601116727@g.us",
+    "remoteJid": "synthetic-group-1-1700000000@g.us",
     "fromMe": false,
-    "id": "AC1E8970BEA2FEE348237EC436490FC5"
+    "id": "synthetic-message-1"
   },
   "message": {
     "audioMessage": {
@@ -10,12 +10,12 @@
       "fileLength": "125682",
       "seconds": 53,
       "ptt": true,
-      "mediaKeyTimestamp": "1765026483",
+      "mediaKeyTimestamp": "",
       "viewOnce": true
     },
     "messageContextInfo": {}
   },
-  "messageTimestamp": "1765026536",
-  "participant": "228973531406343@lid",
+  "messageTimestamp": "1700000000",
+  "participant": "synthetic-participant-1@lid",
   "isMentionedInStatus": false
 }

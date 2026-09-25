@@ -1,8 +1,43 @@
-import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
-import { FlowHandler } from '../src/core/FlowHandler';
+import { expect, test, describe, beforeEach, afterAll, afterEach, mock } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { CANCEL_COMMANDS } from '../src/core/constants';
 import { logger } from '../src/utils/logger';
+import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { ne } from 'drizzle-orm';
+import { flowSessions } from '../src/db/schema';
+
+// Bun module mocks are process-wide, so this file installs a full real database
+// behind `../src/db` to stay isolated from (and harmless to) other test files.
+const database: TempDatabase = createTempDatabase();
+
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
+
+mock.module('../src/db', () => ({
+  db: database.db,
+  sqlite: database.sqlite,
+  withImmediateTransaction,
+}));
+
+const db = database.db;
+
+// Imported dynamically so the `../src/db` mock above is already registered.
+const { FlowHandler, FlowVersionConflictError } = await import('../src/core/FlowHandler');
 
 // We avoid mock.module to prevent polluting other tests in the same run
 // Instead we spy on/replace methods on the imported objects/classes
@@ -81,7 +116,7 @@ describe('FlowHandler', () => {
       const ctx = createMockCtx();
       const result = await FlowHandler.handle(ctx);
       expect(result).toBe(false);
-      expect(mockGetActiveFlow).toHaveBeenCalledWith('user-456', 'whatsapp');
+      expect(mockGetActiveFlow).toHaveBeenCalledWith('user-456', 'whatsapp', 'chat-123');
     });
 
     test('should return false when user session has no activeFlow', async () => {
@@ -136,7 +171,7 @@ describe('FlowHandler', () => {
       // We check for real translation string
       expect(ctx.reply).toHaveBeenCalledWith('❌ Active flow cancelled.');
 
-      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'myFlow', 'whatsapp');
+      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'myFlow', 'whatsapp', 'chat-123');
     });
 
     test(`should cancel flow on ${CANCEL_COMMANDS[1]} command and return true`, async () => {
@@ -202,7 +237,128 @@ describe('FlowHandler', () => {
       const result = await FlowHandler.handle(ctx);
 
       expect(result).toBe(false);
-      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'unknownFlow', 'whatsapp');
+      expect(mockClearSession).toHaveBeenCalledWith('user-456', 'unknownFlow', 'whatsapp', 'chat-123');
     });
+  });
+});
+
+describe('FlowHandler room binding and versioning', () => {
+  const originalGetActiveFlow = FlowHandler.getActiveFlow;
+  const originalClearSession = FlowHandler.clearSession;
+  const originalLoggerWarn = logger.warn;
+
+  beforeEach(async () => {
+    FlowHandler.getActiveFlow = originalGetActiveFlow;
+    FlowHandler.clearSession = originalClearSession;
+    logger.warn = mock(() => {});
+    await FlowHandler.hydrate();
+    await db.delete(flowSessions).where(ne(flowSessions.id, '__no_such_session__')).run();
+  });
+
+  afterEach(async () => {
+    logger.warn = originalLoggerWarn;
+    await db.delete(flowSessions).where(ne(flowSessions.id, '__no_such_session__')).run();
+  });
+
+  afterAll(() => {
+    database.cleanup();
+  });
+
+  test('a flow started in one room is not resumed in another room', async () => {
+    await FlowHandler.setSession(
+      'user-room-1',
+      'myFlow',
+      { flow: 'myFlow', step: 'step1', data: {} },
+      'whatsapp',
+      300,
+      'chat-room-1',
+    );
+
+    const active = await FlowHandler.getActiveFlow('user-room-1', 'whatsapp', 'chat-room-1');
+    expect(active?.flowId).toBe('myFlow');
+
+    const crossRoom = await FlowHandler.getActiveFlow('user-room-1', 'whatsapp', 'chat-room-2');
+    expect(crossRoom).toBeNull();
+  });
+
+  test('flows on different platforms stay isolated for the same user', async () => {
+    await FlowHandler.setSession(
+      'user-platform',
+      'myFlow',
+      { flow: 'myFlow', step: 'step1', data: {} },
+      'whatsapp',
+      300,
+      'chat-room-1',
+    );
+
+    expect((await FlowHandler.getActiveFlow('user-platform', 'whatsapp', 'chat-room-1'))?.flowId).toBe('myFlow');
+    expect(await FlowHandler.getActiveFlow('user-platform', 'discord', 'chat-room-1')).toBeNull();
+  });
+
+  test('a stale expected version is rejected instead of clobbering a newer session', async () => {
+    await FlowHandler.setSession(
+      'user-version',
+      'myFlow',
+      { flow: 'myFlow', step: 'step1', data: {} },
+      'whatsapp',
+      300,
+      'chat-room-1',
+    );
+
+    const session = await FlowHandler.getSessionAsync('user-version', 'whatsapp', 'chat-room-1');
+    const currentVersion = session?.version ?? 0;
+    expect(currentVersion).toBeGreaterThan(0);
+
+    await FlowHandler.setSession(
+      'user-version',
+      'myFlow',
+      { flow: 'myFlow', step: 'step2', data: {} },
+      'whatsapp',
+      300,
+      'chat-room-1',
+      currentVersion,
+    );
+
+    await expect(FlowHandler.clearSession('user-version', 'myFlow', 'whatsapp', 'chat-room-1', currentVersion))
+      .rejects.toBeInstanceOf(FlowVersionConflictError);
+
+    const stillActive = await FlowHandler.getActiveFlow('user-version', 'whatsapp', 'chat-room-1');
+    expect(stillActive?.flow.step).toBe('step2');
+  });
+
+  test('clearSession accepts a numeric version in the room argument position for room-less sessions', async () => {
+    await FlowHandler.setSession(
+      'user-numeric',
+      'myFlow',
+      { flow: 'myFlow', step: 'step1', data: {} },
+      'whatsapp',
+      300,
+    );
+    const session = await FlowHandler.getSessionAsync('user-numeric', 'whatsapp');
+    expect(session?.version).toBeGreaterThan(0);
+
+    await FlowHandler.clearSession('user-numeric', 'myFlow', 'whatsapp', session?.version ?? 0);
+
+    expect(await FlowHandler.getActiveFlow('user-numeric', 'whatsapp')).toBeNull();
+  });
+
+  test('clearing a room-less session by version leaves a room-bound session untouched', async () => {
+    await FlowHandler.setSession(
+      'user-mixed',
+      'myFlow',
+      { flow: 'myFlow', step: 'step1', data: {} },
+      'whatsapp',
+      300,
+      'chat-room-1',
+    );
+
+    await FlowHandler.clearSession('user-mixed', 'myFlow', 'whatsapp', 0);
+
+    expect((await FlowHandler.getActiveFlow('user-mixed', 'whatsapp', 'chat-room-1'))?.flowId).toBe('myFlow');
+  });
+
+  test('the deprecated synchronous getSession accessor refuses to run', () => {
+    expect(() => (FlowHandler as unknown as { getSession: (u: string) => unknown }).getSession('user-1'))
+      .toThrow('deprecated');
   });
 });

@@ -83,7 +83,7 @@ describe('TranslateTool', () => {
         language: 'id',
       });
 
-      const result = await tool.execute({ query: '' }, ctx);
+      await tool.execute({ query: '' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       expect(callArgs[0].content).toContain('Translate the following text to Indonesian');
@@ -94,7 +94,7 @@ describe('TranslateTool', () => {
       const ctx = createMockCtx({ language: 'en' });
 
       // /translate Fish Stew -> 'Fish' is not a language code -> treat 'Fish Stew' as text
-      const result = await tool.execute({ query: 'Fish Stew' }, ctx);
+      await tool.execute({ query: 'Fish Stew' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       expect(callArgs[0].content).toContain('Translate the following text to English');
@@ -106,7 +106,7 @@ describe('TranslateTool', () => {
       const ctx = createMockCtx({ language: 'en' });
 
       // /translate id Good Morning
-      const result = await tool.execute({ query: 'id Good Morning' }, ctx);
+      await tool.execute({ query: 'id Good Morning' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       expect(callArgs[0].content).toContain('Translate the following text to Indonesian');
@@ -118,7 +118,7 @@ describe('TranslateTool', () => {
       const ctx = createMockCtx({ language: 'en' });
 
       // /translate Spanish Good Morning
-      const result = await tool.execute({ query: 'Spanish Good Morning' }, ctx);
+      await tool.execute({ query: 'Spanish Good Morning' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       expect(callArgs[0].content).toContain('Translate the following text to Spanish');
@@ -133,7 +133,7 @@ describe('TranslateTool', () => {
       });
 
       // /translate fr (replying to 'Hello')
-      const result = await tool.execute({ query: 'fr' }, ctx);
+      await tool.execute({ query: 'fr' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       expect(callArgs[0].content).toContain('Translate the following text to French');
@@ -153,7 +153,7 @@ describe('TranslateTool', () => {
       const ctx = createMockCtx({ language: 'en' });
 
       // /translate apple pie
-      const result = await tool.execute({ query: 'apple pie' }, ctx);
+      await tool.execute({ query: 'apple pie' }, ctx);
 
       const callArgs = mockChatCompletion.mock.calls[0][0] as any[];
       // 'apple' is not in LANGUAGE_MAP, so target is default (English)

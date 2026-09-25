@@ -1,336 +1,407 @@
-import { expect, test, describe, mock, spyOn, beforeEach, afterEach, afterAll } from 'bun:test';
-import { MessageContext } from '../src/core/MessageContext';
+import { describe, test, expect, afterAll, afterEach, beforeEach, mock, spyOn } from 'bun:test';
+import { desc, eq } from 'drizzle-orm';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-// ─── Mutable state shared between mock closures and tests ────────────────────
+// ── Environment must be configured before the agent module (and therefore the
+//    ModelRouter singleton) is evaluated, so the import is dynamic. ───────────
+process.env.AI_API_KEY = 'test-key';
+process.env.AI_MODEL_NAME = 'test-model';
+process.env.AI_API_BASE_URL = 'https://ai.test.local/v1';
+process.env.AI_MAX_TOKENS = '512';
+process.env.AI_TEMPERATURE = '0.5';
+process.env.AI_STREAMING = 'true';
+process.env.AI_VERBOSE_LOGS = 'false';
+process.env.CONTEXT_MESSAGE_LIMIT = '10';
 
-let mockRoomRows: any[] = [];
-let mockHistoryRows: any[] = [];
-const insertedValues: any[] = [];
-const mockUpdateSets: any[] = [];
-let shouldThrowOnHistoryFetch = false;
-let shouldFileExist = false;
+import * as toolsModule from '../src/tools';
+import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '../src/tools/BaseTool';
+import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { chatRooms, messages } from '../src/db/schema';
 
-// Flow state
-let mockFlowResult = false;
+// ── Module mock backed by a real migrated temp database ──────────────────────
+// Bun module mocks are process-wide, so this fake must expose the full
+// `../src/db` surface or every other test file importing the real module breaks.
+const database: TempDatabase = createTempDatabase();
 
-// Tool registry – map of name → tool instance
-let mockToolMap: Record<string, any> = {};
-
-// ─── Module mocks ─────────────────────────────────────────────────────────────
-
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-// DB mock: select().from(table).where() must be both awaitable (room lookup)
-// and chainable via .orderBy().limit() (history lookup).
-// We identify tables by their Drizzle name symbol rather than the mock string
-// so that the real schema can be used (no schema mock bleed).
-const DRIZZLE_NAME = Symbol.for('drizzle:Name');
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
 
 mock.module('../src/db', () => ({
-  db: {
-    select: () => ({
-      from: (tableRef: any) => {
-        const isMessages = tableRef?.[DRIZZLE_NAME] === 'messages';
-        return {
-          where: (_cond: any) => {
-            const rows = isMessages ? mockHistoryRows : mockRoomRows;
-            // Return something that is BOTH awaitable AND supports .orderBy().limit() or .limit()
-            const result: any = {
-              then<T = unknown>(
-                resolve: (value: typeof rows) => T | Promise<T>,
-                reject?: (reason: unknown) => unknown,
-              ) {
-                return Promise.resolve(rows).then(resolve as any, reject as any);
-              },
-              catch<T = unknown>(reject: (reason: unknown) => T | Promise<T>) {
-                return Promise.resolve(rows).catch(reject as any);
-              },
-              limit: (_n: number) => Promise.resolve(rows),
-              orderBy: (_ord: any) => ({
-                limit: (_n: number) =>
-                  shouldThrowOnHistoryFetch && isMessages
-                    ? Promise.reject(new Error('DB history fetch failed'))
-                    : Promise.resolve(rows),
-              }),
-            };
-            return result;
-          },
-        };
-      },
-    }),
-    insert: () => ({
-      values: (vals: any) => {
-        insertedValues.push(vals);
-        return { onConflictDoNothing: async () => ({}) };
-      },
-    }),
-    update: () => ({
-      set: (vals: any) => {
-        mockUpdateSets.push(vals);
-        return { where: async () => {} };
-      },
-    }),
-  },
+  db: database.db,
+  sqlite: database.sqlite,
+  withImmediateTransaction,
 }));
 
-process.env.AI_STREAMING = 'true';
+const db = database.db;
+import type { MessageContext } from '../src/core/MessageContext';
+import { createTempMediaDir } from './helpers/tempMedia';
 
-import { handleIncomingMessage } from '../src/agent/index';
+const { handleIncomingMessage } = await import('../src/agent/index');
 
-// Use spyOn for tools, FlowHandler, and fs modules AFTER importing agent.
-// spyOn replaces the live binding in the module namespace so the agent sees it,
-// but unlike mock.module() it does NOT bleed into other test files.
-import * as toolsModule from '../src/tools';
-import * as flowModule from '../src/core/FlowHandler';
-import * as fsModule from 'fs';
-import type { PathLike } from 'fs';
-import * as fsPromisesModule from 'fs/promises';
+// Every test uses its own room/sender identity so parallel files sharing the
+// worker database cannot collide with these rows.
+const RUN_TOKEN = Math.random().toString(36).slice(2, 10);
+let idCounter = 0;
+const nextId = (prefix: string): string => `${prefix}-${RUN_TOKEN}-${++idCounter}`;
 
-const getToolDefinitionsSpy = spyOn(toolsModule, 'getToolDefinitions');
-const getToolByNameSpy = spyOn(toolsModule, 'getToolByName');
-const getToolByAliasOrNameSpy = spyOn(toolsModule, 'getToolByAliasOrName');
-const flowHandleSpy = spyOn(flowModule.FlowHandler, 'handle');
-const existsSyncSpy = spyOn(fsModule, 'existsSync');
-const readFileSpy = spyOn(fsPromisesModule, 'readFile');
+const originalFetch = global.fetch;
 
-// ─── Fetch helper: build a realistic OpenAI chat/completions response ─────────
+// ES module namespaces are read-only, so the registry is stubbed through
+// spyOn() and every stub is restored after each test.
+const registrySpies: Array<{ mockRestore(): void }> = [];
 
-function makeFetchResponse(content: string, toolCalls?: any[]): Response {
-  const message: any = { role: 'assistant', content };
-  if (toolCalls) message.tool_calls = toolCalls;
+function stubRegistry(name: string, implementation: unknown): void {
+  const target = toolsModule as unknown as Record<string, (this: unknown, ...args: never[]) => unknown>;
+  registrySpies.push(spyOn(target, name as never).mockImplementation(implementation as never));
+}
+
+// ── Fixtures ──────────────────────────────────────────────────────────────────
+
+class FakeTool extends BaseTool {
+  readonly name: string;
+  private readonly handler: (args: Record<string, unknown>, ctx: MessageContext) => Promise<ToolResult>;
+  private readonly argSchema: ToolDefinition['function']['parameters'];
+
+  constructor(
+    name: string,
+    handler: (args: Record<string, unknown>, ctx: MessageContext) => Promise<ToolResult>,
+    argSchema: ToolDefinition['function']['parameters'] = {
+      type: 'object',
+      properties: { query: { type: 'string', description: 'search query' } },
+      required: [],
+      additionalProperties: false,
+    },
+  ) {
+    super();
+    this.name = name;
+    this.handler = handler;
+    this.argSchema = argSchema;
+    this.description = `fake ${name}`;
+  }
+  readonly description: string;
+  readonly aliases: string[] = [];
+  readonly category = 'test';
+  readonly permissions = 'user';
+  get definition(): ToolDefinition {
+    return {
+      type: 'function',
+      function: { name: this.name, description: this.description, parameters: this.argSchema },
+    };
+  }
+  async execute(args: ToolArgs, ctx: MessageContext): Promise<ToolResult> {
+    return this.handler(args as Record<string, unknown>, ctx);
+  }
+}
+
+const mediaDir = createTempMediaDir();
+function writeMediaFile(name: string, contents: string): string {
+  const path = join(mediaDir, `${RUN_TOKEN}-${name}`);
+  writeFileSync(path, contents, 'utf8');
+  return path;
+}
+
+function makeFetchResponse(content: string): Response {
   return new Response(
-    JSON.stringify({ choices: [{ message }], usage: {} }),
+    JSON.stringify({ choices: [{ message: { role: 'assistant', content } }], usage: {} }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   );
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+function makeToolCallResponse(toolCalls: Array<{ id: string; name: string; args: string }>): Response {
+  return new Response(
+    JSON.stringify({
+      choices: [{
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: toolCalls.map(call => ({
+            id: call.id,
+            type: 'function',
+            function: { name: call.name, arguments: call.args },
+          })),
+        },
+      }],
+      usage: {},
+    }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } },
+  );
+}
 
-const defaultRoom = () => ({
-  id: 'chat-1',
-  platform: 'whatsapp',
-  language: 'en',
-  systemPrompt: 'You are ElastraX. Language: {{LANGUAGE}}',
-  contextLimit: 10,
-  temperature: 0.7,
-  // Explicitly disable tools and auto-reply for most tests to avoid tool-call loops
-  allowTools: false,
-  autoReplyAll: false,
-  created_at: new Date(),
-});
+type MockFn = ReturnType<typeof mock>;
+type MockCtx = MessageContext & {
+  reply: MockFn;
+  react: MockFn;
+  sendMedia: MockFn;
+  checkPermissions: MockFn;
+  resolveRoles: MockFn;
+  sendTyping: MockFn;
+  verifyRoomMembership: MockFn;
+};
 
-const makeCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
+const makeCtx = (overrides: Partial<MessageContext> = {}): MockCtx => ({
   platform: 'whatsapp',
-  chatId: 'chat-1',
-  senderId: 'user-1',
+  chatId: nextId('room'),
+  senderId: nextId('sender'),
   senderName: 'Alice',
-  text: 'Hello ElastraX',
+  text: '',
   isGroup: false,
   isBotMentioned: false,
+  isGroupAdmin: false,
   hasMedia: false,
-  rawMessage: {},
-  messageId: 'msg-1',
   messageType: 'conversation',
   mediaReady: Promise.resolve(),
-  reply: mock(async () => {}),
-  react: mock(async () => {}),
+  language: 'en',
+  mentionedIds: [],
+  rawMessage: { key: { id: nextId('stanza') } },
+  messageId: nextId('msg'),
+  reply: mock(async () => undefined),
+  react: mock(async () => undefined),
+  sendMedia: mock(async () => undefined),
+  sendTyping: mock(async () => undefined),
   checkPermissions: mock(async () => true),
   resolveRoles: mock(async () => ['user', 'owner']),
+  verifyRoomMembership: mock(async () => true),
   ...overrides,
-} as MessageContext);
+} as unknown as MockCtx);
 
-// ─── Tests ────────────────────────────────────────────────────────────────────
+async function seedRoom(id: string, overrides: Record<string, unknown> = {}): Promise<void> {
+  await db.insert(chatRooms).values({
+    id,
+    platform: 'whatsapp',
+    language: 'en',
+    systemPrompt: 'You are ElastraX.',
+    allowTools: true,
+    longTermMemory: false,
+    created_at: new Date(),
+    ...overrides,
+  }).run();
+}
 
-// Restore all spies after the entire agent test suite so they don't bleed into
-// registry.test.ts, registry.edge.test.ts, or FlowHandler.test.ts.
-afterAll(() => {
-  getToolDefinitionsSpy.mockRestore();
-  getToolByNameSpy.mockRestore();
-  getToolByAliasOrNameSpy.mockRestore();
-  flowHandleSpy.mockRestore();
-  delete process.env.AI_STREAMING;
-});
+async function seedHistory(chatId: string, rows: Array<{ role: string; content: string; senderName: string; mediaPath?: string | null; mimeType?: string | null; providerMessageId?: string; createdAt?: Date }>): Promise<void> {
+  // messages.chat_room_id is a foreign key, so the room must exist first.
+  await db.insert(chatRooms).values({
+    id: chatId,
+    platform: 'whatsapp',
+    language: 'en',
+    systemPrompt: 'You are ElastraX.',
+    allowTools: true,
+    longTermMemory: false,
+    created_at: new Date(),
+  }).onConflictDoNothing().run();
+  for (const [index, row] of rows.entries()) {
+    await db.insert(messages).values({
+      chatRoomId: chatId,
+      senderId: `${row.senderName}@s.whatsapp.net`,
+      senderName: row.senderName,
+      role: row.role,
+      content: row.content,
+      platform: 'whatsapp',
+      providerMessageId: row.providerMessageId ?? nextId('hist'),
+      mediaPath: row.mediaPath ?? null,
+      mimeType: row.mimeType ?? null,
+      created_at: row.createdAt ?? new Date(),
+    }).run();
+    void index;
+  }
+}
+
+const roomRow = (id: string) => db.select().from(chatRooms).where(eq(chatRooms.id, id)).then(rows => rows[0]);
+const messagesFor = (chatId: string) =>
+  db.select().from(messages).where(eq(messages.chatRoomId, chatId)).orderBy(desc(messages.created_at));
+
+// ── Test suite ────────────────────────────────────────────────────────────────
 
 describe('handleIncomingMessage', () => {
-  const originalFetch = global.fetch;
-  const AI_URL = 'https://test-ai.example.com/v1';
+  const originalEnv = { ...process.env };
 
   beforeEach(() => {
-    // Set AI env vars so the real AIClient passes its URL check
-    process.env.AI_API_BASE_URL = AI_URL;
-    process.env.AI_API_KEY = 'test-key';
-    process.env.AI_MODEL_NAME = 'test-model';
+    process.env.AI_STREAMING = 'true';
+    process.env.AI_MAX_TOKENS = '512';
+    process.env.AI_TEMPERATURE = '0.5';
+    process.env.AI_VERBOSE_LOGS = 'false';
+    process.env.AI_TOOL_TIMEOUT_MS = '30000';
+    process.env.AI_MAX_TOOL_ITERATIONS = '8';
+    global.fetch = mock(async () => makeFetchResponse('Hello, I am ElastraX!')) as unknown as typeof global.fetch;
 
-    // Default fetch: return a simple AI response
-    global.fetch = mock(async () => makeFetchResponse('Hello, I am ElastraX!')) as any;
-
-    mockRoomRows = [defaultRoom()];
-    mockHistoryRows = [];
-    insertedValues.length = 0;
-    mockUpdateSets.length = 0;
-    shouldThrowOnHistoryFetch = false;
-    mockFlowResult = false;
-    mockToolMap = {};
-    shouldFileExist = false;
-
-    // Configure spies using current mockToolMap / mockFlowResult state.
-    // These are re-applied every test so the closures see the latest values.
-    flowHandleSpy.mockImplementation(async () => mockFlowResult);
-    existsSyncSpy.mockImplementation((_path: PathLike) => shouldFileExist);
-    readFileSpy.mockImplementation(async () => Buffer.from('media-content') as any);
-    getToolByNameSpy.mockImplementation((name: string) => mockToolMap[name]);
-    getToolByAliasOrNameSpy.mockImplementation((alias: string) =>
-      Object.values(mockToolMap).find((t: any) =>
-        t.name === alias || (t.aliases ?? []).includes(alias),
-      ),
-    );
-    getToolDefinitionsSpy.mockImplementation(() =>
-      Object.values(mockToolMap).map((t: any) => t.definition ?? {
-        type: 'function',
-        function: { name: t.name, description: '', parameters: { type: 'object', properties: {}, required: [] } },
-      }),
-    );
-
+    while (registrySpies.length > 0) registrySpies.pop()!.mockRestore();
   });
 
   afterEach(() => {
-    existsSyncSpy.mockRestore();
-    readFileSpy.mockRestore();
+    process.env = { ...originalEnv };
     global.fetch = originalFetch;
-    delete process.env.AI_API_BASE_URL;
-    delete process.env.AI_API_KEY;
-    delete process.env.AI_MODEL_NAME;
-    delete process.env.AI_TOOL_TIMEOUT_MS;
   });
 
-  // ── Room initialisation ───────────────────────────────────────────────────
+  afterAll(() => {
+    database.cleanup();
+  });
+
+  // ── Room initialisation ─────────────────────────────────────────────────────
 
   describe('room initialisation', () => {
-    test('should create a new room when none exists in the DB', async () => {
-      mockRoomRows = []; // no existing room → agent creates one
-      const ctx = makeCtx();
+    test('creates a room with platform defaults when the chat is new', async () => {
+      const ctx = makeCtx({ text: 'Hello' });
       await handleIncomingMessage(ctx);
-      const roomInsert = insertedValues.find((v) => v.id === 'chat-1' && v.platform);
-      expect(roomInsert).toBeDefined();
-      expect(roomInsert.language).toBe('en');
+
+      const room = await roomRow(ctx.chatId);
+      expect(room).toBeDefined();
+      expect(room?.platform).toBe('whatsapp');
+      expect(room?.language).toBe('en');
+      expect(room?.systemPrompt).toBeTruthy();
     });
 
-    test('should set ctx.language from the existing room record', async () => {
-      mockRoomRows = [{ ...defaultRoom(), language: 'id' }];
-      const ctx = makeCtx();
+    test('reuses an existing room and honours its stored language', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId, { language: 'id', systemPrompt: 'Kamu adalah ElastraX.' });
+
+      const ctx = makeCtx({ chatId, text: 'Halo' });
       await handleIncomingMessage(ctx);
+
       expect(ctx.language).toBe('id');
+      const rows = await db.select().from(chatRooms).where(eq(chatRooms.id, chatId));
+      expect(rows).toHaveLength(1);
     });
-  });
 
-  // ── Flow handling ─────────────────────────────────────────────────────────
+    test('treats a zero contextLimit in the database as unset and uses the default', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId, { contextLimit: 0 });
 
-  describe('flow handling', () => {
-    test('should return early when FlowHandler intercepts the message', async () => {
-      mockFlowResult = true;
-      const ctx = makeCtx({ reply: mock(async () => {}) });
+      const ctx = makeCtx({ chatId, text: 'Hello' });
       await handleIncomingMessage(ctx);
-      // AI was not triggered; no reply sent by the agent itself
-      expect(ctx.reply).not.toHaveBeenCalled();
+
+      const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
+      const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ role: string; content: string }> };
+      expect(body.messages[0]?.content).toBeTruthy();
     });
   });
 
-  // ── Private DM – AI conversation ─────────────────────────────────────────
+  // ── Private DM AI conversation ──────────────────────────────────────────────
 
   describe('private DM – AI conversation', () => {
-    test('should send the AI reply for a private DM', async () => {
-      const ctx = makeCtx({ isGroup: false, text: 'How are you?' });
+    test('sends the AI reply for a private DM', async () => {
+      const ctx = makeCtx({ isGroup: false, text: 'Hello' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
+      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
     });
 
-    test('should still reply when streaming is enabled but non-stream path is selected', async () => {
-      mockRoomRows = [{ ...defaultRoom(), allowTools: true }];
-      const ctx = makeCtx({
-        isGroup: false,
-        text: 'Hello',
-        sendMessage: mock(async () => ({ id: 'sent-1' })),
-        editMessage: mock(async () => {}),
-      });
-      await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
-    });
-
-    test('should react with ⏳ before the AI response and ✅ after', async () => {
+    test('reacts with ⏳ before the AI response and ✅ after', async () => {
       const ctx = makeCtx({ isGroup: false, text: 'Hi' });
       await handleIncomingMessage(ctx);
-      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
+      const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('⏳');
       expect(calls).toContain('✅');
     });
 
-    test('should save user message and AI response to the database', async () => {
+    test('saves the user message and the AI response to the database', async () => {
       const ctx = makeCtx({ isGroup: false, text: 'Test message' });
       await handleIncomingMessage(ctx);
-      const userMsg = insertedValues.find((v) => v.role === 'user');
-      const aiMsg = insertedValues.find((v) => v.role === 'assistant');
-      expect(userMsg).toBeDefined();
-      expect(aiMsg).toBeDefined();
-      expect(aiMsg.content).toBe('Hello, I am ElastraX!');
+
+      const stored = await messagesFor(ctx.chatId);
+      const userMsg = stored.find(row => row.role === 'user');
+      const aiMsg = stored.find(row => row.role === 'assistant');
+      expect(userMsg?.content).toBe('Test message');
+      expect(userMsg?.platform).toBe('whatsapp');
+      expect(aiMsg?.content).toBe('Hello, I am ElastraX!');
+      expect(aiMsg?.senderName).toBe('ElastraX');
     });
 
-    test('should recover gracefully when AI chatCompletion throws', async () => {
+    test('stays on the non-streaming path when the context cannot stream', async () => {
+      process.env.AI_STREAMING = 'true';
+      const ctx = makeCtx({ isGroup: false, text: 'Hello' });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
+    });
+
+    test('ignores a duplicate provider event instead of replying twice', async () => {
+      const ctx = makeCtx({ isGroup: false, text: 'Hello' });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply.mock.calls.length).toBe(1);
+
+      const duplicate = makeCtx({
+        chatId: ctx.chatId,
+        messageId: ctx.messageId,
+        text: 'Hello',
+        isGroup: false,
+      });
+      await handleIncomingMessage(duplicate);
+
+      expect(duplicate.reply).not.toHaveBeenCalled();
+      const userMessages = (await messagesFor(ctx.chatId)).filter(row => row.role === 'user');
+      expect(userMessages).toHaveLength(1);
+    });
+
+    test('recovers gracefully when the AI call throws', async () => {
       global.fetch = mock(async () => {
         throw new Error('Network failure');
-      }) as any;
+      }) as unknown as typeof global.fetch;
       const ctx = makeCtx({ isGroup: false, text: 'trigger error' });
       await expect(handleIncomingMessage(ctx)).resolves.toBeUndefined();
-      // Agent's inner catch is triggered
-      const replyCalls = (ctx.reply as any).mock.calls;
-      expect(replyCalls.length).toBeGreaterThan(0);
+      expect(ctx.reply.mock.calls.length).toBeGreaterThan(0);
+    });
+
+    test('returns a rate-limit notice when the sender exceeds their window', async () => {
+      const senderId = nextId('ratelimited');
+      const chatId = nextId('room');
+      await seedRoom(chatId, { longTermMemory: 0 });
+      // Role privilege overrides come from the environment, so a plain 'user'
+      // caller is throttled to one message per hour.
+      process.env.ROLE_PRIV_USER_MESSAGES_PER_WINDOW = '1';
+      process.env.ROLE_PRIV_USER_RATE_WINDOW_SEC = '3600';
+
+      const roles = mock(async () => ['user']);
+      const first = makeCtx({ chatId, senderId, text: 'one', resolveRoles: roles });
+      await handleIncomingMessage(first);
+      expect(first.reply.mock.calls.length).toBe(1);
+
+      const second = makeCtx({ chatId, senderId, text: 'two', resolveRoles: roles });
+      await handleIncomingMessage(second);
+      expect(String(second.reply.mock.calls[0]?.[0] ?? '')).toContain('Slow down');
+
+      const stored = await messagesFor(chatId);
+      expect(stored.some(row => row.content === 'two')).toBe(false);
     });
   });
 
-  // ── Group messages ────────────────────────────────────────────────────────
+  // ── Group messages ──────────────────────────────────────────────────────────
 
   describe('group messages', () => {
-    test('should NOT reply in a group when not triggered', async () => {
-      const ctx = makeCtx({
-        isGroup: true,
-        text: 'random group message',
-        mentionedIds: [],
-        quoted: undefined,
-      });
+    test('does NOT reply in a group when not triggered', async () => {
+      const ctx = makeCtx({ isGroup: true, text: 'random group message', mentionedIds: [] });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).not.toHaveBeenCalled();
+      // The message is still ingested for context.
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored.some(row => row.role === 'user' && row.content === 'random group message')).toBe(true);
     });
 
-    test('should reply in a group when the bot is @mentioned', async () => {
-      const ctx = makeCtx({
-        isGroup: true,
-        text: 'Hey @bot what is 2+2?',
-        mentionedIds: ['bot@s.whatsapp.net'],
-        isBotMentioned: true,
-      });
+    test('replies in a group when the bot is @mentioned', async () => {
+      const ctx = makeCtx({ isGroup: true, text: 'Hey @bot what is 2+2?', mentionedIds: ['bot@s.whatsapp.net'], isBotMentioned: true });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalled();
     });
 
-    test('should NOT reply in a group when another user is @mentioned', async () => {
-        const ctx = makeCtx({
-          isGroup: true,
-          text: 'Hey @user2 what is 2+2?',
-          mentionedIds: ['user2@s.whatsapp.net'],
-        });
-        await handleIncomingMessage(ctx);
-        // Bot should not reply because isBotMentioned defaults to false
-        expect(ctx.reply).not.toHaveBeenCalled();
+    test('does NOT reply when another user is @mentioned', async () => {
+      const ctx = makeCtx({ isGroup: true, text: 'Hey @user2 what is 2+2?', mentionedIds: ['user2@s.whatsapp.net'] });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).not.toHaveBeenCalled();
     });
 
-    test('should reply in a group when the user replies to a bot message', async () => {
+    test('replies in a group when the user replies to a bot message', async () => {
       const ctx = makeCtx({
         isGroup: true,
         text: 'OK thanks',
@@ -348,331 +419,256 @@ describe('handleIncomingMessage', () => {
       expect(ctx.reply).toHaveBeenCalled();
     });
 
-    test('should reply in a group when /chat prefix is used', async () => {
-      const ctx = makeCtx({
-        isGroup: true,
-        text: '/chat Tell me a joke',
-        mentionedIds: [],
-      });
+    test('strips the /chat prefix from the user content', async () => {
+      const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalled();
-    });
+      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
 
-    test('should reply in a group when /chat prefix is used (strips prefix from user content)', async () => {
-      const ctx = makeCtx({
-        isGroup: true,
-        text: '/chat What is AI?',
-        mentionedIds: [],
-      });
-      await handleIncomingMessage(ctx);
-      // The reply should be the AI response
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!');
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored.find(row => row.role === 'user')?.content).toBe('What is AI?');
     });
-
   });
 
-  // ── Explicit slash command routing ────────────────────────────────────────
+  // ── Explicit slash command routing (real registry) ──────────────────────────
 
   describe('explicit slash command routing', () => {
-    beforeEach(() => {
-      mockToolMap = {
-        menu: {
-          name: 'menu',
-          aliases: ['help'],
-          description: 'Shows menu',
-          permissions: 'user',
-          definition: {
-            type: 'function',
-            function: {
-              name: 'menu',
-              description: 'Shows menu',
-              parameters: { type: 'object', properties: {}, required: [] },
-            },
-          },
-          execute: mock(async () => 'Menu content'),
-        },
-      };
-    });
-
-    test('should route a /menu command to the MenuTool', async () => {
+    test('routes a /menu command to the real MenuTool', async () => {
       const ctx = makeCtx({ text: '/menu', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(mockToolMap.menu.execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Menu content');
+      const replyText = String(ctx.reply.mock.calls.at(-1)?.[0] ?? '');
+      expect(replyText.length).toBeGreaterThan(0);
+      expect(replyText.toLowerCase()).toContain('menu');
     });
 
-    test('should react with 🔍 before executing a tool and ✅ after', async () => {
+    test('routes a command through the durable outbox without calling the model', async () => {
+      global.fetch = mock(async () => {
+        throw new Error('LLM must not be called for explicit commands');
+      }) as unknown as typeof global.fetch;
+      const ctx = makeCtx({ text: '/ping', isGroup: false });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).toHaveBeenCalled();
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored).toHaveLength(0);
+      expect(ctx.reply).toHaveBeenCalledWith(expect.any(String), {});
+    });
+
+    test('reacts with 🔧 before executing a command and ✅ after', async () => {
       const ctx = makeCtx({ text: '/menu', isGroup: false });
       await handleIncomingMessage(ctx);
-      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
-      expect(calls).toContain('🔍');
+      const calls = ctx.react.mock.calls.map(call => call[0]);
+      expect(calls).toContain('🔧');
       expect(calls).toContain('✅');
     });
 
-    test('should reply with no-permission message when the user lacks permission', async () => {
+    test('refuses a command the caller lacks permission for', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId, { language: 'en' });
       const ctx = makeCtx({
-        text: '/menu',
+        chatId,
+        text: '/language set en',
         isGroup: false,
         checkPermissions: mock(async () => false),
+        resolveRoles: mock(async () => ['user']),
       });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('permission'));
+      const replyText = String(ctx.reply.mock.calls.at(-1)?.[0] ?? '');
+      expect(replyText.toLowerCase()).toContain('unknown command');
+      const room = await roomRow(chatId);
+      expect(room?.language).toBe('en');
     });
 
-    test('should reply with error message and react ❌ when tool.execute throws', async () => {
-      mockToolMap.menu.execute = mock(async () => {
+    test('replies with a validation message when a command argument is rejected', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId, { language: 'en' });
+      const ctx = makeCtx({ chatId, text: '/config set contextLimit not-a-number', isGroup: false });
+      await handleIncomingMessage(ctx);
+      expect(String(ctx.reply.mock.calls.at(-1)?.[0] ?? '')).toContain('Invalid value for contextLimit');
+      const calls = ctx.react.mock.calls.map(call => call[0]);
+      expect(calls).toContain('✅');
+    });
+
+    test('replies with the internal error message and ❌ when a command tool throws', async () => {
+      const boom = new FakeTool('boom', async () => {
         throw new Error('Tool crashed!');
       });
-      const ctx = makeCtx({ text: '/menu', isGroup: false });
+      stubRegistry('getAuthorizedTool', async () => boom);
+      stubRegistry('getToolByAliasOrName', () => boom);
+
+      const ctx = makeCtx({ text: '/boom', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.');
-      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
+      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', {});
+      const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
 
-    test('should time out a slash command tool instead of hanging forever', async () => {
+    test('times out a hanging slash command tool instead of blocking forever', async () => {
       process.env.AI_TOOL_TIMEOUT_MS = '10';
-      mockToolMap.menu.execute = mock(() => new Promise(() => {}));
+      const stuck = new FakeTool('stuck', () => new Promise<string>(() => {}));
+      stubRegistry('getAuthorizedTool', async () => stuck);
+      stubRegistry('getToolByAliasOrName', () => stuck);
 
-      const ctx = makeCtx({ text: '/menu', isGroup: false });
+      const ctx = makeCtx({ text: '/stuck', isGroup: false });
       await handleIncomingMessage(ctx);
-
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'));
-      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
+      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', {});
+      const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
 
-    test('should reply "Unknown command" for unrecognised slash commands when no close match is found', async () => {
-      // Use a completely random string that won't match any real tools (like menu, sticker, etc.)
+    test('replies "Unknown command" for an unrecognised slash command', async () => {
       const ctx = makeCtx({ text: '/xyzzy_super_random_command_123', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'), {});
     });
 
-    test('should suggest a similar command when a typo is made (e.g., /men -> /menu)', async () => {
-      // Since we are NOT mocking the tools array anymore, we rely on the fact that
-      // 'menu' tool exists in the real registry (which agent.ts imports).
-      // mockToolMap is still used for execution spies, but the suggestion logic uses the real array.
-
+    test('suggests a similar command when a typo is made (/men -> /menu)', async () => {
       const ctx = makeCtx({ text: '/men', isGroup: false });
       await handleIncomingMessage(ctx);
-      // Should trigger "Did you mean /menu?"
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/menu`*'));
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/menu`*'), {});
     });
 
-    test('should suggest a similar command based on alias (e.g., /hlp -> /help alias for menu)', async () => {
+    test('suggests a similar command based on an alias (/hlp -> /help)', async () => {
       const ctx = makeCtx({ text: '/hlp', isGroup: false });
       await handleIncomingMessage(ctx);
-      // 'help' is an alias for 'menu' in the real tool registry
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/help`*'));
-    });
-
-    test('should pass query string arguments to the tool for multi-word commands', async () => {
-      const ctx = makeCtx({ text: '/menu arg1 arg2', isGroup: false });
-      await handleIncomingMessage(ctx);
-      expect(mockToolMap.menu.execute).toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/help`*'), {});
     });
   });
 
-  // ── Tool call loop (AI requesting tools) ──────────────────────────────────
+  // ── Tool call loop (AI requesting tools) ───────────────────────────────────
 
-  describe('tool call loop (AI requesting tools, allowTools=true)', () => {
-    beforeEach(() => {
-      // Enable tools for this describe block by providing a room with allowTools=null (defaults to true)
-      mockRoomRows = [{ ...defaultRoom(), allowTools: null }];
-    });
+  describe('tool call loop (AI requesting tools)', () => {
+    function registerTool(tool: BaseTool): void {
+      stubRegistry('getToolByName', (name: string) => (name === tool.name ? tool : undefined));
+      stubRegistry('getToolsForContext', () => [tool]);
+      stubRegistry('getAlwaysLoadedDefinitions', () => [tool.definition]);
+      stubRegistry('getTriggeredTools', () => []);
+      stubRegistry('getToolDefinitions', () => [tool.definition]);
+    }
 
-    test('should execute a tool the AI requests and then reply with the final text', async () => {
-      const searchTool = {
-        name: 'web_search',
-        aliases: [],
-        execute: mock(async () => 'Search results here'),
-      };
-      mockToolMap = { web_search: searchTool };
+    function registerNoTools(): void {
+      stubRegistry('getToolByName', () => undefined);
+      stubRegistry('getToolsForContext', () => []);
+      stubRegistry('getAlwaysLoadedDefinitions', () => []);
+      stubRegistry('getTriggeredTools', () => []);
+      stubRegistry('getToolDefinitions', () => []);
+    }
+
+    test('executes a tool the AI requests and then replies with the final text', async () => {
+      const execute = mock(async () => 'Search results here');
+      registerTool(new FakeTool('web_search', execute));
 
       let callCount = 0;
       global.fetch = mock(async () => {
         callCount++;
         if (callCount === 1) {
-          // First AI call: request the tool
-          return new Response(
-            JSON.stringify({
-              choices: [{
-                message: {
-                  role: 'assistant',
-                  content: null,
-                  tool_calls: [{ id: 'call-1', function: { name: 'web_search', arguments: '{"query":"bun"}' } }],
-                },
-              }],
-              usage: {},
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
+          return makeToolCallResponse([{ id: 'call-1', name: 'web_search', args: '{"query":"bun"}' }]);
         }
-        // Second AI call: final text
         return makeFetchResponse('Here are the results!');
-      }) as any;
+      }) as unknown as typeof global.fetch;
 
       const ctx = makeCtx({ isGroup: false, text: 'Search for bun' });
       await handleIncomingMessage(ctx);
-      expect(searchTool.execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Here are the results!');
+
+      expect(execute).toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith('Here are the results!', undefined);
     });
 
-    test('should handle an unknown tool name from AI gracefully', async () => {
-      mockToolMap = {}; // no tools registered
+    test('reports an unknown tool name to the model instead of crashing', async () => {
+      registerNoTools();
 
       let callCount = 0;
       global.fetch = mock(async () => {
         callCount++;
         if (callCount === 1) {
-          return new Response(
-            JSON.stringify({
-              choices: [{
-                message: {
-                  role: 'assistant',
-                  content: null,
-                  tool_calls: [{ id: 'call-x', function: { name: 'nonexistent', arguments: '{}' } }],
-                },
-              }],
-              usage: {},
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
+          return makeToolCallResponse([{ id: 'call-x', name: 'nonexistent', args: '{}' }]);
         }
         return makeFetchResponse('Fallback answer');
-      }) as any;
+      }) as unknown as typeof global.fetch;
 
       const ctx = makeCtx({ isGroup: false, text: 'Do something' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Fallback answer');
+      expect(ctx.reply).toHaveBeenCalledWith('Fallback answer', undefined);
     });
 
-    test('should handle malformed tool arguments from AI gracefully', async () => {
-      const dummyTool = {
-        name: 'web_search',
-        aliases: [],
-        execute: mock(async () => 'ok'),
-      };
-      mockToolMap = { web_search: dummyTool };
+    test('rejects malformed tool arguments and tells the model', async () => {
+      const execute = mock(async () => 'ok');
+      registerTool(new FakeTool('web_search', execute));
 
       let callCount = 0;
       global.fetch = mock(async () => {
         callCount++;
         if (callCount === 1) {
-          return new Response(
-            JSON.stringify({
-              choices: [{
-                message: {
-                  role: 'assistant',
-                  content: null,
-                  tool_calls: [{ id: 'call-bad', function: { name: 'web_search', arguments: 'NOT_JSON' } }],
-                },
-              }],
-              usage: {},
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
+          return makeToolCallResponse([{ id: 'call-bad', name: 'web_search', args: 'NOT_JSON' }]);
         }
         return makeFetchResponse('Done');
-      }) as any;
+      }) as unknown as typeof global.fetch;
 
       const ctx = makeCtx({ isGroup: false, text: 'trigger malformed args' });
       await handleIncomingMessage(ctx);
-      expect(dummyTool.execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Done');
+      expect(execute).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith('Done', undefined);
+
+      const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[1]!;
+      const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ role: string; content: string }> };
+      const toolMessage = body.messages.find(message => message.role === 'tool');
+      expect(toolMessage?.content).toContain('valid JSON object');
     });
 
-    test('should refuse unauthorized AI-requested tools instead of executing them', async () => {
-      const ownerTool = {
-        name: 'owner_admin',
-        aliases: [],
-        execute: mock(async () => 'should not run'),
-      };
-      mockToolMap = { owner_admin: ownerTool };
+    test('refuses unauthorized AI-requested tools instead of executing them', async () => {
+      const execute = mock(async () => 'should not run');
+      registerNoTools();
+      stubRegistry('getToolByName', () => new FakeTool('owner_admin', execute));
 
       let callCount = 0;
       global.fetch = mock(async () => {
         callCount++;
         if (callCount === 1) {
-          return new Response(
-            JSON.stringify({
-              choices: [{
-                message: {
-                  role: 'assistant',
-                  content: null,
-                  tool_calls: [{ id: 'call-owner', function: { name: 'owner_admin', arguments: '{}' } }],
-                },
-              }],
-              usage: {},
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
+          return makeToolCallResponse([{ id: 'call-owner', name: 'owner_admin', args: '{}' }]);
         }
         return makeFetchResponse('Denied');
-      }) as any;
+      }) as unknown as typeof global.fetch;
 
-      const ctx = makeCtx({
-        isGroup: false,
-        text: 'do owner stuff',
-        checkPermissions: mock(async (required: string) => required !== 'owner'),
-        resolveRoles: mock(async () => ['user']),
-      });
-
+      const ctx = makeCtx({ isGroup: false, text: 'do owner stuff' });
       await handleIncomingMessage(ctx);
 
-      expect(ownerTool.execute).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Denied');
+      expect(execute).not.toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith('Denied', undefined);
     });
 
-    test('should time out AI-requested tools and fall back with an error response', async () => {
+    test('times out AI-requested tools and falls back with an error response', async () => {
       process.env.AI_TOOL_TIMEOUT_MS = '10';
+      const execute = mock(() => new Promise<string>(() => {}));
+      registerTool(new FakeTool('web_search', execute));
 
-      const stuckTool = {
-        name: 'web_search',
-        aliases: [],
-        execute: mock(() => new Promise(() => {})),
-      };
-      mockToolMap = { web_search: stuckTool };
-
-      global.fetch = mock(async () => new Response(
-        JSON.stringify({
-          choices: [{
-            message: {
-              role: 'assistant',
-              content: null,
-              tool_calls: [{ id: 'call-timeout', function: { name: 'web_search', arguments: '{"query":"bun"}' } }],
-            },
-          }],
-          usage: {},
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json' } },
-      )) as any;
+      global.fetch = mock(async () => makeToolCallResponse([{ id: 'call-timeout', name: 'web_search', args: '{"query":"bun"}' }])) as unknown as typeof global.fetch;
 
       const ctx = makeCtx({ isGroup: false, text: 'Search for bun' });
       await handleIncomingMessage(ctx);
 
-      expect(stuckTool.execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'));
+      expect(execute).toHaveBeenCalled();
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'), undefined);
     });
   });
 
-  // ── Empty / no-op messages ────────────────────────────────────────────────
+  // ── Empty / no-op messages ──────────────────────────────────────────────────
 
   describe('empty / no-op messages', () => {
-    test('should do nothing if text is empty and there is no media (private DM)', async () => {
+    test('does nothing if text is empty and there is no media (private DM)', async () => {
       const ctx = makeCtx({ isGroup: false, text: '', hasMedia: false });
       await handleIncomingMessage(ctx);
-      // No assistant message saved, no reply sent
-      const aiMsg = insertedValues.find((v) => v.role === 'assistant');
-      expect(aiMsg).toBeUndefined();
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored.find(row => row.role === 'assistant')).toBeUndefined();
     });
   });
 
-  // ── Quoted message context ────────────────────────────────────────────────
+  // ── Quoted message context ──────────────────────────────────────────────────
 
   describe('quoted message context', () => {
-    test('should prepend the quoted text to the user content', async () => {
+    async function storedUserContent(ctx: MockCtx): Promise<string> {
+      const stored = await messagesFor(ctx.chatId);
+      return stored.find(row => row.role === 'user')?.content ?? '';
+    }
+
+    test('prepends the quoted text as untrusted context', async () => {
       const ctx = makeCtx({
         isGroup: false,
         text: 'Is that right?',
@@ -686,12 +682,13 @@ describe('handleIncomingMessage', () => {
         },
       });
       await handleIncomingMessage(ctx);
-      const userMsg = insertedValues.find((v) => v.role === 'user');
-      expect(userMsg?.content).toContain('Replying to');
-      expect(userMsg?.content).toContain('ElastraX is awesome');
+      const content = await storedUserContent(ctx);
+      expect(content).toContain('<quoted_message trust="untrusted">');
+      expect(content).toContain('ElastraX is awesome');
+      expect(content).toContain('Is that right?');
     });
 
-    test('should label the bot\'s own quoted messages as "ElastraX (You)"', async () => {
+    test('labels the bot\'s own quoted messages as "ElastraX (You)"', async () => {
       const ctx = makeCtx({
         isGroup: false,
         text: 'yes exactly',
@@ -705,11 +702,10 @@ describe('handleIncomingMessage', () => {
         },
       });
       await handleIncomingMessage(ctx);
-      const userMsg = insertedValues.find((v) => v.role === 'user');
-      expect(userMsg?.content).toContain('ElastraX (You)');
+      expect(await storedUserContent(ctx)).toContain('ElastraX (You)');
     });
 
-    test('should truncate very long quoted text (>150 chars) with "..."', async () => {
+    test('truncates very long quoted text with an ellipsis', async () => {
       const longText = 'A'.repeat(200);
       const ctx = makeCtx({
         isGroup: false,
@@ -724,11 +720,12 @@ describe('handleIncomingMessage', () => {
         },
       });
       await handleIncomingMessage(ctx);
-      const userMsg = insertedValues.find((v) => v.role === 'user');
-      expect(userMsg?.content).toContain('...');
+      const content = await storedUserContent(ctx);
+      expect(content).toContain('...');
+      expect(content).not.toContain(longText);
     });
 
-    test('should use "<Media attached>" when quoted message has media but no text', async () => {
+    test('uses "<Media attached>" when the quoted message has media but no text', async () => {
       const ctx = makeCtx({
         isGroup: false,
         text: 'cool pic',
@@ -742,36 +739,42 @@ describe('handleIncomingMessage', () => {
         },
       });
       await handleIncomingMessage(ctx);
-      const userMsg = insertedValues.find((v) => v.role === 'user');
-      expect(userMsg?.content).toContain('Media attached');
+      expect(await storedUserContent(ctx)).toContain('Media attached');
     });
   });
 
-  // ── Media handling ─────────────────────────────────────────────────────────
+  // ── Media handling ──────────────────────────────────────────────────────────
 
   describe('media handling', () => {
-    test('should react with 📥 and update DB when hasMedia=true (shouldTriggerAI=true)', async () => {
+    test('reacts with 📥 and persists the downloaded media path', async () => {
+      const mediaPath = writeMediaFile('agent.jpg', 'not-a-real-jpeg');
       const ctx = makeCtx({
         isGroup: false,
         text: 'what is in this image?',
         hasMedia: true,
-        mediaPath: '/tmp/agent-test.jpg',
+        mediaPath,
         mimeType: 'image/jpeg',
         mediaReady: Promise.resolve(),
       });
       await handleIncomingMessage(ctx);
-      const reacts = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
-      expect(reacts).toContain('📥');
-      // The syncDbMedia function should have called db.update with the mediaPath
-      expect(mockUpdateSets.some((s: any) => s.mediaPath === '/tmp/agent-test.jpg')).toBe(true);
+
+      const calls = ctx.react.mock.calls.map(call => call[0]);
+      expect(calls).toContain('📥');
+
+      const stored = await messagesFor(ctx.chatId);
+      const userMsg = stored.find(row => row.role === 'user');
+      expect(userMsg?.mediaPath).toBe(mediaPath);
+      expect(userMsg?.mimeType).toBe('image/jpeg');
     });
 
-    test('should also update DB for quoted.mediaPath when both are present', async () => {
+    test('persists the quoted media path as well', async () => {
+      const mediaPath = writeMediaFile('quoted.jpg', 'not-a-real-jpeg');
+      const quotedStanzaId = nextId('quoted');
       const ctx = makeCtx({
         isGroup: false,
         text: 'describe the quoted image too',
         hasMedia: true,
-        mediaPath: '/tmp/main.jpg',
+        mediaPath: writeMediaFile('main.jpg', 'not-a-real-jpeg'),
         mimeType: 'image/jpeg',
         mediaReady: Promise.resolve(),
         quoted: {
@@ -780,161 +783,126 @@ describe('handleIncomingMessage', () => {
           text: 'old photo',
           senderId: 'user-x',
           hasMedia: true,
-          stanzaId: 'quoted-stanza-1',
-          mediaPath: '/tmp/quoted.jpg',
+          stanzaId: quotedStanzaId,
+          mediaPath,
           mimeType: 'image/jpeg',
           rawMessage: {},
         },
       });
+      await seedHistory(ctx.chatId, [
+        { role: 'user', content: 'old photo', senderName: 'user-x', providerMessageId: quotedStanzaId },
+      ]);
+
       await handleIncomingMessage(ctx);
-      expect(mockUpdateSets.some((s: any) => s.mediaPath === '/tmp/quoted.jpg')).toBe(true);
+
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored.find(row => row.providerMessageId === quotedStanzaId)?.mediaPath).toBe(mediaPath);
     });
 
-    test('should include image media parts in AI context when existsSync=true', async () => {
-      shouldFileExist = true;
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'check this image', senderName: 'Alice',
-          mediaPath: '/tmp/img.jpg', mimeType: 'image/jpeg',
-          created_at: new Date(), providerMessageId: 'hist-img',
-        },
-      ];
-      const ctx = makeCtx({ isGroup: false, text: 'describe it' });
-      await handleIncomingMessage(ctx);
-      // AI must have been called (reply was sent)
-      expect(ctx.reply).toHaveBeenCalled();
-    });
+    test.each([
+      ['image/jpeg', 'image.jpg'],
+      ['video/mp4', 'video.mp4'],
+      ['audio/ogg', 'audio.ogg'],
+      ['application/pdf', 'document.pdf'],
+    ])('builds AI context for %s attachments from history', async (mimeType, fileName) => {
+      const mediaPath = writeMediaFile(fileName, 'payload');
+      const chatId = nextId('room');
+      await seedHistory(chatId, [
+        { role: 'user', content: 'previous media', senderName: 'Alice', mediaPath, mimeType, createdAt: new Date(Date.now() - 60_000) },
+      ]);
 
-    test('should include video media parts in AI context when existsSync=true', async () => {
-      shouldFileExist = true;
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'watch this', senderName: 'Alice',
-          mediaPath: '/tmp/vid.mp4', mimeType: 'video/mp4',
-          created_at: new Date(), providerMessageId: 'hist-vid',
-        },
-      ];
-      const ctx = makeCtx({ isGroup: false, text: 'summarise the video' });
+      const ctx = makeCtx({ chatId, isGroup: false, text: 'describe it' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalled();
-    });
 
-    test('should include audio media parts in AI context when existsSync=true', async () => {
-      shouldFileExist = true;
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'listen', senderName: 'Alice',
-          mediaPath: '/tmp/audio.ogg', mimeType: 'audio/ogg',
-          created_at: new Date(), providerMessageId: 'hist-audio',
-        },
-      ];
-      const ctx = makeCtx({ isGroup: false, text: 'transcribe it' });
-      await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalled();
-    });
-
-    test('should include document attachment note in AI context when existsSync=true', async () => {
-      shouldFileExist = true;
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'here is the doc', senderName: 'Alice',
-          mediaPath: '/tmp/report.pdf', mimeType: 'application/pdf',
-          created_at: new Date(), providerMessageId: 'hist-doc',
-        },
-      ];
-      const ctx = makeCtx({ isGroup: false, text: 'summarise the document' });
-      await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalled();
-    });
-
-    test('should include quoted media parts in AI context when quoted.mediaPath is set', async () => {
-      shouldFileExist = true;
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'what is this?', senderName: 'Alice',
-          mediaPath: null, mimeType: null,
-          created_at: new Date(), providerMessageId: 'msg-1', // matches ctx.messageId
-        },
-      ];
-      const ctx = makeCtx({
-        isGroup: false,
-        text: 'what is this?',
-        quoted: {
-          messageType: 'imageMessage',
-          body: 'context photo',
-          text: 'context photo',
-          senderId: 'user-x',
-          hasMedia: true,
-          mediaPath: '/tmp/quoted-ctx.jpg',
-          mimeType: 'image/jpeg',
-          rawMessage: {},
-        },
-      });
-      await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalled();
+      const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
+      const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ content: unknown }> };
+      const serialized = JSON.stringify(body.messages);
+      expect(serialized).toContain('previous media');
     });
   });
 
-  // ── autoReplyAll group behaviour ──────────────────────────────────────────
+  // ── autoReplyAll group behaviour ────────────────────────────────────────────
 
   describe('group autoReplyAll', () => {
-    test('should respond in a group when autoReplyAll=true (covers line 54)', async () => {
-      mockRoomRows = [{ ...defaultRoom(), autoReplyAll: true }];
-      const ctx = makeCtx({ isGroup: true, text: 'what is the weather?' });
+    test('responds in a group when autoReplyAll is enabled on the room', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId, { autoReplyAll: 1 });
+      const ctx = makeCtx({ chatId, isGroup: true, text: 'what is the weather?' });
       await handleIncomingMessage(ctx);
       expect(ctx.reply).toHaveBeenCalled();
     });
   });
 
-  // ── History context ────────────────────────────────────────────────────────
+  // ── History context ─────────────────────────────────────────────────────────
 
   describe('history context assembly', () => {
-    test('should include previous messages in AI context', async () => {
-      mockHistoryRows = [
-        {
-          role: 'user', content: 'hello there', senderName: 'Alice',
-          mediaPath: null, mimeType: null,
-          created_at: new Date(), providerMessageId: 'old-msg',
-        },
-        {
-          role: 'assistant', content: 'Hi Alice!', senderName: 'ElastraX',
-          mediaPath: null, mimeType: null,
-          created_at: new Date(), providerMessageId: 'bot-msg',
-        },
-      ];
-      const ctx = makeCtx({ isGroup: false, text: 'remember me?' });
+    test('includes previous messages in the AI context window', async () => {
+      const chatId = nextId('room');
+      await seedHistory(chatId, [
+        { role: 'user', content: 'hello there', senderName: 'Alice' },
+        { role: 'assistant', content: 'Hi Alice!', senderName: 'ElastraX' },
+      ]);
+
+      const ctx = makeCtx({ chatId, isGroup: false, text: 'remember me?' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalled();
-      // The fetch payload should have contained the history messages
-      const [, fetchInit] = (global.fetch as any).mock.calls[0];
-      const body = JSON.parse(fetchInit.body);
-      const userMsg = body.messages.find((m: any) => m.role === 'user' && m.content.includes('hello there'));
-      expect(userMsg).toBeDefined();
+
+      const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
+      const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ role: string; content: string }> };
+      // History rows are replayed with a speaker label and treated as untrusted.
+      expect(body.messages.some(message => message.role === 'user' && message.content.includes('hello there'))).toBe(true);
+      expect(body.messages.some(message => message.role === 'assistant' && message.content === 'Hi Alice!')).toBe(true);
+    });
+
+    test('announces the resolved roles to the model', async () => {
+      const ctx = makeCtx({ isGroup: false, text: 'who am I?' });
+      await handleIncomingMessage(ctx);
+
+      const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
+      const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ role: string; content: string }> };
+      expect(body.messages[0]?.content).toContain('Current user roles:');
     });
   });
 
-  // ── Error handling ────────────────────────────────────────────────────────
+  // ── Error handling ──────────────────────────────────────────────────────────
 
   describe('error handling', () => {
-    test('should reply with internal error message and react ❌ on unexpected DB failure', async () => {
-      shouldThrowOnHistoryFetch = true; // throws inside the outer try/catch in agent
-      const ctx = makeCtx({ isGroup: false, text: 'hello' });
+    test('replies with the internal error message and ❌ when media ingestion fails', async () => {
+      const chatId = nextId('room');
+      await seedRoom(chatId);
+      const mediaPath = writeMediaFile('broken.jpg', 'payload');
+
+      const ctx = makeCtx({
+        chatId,
+        isGroup: false,
+        text: 'what is this?',
+        hasMedia: true,
+        mediaPath,
+        mimeType: 'image/jpeg',
+        mediaReady: Promise.reject(new Error('Simulated download failure')),
+      });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(
-        expect.stringContaining('internal error'),
-      );
-      const calls = (ctx.react as any).mock.calls.map((c: any[]) => c[0]);
+
+      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('internal error'), {});
+      const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
 
-    test('should return an error response when AI returns a non-OK HTTP status', async () => {
-      global.fetch = mock(async () =>
-        new Response('Internal Server Error', { status: 500 })
-      ) as any;
+    test('still replies when the AI returns a non-OK HTTP status', async () => {
+      global.fetch = mock(async () => new Response('Internal Server Error', { status: 500 })) as unknown as typeof global.fetch;
       const ctx = makeCtx({ isGroup: false, text: 'trigger ai error' });
       await handleIncomingMessage(ctx);
-      // Agent should still reply (with error fallback text)
       expect(ctx.reply).toHaveBeenCalled();
+    });
+
+    test('falls back to the internal error message when the model returns no text', async () => {
+      global.fetch = mock(async () => new Response(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: null } }], usage: {} }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )) as unknown as typeof global.fetch;
+      const ctx = makeCtx({ isGroup: false, text: 'empty response' });
+      await handleIncomingMessage(ctx);
+      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', undefined);
     });
   });
 });

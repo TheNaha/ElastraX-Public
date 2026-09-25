@@ -91,10 +91,22 @@ describe('ConfigService', () => {
       expect(config.contextLimit).toBe(5);
     });
 
-    test('should allow DB contextLimit of 0', () => {
+    test('treats a DB contextLimit of 0 as unset and uses the default', () => {
       const room = { ...baseRoom(), contextLimit: 0 };
       const config = ConfigService.getResolvedConfig(room);
-      expect(config.contextLimit).toBe(0);
+      expect(config.contextLimit).toBe(10);
+    });
+
+    test('treats a DB contextLimit of 0 as unset even when env overrides the default', () => {
+      process.env.CONTEXT_MESSAGE_LIMIT = '25';
+      const room = { ...baseRoom(), contextLimit: 0 };
+      const config = ConfigService.getResolvedConfig(room);
+      expect(config.contextLimit).toBe(25);
+    });
+
+    test('clamps an out-of-range DB contextLimit into the supported window', () => {
+      expect(ConfigService.getResolvedConfig({ ...baseRoom(), contextLimit: 99_999 }).contextLimit).toBe(10_000);
+      expect(ConfigService.getResolvedConfig({ ...baseRoom(), contextLimit: -50 }).contextLimit).toBe(-1);
     });
   });
 
@@ -172,6 +184,16 @@ describe('ConfigService', () => {
       const room = { ...baseRoom(), maxTokens: 1024 };
       const config = ConfigService.getResolvedConfig(room);
       expect(config.maxTokens).toBe(1024);
+    });
+
+    test('treats a DB maxTokens of 0 as unset and uses the default', () => {
+      const room = { ...baseRoom(), maxTokens: 0 };
+      const config = ConfigService.getResolvedConfig(room);
+      expect(config.maxTokens).toBe(2048);
+    });
+
+    test('clamps a DB maxTokens below the supported minimum to 1', () => {
+      expect(ConfigService.getResolvedConfig({ ...baseRoom(), maxTokens: 1 }).maxTokens).toBe(1);
     });
   });
 

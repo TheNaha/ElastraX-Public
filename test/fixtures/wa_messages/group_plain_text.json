@@ -1,18 +1,18 @@
 {
   "key": {
-    "remoteJid": "120363401925802611@g.us",
+    "remoteJid": "synthetic-group-1@g.us",
     "fromMe": false,
-    "id": "ACC0F16C4DB1A7BA4E476A0FEBB66DFA",
-    "participant": "27870210576446@lid",
-    "participantPn": "62895320460745@s.whatsapp.net"
+    "id": "synthetic-message-1",
+    "participant": "synthetic-participant-1@lid",
+    "participantPn": "synthetic-user-1@s.whatsapp.net"
   },
-  "messageTimestamp": 1757431439,
-  "pushName": "Naufal Hafizd Prayoga",
+  "messageTimestamp": 1700000000,
+  "pushName": "Synthetic User",
   "broadcast": false,
   "message": {
-    "conversation": "bxhsjsjaja",
+    "conversation": "",
     "messageContextInfo": {
-      "messageSecret": "6ULfEvyzLtMCJz3mwJnqJgGFegE2ndwgRwzeKrodnK4="
+      "messageSecret": ""
     }
   }
 }

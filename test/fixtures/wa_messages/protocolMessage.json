@@ -1,29 +1,29 @@
 {
   "key": {
-    "remoteJid": "62895320460745-1601116727@g.us",
+    "remoteJid": "synthetic-group-1-1700000000@g.us",
     "fromMe": false,
-    "id": "ACE2CF3577D9F56590885A00AC6A3C08"
+    "id": "synthetic-message-1"
   },
   "message": {
     "protocolMessage": {
       "key": {
-        "remoteJid": "62895320460745-1601116727@g.us",
+        "remoteJid": "synthetic-group-1-1700000000@g.us",
         "fromMe": false,
-        "id": "ACE34C4CDE48EDEDC331956D720A14B4",
-        "participant": "228973531406343@lid"
+        "id": "synthetic-message-2",
+        "participant": "synthetic-participant-1@lid"
       },
       "type": "MESSAGE_EDIT",
       "editedMessage": {
-        "conversation": "I've read the synopsis"
+        "conversation": ""
       },
-      "timestampMs": "1771411095080"
+      "timestampMs": "1700000000000"
     },
     "messageContextInfo": {}
   },
-  "messageTimestamp": "1771411084",
-  "participant": "228973531406343@lid",
+  "messageTimestamp": "1700000000",
+  "participant": "synthetic-participant-1@lid",
   "reportingTokenInfo": {
-    "reportingTag": "ARBTUg4Rz64Ejv5xNDNTkxbYogY="
+    "reportingTag": ""
   },
   "isMentionedInStatus": false
 }

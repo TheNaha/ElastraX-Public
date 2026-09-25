@@ -1,157 +1,144 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
-import { EventEmitter } from 'events';
+import { afterEach, beforeEach, describe, expect, test, mock } from 'bun:test';
+import {
+  DownloadTool,
+  downloadToolDeps,
+  downloadViaYtDlp,
+  redactUrl,
+} from '../src/tools/DownloadTool';
+import { HARD_MEDIA_MAX_BYTES, MIB } from '../src/providers/media';
+import type { BoundedProcessOptions } from '../src/providers/process';
 import type { MessageContext } from '../src/core/MessageContext';
-import { DownloadTool, downloadToolDeps } from '../src/tools/DownloadTool';
+import type { SafeNetworkTarget } from '../src/providers/ssrf';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
+const original = {
+  fs: downloadToolDeps.fs,
+  path: downloadToolDeps.path,
+  os: downloadToolDeps.os,
+  crypto: downloadToolDeps.crypto,
+  validateUrl: downloadToolDeps.validateUrl,
+  createProxy: downloadToolDeps.createProxy,
+  runProcess: downloadToolDeps.runProcess,
 };
 
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
+const safeTarget = {} as SafeNetworkTarget;
+const mocks = {
+  mkdir: mock(async () => {}),
+  chmod: mock(async () => {}),
+  readdir: mock(async () => ['abababababababab.mp4']),
+  stat: mock(async () => ({ isFile: () => true, size: 4 })),
+  readFile: mock(async () => Buffer.from('data')),
+  rm: mock(async () => {}),
+  validate: mock(async () => safeTarget),
+  proxyStart: mock(async function (this: { url: string }) { return this; }),
+  proxyClose: mock(async () => {}),
+  runProcess: mock(async (_options: BoundedProcessOptions) => undefined),
+};
 
-const originalSpawn = downloadToolDeps.spawn;
-const originalMkdir = downloadToolDeps.fs.mkdir;
-const originalReaddir = downloadToolDeps.fs.readdir;
-const originalReadFile = downloadToolDeps.fs.readFile;
-const originalRm = downloadToolDeps.fs.rm;
-const originalCrypto = downloadToolDeps.crypto;
+const proxy = {
+  url: 'http://127.0.0.1:43123',
+  start: mocks.proxyStart,
+  close: mocks.proxyClose,
+};
 
-let spawnedProcesses: Array<{ args: string[] }> = [];
+function installMocks(): void {
+  downloadToolDeps.fs = {
+    ...original.fs,
+    mkdir: mocks.mkdir,
+    chmod: mocks.chmod,
+    readdir: mocks.readdir,
+    stat: mocks.stat,
+    readFile: mocks.readFile,
+    rm: mocks.rm,
+  } as unknown as typeof downloadToolDeps.fs;
+  downloadToolDeps.path = original.path;
+  downloadToolDeps.os = original.os;
+  downloadToolDeps.crypto = {
+    ...original.crypto,
+    randomBytes: mock((size: number) => Buffer.from('ab'.repeat(size), 'hex')),
+  } as typeof downloadToolDeps.crypto;
+  downloadToolDeps.validateUrl = mocks.validate as typeof downloadToolDeps.validateUrl;
+  downloadToolDeps.createProxy = mock(() => proxy as never);
+  downloadToolDeps.runProcess = mocks.runProcess as never;
+}
 
-const mockSpawn = mock((_command: string, args: string[]) => {
-  const cp = new EventEmitter() as EventEmitter & {
-    stderr: EventEmitter;
-    stdout: EventEmitter;
-    pid: number;
-    args: string[];
-  };
-  cp.stderr = new EventEmitter();
-  cp.stdout = new EventEmitter();
-  cp.pid = 123;
-  cp.args = args;
-
-  setTimeout(() => {
-    cp.emit('close', 0);
-  }, 10);
-
-  spawnedProcesses.push({ args });
-  return cp as never;
-});
-
-const createMockCtx = (): MessageContext => ({
-  platform: 'whatsapp',
-  chatId: 'chat-1',
-  senderId: 'user-1',
-  senderName: 'Alice',
-  text: '',
-  messageType: 'conversation',
-  isGroup: false,
-  isBotMentioned: false,
-  hasMedia: false,
-  rawMessage: {},
-  reply: mock(async () => {}),
-  react: mock(async () => {}),
-  checkPermissions: mock(async () => true),
-  resolveRoles: mock(async () => ['user']),
-  messageId: 'msg-1',
-  mediaReady: Promise.resolve(),
-  sendMedia: mock(async () => {}),
-  language: 'en',
-}) as unknown as MessageContext;
-
-describe('DownloadTool Security', () => {
+describe('DownloadTool security', () => {
   beforeEach(() => {
-    spawnedProcesses = [];
-    mockSpawn.mockClear();
-
-    downloadToolDeps.spawn = mockSpawn as unknown as typeof downloadToolDeps.spawn;
-    downloadToolDeps.fs.mkdir = mock(async () => {}) as typeof downloadToolDeps.fs.mkdir;
-    downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as unknown as typeof downloadToolDeps.fs.readdir;
-    downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as unknown as typeof downloadToolDeps.fs.readFile;
-    downloadToolDeps.fs.rm = mock(async () => {}) as typeof downloadToolDeps.fs.rm;
-    downloadToolDeps.crypto = {
-      ...originalCrypto,
-      randomBytes: mock((size: number) => {
-        if (size === 8) return Buffer.from('feedfacecafebeef', 'hex');
-        return Buffer.from('ab'.repeat(size), 'hex');
-      }),
-    } as typeof downloadToolDeps.crypto;
+    for (const value of Object.values(mocks)) value.mockClear();
+    mocks.readdir.mockImplementation(async () => ['abababababababab.mp4']);
+    mocks.stat.mockImplementation(async () => ({ isFile: () => true, size: 4 }));
+    mocks.readFile.mockImplementation(async () => Buffer.from('data'));
+    mocks.runProcess.mockImplementation(async () => undefined);
+    installMocks();
   });
 
   afterEach(() => {
-    downloadToolDeps.spawn = originalSpawn;
-    downloadToolDeps.fs.mkdir = originalMkdir;
-    downloadToolDeps.fs.readdir = originalReaddir;
-    downloadToolDeps.fs.readFile = originalReadFile;
-    downloadToolDeps.fs.rm = originalRm;
-    downloadToolDeps.crypto = originalCrypto;
+    downloadToolDeps.fs = original.fs;
+    downloadToolDeps.path = original.path;
+    downloadToolDeps.os = original.os;
+    downloadToolDeps.crypto = original.crypto;
+    downloadToolDeps.validateUrl = original.validateUrl;
+    downloadToolDeps.createProxy = original.createProxy;
+    downloadToolDeps.runProcess = original.runProcess;
   });
 
-  test('should reject argument injection vectors (starting with -) due to URL validation', async () => {
+  test('rejects option-like and non-HTTP URLs before role or process work', async () => {
+    mocks.validate.mockRejectedValueOnce(new Error('Invalid URL.'));
     const tool = new DownloadTool();
-    const maliciousUrl = '--version';
+    const roleSpy = mock(async () => []);
+    const ctx = { resolveRoles: roleSpy, reply: mock(async () => {}), react: mock(async () => {}) } as unknown as MessageContext;
+    expect(await tool.execute({ url: '--version', format: 'mp4' }, ctx)).toContain('Invalid URL');
+    expect(roleSpy).not.toHaveBeenCalled();
 
-    const result = await tool.execute({ url: maliciousUrl, format: 'mp4' }, createMockCtx());
-
-    expect(result).toContain('Invalid URL format');
-    expect(spawnedProcesses.length).toBe(0);
+    mocks.validate.mockRejectedValueOnce(new Error('Only HTTP and HTTPS URLs are allowed.'));
+    expect(await tool.execute({ url: 'file:///etc/passwd', format: 'mp4' }, ctx)).toContain('HTTP and HTTPS');
+    expect(downloadToolDeps.runProcess).not.toHaveBeenCalled();
   });
 
-  test('should reject file:// protocol to prevent SSRF/LFI', async () => {
-    const tool = new DownloadTool();
-    const localFileUrl = 'file:///etc/passwd';
-
-    const result = await tool.execute({ url: localFileUrl, format: 'mp4' }, createMockCtx());
-
-    expect(result).toContain('Only HTTP/HTTPS URLs are allowed');
-    expect(spawnedProcesses.length).toBe(0);
+  test('passes the URL after -- through the validating proxy and cleans private jobs', async () => {
+    const buffer = await downloadViaYtDlp('https://example.com/video', 'mp4', 50);
+    expect(buffer.toString()).toBe('data');
+    const options = mocks.runProcess.mock.calls[0]![0];
+    expect(options.args).toContain('--');
+    expect(options.args[options.args.indexOf('--') + 1]).toBe('https://example.com/video');
+    expect(options.args[options.args.indexOf('--proxy') + 1]).toBe(proxy.url);
+    expect(options.args).toContain('--max-filesize');
+    expect(options.env).toMatchObject({ NO_PROXY: '', no_proxy: '', TMPDIR: expect.any(String) });
+    expect(mocks.mkdir).toHaveBeenCalledWith(expect.any(String), { recursive: true, mode: 0o700 });
+    expect(mocks.proxyStart).toHaveBeenCalled();
+    expect(mocks.proxyClose).toHaveBeenCalled();
+    expect(mocks.rm).toHaveBeenCalledWith(expect.any(String), { recursive: true, force: true });
   });
 
-  test('should pass valid URLs safely after -- separator', async () => {
-    const tool = new DownloadTool();
-    const validUrl = 'https://example.com/video';
-
-    await tool.execute({ url: validUrl, format: 'mp4' }, createMockCtx());
-
-    const cp = spawnedProcesses[0];
-    expect(cp).toBeDefined();
-
-    const args = cp.args;
-    expect(args[args.length - 2]).toBe('--');
-    expect(args[args.length - 1]).toBe(validUrl);
+  test('clamps unlimited roles to the hard media cap', async () => {
+    await downloadViaYtDlp('https://example.com/video', 'mp4', Infinity);
+    const options = mocks.runProcess.mock.calls[0]![0];
+    expect(options.args).toContain(`${HARD_MEDIA_MAX_BYTES / MIB}m`);
+    expect(options.watchDirectory).toEqual({ path: expect.any(String), maxBytes: HARD_MEDIA_MAX_BYTES });
   });
 
-  test('should detect and block path traversal in output filename', async () => {
-    const tool = new DownloadTool();
-
-    downloadToolDeps.crypto = {
-      ...originalCrypto,
-      randomBytes: mock((size: number) => {
-        if (size === 8) return Buffer.from('deadbeefdeadbeef', 'hex');
-        return Buffer.from('cd'.repeat(size), 'hex');
-      }),
-    } as typeof downloadToolDeps.crypto;
-    downloadToolDeps.fs.readdir = mock(async () => ['deadbeefdeadbeef/../../../etc/passwd']) as unknown as typeof downloadToolDeps.fs.readdir;
-
-    const result = await tool.execute({ url: 'https://example.com/video', format: 'mp4' }, createMockCtx());
-
-    expect(result).toContain('Invalid output filename');
+  test('rejects understated or oversized output before reading it', async () => {
+    mocks.stat.mockImplementationOnce(async () => ({ isFile: () => true, size: 51 * MIB }));
+    await expect(downloadViaYtDlp('https://example.com/video', 'mp4', 50)).rejects.toThrow('exceeds');
+    expect(mocks.readFile).not.toHaveBeenCalled();
   });
 
-  test('should reject prototype pollution vectors in format parameter', async () => {
-    const tool = new DownloadTool();
+  test('rejects traversal-like output names and multiple outputs', async () => {
+    mocks.readdir.mockImplementationOnce(async () => ['abababababababab/../../../etc/passwd']);
+    await expect(downloadViaYtDlp('https://example.com/video', 'mp4', 50)).rejects.toThrow('Invalid output filename');
 
-    const result = await tool.execute(
-      { url: 'https://example.com/video', format: '__proto__' as never },
-      createMockCtx(),
-    );
+    mocks.readdir.mockImplementationOnce(async () => ['abababababababab.mp4', 'abababababababab.webm']);
+    await expect(downloadViaYtDlp('https://example.com/video', 'mp4', 50)).rejects.toThrow('2 output files');
+  });
 
-    expect(result).toContain('Invalid format requested');
-    expect(spawnedProcesses.length).toBe(0);
+  test('propagates process failure and still closes the proxy and job', async () => {
+    mocks.runProcess.mockRejectedValueOnce(new Error('aborted'));
+    await expect(downloadViaYtDlp('https://example.com/video', 'mp4', 50)).rejects.toThrow('aborted');
+    expect(mocks.proxyClose).toHaveBeenCalled();
+    expect(mocks.rm).toHaveBeenCalled();
+  });
+
+  test('redacts credentials, query parameters, and fragments from logs', () => {
+    expect(redactUrl('https://user:secret@example.com/video?token=abc#part')).toBe('https://example.com/video');
+    expect(redactUrl('not a url')).toBe('[invalid-url]');
   });
 });

@@ -76,7 +76,10 @@ describe('MediaRequestTool', () => {
     expect(createRequest).toHaveBeenCalled();
   });
 
-  test('returns request status details', async () => {
+  test('returns request status details for the bound owner', async () => {
+    MediaService.bindingService = {
+      getBinding: mock(async () => ({ externalUserId: '12', platform: 'discord' })),
+    } as any;
     MediaService.createSeerrClient = () => ({
       isConfigured: true,
       getRequestById: mock(async () => ({
@@ -94,9 +97,81 @@ describe('MediaRequestTool', () => {
     expect(result).toContain('Approved');
   });
 
+  test('refuses to show a request owned by a different Seerr user', async () => {
+    const getRequestById = mock(async () => ({
+      id: 55,
+      status: 2,
+      type: 'tv',
+      media: { tmdbId: 201 },
+      requestedBy: { id: 99, displayName: 'Someone Else' },
+      createdAt: '2026-03-18T00:00:00.000Z',
+    }));
+    MediaService.bindingService = {
+      getBinding: mock(async () => ({ externalUserId: '12', platform: 'discord' })),
+    } as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: true, getRequestById }) as any;
+
+    const result = await new MediaRequestTool().execute({ action: 'status', request_id: 55 }, createMockCtx());
+    expect(result).toContain('only view your own media requests');
+    expect(result).not.toContain('Someone Else');
+  });
+
+  test('refuses to show a request when the Seerr user id is missing', async () => {
+    const getRequestById = mock(async () => ({
+      id: 55,
+      status: 2,
+      type: 'tv',
+      media: { tmdbId: 201 },
+      requestedBy: { id: 12, displayName: 'Alice' },
+      createdAt: '2026-03-18T00:00:00.000Z',
+    }));
+    MediaService.bindingService = {
+      getBinding: mock(async () => ({ id: 7, externalUserId: 'not-a-number', platform: 'discord' })),
+    } as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: true, getRequestById }) as any;
+
+    const result = await new MediaRequestTool().execute({ action: 'status', request_id: 55 }, createMockCtx());
+    expect(result).toContain('link your account first');
+    expect(getRequestById).not.toHaveBeenCalled();
+  });
+
+  test('refuses to use a binding created on a different platform', async () => {
+    const getRequestById = mock(async () => ({
+      id: 55,
+      status: 2,
+      type: 'tv',
+      media: { tmdbId: 201 },
+      requestedBy: { id: 12, displayName: 'Alice' },
+      createdAt: '2026-03-18T00:00:00.000Z',
+    }));
+    MediaService.bindingService = {
+      getBinding: mock(async () => ({ externalUserId: '12', platform: 'whatsapp' })),
+    } as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: true, getRequestById }) as any;
+
+    const result = await new MediaRequestTool().execute({ action: 'status', request_id: 55 }, createMockCtx());
+    expect(result).toContain('link your account first');
+    expect(getRequestById).not.toHaveBeenCalled();
+  });
+
+  test('refuses to use an unverified binding', async () => {
+    const createRequest = mock(async () => ({ id: 1 }));
+    MediaService.bindingService = {
+      getBinding: mock(async () => ({ externalUserId: '12', platform: 'discord', metadata: '{"verified":false}' })),
+    } as any;
+    MediaService.createSeerrClient = () => ({ isConfigured: true, createRequest }) as any;
+
+    const result = await new MediaRequestTool().execute(
+      { action: 'request', media_type: 'movie', media_id: 101 },
+      createMockCtx(),
+    );
+    expect(result).toContain('link your account first');
+    expect(createRequest).not.toHaveBeenCalled();
+  });
+
   test('lists request history and handles empty histories', async () => {
     MediaService.bindingService = {
-      getBinding: mock(async () => ({ externalUserId: '12' })),
+      getBinding: mock(async () => ({ externalUserId: '12', platform: 'discord' })),
     } as any;
     MediaService.createSeerrClient = () => ({
       isConfigured: true,

@@ -29,7 +29,7 @@ describe('RoleService', () => {
         granted_by TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS user_roles_user_scope_idx ON user_roles (user_id, scope);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_roles_platform_user_scope_unique_idx ON user_roles (platform, user_id, scope);
       CREATE INDEX IF NOT EXISTS user_roles_scope_idx ON user_roles (scope, role);
 
       CREATE TABLE IF NOT EXISTS role_privileges (
@@ -41,14 +41,16 @@ describe('RoleService', () => {
       );
 
       CREATE TABLE IF NOT EXISTS user_identities (
+        canonical_id TEXT,
         lid TEXT,
         pn TEXT,
         platform TEXT NOT NULL DEFAULT 'whatsapp',
         display_name TEXT,
         updated_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_lid_unique_idx ON user_identities (lid);
-      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_pn_unique_idx ON user_identities (pn);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_platform_lid_unique_idx ON user_identities (platform, lid);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_identities_platform_pn_unique_idx ON user_identities (platform, pn);
+      CREATE INDEX IF NOT EXISTS user_identities_canonical_idx ON user_identities (platform, canonical_id);
     `);
 
     await db.delete(userRoles).run();
@@ -236,7 +238,23 @@ describe('RoleService', () => {
 
     const roles = await RoleService.getUserRoles('user@lid');
 
-    expect(roles).toEqual([{ scope: 'global', role: 'admin' }]);
+    expect(roles).toEqual([{ platform: 'whatsapp', scope: 'global', role: 'admin' }]);
+    getAllJidsSpy.mockRestore();
+  });
+
+  test('getUserRoles keeps roles for different platforms separate', async () => {
+    const getAllJidsSpy = spyOn(IdentityService, 'getAllJids').mockResolvedValue(['shared-id']);
+
+    await db.insert(userRoles).values([
+      { userId: 'shared-id', platform: 'whatsapp', scope: 'global', role: 'admin', grantedBy: 'owner-1', created_at: new Date() },
+      { userId: 'shared-id', platform: 'discord', scope: 'global', role: 'user', grantedBy: 'owner-1', created_at: new Date() },
+    ]);
+
+    const whatsappRoles = await RoleService.getUserRoles('shared-id', 'whatsapp');
+    const discordRoles = await RoleService.getUserRoles('shared-id', 'discord');
+
+    expect(whatsappRoles).toEqual([{ platform: 'whatsapp', scope: 'global', role: 'admin' }]);
+    expect(discordRoles).toEqual([{ platform: 'discord', scope: 'global', role: 'user' }]);
     getAllJidsSpy.mockRestore();
   });
 

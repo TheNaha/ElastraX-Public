@@ -1,5 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, afterEach } from 'bun:test';
 import * as path from 'path';
+import { withEnvironment } from './helpers/env';
 
 const _mockLogger = {
   trace: () => {},
@@ -16,40 +17,34 @@ import { dumpFixtures, resolveFixtureDir, runStartupCoverageScan, stripFixtureBl
 
 type DiagnosticsDeps = NonNullable<Parameters<typeof dumpFixtures>[1]>;
 
+const allowDump = { NODE_ENV: 'test', ALLOW_FIXTURE_DUMP: 'true' } as const;
+
+const emptyCoverage = {
+  uniqueByType: new Map(),
+  errors: [],
+  unknownSamples: [],
+  total: 0,
+};
+
 describe('startupDiagnostics', () => {
-  const originalFixtureDir = process.env.FIXTURE_DUMP_DIR;
-  const originalNodeEnv = process.env.NODE_ENV;
-
-  beforeEach(() => {
-    delete process.env.FIXTURE_DUMP_DIR;
-    delete process.env.NODE_ENV;
-  });
-
   afterEach(() => {
-    if (originalFixtureDir === undefined) {
-      delete process.env.FIXTURE_DUMP_DIR;
-    } else {
-      process.env.FIXTURE_DUMP_DIR = originalFixtureDir;
-    }
-
-    if (originalNodeEnv === undefined) {
-      delete process.env.NODE_ENV;
-    } else {
-      process.env.NODE_ENV = originalNodeEnv;
-    }
+    delete process.env.ALLOW_FIXTURE_DUMP;
   });
 
-  test('resolveFixtureDir prefers configured directory', () => {
-    process.env.FIXTURE_DUMP_DIR = 'custom/fixtures';
-    expect(resolveFixtureDir()).toBe('custom/fixtures');
+  test('resolveFixtureDir prefers configured directory', async () => {
+    await withEnvironment({ FIXTURE_DUMP_DIR: 'custom/fixtures' }, () => {
+      expect(resolveFixtureDir()).toBe('custom/fixtures');
+    });
   });
 
-  test('resolveFixtureDir switches between development and production defaults', () => {
-    process.env.NODE_ENV = 'development';
-    expect(resolveFixtureDir()).toContain(path.join('test', 'fixtures', 'wa_messages'));
+  test('resolveFixtureDir defaults to the sanitized fixture directory in every environment', async () => {
+    await withEnvironment({ FIXTURE_DUMP_DIR: undefined, NODE_ENV: 'development' }, () => {
+      expect(resolveFixtureDir()).toContain(path.join('test', 'fixtures', 'wa_messages'));
+    });
 
-    process.env.NODE_ENV = 'production';
-    expect(resolveFixtureDir()).toContain(path.join('data', 'fixtures', 'wa_messages'));
+    await withEnvironment({ FIXTURE_DUMP_DIR: undefined, NODE_ENV: 'production' }, () => {
+      expect(resolveFixtureDir()).toContain(path.join('test', 'fixtures', 'wa_messages'));
+    });
   });
 
   test('stripFixtureBlobs removes large binary blob fields recursively', () => {
@@ -70,6 +65,38 @@ describe('startupDiagnostics', () => {
     });
   });
 
+  test('dumpFixtures refuses to run in production even when explicitly allowed', async () => {
+    await withEnvironment({ ...allowDump, NODE_ENV: 'production' }, async () => {
+      await expect(dumpFixtures(null, { loadMessages: () => [{ rawMessage: '{}', providerMessageId: 'm1' }] }))
+        .rejects.toThrow('Fixture dumping is disabled outside an explicit development environment');
+    });
+  });
+
+  test('dumpFixtures refuses to run without an explicit opt-in flag', async () => {
+    await withEnvironment({ NODE_ENV: 'test', ALLOW_FIXTURE_DUMP: undefined }, async () => {
+      await expect(dumpFixtures(null, { loadMessages: () => [{ rawMessage: '{}', providerMessageId: 'm1' }] }))
+        .rejects.toThrow('Fixture dumping is disabled outside an explicit development environment');
+    });
+  });
+
+  test('dumpFixtures never touches the database or filesystem when it refuses', async () => {
+    const loadMessages = mock(() => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
+    const writeTextFile = mock(async () => {});
+    const makeDirectory = mock(async () => {});
+
+    await withEnvironment({ ...allowDump, NODE_ENV: 'production' }, async () => {
+      await expect(dumpFixtures(null, {
+        loadMessages,
+        makeDirectory,
+        writeTextFile,
+      } as unknown as DiagnosticsDeps)).rejects.toThrow('Fixture dumping is disabled outside an explicit development environment');
+    });
+
+    expect(loadMessages).not.toHaveBeenCalled();
+    expect(makeDirectory).not.toHaveBeenCalled();
+    expect(writeTextFile).not.toHaveBeenCalled();
+  });
+
   test('dumpFixtures writes one file per unique type and preserves existing files', async () => {
     const loadMessages = mock(() => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
     const scanCoverage = mock(async () => ({
@@ -86,39 +113,36 @@ describe('startupDiagnostics', () => {
     const writeTextFile = mock(async () => {});
     const fileExists = mock((filePath: string) => filePath.endsWith('conversation.json'));
 
-    process.env.FIXTURE_DUMP_DIR = 'tmp-fixtures';
-
-    await dumpFixtures(null, {
-      loadMessages,
-      scanCoverage,
-      logCoverage,
-      makeDirectory,
-      writeTextFile,
-      fileExists,
-    } as unknown as DiagnosticsDeps);
+    await withEnvironment({ ...allowDump, FIXTURE_DUMP_DIR: 'tmp-fixtures' }, async () => {
+      await dumpFixtures(null, {
+        loadMessages,
+        scanCoverage,
+        logCoverage,
+        makeDirectory,
+        writeTextFile,
+        fileExists,
+      } as unknown as DiagnosticsDeps);
+    });
 
     expect(loadMessages).toHaveBeenCalledTimes(1);
     expect(scanCoverage).toHaveBeenCalledTimes(1);
     expect(logCoverage).toHaveBeenCalledTimes(1);
-    expect(makeDirectory).toHaveBeenCalledWith('tmp-fixtures', { recursive: true });
+    expect(makeDirectory).toHaveBeenCalledWith('tmp-fixtures', { recursive: true, mode: 0o700 });
     expect(writeTextFile).toHaveBeenCalledTimes(1);
     expect(writeTextFile).toHaveBeenCalledWith(
       expect.stringContaining('imageMessage.json'),
       JSON.stringify({ nested: { caption: 'photo' } }, null, 2),
-      'utf-8',
+      { encoding: 'utf-8', mode: 0o600 },
     );
   });
 
   test('dumpFixtures returns early when no rows are loaded', async () => {
     const loadMessages = mock(() => []);
-    const scanCoverage = mock(async () => ({
-      uniqueByType: new Map(),
-      errors: [],
-      unknownSamples: [],
-      total: 0,
-    }));
+    const scanCoverage = mock(async () => emptyCoverage);
 
-    await dumpFixtures(null, { loadMessages, scanCoverage });
+    await withEnvironment(allowDump, async () => {
+      await dumpFixtures(null, { loadMessages, scanCoverage } as unknown as DiagnosticsDeps);
+    });
 
     expect(loadMessages).toHaveBeenCalledTimes(1);
     expect(scanCoverage).not.toHaveBeenCalled();
@@ -139,12 +163,14 @@ describe('startupDiagnostics', () => {
     });
     const writeTextFile = mock(async () => {});
 
-    await expect(dumpFixtures(null, {
-      loadMessages,
-      scanCoverage,
-      makeDirectory,
-      writeTextFile,
-    } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+    await withEnvironment(allowDump, async () => {
+      await expect(dumpFixtures(null, {
+        loadMessages,
+        scanCoverage,
+        makeDirectory,
+        writeTextFile,
+      } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+    });
     expect(writeTextFile).not.toHaveBeenCalled();
   });
 
@@ -162,13 +188,15 @@ describe('startupDiagnostics', () => {
       throw error;
     });
 
-    await expect(dumpFixtures(null, {
-      loadMessages,
-      scanCoverage,
-      makeDirectory: mock(async () => {}),
-      writeTextFile,
-      fileExists: mock(() => false),
-    } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+    await withEnvironment(allowDump, async () => {
+      await expect(dumpFixtures(null, {
+        loadMessages,
+        scanCoverage,
+        makeDirectory: mock(async () => {}),
+        writeTextFile,
+        fileExists: mock(() => false),
+      } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+    });
 
     expect(writeTextFile).toHaveBeenCalledTimes(1);
   });
@@ -183,7 +211,7 @@ describe('startupDiagnostics', () => {
     }));
     const logCoverage = mock(() => {});
 
-    await runStartupCoverageScan(null, { loadMessages, scanCoverage, logCoverage });
+    await runStartupCoverageScan(null, { loadMessages, scanCoverage, logCoverage } as unknown as DiagnosticsDeps);
 
     expect(loadMessages).toHaveBeenCalledWith(2000);
     expect(scanCoverage).toHaveBeenCalledTimes(1);
@@ -196,21 +224,35 @@ describe('startupDiagnostics', () => {
       throw new Error('scan failed');
     });
 
-    await expect(runStartupCoverageScan(null, { loadMessages, scanCoverage })).resolves.toBeUndefined();
+    await expect(runStartupCoverageScan(null, { loadMessages, scanCoverage } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
   });
 
   test('runStartupCoverageScan returns early when no rows exist', async () => {
     const loadMessages = mock((_limit?: number) => []);
-    const scanCoverage = mock(async () => ({
-      uniqueByType: new Map(),
-      errors: [],
-      unknownSamples: [],
-      total: 0,
-    }));
+    const scanCoverage = mock(async () => emptyCoverage);
 
-    await runStartupCoverageScan(null, { loadMessages, scanCoverage });
+    await runStartupCoverageScan(null, { loadMessages, scanCoverage } as unknown as DiagnosticsDeps);
 
     expect(loadMessages).toHaveBeenCalledWith(2000);
     expect(scanCoverage).not.toHaveBeenCalled();
+  });
+
+  test('runStartupCoverageScan never dumps fixtures regardless of the dump opt-in', async () => {
+    const writeTextFile = mock(async () => {});
+
+    await withEnvironment(allowDump, async () => {
+      await runStartupCoverageScan(null, {
+        loadMessages: () => [{ rawMessage: '{}', providerMessageId: 'm1' }],
+        scanCoverage: async () => ({
+          uniqueByType: new Map([['conversation', { raw: { text: 'hello' }, parsed: { messageType: 'conversation' } }]]),
+          errors: [],
+          unknownSamples: [],
+          total: 1,
+        }),
+        writeTextFile,
+      } as unknown as DiagnosticsDeps);
+    });
+
+    expect(writeTextFile).not.toHaveBeenCalled();
   });
 });

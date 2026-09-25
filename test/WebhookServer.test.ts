@@ -117,10 +117,13 @@ describe('WebhookServer helpers', () => {
     expect(fallbackMsg).toContain('GitHub Event: deployment');
   });
 
-  test('buildWebhookMessage should stringify payloads with no generic fields', () => {
-    const msg = buildWebhookMessage({}, { nested: { value: 1 } });
+  test('buildWebhookMessage should stringify payloads with no generic fields as field names only', () => {
+    const secret = 'test-webhook-secret-0123456789abcdef';
+    const msg = buildWebhookMessage({}, { nested: { value: 1 }, secret });
     expect(msg).toContain('Webhook payload');
     expect(msg).toContain('nested');
+    expect(msg).not.toContain(secret);
+    expect(msg).not.toContain('value');
   });
 
   test('resolveRoomIds should merge room_id and room_ids', () => {
@@ -191,5 +194,18 @@ describe('WebhookServer helpers', () => {
     });
 
     await expect(readRequestBodyWithLimit(req, 64)).rejects.toThrow('Request body too large');
+  });
+
+  test('readRequestBodyWithLimit should cancel a stalled body at the deadline', async () => {
+    const body = new ReadableStream<Uint8Array>({
+      start() {},
+    });
+    const req = new Request('http://localhost/webhook', {
+      method: 'POST',
+      body,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+
+    await expect(readRequestBodyWithLimit(req, 1024, 10)).rejects.toMatchObject({ status: 408 });
   });
 });

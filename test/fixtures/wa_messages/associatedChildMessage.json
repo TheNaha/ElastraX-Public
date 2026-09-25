@@ -1,32 +1,32 @@
 {
   "key": {
-    "remoteJid": "62895320460745-1601116727@g.us",
+    "remoteJid": "synthetic-group-1-1700000000@g.us",
     "fromMe": false,
-    "id": "AC8BD1C56B6CBB9DCB31CAA4BD7974A3"
+    "id": "synthetic-message-1"
   },
   "message": {
     "messageContextInfo": {
       "messageAssociation": {
         "associationType": "HD_IMAGE_DUAL_UPLOAD",
         "parentMessageKey": {
-          "remoteJid": "62895320460745-1601116727@g.us",
+          "remoteJid": "synthetic-group-1-1700000000@g.us",
           "fromMe": false,
-          "id": "AC21536325253F054837759C9D2C3785",
-          "participant": "27870210576446@lid"
+          "id": "synthetic-parent-message-1",
+          "participant": "synthetic-participant-1@lid"
         }
       }
     },
     "associatedChildMessage": {
       "message": {
         "imageMessage": {
-          "url": "https://mmg.whatsapp.net/v/t62.7118-24/543128192_1305976158031071_4703376326389053865_n.enc?ccb=11-4&oh=01_Q5Aa3wH2DJx9d3w0T_jAAZC7HDL9-HGR296QJuRkIMC61ZcNQQ&oe=69B3BA4A&_nc_sid=5e03e0&mms3=true",
+          "url": "",
           "mimetype": "image/jpeg",
-          "caption": "Ke toko print untuk burning cd dan submit digilib. Meanwhile toko ini tutup jam 18.00 🤡",
+          "caption": "",
           "fileLength": "251655",
           "height": 2560,
           "width": 1440,
-          "directPath": "/v/t62.7118-24/543128192_1305976158031071_4703376326389053865_n.enc?ccb=11-4&oh=01_Q5Aa3wH2DJx9d3w0T_jAAZC7HDL9-HGR296QJuRkIMC61ZcNQQ&oe=69B3BA4A&_nc_sid=5e03e0",
-          "mediaKeyTimestamp": "1770805865",
+          "directPath": "",
+          "mediaKeyTimestamp": "",
           "contextInfo": {
             "pairedMediaType": "HD_IMAGE_CHILD"
           },
@@ -40,13 +40,13 @@
       }
     }
   },
-  "messageTimestamp": "1770805866",
-  "participant": "27870210576446@lid",
+  "messageTimestamp": "1700000000",
+  "participant": "synthetic-participant-1@lid",
   "mediaData": {
-    "localPath": "Media/WhatsApp Images/IMG-20260218-WA0003.jpg"
+    "localPath": ""
   },
   "reportingTokenInfo": {
-    "reportingTag": "ARCet0pEgV83LAvsJz/r7Q=="
+    "reportingTag": ""
   },
   "isMentionedInStatus": false
 }

@@ -16,6 +16,9 @@ const originalFfmpegMkdir = ffmpegConverterDeps.fs.mkdir;
 const originalFfmpegWriteFile = ffmpegConverterDeps.fs.writeFile;
 const originalFfmpegReadFile = ffmpegConverterDeps.fs.readFile;
 const originalFfmpegUnlink = ffmpegConverterDeps.fs.unlink;
+const originalFfmpegStat = ffmpegConverterDeps.fs.stat;
+const originalFfmpegChmod = ffmpegConverterDeps.fs.chmod;
+const originalFfmpegRm = ffmpegConverterDeps.fs.rm;
 const originalFfmpegCrypto = ffmpegConverterDeps.crypto;
 
 const createMockCtx = (): MessageContext => ({
@@ -39,12 +42,37 @@ const createMockCtx = (): MessageContext => ({
   language: 'en',
 }) as unknown as MessageContext;
 
+type FakeChild = EventEmitter & {
+  stdout: EventEmitter;
+  stderr: EventEmitter;
+  stdin: EventEmitter & { end: (chunk?: Uint8Array) => void; destroyed: boolean };
+  kill: (signal?: NodeJS.Signals) => boolean;
+  killed: boolean;
+  pid?: number;
+  args?: string[];
+};
+
+function createFakeChild(args: string[] = [], pid?: number): FakeChild {
+  const child = new EventEmitter() as FakeChild;
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = Object.assign(new EventEmitter(), { end: () => undefined, destroyed: true }) as FakeChild['stdin'];
+  child.kill = () => {
+    child.killed = true;
+    return true;
+  };
+  child.killed = false;
+  if (pid !== undefined) child.pid = pid;
+  child.args = args;
+  return child;
+}
+
 describe('Mock isolation regression', () => {
   beforeEach(() => {
-    downloadToolDeps.fs.mkdir = mock(async () => {}) as typeof downloadToolDeps.fs.mkdir;
+    downloadToolDeps.fs.mkdir = mock(async () => undefined) as unknown as typeof downloadToolDeps.fs.mkdir;
     downloadToolDeps.fs.readdir = mock(async () => ['feedfacecafebeef.mp4']) as unknown as typeof downloadToolDeps.fs.readdir;
     downloadToolDeps.fs.readFile = mock(async () => Buffer.from('video-bytes')) as unknown as typeof downloadToolDeps.fs.readFile;
-    downloadToolDeps.fs.rm = mock(async () => {}) as typeof downloadToolDeps.fs.rm;
+    downloadToolDeps.fs.rm = mock(async () => undefined) as unknown as typeof downloadToolDeps.fs.rm;
     downloadToolDeps.crypto = {
       ...originalDownloadCrypto,
       randomBytes: mock((size: number) => {
@@ -53,10 +81,13 @@ describe('Mock isolation regression', () => {
       }),
     } as typeof downloadToolDeps.crypto;
 
-    ffmpegConverterDeps.fs.mkdir = mock(async () => {}) as typeof ffmpegConverterDeps.fs.mkdir;
-    ffmpegConverterDeps.fs.writeFile = mock(async () => {}) as typeof ffmpegConverterDeps.fs.writeFile;
+    ffmpegConverterDeps.fs.mkdir = mock(async () => undefined) as unknown as typeof ffmpegConverterDeps.fs.mkdir;
+    ffmpegConverterDeps.fs.chmod = mock(async () => undefined) as unknown as typeof ffmpegConverterDeps.fs.chmod;
+    ffmpegConverterDeps.fs.writeFile = mock(async () => undefined) as unknown as typeof ffmpegConverterDeps.fs.writeFile;
     ffmpegConverterDeps.fs.readFile = mock(async () => Buffer.from('webp-bytes')) as unknown as typeof ffmpegConverterDeps.fs.readFile;
-    ffmpegConverterDeps.fs.unlink = mock(async () => {}) as typeof ffmpegConverterDeps.fs.unlink;
+    ffmpegConverterDeps.fs.unlink = mock(async () => undefined) as unknown as typeof ffmpegConverterDeps.fs.unlink;
+    ffmpegConverterDeps.fs.rm = mock(async () => undefined) as unknown as typeof ffmpegConverterDeps.fs.rm;
+    ffmpegConverterDeps.fs.stat = mock(async () => ({ isFile: () => true, size: 10 })) as unknown as typeof ffmpegConverterDeps.fs.stat;
     ffmpegConverterDeps.crypto = {
       ...originalFfmpegCrypto,
       randomBytes: mock((size: number) => Buffer.from('cd'.repeat(size), 'hex')),
@@ -76,21 +107,21 @@ describe('Mock isolation regression', () => {
     ffmpegConverterDeps.fs.writeFile = originalFfmpegWriteFile;
     ffmpegConverterDeps.fs.readFile = originalFfmpegReadFile;
     ffmpegConverterDeps.fs.unlink = originalFfmpegUnlink;
+    ffmpegConverterDeps.fs.stat = originalFfmpegStat;
+    ffmpegConverterDeps.fs.chmod = originalFfmpegChmod;
+    ffmpegConverterDeps.fs.rm = originalFfmpegRm;
     ffmpegConverterDeps.crypto = originalFfmpegCrypto;
   });
 
   test('DownloadTool and FFmpegConverter can be mocked independently in the same test process', async () => {
     const downloadSpawn = mock((_command: string, args: string[]) => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter; stdout: EventEmitter };
-      child.stderr = new EventEmitter();
-      child.stdout = new EventEmitter();
-      setTimeout(() => child.emit('close', 0), 10);
-      return Object.assign(child, { args }) as never;
+      const child = createFakeChild(args);
+      setTimeout(() => child.emit('close', 0, null), 10);
+      return child as never;
     });
     const ffmpegSpawn = mock(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => child.emit('close', 0), 10);
+      const child = createFakeChild();
+      setTimeout(() => child.emit('close', 0, null), 10);
       return child as never;
     });
 
@@ -106,6 +137,28 @@ describe('Mock isolation regression', () => {
     expect(downloadResult).toContain('Download complete');
     expect(converted.toString()).toBe('webp-bytes');
     expect(downloadSpawn).toHaveBeenCalledTimes(1);
+    expect(ffmpegSpawn).toHaveBeenCalledTimes(1);
+  });
+
+  test('each tool keeps its own spawn dependency after a failure in the other', async () => {
+    const downloadSpawn = mock(() => {
+      throw new Error('yt-dlp is unavailable');
+    });
+    const ffmpegSpawn = mock(() => {
+      const child = createFakeChild();
+      setTimeout(() => child.emit('close', 0, null), 10);
+      return child as never;
+    });
+    downloadToolDeps.spawn = downloadSpawn as unknown as typeof downloadToolDeps.spawn;
+    ffmpegConverterDeps.spawn = ffmpegSpawn as typeof ffmpegConverterDeps.spawn;
+
+    const downloadResult = await new DownloadTool().execute({ url: 'https://example.com/video', format: 'mp4' }, createMockCtx());
+    expect(downloadResult).toContain('yt-dlp is unavailable');
+    expect(downloadResult).not.toContain('Download complete');
+    expect(downloadSpawn).toHaveBeenCalledTimes(1);
+
+    const converted = await FFmpegConverter.convert(Buffer.from('input'), ['-vf', 'scale=256:256'], 'png', 'webp');
+    expect(converted.toString()).toBe('webp-bytes');
     expect(ffmpegSpawn).toHaveBeenCalledTimes(1);
   });
 });

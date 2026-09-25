@@ -70,7 +70,7 @@ describe('parseWhatsAppMessage — dynamic fixture coverage', () => {
       let didThrow = false;
       try {
         result = await parseWhatsAppMessage(raw, BOT_JID, null, dummyResolver);
-      } catch (e) {
+      } catch {
         didThrow = true;
       }
       expect(didThrow).toBe(false);
@@ -85,7 +85,6 @@ describe('parseWhatsAppMessage — dynamic fixture coverage', () => {
       expect(Array.isArray(result!.mentionedIds)).toBe(true);
 
       // If the raw message contains a known media type key, hasMedia must be true
-      const msg = raw?.message ?? {};
       const hasSomeMediaKey = MEDIA_TYPES.has(result!.messageType);
       if (hasSomeMediaKey) {
         expect(result!.hasMedia).toBe(true);
@@ -195,7 +194,7 @@ describe('parseWhatsAppMessage — specific type assertions', () => {
 describe('parseWhatsAppMessage — edge cases', () => {
   test('empty message object does not throw', async () => {
     let err = false;
-    try { await parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false } } as any, null, null, dummyResolver); } catch(e) { err = true; };
+    try { await parseWhatsAppMessage({ key: { remoteJid: 'x@s.whatsapp.net', id: 'y', fromMe: false } } as any, null, null, dummyResolver); } catch { err = true; };
     expect(err).toBe(false);
   });
 

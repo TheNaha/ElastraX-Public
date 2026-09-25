@@ -46,6 +46,9 @@ import { Scheduler, computeNextOccurrence } from '../src/utils/Scheduler';
 type SchedulerInternals = {
   computeNextOccurrence(lastFire: Date, recurrence: string): Date | null;
   processReminders(): Promise<void>;
+  stopped: boolean;
+  processing: boolean;
+  timer: ReturnType<typeof setInterval> | null;
 };
 
 const schedulerInternals = Scheduler as unknown as SchedulerInternals;
@@ -53,13 +56,17 @@ const schedulerInternals = Scheduler as unknown as SchedulerInternals;
 describe('Scheduler', () => {
   beforeEach(() => {
     Scheduler.stop();
+    schedulerInternals.stopped = false;
+    schedulerInternals.processing = false;
     dueReminders = [];
     updateSets.length = 0;
     updateRunCalls.length = 0;
+    nextClaimChanges = 1;
   });
 
   afterEach(() => {
     Scheduler.stop();
+    schedulerInternals.stopped = false;
   });
 
   test('registerSender does not throw', () => {
@@ -127,9 +134,75 @@ describe('Scheduler', () => {
     expect(computeNextOccurrence(lastFire, 'every 0h')).toBeNull();
   });
 
+  test('computeNextOccurrence rejects sub-minute intervals instead of looping', () => {
+    const lastFire = new Date(Date.now() - 10_000);
+    expect(computeNextOccurrence(lastFire, 'every 0.0000001m')).toBeNull();
+    expect(computeNextOccurrence(lastFire, 'every 0.5m')).toBeNull();
+    expect(computeNextOccurrence(lastFire, 'every 0m')).toBeNull();
+    expect(computeNextOccurrence(lastFire, 'every 1m')).toBeInstanceOf(Date);
+  });
+
+  test('computeNextOccurrence rejects intervals beyond the five year ceiling', () => {
+    const lastFire = new Date(Date.now() - 86_400_000);
+    expect(computeNextOccurrence(lastFire, 'every 3650d')).toBeNull();
+    expect(computeNextOccurrence(lastFire, 'every 365d')).toBeInstanceOf(Date);
+  });
+
   test('processReminders returns early when nothing is due', async () => {
     await expect(schedulerInternals.processReminders()).resolves.toBeUndefined();
     expect(updateRunCalls).toHaveLength(0);
+  });
+
+  test('processReminders does nothing while the scheduler is stopped', async () => {
+    dueReminders = [{
+      id: 9,
+      chatRoomId: 'chat-9',
+      senderName: 'Ivy',
+      message: 'Standup',
+      platform: 'whatsapp',
+      remindAt: new Date(Date.now() - 1000),
+      recurrence: null,
+    }];
+    const send = mock(async () => {});
+    Scheduler.registerSender('whatsapp', send);
+    schedulerInternals.stopped = true;
+
+    await schedulerInternals.processReminders();
+
+    expect(send).not.toHaveBeenCalled();
+    expect(updateRunCalls).toHaveLength(0);
+  });
+
+  test('processReminders releases the claim when the scheduler is stopped mid-batch', async () => {
+    const send = mock(async () => {
+      schedulerInternals.stopped = true;
+    });
+    Scheduler.registerSender('whatsapp', send);
+    dueReminders = [
+      {
+        id: 10,
+        chatRoomId: 'chat-10',
+        senderName: 'Jo',
+        message: 'First',
+        platform: 'whatsapp',
+        remindAt: new Date(Date.now() - 1000),
+        recurrence: null,
+      },
+      {
+        id: 11,
+        chatRoomId: 'chat-11',
+        senderName: 'Jo',
+        message: 'Second',
+        platform: 'whatsapp',
+        remindAt: new Date(Date.now() - 1000),
+        recurrence: null,
+      },
+    ];
+
+    await schedulerInternals.processReminders();
+
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
   });
 
   test('processReminders marks one-shot reminders as sent after delivery', async () => {
@@ -148,7 +221,7 @@ describe('Scheduler', () => {
     await schedulerInternals.processReminders();
 
     expect(send).toHaveBeenCalledTimes(1);
-    expect(updateSets).toContainEqual({ isSent: true });
+    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
   });
 
   test('processReminders reschedules recurring reminders when recurrence is valid', async () => {
@@ -188,7 +261,7 @@ describe('Scheduler', () => {
 
     await schedulerInternals.processReminders();
 
-    expect(updateSets).toContainEqual({ isSent: true });
+    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
   });
 
   test('processReminders skips reminders when no sender exists for the platform', async () => {
@@ -205,7 +278,7 @@ describe('Scheduler', () => {
     await schedulerInternals.processReminders();
 
     expect(updateRunCalls).toHaveLength(2); // claim + release
-    expect(updateSets).toContainEqual({ claimedAt: null });
+    expect(updateSets).toContainEqual(expect.objectContaining({ claimedAt: null }));
   });
 
   test('processReminders skips delivery when the atomic claim is already held', async () => {
@@ -231,7 +304,7 @@ describe('Scheduler', () => {
     }
   });
 
-  test('processReminders swallows sender failures and continues', async () => {
+  test('processReminders releases the claim and backs off when a sender fails', async () => {
     const send = mock(async (_chatId: string) => {
       throw new Error('send failed');
     });
@@ -248,31 +321,99 @@ describe('Scheduler', () => {
 
     await expect(schedulerInternals.processReminders()).resolves.toBeUndefined();
     expect(updateRunCalls).toHaveLength(2); // claim + release for retry
-    expect(updateSets).toContainEqual({ claimedAt: null });
+    const release = updateSets[1];
+    expect(release?.claimedAt).toBeNull();
+    expect(release?.remindAt).toBeInstanceOf(Date);
+    expect((release?.remindAt as Date).getTime()).toBeGreaterThan(Date.now());
+    expect(updateSets).not.toContainEqual({ isSent: true });
   });
 
-  test('start logs loop failures from the interval callback', async () => {
+  test('start polls immediately and then on every interval tick without leaking rejections', async () => {
     const originalSetInterval = global.setInterval;
     const originalClearInterval = global.clearInterval;
+    const intervalDelays: number[] = [];
     let intervalCallback: (() => void) | null = null;
-    const processSpy = spyOn(schedulerInternals, 'processReminders').mockRejectedValue(new Error('loop failed'));
 
-    global.setInterval = (((callback: () => void) => {
+    global.setInterval = (((callback: () => void, delay?: number) => {
       intervalCallback = callback;
-      return 1 as unknown as ReturnType<typeof setInterval>;
+      intervalDelays.push(Number(delay));
+      return { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
     }) as typeof global.setInterval);
     global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
 
+    const processSpy = spyOn(schedulerInternals, 'processReminders').mockResolvedValue(undefined);
+    const rejections: unknown[] = [];
+    const captureRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', captureRejection);
+
     try {
       Scheduler.start();
-      (intervalCallback as (() => void) | null)?.();
-      await Promise.resolve();
       expect(processSpy).toHaveBeenCalledTimes(1);
+      expect(intervalDelays).toEqual([30_000]);
+      Scheduler.start();
+      expect(intervalDelays).toHaveLength(1);
+      expect(intervalDelays).toHaveLength(1); // idempotent: no second interval
+
+      (intervalCallback as (() => void) | null)?.();
+      expect(processSpy).toHaveBeenCalledTimes(2);
     } finally {
-      Scheduler.stop();
+      process.off('unhandledRejection', captureRejection);
       processSpy.mockRestore();
       global.setInterval = originalSetInterval;
       global.clearInterval = originalClearInterval;
     }
+    expect(rejections).toEqual([]);
+  });
+
+  test('start clears the stopped flag so a restarted scheduler resumes delivery', async () => {
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+    global.setInterval = ((() => ({ unref: () => {} }) as unknown as ReturnType<typeof setInterval>) as unknown) as typeof global.setInterval;
+    global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
+
+    try {
+      Scheduler.stop();
+      expect(schedulerInternals.stopped).toBe(true);
+      Scheduler.start();
+      expect(schedulerInternals.stopped).toBe(false);
+    } finally {
+      global.setInterval = originalSetInterval;
+      global.clearInterval = originalClearInterval;
+    }
+  });
+
+  test('a failing reminder tick is contained instead of becoming a fatal unhandled rejection', async () => {
+    const originalSetInterval = global.setInterval;
+    const originalClearInterval = global.clearInterval;
+    let intervalCallback: (() => void) | null = null;
+
+    global.setInterval = (((callback: () => void) => {
+      intervalCallback = callback;
+      return { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
+    }) as typeof global.setInterval);
+    global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
+
+    const processSpy = spyOn(schedulerInternals, 'processReminders').mockRejectedValue(new Error('loop failed'));
+    const rejections: unknown[] = [];
+    const captureRejection = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', captureRejection);
+
+    try {
+      Scheduler.start();
+      await Promise.resolve();
+      (intervalCallback as (() => void) | null)?.();
+      await new Promise(resolve => setTimeout(resolve, 25));
+    } finally {
+      process.off('unhandledRejection', captureRejection);
+      processSpy.mockRestore();
+      global.setInterval = originalSetInterval;
+      global.clearInterval = originalClearInterval;
+    }
+
+    expect(rejections).toEqual([]);
   });
 });

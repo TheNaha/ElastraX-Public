@@ -1,17 +1,17 @@
 {
   "key": {
-    "remoteJid": "62895320460745-1601116727@g.us",
+    "remoteJid": "synthetic-group-1-1700000000@g.us",
     "fromMe": false,
-    "id": "AC3BF020E7440EC88AE5275E7897D42F"
+    "id": "synthetic-message-1"
   },
   "message": {
-    "conversation": "Damn its dead",
+    "conversation": "",
     "messageContextInfo": {}
   },
-  "messageTimestamp": "1771754495",
-  "participant": "228973531406343@lid",
+  "messageTimestamp": "1700000000",
+  "participant": "synthetic-participant-1@lid",
   "reportingTokenInfo": {
-    "reportingTag": "ARDj4Am3yU/me4fIErWZfHIJpNc="
+    "reportingTag": ""
   },
   "isMentionedInStatus": false
 }

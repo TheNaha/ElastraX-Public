@@ -1,15 +1,15 @@
 {
   "key": {
-    "remoteJid": "628123456789@s.whatsapp.net",
+    "remoteJid": "synthetic-user-1@s.whatsapp.net",
     "fromMe": false,
-    "id": "IMG002"
+    "id": "synthetic-message-1"
   },
-  "pushName": "Alice",
+  "pushName": "Synthetic User",
   "message": {
     "imageMessage": {
       "caption": "",
       "mimetype": "image/jpeg",
-      "url": "https://mmg.whatsapp.net/fake"
+      "url": ""
     }
   },
   "messageTimestamp": 1700000002

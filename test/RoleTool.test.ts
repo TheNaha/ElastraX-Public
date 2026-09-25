@@ -1,32 +1,47 @@
 import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
-
-type SafeDbQuery = {
-  where: () => {
-    then: (
-      resolve: (value: unknown[]) => unknown,
-      reject?: (reason: unknown) => unknown,
-    ) => Promise<unknown>;
-    catch: (reject: (reason: unknown) => unknown) => Promise<unknown>;
-    limit: () => Promise<unknown[]>;
-    orderBy: () => { limit: () => Promise<unknown[]> };
-  };
-  limit: () => Promise<unknown[]>;
-};
-
-type SafeDb = {
-  select: () => { from: () => SafeDbQuery };
-  insert: () => { values: () => { onConflictDoNothing: () => Promise<object>; then: (resolve: (value: object) => unknown) => Promise<unknown> } };
-  update: () => { set: () => { where: () => Promise<void> } };
-  delete: () => { where: () => Promise<object> };
-};
+import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 // ─── Override the db mock that leaks from agent.test.ts (mock.module is process-scoped) ───
 // agent.test.ts permanently replaces '../src/db' without a `delete` method, which
 // breaks code paths that call db.delete() even when most service methods are spied.
 // This re-registers a safe, complete mock that covers all db operations used by
 // RoleTool's service dependencies (RoleService, IdentityService, PrivilegeService).
-mock.module('../src/db', () => {
-  const safeMock: SafeDb = {
+// ── Module mock backed by a real migrated temp database ──────────────────────
+// Bun module mocks are process-wide, so this fake must expose the full
+// `../src/db` surface or every other test file importing the real module breaks.
+const database: TempDatabase = createTempDatabase();
+
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
+
+function completeDb(overrides: Record<string, unknown>): unknown {
+  const base = database.db as unknown as Record<string | symbol, unknown>;
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && property in overrides) return overrides[property];
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
+mock.module('../src/db', () => ({
+  db: completeDb({
     select: () => ({
       from: () => ({
         where: () => ({
@@ -53,13 +68,14 @@ mock.module('../src/db', () => {
     delete: () => ({
       where: async () => ({}),
     }),
-  };
-  return { db: safeMock };
-});
+  }),
+  sqlite: database.sqlite,
+  withImmediateTransaction,
+}));
 
 import { MessageContext } from '../src/core/MessageContext';
 import { RoleTool } from '../src/tools/RoleTool';
-import { AuthService, BUILTIN_ROLES } from '../src/utils/AuthService';
+import { AuthService } from '../src/utils/AuthService';
 
 import { IdentityService } from '../src/utils/IdentityService';
 

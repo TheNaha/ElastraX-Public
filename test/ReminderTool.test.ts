@@ -7,8 +7,42 @@ let mockReminderRows: any[] = [];
 let lastInsertedValues: any = null;
 let lastDeletedId: any = null;
 
+// ── Module mock backed by a real migrated temp database ──────────────────────
+// Bun module mocks are process-wide, so this fake must expose the full
+// `../src/db` surface or every other test file importing the real module breaks.
+const database: TempDatabase = createTempDatabase();
+
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
+
+function completeDb(overrides: Record<string, unknown>): unknown {
+  const base = database.db as unknown as Record<string | symbol, unknown>;
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && property in overrides) return overrides[property];
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 mock.module('../src/db', () => ({
-  db: {
+  db: completeDb({
     select: () => ({
       from: () => ({
         where: () => ({
@@ -29,9 +63,12 @@ mock.module('../src/db', () => ({
         run: () => { lastDeletedId = true; },
       }),
     }),
-  },
+  }),
+  sqlite: database.sqlite,
+  withImmediateTransaction,
 }));
 
+import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { parseRelativeTime, ReminderTool } from '../src/tools/ReminderTool';
 import { MessageContext } from '../src/core/MessageContext';
 
@@ -150,6 +187,35 @@ describe('parseRelativeTime', () => {
     expect(result).toBeInstanceOf(Date);
     expect(result!.getHours()).toBe(14);
     expect(result!.getMinutes()).toBe(30);
+  });
+
+  test('"at 18:00" from the tool description parses as 6 PM', () => {
+    const result = parseRelativeTime('at 18:00');
+    expect(result).toBeInstanceOf(Date);
+    expect(result!.getHours()).toBe(18);
+    expect(result!.getMinutes()).toBe(0);
+  });
+
+  test('"tomorrow at 23:59" parses as just before midnight tomorrow', () => {
+    const result = parseRelativeTime('tomorrow at 23:59');
+    expect(result).toBeInstanceOf(Date);
+    expect(result!.getHours()).toBe(23);
+    expect(result!.getMinutes()).toBe(59);
+  });
+
+  test('rejects sub-minute and past delays instead of scheduling them', () => {
+    expect(parseRelativeTime('in 0 seconds')).toBeNull();
+    expect(parseRelativeTime('in 0.2 seconds')).toBeNull();
+  });
+
+  test('rejects reminders beyond the five year horizon', () => {
+    const tooFar = new Date(Date.now() + 6 * 365 * 86_400_000).toISOString();
+    expect(parseRelativeTime(tooFar)).toBeNull();
+  });
+
+  test('rejects 12-hour clock values that exceed 12', () => {
+    expect(parseRelativeTime('at 13:00 pm')).toBeNull();
+    expect(parseRelativeTime('tomorrow at 25:00')).toBeNull();
   });
 
   test('invalid input returns null', () => {

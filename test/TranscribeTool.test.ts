@@ -2,21 +2,32 @@ import { expect, test, describe, mock, spyOn, beforeEach, afterEach } from 'bun:
 import { MessageContext } from '../src/core/MessageContext';
 import { TranscribeTool } from '../src/tools/TranscribeTool';
 import * as fs from 'fs';
-import * as fsPromises from 'fs/promises';
+import { mediaStorageDeps } from '../src/utils/MediaStorage';
 
 describe('TranscribeTool', () => {
   const originalFetch = global.fetch;
   const savedEndpoint = process.env.TRANSCRIBE_ENDPOINT;
   const savedApiKey = process.env.TRANSCRIBE_API_KEY;
   let existsSpy: ReturnType<typeof spyOn>;
-  let readFileSpy: ReturnType<typeof spyOn>;
+  let statSpy: ReturnType<typeof spyOn>;
+  let openSpy: ReturnType<typeof spyOn>;
+  let mediaReadCount: number;
 
   beforeEach(() => {
     global.fetch = originalFetch;
     process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
     process.env.TRANSCRIBE_API_KEY = savedApiKey;
     existsSpy = spyOn(fs, 'existsSync').mockReturnValue(true);
-    readFileSpy = spyOn(fsPromises, 'readFile').mockResolvedValue(Buffer.from('audio-data') as any);
+    statSpy = spyOn(mediaStorageDeps, 'stat').mockResolvedValue({ isFile: () => true, size: 8 } as never);
+    mediaReadCount = 0;
+    openSpy = spyOn(mediaStorageDeps, 'open').mockResolvedValue({
+      read: async (buffer: Buffer) => {
+        if (mediaReadCount++ > 0) return { bytesRead: 0 };
+        buffer.set(Buffer.from([0x4f, 0x67, 0x67, 0x53, 0, 2, 0, 0]));
+        return { bytesRead: 8 };
+      },
+      close: async () => undefined,
+    } as never);
   });
 
   afterEach(() => {
@@ -24,7 +35,8 @@ describe('TranscribeTool', () => {
     process.env.TRANSCRIBE_ENDPOINT = savedEndpoint;
     process.env.TRANSCRIBE_API_KEY = savedApiKey;
     existsSpy.mockRestore();
-    readFileSpy.mockRestore();
+    statSpy.mockRestore();
+    openSpy.mockRestore();
   });
 
   const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -79,7 +91,7 @@ describe('TranscribeTool', () => {
     global.fetch = mock(async () => ({
       ok: true,
       json: async () => ({ text: 'hello world' }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const tool = new TranscribeTool();
     const ctx = createMockCtx();
@@ -93,7 +105,7 @@ describe('TranscribeTool', () => {
     global.fetch = mock(async () => ({
       ok: false,
       status: 500,
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const tool = new TranscribeTool();
     const ctx = createMockCtx();

@@ -1,191 +1,95 @@
-import { expect, test, describe, mock, beforeEach, afterEach } from 'bun:test';
-import { EventEmitter } from 'events';
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FFmpegConverter, ffmpegConverterDeps } from '../src/utils/FFmpegConverter';
+import { NORMAL_MEDIA_MAX_BYTES } from '../src/providers/media';
+import type { BoundedProcessOptions } from '../src/providers/process';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
+const original = {
+  mkdir: ffmpegConverterDeps.fs.mkdir,
+  chmod: ffmpegConverterDeps.fs.chmod,
+  writeFile: ffmpegConverterDeps.fs.writeFile,
+  stat: ffmpegConverterDeps.fs.stat,
+  readFile: ffmpegConverterDeps.fs.readFile,
+  rm: ffmpegConverterDeps.fs.rm,
+  crypto: ffmpegConverterDeps.crypto,
+  runProcess: ffmpegConverterDeps.runProcess,
 };
 
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-const originalSpawn = ffmpegConverterDeps.spawn;
-const originalMkdir = ffmpegConverterDeps.fs.mkdir;
-const originalWriteFile = ffmpegConverterDeps.fs.writeFile;
-const originalReadFile = ffmpegConverterDeps.fs.readFile;
-const originalUnlink = ffmpegConverterDeps.fs.unlink;
-const originalCrypto = ffmpegConverterDeps.crypto;
-
-const mockSpawn = mock(() => {
-  const child = new EventEmitter() as EventEmitter & {
-    stderr: EventEmitter;
-    kill: ReturnType<typeof mock>;
-  };
-  child.stderr = new EventEmitter();
-  child.kill = mock();
-  return child as never;
-});
-
-const mockWriteFile = mock(async () => {});
-const mockReadFile = mock(async () => Buffer.from('output'));
-const mockUnlink = mock(async () => {});
-const mockMkdir = mock(async () => {});
+const mocks = {
+  mkdir: mock(async () => {}),
+  chmod: mock(async () => {}),
+  writeFile: mock(async () => {}),
+  stat: mock(async () => ({ isFile: () => true, size: 6 })),
+  readFile: mock(async () => Buffer.from('output')),
+  rm: mock(async () => {}),
+  runProcess: mock(async (_options: BoundedProcessOptions) => undefined),
+};
 
 describe('FFmpegConverter', () => {
   beforeEach(() => {
-    mockSpawn.mockClear();
-    mockWriteFile.mockClear();
-    mockReadFile.mockClear();
-    mockUnlink.mockClear();
-    mockMkdir.mockClear();
-
-    ffmpegConverterDeps.spawn = mockSpawn as typeof ffmpegConverterDeps.spawn;
-    ffmpegConverterDeps.fs.mkdir = mockMkdir as typeof ffmpegConverterDeps.fs.mkdir;
-    ffmpegConverterDeps.fs.writeFile = mockWriteFile as typeof ffmpegConverterDeps.fs.writeFile;
-    ffmpegConverterDeps.fs.readFile = mockReadFile as unknown as typeof ffmpegConverterDeps.fs.readFile;
-    ffmpegConverterDeps.fs.unlink = mockUnlink as typeof ffmpegConverterDeps.fs.unlink;
+    for (const value of Object.values(mocks)) value.mockClear();
+    mocks.stat.mockImplementation(async () => ({ isFile: () => true, size: 6 }) as never);
+    mocks.readFile.mockImplementation(async () => Buffer.from('output'));
+    mocks.runProcess.mockImplementation(async () => undefined);
+    ffmpegConverterDeps.fs.mkdir = mocks.mkdir as never;
+    ffmpegConverterDeps.fs.chmod = mocks.chmod as never;
+    ffmpegConverterDeps.fs.writeFile = mocks.writeFile as never;
+    ffmpegConverterDeps.fs.stat = mocks.stat as never;
+    ffmpegConverterDeps.fs.readFile = mocks.readFile as never;
+    ffmpegConverterDeps.fs.rm = mocks.rm as never;
+    ffmpegConverterDeps.runProcess = mocks.runProcess as never;
     ffmpegConverterDeps.crypto = {
-      ...originalCrypto,
+      ...original.crypto,
       randomBytes: mock((size: number) => Buffer.from('ab'.repeat(size), 'hex')),
     } as typeof ffmpegConverterDeps.crypto;
   });
 
   afterEach(() => {
-    ffmpegConverterDeps.spawn = originalSpawn;
-    ffmpegConverterDeps.fs.mkdir = originalMkdir;
-    ffmpegConverterDeps.fs.writeFile = originalWriteFile;
-    ffmpegConverterDeps.fs.readFile = originalReadFile;
-    ffmpegConverterDeps.fs.unlink = originalUnlink;
-    ffmpegConverterDeps.crypto = originalCrypto;
+    ffmpegConverterDeps.fs.mkdir = original.mkdir;
+    ffmpegConverterDeps.fs.chmod = original.chmod;
+    ffmpegConverterDeps.fs.writeFile = original.writeFile;
+    ffmpegConverterDeps.fs.stat = original.stat;
+    ffmpegConverterDeps.fs.readFile = original.readFile;
+    ffmpegConverterDeps.fs.rm = original.rm;
+    ffmpegConverterDeps.crypto = original.crypto;
+    ffmpegConverterDeps.runProcess = original.runProcess;
   });
 
-  test('should convert buffer successfully', async () => {
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => child.emit('close', 0), 10);
-      return child as never;
-    });
+  test('converts with private permissions and bounded output', async () => {
+    const result = await FFmpegConverter.convert(Buffer.from('input'), ['-vf', 'fps=10,scale=320:-1:flags=lanczos'], 'img', 'webp');
 
-    const result = await FFmpegConverter.convert(Buffer.from('input'), ['-vf', 'scale=320:320'], 'img', 'webp');
-
-    expect(result).toBeDefined();
-    expect(mockMkdir).toHaveBeenCalled();
-    expect(mockWriteFile).toHaveBeenCalled();
-    expect(mockSpawn).toHaveBeenCalled();
-    expect(mockUnlink).toHaveBeenCalledTimes(2);
-    expect(mockReadFile).toHaveBeenCalled();
+    expect(result.toString()).toBe('output');
+    expect(mocks.mkdir).toHaveBeenCalledWith(expect.any(String), { recursive: true, mode: 0o700 });
+    expect(mocks.writeFile).toHaveBeenCalledWith(expect.any(String), expect.any(Buffer), { mode: 0o600, flag: 'wx' });
+    expect(mocks.runProcess).toHaveBeenCalled();
+    const options = mocks.runProcess.mock.calls[0]![0];
+    expect(options.args).toContain('-nostdin');
+    expect(options.env).toEqual({ TMPDIR: expect.any(String) });
+    expect(mocks.rm).toHaveBeenCalledWith(expect.any(String), { recursive: true, force: true });
   });
 
-  test('should handle ffmpeg failure', async () => {
-    expect.assertions(3);
-
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => {
-        child.stderr.emit('data', 'Error message');
-        child.emit('close', 1);
-      }, 10);
-      return child as never;
-    });
-
-    try {
-      await FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp');
-    } catch (e: any) {
-      expect(e.message).toContain('FFmpeg error 1');
-      expect(e.message).toContain('Error message');
-    }
-
-    expect(mockUnlink).toHaveBeenCalled();
+  test('rejects unsafe arguments and extensions before starting work', async () => {
+    await expect(FFmpegConverter.convert(Buffer.from('input'), ['-exec', 'rm'], 'img', 'webp')).rejects.toThrow('Unsafe');
+    await expect(FFmpegConverter.convert(Buffer.from('input'), ['-vf', 'movie=/etc/passwd'], 'img', 'webp')).rejects.toThrow('Unsafe');
+    await expect(FFmpegConverter.convert(Buffer.from('input'), [], '../webp', 'webp')).rejects.toThrow('Invalid extension');
+    expect(mocks.runProcess).not.toHaveBeenCalled();
   });
 
-  test('should handle unlink input error gracefully on close', async () => {
-    expect.assertions(2);
-
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => {
-        child.emit('close', 1);
-      }, 10);
-      return child as never;
-    });
-    mockUnlink.mockImplementationOnce(() => Promise.reject(new Error('unlink failed')));
-
-    try {
-      await FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp');
-    } catch (e: any) {
-      expect(e.message).toContain('FFmpeg error 1');
-    }
-
-    expect(mockUnlink).toHaveBeenCalled();
+  test('cleans up and reports bounded process failures', async () => {
+    mocks.runProcess.mockRejectedValueOnce(new Error('ffmpeg failed with bounded stderr'));
+    await expect(FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp')).rejects.toThrow('ffmpeg failed with bounded stderr');
+    expect(mocks.rm).toHaveBeenCalled();
   });
 
-  test('should handle spawn error', async () => {
-    expect.assertions(1);
-
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => child.emit('error', new Error('Spawn failed')), 10);
-      return child as never;
-    });
-
-    try {
-      await FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp');
-    } catch (e: any) {
-      expect(e.message).toBe('Spawn failed');
-    }
+  test('rejects output above the normal media cap before reading it', async () => {
+    mocks.stat.mockImplementationOnce(async () => ({ isFile: () => true, size: NORMAL_MEDIA_MAX_BYTES + 1 }) as never);
+    await expect(FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp')).rejects.toThrow('exceeds');
+    expect(mocks.readFile).not.toHaveBeenCalled();
+    expect(mocks.rm).toHaveBeenCalled();
   });
 
-  test('should throw for invalid input extension containing special characters', async () => {
-    await expect(
-      FFmpegConverter.convert(Buffer.from('data'), [], 'invalid/ext', 'webp'),
-    ).rejects.toThrow('Invalid extension provided');
-  });
-
-  test('should throw for invalid output extension containing special characters', async () => {
-    await expect(
-      FFmpegConverter.convert(Buffer.from('data'), [], 'mp4', 'out.put'),
-    ).rejects.toThrow('Invalid extension provided');
-  });
-
-  test('should throw for unallowed FFmpeg flags', async () => {
-    await expect(
-      FFmpegConverter.convert(Buffer.from('data'), ['-unallowed'], 'mp4', 'webp'),
-    ).rejects.toThrow('Unsafe or unsupported FFmpeg argument detected: -unallowed');
-  });
-
-  test('should allow numeric flags', async () => {
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => child.emit('close', 0), 10);
-      return child as never;
-    });
-
-    const result = await FFmpegConverter.convert(Buffer.from('input'), ['-1', '-200'], 'img', 'webp');
-    expect(result).toBeDefined();
-  });
-
-  test('should handle exception during success flow in close event', async () => {
-    mockReadFile.mockImplementationOnce(async () => {
-      throw new Error('Read failed');
-    });
-    mockSpawn.mockImplementationOnce(() => {
-      const child = new EventEmitter() as EventEmitter & { stderr: EventEmitter };
-      child.stderr = new EventEmitter();
-      setTimeout(() => child.emit('close', 0), 10);
-      return child as never;
-    });
-
-    await expect(
-      FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp'),
-    ).rejects.toThrow('Read failed');
+  test('cleans up when output reading fails', async () => {
+    mocks.readFile.mockRejectedValueOnce(new Error('read failed'));
+    await expect(FFmpegConverter.convert(Buffer.from('input'), [], 'img', 'webp')).rejects.toThrow('read failed');
+    expect(mocks.rm).toHaveBeenCalled();
   });
 });

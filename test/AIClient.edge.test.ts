@@ -140,15 +140,15 @@ describe('AIClient – edge cases', () => {
     );
   });
 
-  test('chatCompletion should return fallback message when choices is empty', async () => {
+  test('chatCompletion throws a typed no-choice protocol error', async () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
-    assignFetch(async () => {
-      return new Response(JSON.stringify({ choices: [], usage: {} }), { status: 200 });
-    });
+    assignFetch(async () => new Response(JSON.stringify({ id: 'empty', choices: [], usage: {} }), { status: 200 }));
 
-    const result = await client.chatCompletion([{ role: 'user', content: 'hi' }]);
-    expect(result.content).toBe('No response generated.');
+    const error = await client.chatCompletion([{ role: 'user', content: 'hi' }]).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { code?: string }).code).toBe('no_choices');
+    expect((error as Error).name).toBe('AINoChoiceError');
   });
 
   test('chatCompletion should send Authorization header with Bearer token', async () => {
@@ -194,25 +194,20 @@ describe('AIClient – edge cases', () => {
     expect(chunks[1].choices[0]?.delta?.content).toBe('lo');
   });
 
-  test('chatCompletionStream ignores malformed and comment SSE lines', async () => {
+  test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     assignFetch(async () => new Response(
       ': keepalive\n\n' +
-      'data: not-json\n\n' +
-      'event: ping\n\n' +
-      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":null}]}\n\n' +
-      'data: [DONE]\n\n',
+      'data: not-json\n\n',
       { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
     ));
 
-    const chunks = [];
-    for await (const chunk of client.chatCompletionStream([{ role: 'user', content: 'hi' }])) {
-      chunks.push(chunk);
-    }
-
-    expect(chunks).toHaveLength(1);
-    expect(chunks[0].choices[0]?.delta?.content).toBe('ok');
+    const error = await client.chatCompletionStream([{ role: 'user', content: 'hi' }])
+      .next()
+      .catch((caught: unknown) => caught);
+    expect((error as { code?: string }).code).toBe('invalid_sse');
+    expect((error as Error).name).toBe('AIProtocolError');
   });
 
   test('chatCompletionStream throws on non-OK responses', async () => {

@@ -1,67 +1,73 @@
-import { describe, test, expect, mock, spyOn, beforeEach, afterEach } from 'bun:test';
-import { MediaCleanup } from '../src/utils/MediaCleanup';
-import * as fsPromises from 'fs/promises';
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { MediaCleanup, mediaCleanupDeps } from '../src/utils/MediaCleanup';
+import { mediaStorageDeps } from '../src/utils/MediaStorage';
+
+const original = {
+  cleanupStat: mediaCleanupDeps.stat,
+  cleanupUnlink: mediaCleanupDeps.unlink,
+  storageReaddir: mediaStorageDeps.readdir,
+  storageStat: mediaStorageDeps.stat,
+  storageUnlink: mediaStorageDeps.unlink,
+};
+const mocks = {
+  readdir: mock(async () => ['old.jpg', 'new.jpg'] as string[]),
+  stat: mock(async (file: string) => ({
+    isFile: () => true,
+    size: 10,
+    mtimeMs: file.endsWith('old.jpg') ? 1 : Date.now(),
+  })),
+  unlink: mock(async (_file: string) => {}),
+};
 
 describe('MediaCleanup', () => {
   const originalRetentionHours = process.env.MEDIA_RETENTION_HOURS;
-  let readdirSpy: ReturnType<typeof spyOn>;
-  let statSpy: ReturnType<typeof spyOn>;
-  let unlinkSpy: ReturnType<typeof spyOn>;
 
   beforeEach(() => {
-    unlinkSpy = spyOn(fsPromises, 'unlink').mockResolvedValue(undefined);
-    readdirSpy = spyOn(fsPromises, 'readdir').mockResolvedValue(['old.jpg', 'new.jpg'] as any);
-    statSpy = spyOn(fsPromises, 'stat').mockImplementation(async (path: any) => {
-      const isOld = String(path).includes('old');
-      return {
-        isFile: () => true,
-        mtimeMs: isOld ? Date.now() - 100 * 60 * 60 * 1000 : Date.now(),
-      } as any;
-    });
+    for (const value of Object.values(mocks)) value.mockClear();
+    mocks.readdir.mockImplementation(async () => ['old.jpg', 'new.jpg']);
+    mocks.stat.mockImplementation(async file => ({
+      isFile: () => true,
+      size: 10,
+      mtimeMs: file.endsWith('old.jpg') ? 1 : Date.now(),
+    }) as never);
+    mediaStorageDeps.readdir = mocks.readdir as never;
+    mediaStorageDeps.stat = mocks.stat as never;
+    mediaStorageDeps.unlink = mocks.unlink as never;
+    mediaCleanupDeps.stat = mocks.stat as never;
+    mediaCleanupDeps.unlink = mocks.unlink as never;
   });
 
   afterEach(() => {
-    readdirSpy.mockRestore();
-    statSpy.mockRestore();
-    unlinkSpy.mockRestore();
-    if (originalRetentionHours === undefined) {
-      delete process.env.MEDIA_RETENTION_HOURS;
-    } else {
-      process.env.MEDIA_RETENTION_HOURS = originalRetentionHours;
-    }
+    mediaCleanupDeps.stat = original.cleanupStat;
+    mediaCleanupDeps.unlink = original.cleanupUnlink;
+    mediaStorageDeps.readdir = original.storageReaddir;
+    mediaStorageDeps.stat = original.storageStat;
+    mediaStorageDeps.unlink = original.storageUnlink;
+    if (originalRetentionHours === undefined) delete process.env.MEDIA_RETENTION_HOURS;
+    else process.env.MEDIA_RETENTION_HOURS = originalRetentionHours;
   });
 
   test('pruneOldFiles deletes files older than cutoff', async () => {
-    await MediaCleanup.pruneOldFiles();
-    // old.jpg should be deleted (100 hours old > 72 hour default)
-    expect(unlinkSpy).toHaveBeenCalled();
+    await MediaCleanup.pruneOldFiles({ clearReferences: false });
+    expect(mocks.unlink).toHaveBeenCalledTimes(1);
+    expect(mocks.unlink.mock.calls[0]?.[0]).toContain('old.jpg');
   });
 
   test('pruneOldFiles does not delete recent files', async () => {
-    readdirSpy.mockResolvedValue(['recent.jpg'] as any);
-    statSpy.mockResolvedValue({
-      isFile: () => true,
-      mtimeMs: Date.now(),
-    } as any);
-
-    await MediaCleanup.pruneOldFiles();
-    expect(unlinkSpy).not.toHaveBeenCalled();
+    mocks.readdir.mockImplementation(async () => ['recent.jpg']);
+    mocks.stat.mockImplementation(async () => ({ isFile: () => true, size: 10, mtimeMs: Date.now() }) as never);
+    await MediaCleanup.pruneOldFiles({ clearReferences: false });
+    expect(mocks.unlink).not.toHaveBeenCalled();
   });
 
   test('handles ENOENT gracefully', async () => {
-    const err = new Error('ENOENT') as any;
-    err.code = 'ENOENT';
-    readdirSpy.mockRejectedValue(err);
-
-    // Should not throw
-    await MediaCleanup.pruneOldFiles();
+    mocks.readdir.mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }));
+    await expect(MediaCleanup.pruneOldFiles({ clearReferences: false })).resolves.toBeUndefined();
   });
 
-  test('invalid MEDIA_RETENTION_HOURS falls back to the default retention window', async () => {
+  test('invalid retention falls back to the default window', async () => {
     process.env.MEDIA_RETENTION_HOURS = 'invalid';
-
-    await MediaCleanup.pruneOldFiles();
-
-    expect(unlinkSpy).toHaveBeenCalled();
+    await MediaCleanup.pruneOldFiles({ clearReferences: false });
+    expect(mocks.unlink).toHaveBeenCalledTimes(1);
   });
 });

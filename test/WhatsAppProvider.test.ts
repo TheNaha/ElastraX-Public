@@ -50,7 +50,7 @@ function createFakeSocket() {
   const sock: FakeWhatsAppSocket = {
     user: { id: '628111:0@s.whatsapp.net' },
     end: mock(() => {}),
-    sendMessage: mock(async () => ({ key: { id: 'sent-1' } })),
+    sendMessage: mock(async (_jid: string, _content: unknown, _options?: unknown) => ({ key: { id: 'sent-1' } })),
     readMessages: mock(async () => {}),
     updateMediaMessage: mock(async () => {}),
     groupParticipantsUpdate: mock(async () => {}),
@@ -104,6 +104,7 @@ describe('WhatsAppProvider', () => {
   const originalFetchLatestVersion = whatsAppProviderDeps.fetchLatestVersion;
   const originalCreateSocket = whatsAppProviderDeps.createSocket;
   const originalRenderQr = whatsAppProviderDeps.renderQr;
+  const originalLookupStoredMessage = whatsAppProviderDeps.lookupStoredMessage;
 
   let identitySpy: ReturnType<typeof spyOn>;
   let roleSpy: ReturnType<typeof spyOn>;
@@ -112,7 +113,7 @@ describe('WhatsAppProvider', () => {
     delete process.env.BOT_OWNER_JID;
     mockIdentityUpsert.mockClear();
     mockSetRole.mockClear();
-    identitySpy = spyOn(IdentityService, 'upsert').mockImplementation(mockIdentityUpsert);
+    identitySpy = spyOn(IdentityService, 'upsertIdentity').mockImplementation(mockIdentityUpsert);
     roleSpy = spyOn(RoleService, 'setRole').mockImplementation(mockSetRole);
   });
 
@@ -123,6 +124,7 @@ describe('WhatsAppProvider', () => {
     whatsAppProviderDeps.fetchLatestVersion = originalFetchLatestVersion;
     whatsAppProviderDeps.createSocket = originalCreateSocket;
     whatsAppProviderDeps.renderQr = originalRenderQr;
+    whatsAppProviderDeps.lookupStoredMessage = originalLookupStoredMessage;
     delete process.env.BOT_OWNER_JID;
   });
 
@@ -227,5 +229,148 @@ describe('WhatsAppProvider', () => {
 
     expect(sock.end).toHaveBeenCalled();
     expect((provider as unknown as { sock: unknown }).sock).toBeNull();
+  });
+
+  test('getMessage returns only a message body and undefined for missing rows', async () => {
+    const { sock } = createFakeSocket();
+    let socketOptions: Parameters<typeof whatsAppProviderDeps.createSocket>[0] | undefined;
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = options => {
+      socketOptions = options;
+      return asWhatsAppSocket(sock);
+    };
+    whatsAppProviderDeps.renderQr = mock(() => {});
+    whatsAppProviderDeps.lookupStoredMessage = async id => id === 'full'
+      ? JSON.stringify({ key: { id }, message: { conversation: 'retry me' } })
+      : id === 'body' ? JSON.stringify({ conversation: 'body only' }) : null;
+
+    const provider = new WhatsAppProvider();
+    await provider.start();
+    const getMessage = socketOptions!.getMessage!;
+    await expect(getMessage({ id: 'full' } as never)).resolves.toEqual({ conversation: 'retry me' });
+    await expect(getMessage({ id: 'body' } as never)).resolves.toEqual({ conversation: 'body only' });
+    await expect(getMessage({ id: 'missing' } as never)).resolves.toBeUndefined();
+    await provider.stop();
+    await expect(getMessage({ id: 'full' } as never)).resolves.toBeUndefined();
+  });
+
+  test('stopping during async auth prevents socket creation', async () => {
+    let resolveAuth!: (value: WhatsAppAuthStateResult) => void;
+    whatsAppProviderDeps.useAuthState = () => new Promise<WhatsAppAuthStateResult>(resolve => { resolveAuth = resolve; });
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    const createSocket = mock(() => { throw new Error('must not create'); });
+    whatsAppProviderDeps.createSocket = createSocket as never;
+    const provider = new WhatsAppProvider();
+
+    const starting = provider.start();
+    await provider.stop();
+    resolveAuth(createFakeAuthState());
+    await starting;
+
+    expect(createSocket).not.toHaveBeenCalled();
+    expect(provider.status).toBe('stopped');
+  });
+
+  test('sends audio with WhatsApp voice-note parity', async () => {
+    const { sock } = createFakeSocket();
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    const provider = new WhatsAppProvider();
+    await provider.start();
+    const ctx = await (provider as unknown as { createContext(message: unknown): Promise<MessageContext> }).createContext({
+      key: { id: 'msg-audio', remoteJid: 'chat-1', fromMe: false },
+      message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true, fileLength: '4' } },
+      pushName: 'Alice',
+    });
+    const audio = Buffer.from('audio');
+
+    await ctx.sendMedia?.(audio, { mimetype: 'audio/ogg', ptt: true });
+
+    expect(sock.sendMessage.mock.calls[0]![0]).toBe('chat-1');
+    expect(sock.sendMessage.mock.calls[0]![1]).toEqual({ audio, mimetype: 'audio/ogg', ptt: true });
+    expect(sock.sendMessage.mock.calls[0]![2]).toMatchObject({ quoted: expect.anything() });
+    await provider.stop();
+  });
+
+  test('routes audio, video, image, and document media to the matching WhatsApp field', async () => {
+    const { sock } = createFakeSocket();
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    const provider = new WhatsAppProvider();
+    await provider.start();
+    const ctx = await (provider as unknown as { createContext(message: unknown): Promise<MessageContext> }).createContext({
+      key: { id: 'msg-media', remoteJid: 'chat-1', fromMe: false },
+      message: { conversation: 'hi' },
+      pushName: 'Alice',
+    });
+    const buffer = Buffer.from('payload');
+
+    await ctx.sendMedia?.(buffer, { mimetype: 'audio/ogg' });
+    await ctx.sendMedia?.(buffer, { mimetype: 'video/mp4', caption: 'clip' });
+    await ctx.sendMedia?.(buffer, { mimetype: 'image/png', caption: 'pic' });
+    await ctx.sendMedia?.(buffer, { mimetype: 'application/pdf', filename: 'doc.pdf', caption: 'read' });
+
+    expect(sock.sendMessage.mock.calls[0]![1]).toEqual({ audio: buffer, mimetype: 'audio/ogg', ptt: false });
+    expect(sock.sendMessage.mock.calls[1]![1]).toEqual({ video: buffer, caption: 'clip', mimetype: 'video/mp4' });
+    expect(sock.sendMessage.mock.calls[2]![1]).toEqual({ image: buffer, caption: 'pic', mimetype: 'image/png' });
+    expect(sock.sendMessage.mock.calls[3]![1]).toEqual({
+      document: buffer,
+      mimetype: 'application/pdf',
+      fileName: 'doc.pdf',
+      caption: 'read',
+    });
+    await provider.stop();
+  });
+
+  test('falls back to a generic document name when no filename is supplied', async () => {
+    const { sock } = createFakeSocket();
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    const provider = new WhatsAppProvider();
+    await provider.start();
+    const ctx = await (provider as unknown as { createContext(message: unknown): Promise<MessageContext> }).createContext({
+      key: { id: 'msg-doc', remoteJid: 'chat-1', fromMe: false },
+      message: { conversation: 'hi' },
+      pushName: 'Alice',
+    });
+
+    await ctx.sendMedia?.(Buffer.from('payload'), { mimetype: 'application/pdf' });
+
+    expect(sock.sendMessage.mock.calls[0]![1]).toMatchObject({ fileName: 'file', caption: undefined });
+    await provider.stop();
+  });
+
+  test('propagates delete and reaction failures', async () => {
+    const { sock } = createFakeSocket();
+    sock.sendMessage = mock(async () => { throw new Error('provider action failed'); });
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    const provider = new WhatsAppProvider();
+    await provider.start();
+    const ctx = await (provider as unknown as { createContext(message: unknown): Promise<MessageContext> }).createContext({
+      key: { id: 'msg-fail', remoteJid: 'chat-1', fromMe: false },
+      message: { conversation: 'hello' },
+      pushName: 'Alice',
+    });
+
+    await expect(ctx.react?.('✅')).rejects.toThrow('provider action failed');
+    await expect(ctx.deleteMessage?.()).rejects.toThrow('provider action failed');
+    await provider.stop();
+  });
+
+  test('surfaces startup failure while retaining bounded reconnect', async () => {
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => { throw new Error('version lookup failed'); };
+    const provider = new WhatsAppProvider();
+
+    await expect(provider.start()).rejects.toThrow('WhatsApp startup failed');
+    expect(provider.status).toBe('backoff');
+    expect((provider as unknown as { reconnectTimer: unknown }).reconnectTimer).not.toBeNull();
+    await provider.stop();
   });
 });

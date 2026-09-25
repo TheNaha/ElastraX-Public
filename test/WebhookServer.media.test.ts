@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import { describe, expect, mock, spyOn, test } from 'bun:test';
+import { withEnvironment } from './helpers/env';
 
 const _mockLogger = {
   trace: () => {},
@@ -15,59 +16,86 @@ import { WebhookServer } from '../src/webhookServer';
 import { ServiceBindingService } from '../src/utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../src/utils/NotificationSubscriptionService';
 
-describe('WebhookServer media routing', () => {
-  const originalSeerrSecret = process.env.SEERR_WEBHOOK_SECRET;
-  const originalJellyfinSecret = process.env.JELLYFIN_WEBHOOK_SECRET;
+const SEERR_SECRET = 'seerr-webhook-secret-0123456789abcdef';
+const JELLYFIN_SECRET = 'jellyfin-webhook-secret-0123456789';
 
-  afterEach(() => {
-    delete process.env.WEBHOOK_ENABLED;
-    delete process.env.WEBHOOK_PORT;
-    process.env.SEERR_WEBHOOK_SECRET = originalSeerrSecret;
-    process.env.JELLYFIN_WEBHOOK_SECRET = originalJellyfinSecret;
+function portOf(server: WebhookServer): number {
+  const port = (server as unknown as { server?: { port?: number } }).server?.port;
+  if (typeof port !== 'number') throw new Error('Webhook server did not start');
+  return port;
+}
+
+async function withMediaServer(
+  overrides: Record<string, string | undefined>,
+  callback: (baseUrl: string) => Promise<void>,
+  register?: (server: WebhookServer) => void,
+): Promise<void> {
+  await withEnvironment({
+    WEBHOOK_ENABLED: 'true',
+    WEBHOOK_HOST: '127.0.0.1',
+    WEBHOOK_PORT: '0',
+    WEBHOOK_SECRET: 'generic-webhook-secret-0123456789ab',
+    WEBHOOK_BODY_SECRET_COMPAT_ENABLED: undefined,
+    WEBHOOK_BODY_SECRET_COMPAT_UNTIL: undefined,
+    WEBHOOK_QUERY_SECRET_COMPAT_ENABLED: undefined,
+    WEBHOOK_QUERY_SECRET_COMPAT_UNTIL: undefined,
+    SEERR_WEBHOOK_SECRET: SEERR_SECRET,
+    JELLYFIN_WEBHOOK_SECRET: JELLYFIN_SECRET,
+    ...overrides,
+  }, async () => {
+    const server = new WebhookServer();
+    register?.(server);
+    server.start();
+    try {
+      await callback(`http://127.0.0.1:${portOf(server)}`);
+    } finally {
+      server.stop();
+    }
   });
+}
 
-  test('Seerr routing falls back from username to email and delivers once', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_PORT = '0';
-    delete process.env.SEERR_WEBHOOK_SECRET;
-    delete process.env.JELLYFIN_WEBHOOK_SECRET;
-
+describe('WebhookServer media routing', () => {
+  test('Seerr authenticates by header and falls back from username to email', async () => {
     const sendDiscord = mock(async () => {});
     const usernameSpy = spyOn(ServiceBindingService, 'findByExternalUsername').mockResolvedValue([]);
     const emailSpy = spyOn(ServiceBindingService, 'findByExternalEmail').mockResolvedValue([
-      { id: 1, userId: 'user-1', platform: 'discord' } as any,
-    ]);
+      { id: 1, userId: 'user-1', platform: 'discord' },
+    ] as never);
     const roomsSpy = spyOn(NotificationSubscriptionService, 'getNotificationRooms').mockResolvedValue([
       { chatRoomId: 'room-a', platform: 'discord' },
     ]);
     const adminSpy = spyOn(NotificationSubscriptionService, 'getAdminNotificationRooms').mockResolvedValue([]);
 
-    const server = new WebhookServer();
-    server.registerSender('discord', sendDiscord);
-    server.start();
-
     try {
-      const port = (server as any).server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook/seerr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notification_type: 'MEDIA_APPROVED',
-          subject: 'Dark',
-          message: 'Approved!',
-          requestedBy_username: 'missing-user',
-          requestedBy_email: 'alice@example.com',
-        }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, delivered: 1 });
-      expect(usernameSpy).toHaveBeenCalled();
-      expect(emailSpy).toHaveBeenCalled();
-      expect(roomsSpy).toHaveBeenCalledTimes(1);
-      expect(sendDiscord).toHaveBeenCalledWith('room-a', expect.stringContaining('Approved'), 'discord');
+      await withMediaServer({}, async baseUrl => {
+        const response = await Bun.fetch(`${baseUrl}/webhook/seerr`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': SEERR_SECRET,
+          },
+          body: JSON.stringify({
+            notification_type: 'MEDIA_APPROVED',
+            subject: 'Dark',
+            message: 'Approved!',
+            requestedBy_username: 'missing-user',
+            requestedBy_email: 'alice@example.com',
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, delivered: 1 });
+        expect(usernameSpy).toHaveBeenCalled();
+        expect(emailSpy).toHaveBeenCalled();
+        expect(roomsSpy).toHaveBeenCalledTimes(1);
+        // Senders are invoked as (chatId, text, signal) so delivery can be
+        // cancelled when the webhook request is aborted.
+        expect(sendDiscord).toHaveBeenCalledWith(
+          'room-a',
+          expect.stringContaining('Approved'),
+          expect.any(AbortSignal),
+        );
+      }, server => server.registerSender('discord', sendDiscord));
     } finally {
-      server.stop();
       usernameSpy.mockRestore();
       emailSpy.mockRestore();
       roomsSpy.mockRestore();
@@ -75,20 +103,15 @@ describe('WebhookServer media routing', () => {
     }
   });
 
-  test('Jellyfin routing tries both identifiers and deduplicates target rooms', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_PORT = '0';
-    delete process.env.SEERR_WEBHOOK_SECRET;
-    delete process.env.JELLYFIN_WEBHOOK_SECRET;
-
+  test('Jellyfin authenticates by header and deduplicates target rooms', async () => {
     const sendDiscord = mock(async () => {});
     const userSpy = spyOn(ServiceBindingService, 'findByExternalUser').mockResolvedValue([
-      { id: 1, userId: 'user-1', platform: 'discord' } as any,
-    ]);
+      { id: 1, userId: 'user-1', platform: 'discord' },
+    ] as never);
     const usernameSpy = spyOn(ServiceBindingService, 'findByExternalUsername').mockResolvedValue([
-      { id: 1, userId: 'user-1', platform: 'discord' } as any,
-      { id: 2, userId: 'user-2', platform: 'discord' } as any,
-    ]);
+      { id: 1, userId: 'user-1', platform: 'discord' },
+      { id: 2, userId: 'user-2', platform: 'discord' },
+    ] as never);
     const roomsSpy = spyOn(NotificationSubscriptionService, 'getNotificationRooms').mockImplementation(async (userId: string) => {
       if (userId === 'user-1') {
         return [
@@ -103,73 +126,112 @@ describe('WebhookServer media routing', () => {
     });
     const adminSpy = spyOn(NotificationSubscriptionService, 'getAdminNotificationRooms').mockResolvedValue([]);
 
-    const server = new WebhookServer();
-    server.registerSender('discord', sendDiscord);
-    server.start();
-
     try {
-      const port = (server as any).server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook/jellyfin`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          NotificationType: 'PlaybackStart',
-          Name: 'Episode Name',
-          UserId: 'jf-user-1',
-          NotificationUsername: 'alice',
-          DeviceName: 'Living Room',
-        }),
-      });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, delivered: 3 });
-      expect(userSpy).toHaveBeenCalled();
-      expect(usernameSpy).toHaveBeenCalled();
-      expect(roomsSpy).toHaveBeenCalledTimes(2);
-      expect(sendDiscord).toHaveBeenCalledTimes(3);
+      await withMediaServer({}, async baseUrl => {
+        const response = await Bun.fetch(`${baseUrl}/webhook/jellyfin`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': JELLYFIN_SECRET,
+          },
+          body: JSON.stringify({
+            NotificationType: 'PlaybackStart',
+            Name: 'Episode Name',
+            UserId: 'jf-user-1',
+            NotificationUsername: 'alice',
+            DeviceName: 'Living Room',
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, delivered: 3 });
+        expect(userSpy).toHaveBeenCalled();
+        expect(usernameSpy).toHaveBeenCalled();
+        expect(roomsSpy).toHaveBeenCalledTimes(2);
+        expect(sendDiscord).toHaveBeenCalledTimes(3);
+      }, server => server.registerSender('discord', sendDiscord));
     } finally {
-      server.stop();
-      userSpy.mockRestore();
       usernameSpy.mockRestore();
+      userSpy.mockRestore();
       roomsSpy.mockRestore();
       adminSpy.mockRestore();
     }
   });
 
   test('media webhook returns no-subscriber note when nobody is linked', async () => {
-    process.env.WEBHOOK_ENABLED = 'true';
-    process.env.WEBHOOK_PORT = '0';
-    delete process.env.SEERR_WEBHOOK_SECRET;
-    delete process.env.JELLYFIN_WEBHOOK_SECRET;
-
     const usernameSpy = spyOn(ServiceBindingService, 'findByExternalUsername').mockResolvedValue([]);
     const emailSpy = spyOn(ServiceBindingService, 'findByExternalEmail').mockResolvedValue([]);
     const adminSpy = spyOn(NotificationSubscriptionService, 'getAdminNotificationRooms').mockResolvedValue([]);
 
-    const server = new WebhookServer();
-    server.start();
-
     try {
-      const port = (server as any).server?.port;
-      const res = await fetch(`http://127.0.0.1:${port}/webhook/seerr`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          notification_type: 'MEDIA_PENDING',
-          subject: 'Dark',
-          message: 'Pending',
-          requestedBy_username: 'alice',
-          requestedBy_email: 'alice@example.com',
-        }),
+      await withMediaServer({}, async baseUrl => {
+        const response = await Bun.fetch(`${baseUrl}/webhook/seerr`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Webhook-Secret': SEERR_SECRET,
+          },
+          body: JSON.stringify({
+            notification_type: 'MEDIA_PENDING',
+            subject: 'Dark',
+            message: 'Pending',
+            requestedBy_username: 'alice',
+            requestedBy_email: 'alice@example.com',
+          }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toEqual({ ok: true, delivered: 0, note: 'No subscribers' });
       });
-
-      expect(res.status).toBe(200);
-      expect(await res.json()).toEqual({ ok: true, delivered: 0, note: 'No subscribers' });
     } finally {
-      server.stop();
       usernameSpy.mockRestore();
       emailSpy.mockRestore();
       adminSpy.mockRestore();
+    }
+  });
+
+  test('Seerr and Jellyfin fail closed without configured secrets', async () => {
+    await withMediaServer({
+      SEERR_WEBHOOK_SECRET: undefined,
+      JELLYFIN_WEBHOOK_SECRET: undefined,
+    }, async baseUrl => {
+      for (const route of ['seerr', 'jellyfin']) {
+        const response = await Bun.fetch(`${baseUrl}/webhook/${route}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}',
+        });
+        expect(response.status).toBe(503);
+      }
+    });
+  });
+
+  test('media routes reject invalid secrets before database lookups', async () => {
+    const usernameSpy = spyOn(ServiceBindingService, 'findByExternalUsername');
+    const emailSpy = spyOn(ServiceBindingService, 'findByExternalEmail');
+    const userSpy = spyOn(ServiceBindingService, 'findByExternalUser');
+
+    try {
+      await withMediaServer({}, async baseUrl => {
+        const seerr = await Bun.fetch(`${baseUrl}/webhook/seerr`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': `${SEERR_SECRET}x` },
+          body: JSON.stringify({ notification_type: 'MEDIA_PENDING' }),
+        });
+        expect(seerr.status).toBe(401);
+
+        const jellyfin = await Bun.fetch(`${baseUrl}/webhook/jellyfin`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': `${JELLYFIN_SECRET}x` },
+          body: JSON.stringify({ NotificationType: 'ItemAdded' }),
+        });
+        expect(jellyfin.status).toBe(401);
+      });
+      expect(usernameSpy).not.toHaveBeenCalled();
+      expect(emailSpy).not.toHaveBeenCalled();
+      expect(userSpy).not.toHaveBeenCalled();
+    } finally {
+      usernameSpy.mockRestore();
+      emailSpy.mockRestore();
+      userSpy.mockRestore();
     }
   });
 });

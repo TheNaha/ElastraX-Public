@@ -27,7 +27,7 @@ class MockSingleStringTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(args: Record<string, any>, _ctx: MessageContext): Promise<string> {
     return args.text;
   }
 }
@@ -58,7 +58,7 @@ class MockMultiArgTool extends BaseTool {
     };
   }
 
-  async execute(args: Record<string, any>, ctx: MessageContext): Promise<string> {
+  async execute(_args: Record<string, any>, _ctx: MessageContext): Promise<string> {
     return 'ok';
   }
 }

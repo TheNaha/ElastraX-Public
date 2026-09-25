@@ -93,11 +93,13 @@ describe('HealthMetrics', () => {
     expect(m.tools['test_tool'].durationP50).toBe(200);
   });
 
-  test('recordTokenUsage tracks prompt and completion tokens', () => {
-    healthMetrics.recordTokenUsage('test_model', 10, 20);
+  test('recordTokenUsage tracks prompt, completion, and total tokens', () => {
+    healthMetrics.recordTokenUsage('test_model', 10, 20, 35);
     const m = healthMetrics.getMetrics();
     expect(m.tokens['test_model'].prompt).toBeGreaterThanOrEqual(10);
     expect(m.tokens['test_model'].completion).toBeGreaterThanOrEqual(20);
+    expect(m.tokens['test_model'].total).toBeGreaterThanOrEqual(35);
+    expect(healthMetrics.getPrometheusMetrics()).toContain('type="total"');
   });
 
   test('recordMessageDuration tracks message processing latency', () => {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { SeerrClient } from '../src/providers/seerr/SeerrClient';
+import { HttpClientError } from '../src/utils/BaseHttpClient';
 
 describe('SeerrClient', () => {
   const originalFetch = global.fetch;
@@ -30,7 +31,7 @@ describe('SeerrClient', () => {
           results: [{ id: 10, mediaType: 'movie', title: 'Dark City' }],
         }),
       } as Response;
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const client = new SeerrClient('https://seerr.example/api/v1', 'token');
     const result = await client.search('dark', 2);
@@ -58,7 +59,7 @@ describe('SeerrClient', () => {
           updatedAt: '2026-03-18T00:00:00.000Z',
         }),
       } as Response;
-    }) as any;
+    }) as unknown as typeof fetch;
 
     const client = new SeerrClient('https://seerr.example/api/v1', 'token');
     const result = await client.createRequest('tv', 42, { seasons: [1, 2], userId: 99 });
@@ -76,7 +77,7 @@ describe('SeerrClient', () => {
         updateAvailable: false,
         commitsBehind: 0,
       }),
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const client = new SeerrClient('https://seerr.example/api/v1', 'token');
     const result = await client.getStatus();
@@ -89,10 +90,13 @@ describe('SeerrClient', () => {
       ok: false,
       status: 500,
       text: async () => 'server exploded',
-    })) as any;
+    })) as unknown as typeof fetch;
 
     const client = new SeerrClient('https://seerr.example/api/v1', 'token');
 
-    await expect(client.getStatus()).rejects.toThrow('Seerr API GET /status failed: 500 server exploded');
+    const failure = client.getStatus();
+    await expect(failure).rejects.toThrow('Seerr API GET /status failed: 500 server exploded');
+    await expect(failure).rejects.toBeInstanceOf(HttpClientError);
+    await expect(failure).rejects.toMatchObject({ code: 'HTTP_ERROR', status: 500, retryable: true, service: 'Seerr' });
   });
 });

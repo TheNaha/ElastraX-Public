@@ -1,14 +1,14 @@
 {
   "key": {
-    "remoteJid": "6281519434797@s.whatsapp.net",
+    "remoteJid": "synthetic-user-1@s.whatsapp.net",
     "fromMe": false,
-    "id": "F79298A59D1F922C75"
+    "id": "synthetic-message-1"
   },
   "message": {
     "placeholderMessage": {
       "type": "MASK_LINKED_DEVICES"
     }
   },
-  "messageTimestamp": "1740642662",
+  "messageTimestamp": "1700000000",
   "isMentionedInStatus": false
 }

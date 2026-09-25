@@ -1,17 +1,14 @@
 {
   "key": {
-    "remoteJid": "120363418247447171@g.us",
+    "remoteJid": "synthetic-group-1@g.us",
     "fromMe": false,
-    "id": "0C841F4D9AC6305FD2155D6B3CC1E520"
+    "id": "synthetic-message-1"
   },
   "message": {
-    "locationMessage": {
-      "degreesLatitude": -6.8746419,
-      "degreesLongitude": 107.6030193
-    },
+    "locationMessage": {},
     "messageContextInfo": {}
   },
-  "messageTimestamp": "1743586580",
-  "participant": "62895320460745@s.whatsapp.net",
+  "messageTimestamp": "1700000000",
+  "participant": "synthetic-user-1@s.whatsapp.net",
   "isMentionedInStatus": false
 }

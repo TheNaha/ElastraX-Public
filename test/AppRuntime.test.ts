@@ -27,6 +27,10 @@ type FakeProvider = BotProvider & {
   sendMessage: ReturnType<typeof mock>;
 };
 
+// The durable inbox dedupes on platform+event key against the shared worker DB,
+// so every test needs its own room/message identity.
+const runToken = Math.random().toString(36).slice(2, 10);
+
 function createProvider(name: BotProvider['name']): FakeProvider {
   return {
     name,
@@ -116,16 +120,17 @@ describe('AppRuntime', () => {
     expect(scheduler.registerSender).toHaveBeenCalledTimes(2);
     expect(webhookServer.start).toHaveBeenCalledTimes(1);
     expect(scheduler.start).toHaveBeenCalledTimes(1);
-    expect(timers.setInterval).toHaveBeenCalledTimes(2);
+    // rate limiter, outbox pump, retention sweep, media cleanup.
+    expect(timers.setInterval).toHaveBeenCalledTimes(4);
     expect(timers.setTimeout).toHaveBeenCalledTimes(1);
 
     const ctx = {
       platform: 'whatsapp',
-      chatId: 'room-1',
+      chatId: `room-1-${runToken}`,
       senderId: 'user-1',
       senderName: 'Alice',
       text: 'hello',
-      messageId: 'msg-1',
+      messageId: `msg-1-${runToken}`,
       messageType: 'conversation',
       isGroup: false,
       isBotMentioned: false,
@@ -140,7 +145,7 @@ describe('AppRuntime', () => {
     await whatsappProvider.capturedHandler?.(ctx);
 
     expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(enqueue).toHaveBeenCalledWith('room-1', expect.any(Function));
+    expect(enqueue).toHaveBeenCalledWith(`room-1-${runToken}`, expect.any(Function));
     expect(handleIncoming).toHaveBeenCalledWith(ctx);
 
     const whatsappWebhookSender = webhookServer.registerSender.mock.calls[0]?.[1];
@@ -202,7 +207,7 @@ describe('AppRuntime', () => {
     await runtime.stop();
     await runtime.stop();
 
-    expect(timers.clearInterval).toHaveBeenCalledTimes(2);
+    expect(timers.clearInterval).toHaveBeenCalledTimes(4);
     expect(timers.clearTimeout).toHaveBeenCalledTimes(1);
     expect(scheduler.stop).toHaveBeenCalledTimes(1);
     expect(webhookServer.stop).toHaveBeenCalledTimes(1);
@@ -223,7 +228,7 @@ describe('AppRuntime', () => {
     const messageQueue = {
       enqueue: mock(() => {}),
       stop: mock(() => {}),
-      getStats: mock(() => ({ totalRooms: 3, totalPending: 4, totalRunning: 1 })),
+      getStats: mock(() => ({ totalRooms: 3, totalPending: 4, totalRunning: 1, stopped: false })),
     };
     const webhookServer = {
       registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
@@ -247,8 +252,15 @@ describe('AppRuntime', () => {
       await runtime.start();
 
       expect(registerSpy).toHaveBeenCalledTimes(1);
-      const getter = registerSpy.mock.calls[0]?.[0];
-      expect(getter?.()).toEqual({ totalRooms: 3, totalPending: 4, totalRunning: 1 });
+      const getter = registerSpy.mock.calls[0]?.[0] as unknown as () => Record<string, unknown> | undefined;
+      expect(getter?.()).toEqual({
+        totalRooms: 3,
+        totalPending: 4,
+        totalRunning: 1,
+        oldestPendingAgeMs: 0,
+        droppedTasks: 0,
+        stopped: false,
+      });
 
       await runtime.stop();
     } finally {

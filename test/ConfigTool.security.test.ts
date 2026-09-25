@@ -1,4 +1,5 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { MessageContext } from '../src/core/MessageContext';
 
 type MockRoom = ReturnType<typeof defaultRoom>;
@@ -11,19 +12,55 @@ function createMockUpdateWhere() {
 let mockRoomRows: MockRoom[] = [];
 let mockUpdateWhere = createMockUpdateWhere();
 
+// ── Module mock backed by a real migrated temp database ──────────────────────
+// Bun module mocks are process-wide, so this fake must expose the full
+// `../src/db` surface or every other test file importing the real module breaks.
+const database: TempDatabase = createTempDatabase();
+
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
+
+function completeDb(overrides: Record<string, unknown>): unknown {
+  const base = database.db as unknown as Record<string | symbol, unknown>;
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && property in overrides) return overrides[property];
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 mock.module('../src/db', () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: async () => mockRoomRows,
-      }),
+  db: completeDb({
+  select: () => ({
+    from: () => ({
+      where: async () => mockRoomRows,
     }),
-    update: () => ({
-      set: () => ({
-        where: (...args: unknown[]) => mockUpdateWhere(...args),
-      }),
+  }),
+  update: () => ({
+    set: () => ({
+      where: (...args: unknown[]) => mockUpdateWhere(...args),
     }),
-  },
+  }),
+  }),
+  sqlite: database.sqlite,
+  withImmediateTransaction,
 }));
 
 const _mockLogger = {

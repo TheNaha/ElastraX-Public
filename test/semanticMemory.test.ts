@@ -1,15 +1,49 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-type MemRow = { id: string; content: string; embedding?: Buffer | null; created_at: Date };
+type MemRow = { id: string; content: string; embedding?: Buffer | null; embeddingModel?: string | null; created_at: Date };
 
 let memRows: MemRow[] = [];
 let updateCalls: Record<string, unknown>[] = [];
 
+// Bun module mocks are process-wide, so this fake must expose the full
+// `../src/db` surface or every other test file importing the real module breaks.
+const database: TempDatabase = createTempDatabase();
+
+// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
+// because callers such as claimInboxEvents rely on it.
+function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
+  sqlite.exec('BEGIN IMMEDIATE');
+  try {
+    const result = operation();
+    sqlite.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try {
+      sqlite.exec('ROLLBACK');
+    } catch {
+      // The transaction may already be rolled back; surface the original error.
+    }
+    throw error;
+  }
+}
+
+function completeDb(overrides: Record<string, unknown>): unknown {
+  const base = database.db as unknown as Record<string | symbol, unknown>;
+  return new Proxy(base, {
+    get(target, property, receiver) {
+      if (typeof property === 'string' && property in overrides) return overrides[property];
+      const value = Reflect.get(target, property, receiver);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 mock.module('../src/db', () => ({
-  db: {
+  db: completeDb({
     select: () => ({
       from: () => ({
         where: () => ({
@@ -28,9 +62,12 @@ mock.module('../src/db', () => ({
         },
       }),
     }),
-  },
+  }),
+  sqlite: database.sqlite,
+  withImmediateTransaction,
 }));
 
+import { EmbeddingService } from '../src/utils/EmbeddingService';
 import {
   cosineSimilarity,
   bytesToFloat32,
@@ -41,6 +78,22 @@ import {
 } from '../src/utils/semanticMemory';
 
 const V = (...xs: number[]) => new Float32Array(xs);
+
+/** Stored vectors are only comparable when they come from the same embedding
+ *  space (model + endpoint + dimension); the row must carry that space id. */
+function spaceIdFor(dimension: number): string {
+  return EmbeddingService.getCurrentSpace(dimension).id;
+}
+
+function memoryRow(
+  id: string,
+  content: string,
+  vector: Float32Array | null,
+  created_at: Date,
+  spaceId = vector ? spaceIdFor(vector.length) : null,
+): MemRow {
+  return { id, content, embedding: vector ? float32ToBytes(vector) : null, embeddingModel: spaceId, created_at };
+}
 
 const setEnv = () => {
   process.env.EMBEDDING_API_URL = 'http://localhost:9999';
@@ -105,12 +158,14 @@ describe('updateMemoryEmbedding', () => {
     expect(called).toBe(false);
   });
 
-  test('persists vector + model + timestamp when embed succeeds', async () => {
+  test('persists vector + embedding space id + timestamp when embed succeeds', async () => {
     const ok = await updateMemoryEmbedding('m1', 'hello', { embed: async () => V(0.25, 0.75) });
     expect(ok).toBe(true);
     expect(updateCalls).toHaveLength(1);
     const vals = updateCalls[0]!;
-    expect(vals.embeddingModel).toBe('test-model');
+    // The stored fingerprint pins model + endpoint + dimension so vectors from
+    // a different embedding space are never compared.
+    expect(vals.embeddingModel).toBe(spaceIdFor(2));
     expect(vals.embedding).toBeInstanceOf(Buffer);
     expect(Array.from(bytesToFloat32(vals.embedding as Buffer))).toEqual([0.25, 0.75]);
     expect(vals.embeddedAt).toBeInstanceOf(Date);
@@ -133,14 +188,32 @@ describe('findSemanticDuplicate', () => {
   });
 
   test('detects near-identical stored memory above threshold', async () => {
-    memRows = [{ id: 'm1', content: 'the wifi password is hunter2', embedding: float32ToBytes(V(1, 0)), created_at: new Date() }];
+    memRows = [memoryRow('m1', 'the wifi password is hunter2', V(1, 0), new Date())];
     const hit = await findSemanticDuplicate('owner', 'the wifi password is hunter2!', { embed: async () => V(1, 0) });
     expect(hit?.id).toBe('m1');
     expect(hit?.similarity).toBeCloseTo(1);
   });
 
+  test('ignores vectors written by a different embedding space', async () => {
+    memRows = [{
+      id: 'm1',
+      content: 'the wifi password is hunter2',
+      embedding: float32ToBytes(V(1, 0)),
+      embeddingModel: 'embedding-space:v1:someotherendpoint',
+      created_at: new Date(),
+    }];
+    const hit = await findSemanticDuplicate('owner', 'the wifi password is hunter2!', { embed: async () => V(1, 0) });
+    expect(hit).toBeNull();
+  });
+
+  test('ignores vectors whose dimension does not match the current space', async () => {
+    memRows = [memoryRow('m1', 'stale vector', V(1, 0, 0), new Date())];
+    const hit = await findSemanticDuplicate('owner', 'stale vector', { embed: async () => V(1, 0) });
+    expect(hit).toBeNull();
+  });
+
   test('unrelated content produces no duplicate', async () => {
-    memRows = [{ id: 'm1', content: 'a', embedding: float32ToBytes(V(1, 0)), created_at: new Date() }];
+    memRows = [memoryRow('m1', 'a', V(1, 0), new Date())];
     const hit = await findSemanticDuplicate('owner', 'b', { embed: async () => V(0, 1) });
     expect(hit).toBeNull();
   });
@@ -157,6 +230,18 @@ describe('rankMemoriesForInjection', () => {
     expect(ranked).toBeNull();
   });
 
+  test('vectors from a foreign embedding space are not ranked', async () => {
+    memRows = [{
+      id: 'A',
+      content: 'exact match',
+      embedding: float32ToBytes(V(1, 0)),
+      embeddingModel: 'embedding-space:v1:elsewhere',
+      created_at: new Date(),
+    }];
+    const ranked = await rankMemoriesForInjection('owner', 'match me', { embed: async () => V(1, 0) }, 3);
+    expect(ranked).toBeNull();
+  });
+
   test('no embedded candidates falls back (null)', async () => {
     memRows = [];
     const ranked = await rankMemoriesForInjection('owner', 'hello', { embed: async () => V(1) });
@@ -164,7 +249,7 @@ describe('rankMemoriesForInjection', () => {
   });
 
   test('query embedding failure falls back (null)', async () => {
-    memRows = [{ id: 'm1', content: 'a', embedding: float32ToBytes(V(1, 0)), created_at: new Date() }];
+    memRows = [memoryRow('m1', 'a', V(1, 0), new Date())];
     const ranked = await rankMemoriesForInjection('owner', 'hello', { embed: async () => null });
     expect(ranked).toBeNull();
   });
@@ -175,9 +260,9 @@ describe('rankMemoriesForInjection', () => {
     const t3 = new Date('2026-03-01');
     // DB order is newest-first (orderBy desc).
     memRows = [
-      { id: 'A', content: 'exact match', embedding: float32ToBytes(V(1, 0)), created_at: t3 },
-      { id: 'B', content: 'orthogonal', embedding: float32ToBytes(V(0, 1)), created_at: t1 },
-      { id: 'C', content: 'not yet embedded', embedding: null, created_at: t2 },
+      memoryRow('A', 'exact match', V(1, 0), t3),
+      memoryRow('B', 'orthogonal', V(0, 1), t1),
+      memoryRow('C', 'not yet embedded', null, t2),
     ];
     const ranked = await rankMemoriesForInjection('owner', 'match me', { embed: async () => V(1, 0) }, 3);
     // Semantic head A first, then recency tail B/C; display order oldest→newest.
@@ -189,9 +274,9 @@ describe('rankMemoriesForInjection', () => {
     const t2 = new Date('2026-02-01');
     const t3 = new Date('2026-03-01');
     memRows = [
-      { id: 'A', content: 'exact match', embedding: float32ToBytes(V(1, 0)), created_at: t3 },
-      { id: 'B', content: 'orthogonal', embedding: float32ToBytes(V(0, 1)), created_at: t1 },
-      { id: 'C', content: 'not embedded', embedding: null, created_at: t2 },
+      memoryRow('A', 'exact match', V(1, 0), t3),
+      memoryRow('B', 'orthogonal', V(0, 1), t1),
+      memoryRow('C', 'not embedded', null, t2),
     ];
     const ranked = await rankMemoriesForInjection('owner', 'match me', { embed: async () => V(1, 0) }, 1);
     expect(ranked?.map(r => r.id)).toEqual(['A']);

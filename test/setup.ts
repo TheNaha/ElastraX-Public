@@ -1,63 +1,77 @@
-/**
- * test/setup.ts – bun test preload file
- *
- * This file is executed by the bun test runner before any test modules are
- * loaded.  Setting AI env vars here ensures that the AIClient singleton
- * created at module-evaluation time in src/agent/index.ts picks up a valid
- * base URL, so chatCompletion() proceeds to the fetch() call (which is then
- * intercepted per-test via global.fetch mock).
- *
- * It also ensures libsignal stub files exist so that @whiskeysockets/baileys
- * can be imported without the native 'libsignal' binary (unavailable in CI).
- */
+import { afterAll, afterEach, beforeEach, mock } from 'bun:test';
+import {
+  assertHarnessEnvironment,
+  assertRepositoryDataUnchanged,
+  captureRepositoryDataSnapshot,
+  cleanupTestWorkerPaths,
+  configureTestEnvironment,
+  ensureTempDatabaseSchema,
+  getTestWorkerPaths,
+  installFilesystemSpies,
+  installProcessEnvironmentGuard,
+} from './helpers/index';
+import { libsignal } from './helpers/libsignalFixture';
+import * as whatsappRustBridge from './helpers/whatsappRustBridgeFixture';
 
-import { mkdirSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
+const paths = getTestWorkerPaths();
+const repositoryDataSnapshot = captureRepositoryDataSnapshot();
+const cleanupHandles: {
+  restoreEnvironmentGuard?: () => void;
+  fetchHandle?: ReturnType<typeof installBlockedFetch>;
+} = {};
 
-process.env.AI_API_BASE_URL = 'https://test-ai.example.com/v1';
-process.env.AI_API_KEY = 'test-key';
-process.env.AI_MODEL_NAME = 'test-model';
-process.env.ELASTRAX_DB_PATH = ':memory:';
+process.once('exit', () => {
+  cleanupWorker();
+  cleanupHandles.fetchHandle?.restore();
+  cleanupHandles.restoreEnvironmentGuard?.();
+});
 
-// ─── libsignal stubs ─────────────────────────────────────────────────────────
-// @whiskeysockets/baileys requires the 'libsignal' native binary package.
-// In CI / dev environments where the native build is unavailable, we create
-// minimal stub files so Bun can resolve the imports without error.
-// Signal Protocol cryptography is never exercised in unit tests.
+configureTestEnvironment(paths);
+ensureTempDatabaseSchema(paths.dbPath);
+installFilesystemSpies(paths);
+try {
+  beforeEach(() => installFilesystemSpies(paths));
+  afterEach(() => installFilesystemSpies(paths));
+  afterAll(() => cleanupWorker());
+} catch (error) {
+  void error;
+}
+cleanupHandles.restoreEnvironmentGuard = installProcessEnvironmentGuard();
+cleanupHandles.fetchHandle = installBlockedFetch();
 
-const libsignalRoot = join(import.meta.dir, '..', 'node_modules', 'libsignal');
+mock.module('libsignal', () => ({ ...libsignal, default: libsignal }));
+mock.module('libsignal/src/curve.js', () => ({ ...libsignal.curve, default: libsignal.curve }));
+mock.module('libsignal/src/crypto.js', () => ({ ...libsignal.crypto, default: libsignal.crypto }));
+mock.module('libsignal/src/keyhelper.js', () => ({ ...libsignal.keyhelper, default: libsignal.keyhelper }));
+mock.module('libsignal/src/protobufs.js', () => ({ PreKeyWhisperMessage: libsignal.PreKeyWhisperMessage, default: { PreKeyWhisperMessage: libsignal.PreKeyWhisperMessage } }));
+mock.module('whatsapp-rust-bridge', () => ({ ...whatsappRustBridge }));
 
-if (!existsSync(join(libsignalRoot, 'index.js'))) {
-  mkdirSync(join(libsignalRoot, 'src'), { recursive: true });
+assertHarnessEnvironment();
 
-  writeFileSync(
-    join(libsignalRoot, 'package.json'),
-    JSON.stringify({ name: 'libsignal', version: '0.0.0', main: 'index.js', type: 'module' }),
-  );
+function cleanupWorker(): void {
+  try {
+    assertRepositoryDataUnchanged(repositoryDataSnapshot);
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  }
+  try {
+    cleanupTestWorkerPaths(paths);
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  }
+}
 
-  writeFileSync(
-    join(libsignalRoot, 'index.js'),
-    `export class SessionCipher { async decryptPreKeyWhisperMessage() { return Buffer.alloc(0); } async decryptWhisperMessage() { return Buffer.alloc(0); } async encrypt() { return { type: 1, body: '' }; } async getRecord() { return null; } async hasOpenSession() { return false; } async deleteAllSessionsForDevice() {} }
-export class SessionBuilder { async initOutgoing() {} async processPreKey() {} }
-export class SessionRecord { static deserialize() { return new SessionRecord(); } serialize() { return Buffer.alloc(0); } }
-export class ProtocolAddress { constructor(n, d) { this.name = n; this.deviceId = d; } getName() { return this.name; } getDeviceId() { return this.deviceId; } toString() { return this.name + '.' + this.deviceId; } }
-`,
-  );
-
-  const curveStub = `export function generateKeyPair() { return { pubKey: Buffer.alloc(33), privKey: Buffer.alloc(32) }; }
-export function calculateAgreement() { return Buffer.alloc(32); }
-export function calculateSignature() { return Buffer.alloc(64); }
-export function verifySignature() { return true; }
-export function createKeyPair(p) { return { pubKey: Buffer.alloc(33), privKey: p || Buffer.alloc(32) }; }
-export default { generateKeyPair, calculateAgreement, calculateSignature, verifySignature, createKeyPair };
-`;
-  writeFileSync(join(libsignalRoot, 'src', 'curve.js'), curveStub);
-
-  const cryptoStub = `export function calculateMAC() { return Buffer.alloc(32); }
-export function deriveSecrets(_i, _s, _n, chunks) { return Array.from({ length: chunks || 3 }, () => Buffer.alloc(32)); }
-export function decrypt() { return Buffer.alloc(0); }
-export function encrypt() { return Buffer.alloc(0); }
-export function hmacSha256() { return Buffer.alloc(32); }
-`;
-  writeFileSync(join(libsignalRoot, 'src', 'crypto.js'), cryptoStub);
+function installBlockedFetch() {
+  const original = globalThis.fetch;
+  const blocked = async (): Promise<Response> => {
+    throw new Error('Network access is disabled in the hermetic test harness.');
+  };
+  globalThis.fetch = blocked as unknown as typeof globalThis.fetch;
+  return {
+    restore() {
+      globalThis.fetch = original;
+    },
+  };
 }

@@ -99,15 +99,19 @@ describe('HealthMonitor', () => {
   describe('HealthMonitor lifecycle', () => {
     test('start/stop manages timers correctly', () => {
       const monitor = new HealthMonitor();
+      const internals = monitor as unknown as { timers: ReturnType<typeof setInterval>[] };
 
-      // Should not throw
       monitor.start();
-      const timersBeforeStop = (monitor as any).timers.length;
+      const timersBeforeStop = internals.timers.length;
       expect(timersBeforeStop).toBeGreaterThanOrEqual(0);
+      expect(monitor.isStarted()).toBe(true);
+
+      monitor.start();
+      expect(internals.timers).toHaveLength(timersBeforeStop);
 
       monitor.stop();
-      const timersAfterStop = (monitor as any).timers.length;
-      expect(timersAfterStop).toBe(0);
+      expect(internals.timers).toHaveLength(0);
+      expect(monitor.isStarted()).toBe(false);
     });
 
     test('singleton healthMonitor is exported', () => {

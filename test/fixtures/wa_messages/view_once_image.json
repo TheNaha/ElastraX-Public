@@ -1,17 +1,17 @@
 {
   "key": {
-    "remoteJid": "628123456789@s.whatsapp.net",
+    "remoteJid": "synthetic-user-1@s.whatsapp.net",
     "fromMe": false,
-    "id": "ONCE001"
+    "id": "synthetic-message-1"
   },
-  "pushName": "Alice",
+  "pushName": "Synthetic User",
   "message": {
     "viewOnceMessageV2": {
       "message": {
         "imageMessage": {
           "caption": "",
           "mimetype": "image/jpeg",
-          "url": "https://mmg.whatsapp.net/fake-viewonce"
+          "url": ""
         }
       }
     }
