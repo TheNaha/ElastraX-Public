@@ -1,51 +1,65 @@
 services:
   bot:
-    # --- OPTION 1: Pull pre-built from GitHub (Recommended for VPSS/Servers) ---
-    # image: ghcr.io/thenaha/elastrax:latest
-    
-    # --- OPTION 2: Build Locally (Uncomment below and comment OPTION 1) ---
+    image: ${ELASTRAX_IMAGE:-ghcr.io/thenaha/elastrax:local}
     build:
       context: .
       dockerfile: Dockerfile
-
-    container_name: elastrax-bot
-    volumes:
-      # We only need to mount the persistent data and logs now!
-      # We no longer mount the live source code or node_modules because it is baked into the image.
-      - ./data:/usr/src/app/data
-    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: production
+      ELASTRAX_DB_PATH: /app/data/bot.db
+      WEBHOOK_HOST: 0.0.0.0
+      WEBHOOK_CONTAINER_MODE: "true"
+      WEBHOOK_PORT: ${WEBHOOK_PORT:-3500}
+    expose:
+      - "${WEBHOOK_PORT:-3500}"
     ports:
-      # Both sides follow WEBHOOK_PORT from .env (host:container)
-      - "${WEBHOOK_PORT:-3500}:${WEBHOOK_PORT:-3500}"
-    env_file:
-      - .env
-    # NOTE: the healthcheck is defined once in the Dockerfile (HEALTHCHECK),
-    # probing GET /health on $WEBHOOK_PORT — do not duplicate it here.
-    networks:
-       - proxy
-    # We no longer need the command override since the Dockerfile CMD will run the compiled app
-
-  # ── Optional continuous backup sidecar (Litestream) ────────────────────────
-  # Start with: docker compose --profile backup up -d
-  # Requires LITESTREAM_REPLICA_URL in .env (s3://…, sftp://…, etc.) and
-  # litestream.yml mounted — see litestream.yml.example. Shares ./data so it can
-  # replicate data/bot.db (and read snapshots under data/backups) directly.
-  litestream:
-    image: litestream/litestream:latest
-    container_name: elastrax-litestream
-    profiles: ["backup"]
-    depends_on:
-      - bot
+      - "127.0.0.1:${WEBHOOK_PORT:-3500}:${WEBHOOK_PORT:-3500}"
     volumes:
-      - ./data:/data
-      - ./litestream.yml:/etc/litestream.yml:ro
-    env_file:
-      - .env
-    restart: unless-stopped
+      - elastrax-data:/app/data
     networks:
-       - proxy
+      - proxy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=256m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    pids_limit: 256
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  litestream:
+    image: litestream/litestream:0.5.10@sha256:66c0ef32779b20f7ce682751ec50ba0f1363cad5cb9dba1e23fbeee6ae3197b9
+    profiles:
+      - backup
+    environment:
+      LITESTREAM_ACCESS_KEY_ID: ${LITESTREAM_ACCESS_KEY_ID-}
+      LITESTREAM_SECRET_ACCESS_KEY: ${LITESTREAM_SECRET_ACCESS_KEY-}
+    volumes:
+      - elastrax-data:/data
+      - "${LITESTREAM_CONFIG:-./litestream.yml.example}:/etc/litestream.yml:ro"
+    networks:
+      - backup
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    init: true
+    restart: unless-stopped
+
+volumes:
+  elastrax-data:
 
 networks:
+  backup:
+    internal: true
   proxy:
     external: true
     name: proxy

@@ -1,97 +1,79 @@
-# ───────────────────────────────────────────────────────────────────────
-# ElastraX v7 — Multi-stage Dockerfile
-# ───────────────────────────────────────────────────────────────────────
-# Stage 1: fetch     — download yt-dlp + ffmpeg static binaries
-# Stage 2: install   — bun install (dev + prod) with native build tools
-# Stage 3: prerelease — copy source + dev node_modules for optional tests
-# Stage 4: release   — minimal runtime image
-# ───────────────────────────────────────────────────────────────────────
+ARG BUN_IMAGE=oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
 
-# ── Stage 1: Fetch external binaries ────────────────────────────────────
-FROM oven/bun:1.3 AS fetch
+FROM ${BUN_IMAGE} AS fetch
 ARG TARGETARCH
+ARG YTDLP_VERSION=2026.08.19
+ARG YTDLP_SHA256_AMD64=58162f9bfdc27458ea47bfcb311cf47028f17d8154a8bf7d689861d46399230a
+ARG YTDLP_SHA256_ARM64=b16e4dab368a816cd05d477d698a605a6ae87ccee1c8ffd38fa21d7254141fcc
+ARG FFMPEG_RELEASE=autobuild-2026-09-12-13-12
+ARG FFMPEG_BUILD=8.1.2-52-g5a03dfa0f6
+ARG FFMPEG_SHA256_AMD64=682dba33847c14b496b51bb4f8bd6601a180295d038928c68c558ab8978d6fa8
+ARG FFMPEG_SHA256_ARM64=c575dc71e07878219de9f9f5a3e2387697524f58b2e8de6dca03086eb7925d68
 RUN set -eux; \
-        export DEBIAN_FRONTEND=noninteractive; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
-        rm -rf /var/lib/apt/lists/*; \
-        # ── Resolve architecture ──────────────────────────────────────────── \
-        ARCH="${TARGETARCH:-}"; \
-        if [ -z "$ARCH" ]; then ARCH="$(dpkg --print-architecture)"; fi; \
-        # ── yt-dlp standalone binary (no Python needed) ───────────────────── \
-        case "$ARCH" in \
-                amd64) YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux" ;; \
-                arm64) YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux_aarch64" ;; \
-                *) echo "Unsupported architecture: $ARCH"; exit 1 ;; \
-        esac; \
-        curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$YTDLP_URL" \
-                -o /usr/local/bin/yt-dlp; \
-        chmod a+rx /usr/local/bin/yt-dlp; \
-        # ── ffmpeg + ffprobe static build ─────────────────────────────────── \
-        case "$ARCH" in \
-                amd64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz" ;; \
-                arm64) FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz" ;; \
-        esac; \
-        curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz; \
-        tar -xJf /tmp/ffmpeg.tar.xz -C /tmp; \
-        FFMPEG_DIR="$(find /tmp -maxdepth 1 -type d -name 'ffmpeg-*' | head -n1)"; \
-        test -n "$FFMPEG_DIR"; \
-        install -m 0755 "$FFMPEG_DIR/bin/ffmpeg"  /usr/local/bin/ffmpeg; \
-        install -m 0755 "$FFMPEG_DIR/bin/ffprobe" /usr/local/bin/ffprobe; \
-        rm -rf /tmp/ffmpeg.tar.xz "$FFMPEG_DIR"
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
+    rm -rf /var/lib/apt/lists/*; \
+    ARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "$ARCH" in \
+      amd64) YTDLP_FILE="yt-dlp_linux"; YTDLP_SHA256="$YTDLP_SHA256_AMD64"; FFMPEG_ARCH="linux64";; \
+      arm64) YTDLP_FILE="yt-dlp_linux_aarch64"; YTDLP_SHA256="$YTDLP_SHA256_ARM64"; FFMPEG_ARCH="linuxarm64";; \
+      *) echo "Unsupported architecture: $ARCH"; exit 1;; \
+    esac; \
+    YTDLP_URL="https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/${YTDLP_FILE}"; \
+    curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 2 --retry-connrefused "$YTDLP_URL" -o "/tmp/$YTDLP_FILE"; \
+    printf '%s  %s\n' "$YTDLP_SHA256" "/tmp/$YTDLP_FILE" | sha256sum -c -; \
+    install -m 0755 "/tmp/$YTDLP_FILE" /usr/local/bin/yt-dlp; \
+    FFMPEG_FILE="ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1.tar.xz"; \
+    if [ "$ARCH" = amd64 ]; then FFMPEG_SHA256="$FFMPEG_SHA256_AMD64"; else FFMPEG_SHA256="$FFMPEG_SHA256_ARM64"; fi; \
+    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/${FFMPEG_FILE}"; \
+    curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 2 --retry-connrefused "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz; \
+    printf '%s  %s\n' "$FFMPEG_SHA256" /tmp/ffmpeg.tar.xz | sha256sum -c -; \
+    mkdir -p /tmp/ffmpeg; \
+    tar -xJf /tmp/ffmpeg.tar.xz --strip-components=1 -C /tmp/ffmpeg \
+      "ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1/bin/ffmpeg" \
+      "ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1/bin/ffprobe"; \
+    install -m 0755 /tmp/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg; \
+    install -m 0755 /tmp/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe; \
+    rm -rf "/tmp/$YTDLP_FILE" /tmp/ffmpeg.tar.xz /tmp/ffmpeg
 
-# ── Stage 2: Install npm dependencies ──────────────────────────────────
-FROM oven/bun:1.3 AS install
-# better-sqlite3 (devDependency) needs native build tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-                python3 build-essential pkg-config \
-        && rm -rf /var/lib/apt/lists/*
+FROM ${BUN_IMAGE} AS install
+WORKDIR /app
+COPY package.json bun.lock bunfig.toml ./
+RUN set -eu; \
+    attempt=1; \
+    until bun install --frozen-lockfile --production; do \
+      if [ "$attempt" -ge 3 ]; then exit 1; fi; \
+      attempt=$((attempt + 1)); \
+      rm -rf node_modules; \
+      sleep $((attempt * 2)); \
+    done
 
-# Dev install (includes devDependencies for testing/linting)
-RUN mkdir -p /temp/dev
-COPY package.json bun.lock bunfig.toml /temp/dev/
-RUN cd /temp/dev && bun install --frozen-lockfile
-
-# Production install (excludes devDependencies)
-RUN mkdir -p /temp/prod
-COPY package.json bun.lock bunfig.toml /temp/prod/
-RUN cd /temp/prod && bun install --frozen-lockfile --production
-
-# ── Stage 3: Pre-release (source + dev deps for optional tests) ────────
-FROM oven/bun:1.3 AS prerelease
-WORKDIR /usr/src/app
-COPY --from=install /temp/dev/node_modules node_modules
-COPY . .
-
-ENV NODE_ENV=production
-# RUN bun test
-# RUN bun run build
-
-# ── Stage 4: Final runtime image ──────────────────────────────────────
-FROM oven/bun:1.3 AS release
+FROM ${BUN_IMAGE} AS release
 RUN set -eux; \
-        export DEBIAN_FRONTEND=noninteractive; \
-        apt-get update; \
-        apt-get install -y --no-install-recommends ca-certificates; \
-        rm -rf /var/lib/apt/lists/*; \
-        update-ca-certificates
-WORKDIR /usr/src/app
-
-# Copy external binaries from the fetch stage
-COPY --from=fetch /usr/local/bin/yt-dlp   /usr/local/bin/yt-dlp
-COPY --from=fetch /usr/local/bin/ffmpeg   /usr/local/bin/ffmpeg
-COPY --from=fetch /usr/local/bin/ffprobe  /usr/local/bin/ffprobe
-
-# Copy production node_modules and source
-COPY --from=install /temp/prod/node_modules node_modules
-COPY --from=prerelease /usr/src/app/src src
-COPY --from=prerelease /usr/src/app/drizzle drizzle
-COPY --from=prerelease /usr/src/app/package.json .
-COPY --from=prerelease /usr/src/app/drizzle.config.ts .
-
-HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-        CMD bun -e "fetch('http://127.0.0.1:' + (process.env.WEBHOOK_PORT || 3500) + '/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"
-
-# run the app
+    export DEBIAN_FRONTEND=noninteractive; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends ca-certificates; \
+    rm -rf /var/lib/apt/lists/*; \
+    update-ca-certificates; \
+    mkdir -p /app/data; \
+    chown -R bun:bun /app/data
+WORKDIR /app
+COPY --from=fetch /usr/local/bin/yt-dlp /usr/local/bin/yt-dlp
+COPY --from=fetch /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
+COPY --from=fetch /usr/local/bin/ffprobe /usr/local/bin/ffprobe
+COPY --from=install --chown=bun:bun /app/node_modules node_modules
+COPY --chown=bun:bun package.json bun.lock bunfig.toml drizzle.config.ts ./
+COPY --chown=bun:bun src ./src
+COPY --chown=bun:bun drizzle ./drizzle
+ENV NODE_ENV=production \
+    BUN_CONFIG_DISABLE_DOTENV=1 \
+    ELASTRAX_DB_PATH=/app/data/bot.db \
+    WEBHOOK_HOST=127.0.0.1 \
+    WEBHOOK_PORT=3500
+VOLUME ["/app/data"]
+EXPOSE 3500
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+  CMD bun -e "fetch('http://127.0.0.1:' + (process.env.WEBHOOK_PORT || '3500') + '/ready').then(r => { if (!r.ok) process.exit(1) }).catch(() => process.exit(1))"
 USER bun
-ENTRYPOINT [ "bun", "run", "src/index.ts" ]
+ENTRYPOINT ["bun", "run", "src/index.ts"]
