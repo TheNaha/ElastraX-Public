@@ -101,6 +101,20 @@
       "when": 20,
       "tag": "0019_reminder_language",
       "breakpoints": true
+    },
+    {
+      "idx": null,
+      "version": "6",
+      "when": 21,
+      "tag": "0020_database_safety",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 22,
+      "tag": "0021_database_safety",
+      "breakpoints": true
     }
   ]
 }

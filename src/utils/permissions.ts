@@ -69,12 +69,88 @@ async function resolvePlatformAdmin(
   senderId: string,
   isGroup: boolean,
   senderPn?: string,
+  platform: PlatformName = 'whatsapp',
 ): Promise<boolean> {
   if (!isGroup) return false;
-  return isWhatsAppGroupAdmin(sock, chatId, senderId, senderPn);
+  return isNativeGroupAdmin(platform, { chatId, senderId, isGroup, senderPn, sock });
 }
 
+export type PlatformName = 'whatsapp' | 'discord' | (string & {});
+export type NativeAdminResolver = (ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown; platform?: PlatformName }) => Promise<boolean>;
+
+const nativeAdminResolvers = new Map<string, NativeAdminResolver>();
 const groupMetadataCache = new Map<string, { data: WhatsAppGroupMetadata; expiresAt: number }>();
+
+export function registerNativeAdminResolver(platform: PlatformName, resolver: NativeAdminResolver): () => void {
+  const key = String(platform).trim().toLowerCase();
+  nativeAdminResolvers.set(key, resolver);
+  return () => {
+    if (nativeAdminResolvers.get(key) === resolver) nativeAdminResolvers.delete(key);
+  };
+}
+
+export const setNativeAdminResolver = registerNativeAdminResolver;
+
+export function invalidateNativeAdminCache(chatId?: string, platform?: PlatformName): void {
+  if (platform === undefined && (chatId === 'whatsapp' || chatId === 'discord')) {
+    platform = chatId;
+    chatId = undefined;
+  }
+  const platformKey = platform ? String(platform).trim().toLowerCase() : undefined;
+  if (platformKey && chatId) {
+    groupMetadataCache.delete(`${platformKey}:${chatId}`);
+    return;
+  }
+  if (platformKey) {
+    for (const key of [...groupMetadataCache.keys()]) {
+      if (key.startsWith(`${platformKey}:`)) groupMetadataCache.delete(key);
+    }
+    return;
+  }
+  groupMetadataCache.clear();
+}
+
+export const invalidatePlatformAdminCache = invalidateNativeAdminCache;
+export const invalidateWhatsAppAdminCache = (chatId?: string) => invalidateNativeAdminCache(chatId, 'whatsapp');
+export const invalidateGroupAdminCache = invalidateNativeAdminCache;
+
+export function clearNativeAdminResolvers(): void {
+  nativeAdminResolvers.clear();
+  invalidateNativeAdminCache();
+}
+
+export async function isDiscordGroupAdmin(
+  ctx: { chatId: string; senderId: string; isGroup: boolean; member?: { permissions?: { has?: (permission: bigint | string) => boolean }; administrator?: boolean; roles?: { has?: (id: string) => boolean } }; permissionResolver?: (id: string) => Promise<boolean> | boolean },
+  resolver?: NativeAdminResolver,
+): Promise<boolean> {
+  if (!ctx.isGroup) return false;
+  if (resolver) {
+    try { return await resolver({ ...ctx, platform: 'discord' }); } catch (error: unknown) { logger.warn({ err: error, chatId: ctx.chatId }, 'Discord admin resolver failed'); return false; }
+  }
+  if (ctx.member?.administrator === true) return true;
+  if (ctx.member?.permissions?.has) {
+    try {
+      return ctx.member.permissions.has('Administrator') || ctx.member.permissions.has(0x2n);
+    } catch {
+      try { return ctx.member.permissions.has(BigInt(2)); } catch { return false; }
+    }
+  }
+  if (ctx.permissionResolver) return ctx.permissionResolver(ctx.senderId);
+  return false;
+}
+
+export async function isNativeGroupAdmin(
+  platform: PlatformName,
+  ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown },
+): Promise<boolean> {
+  if (!ctx.isGroup) return false;
+  const resolver = nativeAdminResolvers.get(String(platform).trim().toLowerCase());
+  if (resolver) {
+    try { return await resolver({ ...ctx, platform }); } catch (error: unknown) { logger.warn({ err: error, platform, chatId: ctx.chatId }, 'Native admin resolver failed'); return false; }
+  }
+  if (platform === 'whatsapp') return isWhatsAppGroupAdmin(ctx.sock, ctx.chatId, ctx.senderId, ctx.senderPn);
+  return false;
+}
 
 /**
  * Check whether a WhatsApp user is a native group admin/superadmin.
@@ -94,8 +170,9 @@ export async function isWhatsAppGroupAdmin(
 ): Promise<boolean> {
   if (!hasGroupMetadataClient(sock)) return false;
   try {
+    const cacheKey = `whatsapp:${chatId}`;
     const now = Date.now();
-    const cached = groupMetadataCache.get(chatId);
+    const cached = groupMetadataCache.get(cacheKey);
     let metadata: WhatsAppGroupMetadata;
 
     if (cached && cached.expiresAt > now) {
@@ -107,7 +184,7 @@ export async function isWhatsAppGroupAdmin(
       for (const [key, entry] of groupMetadataCache) {
         if (entry.expiresAt <= now) groupMetadataCache.delete(key);
       }
-      groupMetadataCache.set(chatId, { data: metadata, expiresAt: now + 5 * 60 * 1000 });
+      groupMetadataCache.set(cacheKey, { data: metadata, expiresAt: now + 5 * 60 * 1000 });
     }
 
     const participants = metadata.participants ?? [];
@@ -137,15 +214,16 @@ export async function resolveUserRoles(
   senderId: string,
   isGroup: boolean,
   senderPn?: string,
+  platform: PlatformName = 'whatsapp',
 ): Promise<string[]> {
   logger.debug(
     { chatId, senderId, senderPn, isGroup },
     '[Permissions] resolveUserRoles — start',
   );
 
-  const isPlatformAdmin = await resolvePlatformAdmin(sock, chatId, senderId, isGroup, senderPn);
+  const isPlatformAdmin = await resolvePlatformAdmin(sock, chatId, senderId, isGroup, senderPn, platform);
 
-  const roles = await AuthService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn);
+  const roles = await AuthService.resolveRoles(senderId, chatId, isPlatformAdmin, senderPn, platform);
 
   logger.debug(
     { senderId, senderPn, chatId, roles, isPlatformAdmin },
@@ -173,10 +251,11 @@ export async function checkPermissions(
   isGroup: boolean,
   required: string,
   senderPn?: string,
+  platform: PlatformName = 'whatsapp',
 ): Promise<boolean> {
   if (required === 'user') return true;
 
-  const roles = await resolveUserRoles(sock, chatId, senderId, isGroup, senderPn);
+  const roles = await resolveUserRoles(sock, chatId, senderId, isGroup, senderPn, platform);
   const allowed = AuthService.hasPermission(roles, required);
 
   logger.debug(

@@ -4,7 +4,7 @@
  */
 
 import { db } from '../db';
-import { userRoles, rolePrivileges, userIdentities } from '../db/schema';
+import { userRoles, rolePrivileges } from '../db/schema';
 import { eq, and, inArray } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
@@ -51,21 +51,40 @@ function envInt(role: string, field: string, fallback: number): number {
   const key = `ROLE_PRIV_${role.toUpperCase()}_${field}`;
   const raw = process.env[key];
   if (raw !== undefined && raw.trim() !== '') {
-    const parsed = parseInt(raw, 10);
-    if (!Number.isNaN(parsed)) return parsed;
+    const parsed = Number(raw.trim());
+    if (Number.isSafeInteger(parsed)) return parsed;
   }
   return fallback;
+}
+
+function isValidPrivilegeValue(field: PrivilegeField, value: number): boolean {
+  switch (field) {
+    case 'maxMessagesPerWindow':
+      return value === -1 || (value >= 1 && value <= 1_000_000);
+    case 'rateLimitWindowSec':
+      return value >= 1 && value <= 86_400;
+    case 'contextLimit':
+      return value === -1 || (value >= 1 && value <= 10_000);
+    case 'maxDownloadMb':
+      return value === -1 || (value >= 1 && value <= 1_024);
+  }
 }
 
 /** Build the env-level defaults for a single role (env → hardcoded). */
 function envDefaults(role: string): RolePrivileges {
   const hc = HARDCODED[role] || HARDCODED.user;
-  return {
+  const values: RolePrivileges = {
     maxMessagesPerWindow: envInt(role, 'MESSAGES_PER_WINDOW', hc.maxMessagesPerWindow),
-    rateLimitWindowSec:   envInt(role, 'RATE_WINDOW_SEC',     hc.rateLimitWindowSec),
-    contextLimit:         envInt(role, 'CONTEXT_LIMIT',       hc.contextLimit),
-    maxDownloadMb:        envInt(role, 'MAX_DOWNLOAD_MB',     hc.maxDownloadMb),
+    rateLimitWindowSec: envInt(role, 'RATE_WINDOW_SEC', hc.rateLimitWindowSec),
+    contextLimit: envInt(role, 'CONTEXT_LIMIT', hc.contextLimit),
+    maxDownloadMb: envInt(role, 'MAX_DOWNLOAD_MB', hc.maxDownloadMb),
   };
+  for (const field of PRIVILEGE_FIELDS) {
+    if (!isValidPrivilegeValue(field, values[field])) {
+      values[field] = hc[field];
+    }
+  }
+  return values;
 }
 
 /**
@@ -119,72 +138,71 @@ export class AuthService {
     chatId?: string,
     isPlatformAdmin?: boolean,
     senderPn?: string,
+    platform: string = 'whatsapp',
   ): Promise<string[]> {
-    const { db, userRoles } = this.deps;
     const roles = new Set<string>(['user']);
 
     try {
-      const ownerJid = process.env.BOT_OWNER_JID;
+      const ownerJid = process.env.BOT_OWNER_JID?.trim();
       const ownerMatchUserId = ownerJid ? userId === ownerJid : false;
       const ownerMatchPn = ownerJid && senderPn ? senderPn === ownerJid : false;
 
       if (ownerJid && (ownerMatchUserId || ownerMatchPn)) {
         roles.add('owner');
-        logger.info(
-          { userId, senderPn, ownerJid, matchedVia: ownerMatchUserId ? 'userId' : 'senderPn' },
-          '[AuthService] Owner matched via env BOT_OWNER_JID',
-        );
-      } else if (ownerJid) {
-        logger.debug({ userId, senderPn, ownerJid }, '[AuthService] Owner check - no match');
+        logger.info({ matchedVia: ownerMatchUserId ? 'userId' : 'senderPn' }, '[AuthService] Owner role matched');
       }
 
-    let userIds: string[];
-    let roleRows: { scope: string; role: string }[];
+      let userIds: string[];
+      let roleRows: Array<{ scope: string; role: string }>;
 
-    try {
-      // PERF-03: Single batched query for JIDs + roles (was N+1: getAllJids + user_roles lookup)
-      const { jids, roles: dbRoles } = await IdentityService.getJidsAndRoles(userId, chatId);
-      userIds = jids;
-      roleRows = dbRoles;
-      if (senderPn && !userIds.includes(senderPn)) {
-        userIds.push(senderPn);
+      try {
+        const resolved = await IdentityService.getJidsAndRoles(userId, chatId, platform);
+        userIds = resolved.jids;
+        roleRows = resolved.roles;
+        if (senderPn && !userIds.includes(senderPn)) {
+          userIds.push(senderPn);
+        }
+      } catch (err) {
+        logger.warn({ err, userId, senderPn }, '[AuthService] Identity role lookup failed');
+        userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
+        roleRows = [];
       }
-    } catch {
-      userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];
-      roleRows = [];
-    }
 
-    logger.debug({ userIds, chatId, hasDbRoles: roleRows.length > 0 }, '[AuthService] Identity+roles resolved in single query');
-
-    if (roleRows.length > 0) {
       const appliedRoles: string[] = [];
       for (const row of roleRows) {
-        if (row.scope === 'global' || row.scope === chatId) {
+        if (BUILTIN_ROLES.includes(row.role) && (row.scope === 'global' || row.scope === chatId)) {
           roles.add(row.role);
           appliedRoles.push(row.role);
         }
       }
-      logger.debug(
-          {
-            userId,
-            dbRows: roleRows.length,
-            appliedRoles,
-          },
-          '[AuthService] DB roles found',
-        );
-      }
 
       if (isPlatformAdmin) {
         roles.add('admin');
-        logger.debug({ userId }, '[AuthService] Platform admin flag set - added admin role');
+        if (!appliedRoles.includes('admin')) {
+          appliedRoles.push('admin');
+        }
       }
+
+      logger.debug(
+        { userIds, chatId, appliedRoles, platformAdmin: isPlatformAdmin === true },
+        '[AuthService] Roles resolved',
+      );
+      return Array.from(roles);
     } catch (err) {
       logger.error({ err, userId, senderPn }, '[AuthService] Failed to resolve roles');
+      return ['user'];
     }
+  }
 
-    const result = Array.from(roles);
-      logger.debug({ userId, senderPn, chatId, roles: result }, '[AuthService] resolveRoles - final result');
-    return result;
+  static canManageScope(actorRoles: readonly string[], targetScope: string, currentScope?: string): boolean {
+    if (actorRoles.includes('owner')) return true;
+    return actorRoles.includes('admin') && currentScope !== undefined && targetScope === currentScope;
+  }
+
+  static assertRoleScopeAllowed(actorRoles: readonly string[], targetScope: string, currentScope?: string): void {
+    if (!this.canManageScope(actorRoles, targetScope, currentScope)) {
+      throw new Error('You are not allowed to manage roles in that scope');
+    }
   }
 
   static hasPermission(roles: string[], required: string): boolean {
@@ -210,35 +228,39 @@ export class AuthService {
     platform: string,
     grantedBy: string,
   ): Promise<void> {
-    const { db, userRoles } = this.deps;
-    logger.info({ userId, role, scope, platform, grantedBy }, '[AuthService] setRole - start');
+    if (!BUILTIN_ROLES.includes(role)) {
+      throw new Error(`Unsupported role: ${role}`);
+    }
+    if (!scope.trim()) {
+      throw new Error('Role scope is required');
+    }
+    if (!platform.trim()) {
+      throw new Error('Role platform is required');
+    }
 
-    // user_roles has UNIQUE(user_id, scope) — one role per user per scope.
-    // Look up by (userId, scope) regardless of role so granting a different
-    // role replaces the old one instead of violating the constraint.
+    const { db, userRoles } = this.deps;
+    logger.info({ role, scope, platform }, '[AuthService] setRole - start');
+
     const existing = await db
       .select()
       .from(userRoles)
-      .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
+      .where(and(
+        eq(userRoles.userId, userId),
+        eq(userRoles.platform, platform),
+        eq(userRoles.scope, scope),
+      ));
 
     if (existing.length > 0) {
       const current = existing[0]!;
-      if (current.role === role) {
-        await db
-          .update(userRoles)
-          .set({ grantedBy })
-          .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
-        logger.info({ userId, role, scope }, '[AuthService] setRole - updated existing entry');
-      } else {
-        await db
-          .update(userRoles)
-          .set({ role, platform, grantedBy })
-          .where(and(eq(userRoles.userId, userId), eq(userRoles.scope, scope)));
-        logger.info(
-          { userId, previousRole: current.role, newRole: role, scope },
-          '[AuthService] setRole - replaced existing role',
-        );
-      }
+      await db
+        .update(userRoles)
+        .set({ role, grantedBy })
+        .where(and(
+          eq(userRoles.userId, userId),
+          eq(userRoles.platform, platform),
+          eq(userRoles.scope, scope),
+        ));
+      logger.info({ role, scope, platform, replacedRole: current.role === role ? undefined : current.role }, '[AuthService] setRole - updated');
     } else {
       await db.insert(userRoles).values({
         userId,
@@ -248,18 +270,22 @@ export class AuthService {
         grantedBy,
         created_at: new Date(),
       });
-      logger.info({ userId, role, scope }, '[AuthService] setRole - inserted new entry');
+      logger.info({ role, scope, platform }, '[AuthService] setRole - inserted');
     }
   }
 
-  static async removeRole(userId: string, scope: string, role: string): Promise<boolean> {
+  static async removeRole(
+    userId: string,
+    scope: string,
+    role: string,
+    platform: string = 'whatsapp',
+  ): Promise<boolean> {
     const { db, userRoles } = this.deps;
-    logger.info({ userId, scope, role }, '[AuthService] removeRole - start');
+    logger.info({ scope, role, platform }, '[AuthService] removeRole - start');
 
-    // A specific role is mandatory: bulk-revoking every role of a target
-    // (including owner) must never be possible from a single unscoped call.
     const conditions = and(
       eq(userRoles.userId, userId),
+      eq(userRoles.platform, platform),
       eq(userRoles.scope, scope),
       eq(userRoles.role, role),
     );
@@ -267,28 +293,37 @@ export class AuthService {
     const existing = await db.select({ id: userRoles.id }).from(userRoles).where(conditions).limit(1);
 
     if (existing.length === 0) {
-      logger.warn({ userId, scope, role }, '[AuthService] removeRole - no matching entry found');
+      logger.warn({ scope, role, platform }, '[AuthService] removeRole - no matching entry found');
       return false;
     }
 
     await db.delete(userRoles).where(conditions);
-    logger.info({ userId, scope, role }, '[AuthService] removeRole - deleted');
+    logger.info({ scope, role, platform }, '[AuthService] removeRole - deleted');
     return true;
   }
 
-  static async listRoles(scope: string): Promise<Array<{ userId: string; role: string; grantedBy: string }>> {
+  static async listRoles(
+    scope: string,
+    platform?: string,
+  ): Promise<Array<{ userId: string; role: string; platform: string; grantedBy: string }>> {
     const { db, userRoles } = this.deps;
     return db
       .select({
         userId: userRoles.userId,
         role: userRoles.role,
+        platform: userRoles.platform,
         grantedBy: userRoles.grantedBy,
       })
       .from(userRoles)
-      .where(eq(userRoles.scope, scope));
+      .where(platform
+        ? and(eq(userRoles.scope, scope), eq(userRoles.platform, platform))
+        : eq(userRoles.scope, scope));
   }
 
-  static async getUserRoles(userId: string): Promise<Array<{ scope: string; role: string }>> {
+  static async getUserRoles(
+    userId: string,
+    platform?: string,
+  ): Promise<Array<{ scope: string; role: string; platform?: string }>> {
     const { db, userRoles } = this.deps;
     let userIds: string[];
     try {
@@ -303,9 +338,12 @@ export class AuthService {
       .select({
         scope: userRoles.scope,
         role: userRoles.role,
+        platform: userRoles.platform,
       })
       .from(userRoles)
-      .where(roleLookupCondition);
+      .where(platform
+        ? and(roleLookupCondition, eq(userRoles.platform, platform))
+        : roleLookupCondition);
   }
 
   // ── Privileges API ──────────────────────────────────────────────────────────
@@ -379,6 +417,13 @@ export class AuthService {
    * Pass `null` for a field to remove the override (revert to env default).
    */
   static async setPrivilegeOverride(role: string, field: PrivilegeField, value: number | null): Promise<void> {
+    if (!BUILTIN_ROLES.includes(role)) {
+      throw new Error(`Unsupported role: ${role}`);
+    }
+    if (value !== null && !isValidPrivilegeValue(field, value)) {
+      throw new Error(`Invalid value for ${field}`);
+    }
+
     const { db, rolePrivileges } = this.deps;
     logger.info({ role, field, value }, '[AuthService] setPrivilegeOverride — updating DB');
     // Upsert into role_privileges
@@ -411,6 +456,9 @@ export class AuthService {
    * Reset all DB overrides for a role (revert everything to env defaults).
    */
   static async resetPrivilegesToDefaults(role: string): Promise<void> {
+    if (!BUILTIN_ROLES.includes(role)) {
+      throw new Error(`Unsupported role: ${role}`);
+    }
     const { db, rolePrivileges } = this.deps;
     logger.info({ role }, '[AuthService] resetPrivilegesToDefaults — clearing DB overrides');
     await db.delete(rolePrivileges).where(eq(rolePrivileges.role, role));

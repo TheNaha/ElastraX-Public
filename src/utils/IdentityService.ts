@@ -1,252 +1,333 @@
-/**
- * @file src/utils/IdentityService.ts
- * @description Persistent LID <-> PN identity mapping for Baileys V7.
- */
+import { randomUUID } from 'node:crypto';
+import { and, eq, inArray, or } from 'drizzle-orm';
+import { db, type ElastraXDatabase } from '../db';
+import {
+  canonicalIdentities,
+  identityAliases,
+  userIdentities,
+  userRoles,
+} from '../db/schema';
 
-import { db } from '../db';
-import { userIdentities, userRoles } from '../db/schema';
-import { eq, or, sql, inArray } from 'drizzle-orm';
-import { logger } from './logger';
+type IdentityRow = typeof userIdentities.$inferSelect;
+type LegacyIdentityRow = Pick<IdentityRow, 'lid' | 'pn' | 'displayName' | 'platform' | 'updated_at'>;
+type CanonicalRow = typeof canonicalIdentities.$inferSelect;
 
-type IdentityRow = {
-  rowId: number;
-  lid: string | null;
+export interface IdentityServiceDeps {
+  db: ElastraXDatabase;
+  userIdentities: typeof userIdentities;
+  canonicalIdentities?: typeof canonicalIdentities;
+  identityAliases?: typeof identityAliases;
+  userRoles: typeof userRoles;
+}
+
+export interface IdentityInfo {
+  canonicalId: string;
   pn: string | null;
+  lid: string | null;
   displayName: string | null;
-};
-
-type IdentityDeps = {
-  db: typeof import('../db').db;
-  userIdentities: typeof import('../db/schema').userIdentities;
-  userRoles?: typeof import('../db/schema').userRoles;
-};
-
-function buildRowIdFilter(rowIds: number[]) {
-  return sql`rowid in (${sql.join(rowIds.map((rowId) => sql`${rowId}`), sql`, `)})`;
+  platform: string;
 }
 
-/**
- * Treat placeholder JIDs as unknown. WhatsApp emits bare "0@s.whatsapp.net"
- * for anonymized group senders; storing them would collide across users once
- * the UNIQUE indexes exist.
- */
-function normalizeJid(jid: string | undefined): string | undefined {
-  if (!jid) return undefined;
-  const user = jid.split('@')[0] ?? '';
-  if (user === '' || user === '0') return undefined;
-  return jid;
+let deps: IdentityServiceDeps = {
+  db,
+  userIdentities,
+  canonicalIdentities,
+  identityAliases,
+  userRoles,
+};
+
+export function setDepsForTesting(overrides: Partial<IdentityServiceDeps> | null): void {
+  if (overrides === null) {
+    deps = { db, userIdentities, canonicalIdentities, identityAliases, userRoles };
+    return;
+  }
+  const next = { ...deps, ...overrides };
+  if (Object.prototype.hasOwnProperty.call(overrides, 'db')) {
+    next.canonicalIdentities = overrides.canonicalIdentities;
+    next.identityAliases = overrides.identityAliases;
+  }
+  deps = next;
 }
 
-export class IdentityService {
-  private static deps: IdentityDeps = { db, userIdentities, userRoles };
+function normalized(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
 
-  static setDepsForTesting(deps: IdentityDeps | null): void {
-    this.deps = deps ?? { db, userIdentities, userRoles };
-  }
+function aliasKinds(lid: string | null, pn: string | null): Array<{ value: string; kind: string }> {
+  return [
+    ...(lid ? [{ value: lid, kind: 'lid' }] : []),
+    ...(pn ? [{ value: pn, kind: 'pn' }] : []),
+  ];
+}
 
-  private static async findMatchingRows(lid?: string, pn?: string): Promise<IdentityRow[]> {
-    const { db, userIdentities } = this.deps;
-    const conditions = [];
-    if (lid) conditions.push(eq(userIdentities.lid, lid));
-    if (pn) conditions.push(eq(userIdentities.pn, pn));
-    if (conditions.length === 0) return [];
+async function legacyRowFor(aliases: string[], platform: string): Promise<LegacyIdentityRow | undefined> {
+  if (aliases.length === 0) return undefined;
+  return (await deps.db.select({
+    lid: deps.userIdentities.lid,
+    pn: deps.userIdentities.pn,
+    displayName: deps.userIdentities.displayName,
+    platform: deps.userIdentities.platform,
+    updated_at: deps.userIdentities.updated_at,
+  }).from(deps.userIdentities).where(and(
+    eq(deps.userIdentities.platform, platform),
+    or(...aliases.map(alias => or(
+      eq(deps.userIdentities.lid, alias),
+      eq(deps.userIdentities.pn, alias),
+    ))),
+  )).limit(1))[0];
+}
 
-    return db
-      .select({
-        rowId: sql<number>`rowid`.as('rowId'),
-        lid: userIdentities.lid,
-        pn: userIdentities.pn,
-        displayName: userIdentities.displayName,
-      })
-      .from(userIdentities)
-      .where(conditions.length === 1 ? conditions[0] : or(...conditions));
-  }
+async function canonicalForAlias(alias: string, platform: string): Promise<CanonicalRow | undefined> {
+  if (!deps.canonicalIdentities || !deps.identityAliases) return undefined;
+  const aliasRow = (await deps.db.select().from(deps.identityAliases).where(and(
+    eq(deps.identityAliases.platform, platform),
+    eq(deps.identityAliases.alias, alias),
+  )).limit(1))[0];
+  if (!aliasRow) return undefined;
+  return (await deps.db.select().from(deps.canonicalIdentities)
+    .where(eq(deps.canonicalIdentities.id, aliasRow.canonicalId))
+    .limit(1))[0];
+}
 
-  static async upsert(
-    lid: string | undefined,
-    pn: string | undefined,
-    displayName?: string,
-    platform: string = 'whatsapp',
-  ): Promise<void> {
-    if (!lid && !pn) return;
+export const IdentityService = {
+  setDepsForTesting,
+  upsert: (...args: [string | null | undefined, string | null | undefined, (string | null)?, (string)?]) =>
+    IdentityService.upsertIdentity(args[0] ?? null, args[1] ?? null, args[2], args[3]),
+  async getIdentity(jid: string): Promise<IdentityInfo | null> {
+    const alias = normalized(jid);
+    if (!alias) return null;
+    if (deps.canonicalIdentities && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(alias)) {
+      const canonical = (await deps.db.select().from(deps.canonicalIdentities)
+        .where(eq(deps.canonicalIdentities.id, alias)).limit(1))[0];
+      if (canonical && deps.identityAliases) {
+        const aliases = await deps.db.select().from(deps.identityAliases)
+          .where(eq(deps.identityAliases.canonicalId, canonical.id));
+        return {
+          canonicalId: canonical.id,
+          lid: aliases.find(row => row.aliasKind === 'lid')?.alias ?? null,
+          pn: aliases.find(row => row.aliasKind === 'pn' || row.aliasKind === 'phone')?.alias ?? null,
+          displayName: canonical.displayName,
+          platform: canonical.platform,
+        };
+      }
+    }
+    const platform = alias.endsWith('@lid') || alias.endsWith('@s.whatsapp.net') ? 'whatsapp' : 'discord';
+    const canonical = await canonicalForAlias(alias, platform);
+    if (canonical && deps.identityAliases) {
+      const aliases = await deps.db.select().from(deps.identityAliases)
+        .where(and(
+          eq(deps.identityAliases.platform, platform),
+          eq(deps.identityAliases.canonicalId, canonical.id),
+        ));
+      return {
+        canonicalId: canonical.id,
+        lid: aliases.find(row => row.aliasKind === 'lid')?.alias ?? null,
+        pn: aliases.find(row => row.aliasKind === 'pn' || row.aliasKind === 'phone')?.alias ?? null,
+        displayName: canonical.displayName,
+        platform,
+      };
+    }
+    const row = (await deps.db.select({
+      lid: deps.userIdentities.lid,
+      pn: deps.userIdentities.pn,
+      displayName: deps.userIdentities.displayName,
+      platform: deps.userIdentities.platform,
+    }).from(deps.userIdentities).where(and(
+      eq(deps.userIdentities.platform, platform),
+      or(eq(deps.userIdentities.lid, alias), eq(deps.userIdentities.pn, alias)),
+    )).limit(1))[0];
+    if (!row) return null;
+    return {
+      canonicalId: row.pn ?? row.lid ?? alias,
+      lid: row.lid,
+      pn: row.pn,
+      displayName: row.displayName,
+      platform,
+    };
+  },
 
-    lid = normalizeJid(lid);
-    pn = normalizeJid(pn);
-    if (!lid && !pn) return;
+  async getCanonicalId(jid: string): Promise<string | null> {
+    return (await this.getIdentity(jid))?.canonicalId ?? null;
+  },
 
-    try {
-      const { db, userIdentities } = this.deps;
-      const existing = await this.findMatchingRows(lid, pn);
+  async getAllJids(jid: string): Promise<string[]> {
+    const identity = await this.getIdentity(jid);
+    if (!identity) return jid ? [jid] : [];
+    const jids = [identity.canonicalId, identity.lid, identity.pn].filter((value): value is string => Boolean(value));
+    if (!deps.identityAliases || !identity.canonicalId) return [...new Set(jids)];
+    const aliases = await deps.db.select({ alias: deps.identityAliases.alias })
+      .from(deps.identityAliases)
+      .where(eq(deps.identityAliases.canonicalId, identity.canonicalId));
+    return [...new Set([...jids, ...aliases.map(row => row.alias)])].filter(Boolean);
+  },
 
-      if (existing.length > 0) {
-        const canonical = existing.find((row) => row.lid && row.pn) ?? existing[0];
-        const mergedLid = lid ?? existing.find((row) => row.lid)?.lid ?? null;
-        const mergedPn = pn ?? existing.find((row) => row.pn)?.pn ?? null;
-        const mergedDisplayName = displayName ?? existing.find((row) => row.displayName)?.displayName ?? null;
-        const duplicateRowIds = existing
-          .filter((row) => row.rowId !== canonical.rowId)
-          .map((row) => row.rowId);
+  async getJidsAndRoles(userId: string, chatId?: string, platform?: string): Promise<{ jids: string[]; roles: Array<{ scope: string; role: string }> }> {
+    const jids = await this.getAllJids(userId);
+    if (jids.length === 0) return { jids, roles: [] };
+    const scopeCondition = chatId
+      ? or(eq(deps.userRoles.scope, 'global'), eq(deps.userRoles.scope, chatId))
+      : eq(deps.userRoles.scope, 'global');
+    const rows = platform
+      ? await deps.db.select({ scope: deps.userRoles.scope, role: deps.userRoles.role })
+        .from(deps.userRoles)
+        .where(and(inArray(deps.userRoles.userId, jids), eq(deps.userRoles.platform, platform), scopeCondition))
+      : await deps.db.select({ scope: deps.userRoles.scope, role: deps.userRoles.role })
+        .from(deps.userRoles)
+        .where(and(inArray(deps.userRoles.userId, jids), scopeCondition));
+    return { jids, roles: rows };
+  },
 
-        if (duplicateRowIds.length > 0) {
-          await db.delete(userIdentities).where(buildRowIdFilter(duplicateRowIds));
+  async getLidForPn(pn: string): Promise<string | undefined> {
+    const identity = await this.getIdentity(pn);
+    return identity?.lid ?? undefined;
+  },
+
+  async getPnForLid(lid: string): Promise<string | undefined> {
+    const identity = await this.getIdentity(lid);
+    return identity?.pn ?? undefined;
+  },
+
+  async upsertIdentity(lid: string | null, pn: string | null, displayName?: string | null, platform: string = 'whatsapp'): Promise<void> {
+    const normalizedLid = normalized(lid);
+    const normalizedPn = normalized(pn);
+    if (!normalizedLid && !normalizedPn) return;
+    const aliases = aliasKinds(normalizedLid, normalizedPn);
+    const nowMs = Date.now();
+    const now = new Date();
+
+    if (deps.canonicalIdentities && deps.identityAliases) {
+      const existingRows = await Promise.all(aliases.map(alias => canonicalForAlias(alias.value, platform)));
+      const existing = existingRows.find((row: CanonicalRow | undefined): row is CanonicalRow => Boolean(row));
+      const canonicalId = existing?.id ?? randomUUID();
+      const primaryAlias = existing?.primaryAlias ?? aliases[0]!.value;
+
+      await deps.db.transaction(transaction => {
+        transaction.insert(deps.canonicalIdentities!).values({
+          id: canonicalId,
+          platform,
+          primaryAlias,
+          displayName: displayName ?? existing?.displayName ?? null,
+          created_at: nowMs,
+          updated_at: nowMs,
+        }).onConflictDoUpdate({
+          target: deps.canonicalIdentities!.id,
+          set: { displayName: displayName ?? existing?.displayName ?? null, updated_at: nowMs },
+        }).run();
+
+        for (const alias of aliases) {
+          transaction.insert(deps.identityAliases!).values({
+            canonicalId,
+            platform,
+            alias: alias.value,
+            aliasKind: alias.kind,
+            metadata: null,
+            firstSeenAt: nowMs,
+            lastSeenAt: nowMs,
+          }).onConflictDoUpdate({
+            target: [deps.identityAliases!.platform, deps.identityAliases!.alias],
+            set: { canonicalId, lastSeenAt: nowMs },
+          }).run();
         }
+      });
 
-        await db
-          .update(userIdentities)
-          .set({
-            lid: mergedLid,
-            pn: mergedPn,
-            displayName: mergedDisplayName,
-            updated_at: new Date(),
-          })
-          .where(sql`rowid = ${canonical.rowId}`);
-
-        logger.debug(
-          {
-            lid: mergedLid,
-            pn: mergedPn,
-            displayName: mergedDisplayName,
-            mergedDuplicates: duplicateRowIds.length,
-          },
-          '[IdentityService] Updated existing identity',
-        );
-      } else {
-        await db.insert(userIdentities).values({
-          lid: lid ?? null,
-          pn: pn ?? null,
+      const legacy = await legacyRowFor(aliases.map(alias => alias.value), platform);
+      if (!legacy) {
+        await deps.db.insert(deps.userIdentities).values({
+          canonicalId,
+          lid: normalizedLid,
+          pn: normalizedPn,
           platform,
           displayName: displayName ?? null,
-          updated_at: new Date(),
-        });
-
-        logger.info({ lid, pn, displayName }, '[IdentityService] Stored new identity mapping');
+          updated_at: now,
+        }).onConflictDoNothing().run();
       }
-    } catch (err) {
-      logger.error({ err, lid, pn }, '[IdentityService] Failed to upsert identity');
+      return;
     }
-  }
 
-  static async getAllJids(jid: string): Promise<string[]> {
-    if (!jid) return [];
-
-    try {
-      const { db, userIdentities } = this.deps;
-      const isLid = jid.includes('@lid');
-      const condition = isLid ? eq(userIdentities.lid, jid) : eq(userIdentities.pn, jid);
-
-      const rows = await db
-        .select({ lid: userIdentities.lid, pn: userIdentities.pn })
-        .from(userIdentities)
-        .where(condition)
-        .limit(1);
-
-      if (rows.length === 0) return [jid];
-
-      const result = new Set<string>();
-      if (rows[0].lid) result.add(rows[0].lid);
-      if (rows[0].pn) result.add(rows[0].pn);
-      result.add(jid);
-
-      return Array.from(result);
-    } catch (err) {
-      logger.error({ err, jid }, '[IdentityService] Failed to look up identity');
-      return [jid];
+    const lidRows = normalizedLid
+      ? await deps.db.select({
+          lid: deps.userIdentities.lid,
+          pn: deps.userIdentities.pn,
+          displayName: deps.userIdentities.displayName,
+          platform: deps.userIdentities.platform,
+          updated_at: deps.userIdentities.updated_at,
+        }).from(deps.userIdentities).where(eq(deps.userIdentities.lid, normalizedLid))
+      : [];
+    const pnRows = normalizedPn
+      ? await deps.db.select({
+          lid: deps.userIdentities.lid,
+          pn: deps.userIdentities.pn,
+          displayName: deps.userIdentities.displayName,
+          platform: deps.userIdentities.platform,
+          updated_at: deps.userIdentities.updated_at,
+        }).from(deps.userIdentities).where(eq(deps.userIdentities.pn, normalizedPn))
+      : [];
+    const row = lidRows[0] ?? pnRows[0];
+    if (!row) {
+      await deps.db.insert(deps.userIdentities).values({
+        lid: normalizedLid,
+        pn: normalizedPn,
+        displayName: displayName ?? null,
+        platform,
+        updated_at: now,
+      }).run();
+      return;
     }
-  }
-
-  /**
-   * Batch lookup: resolve all JIDs for a user AND fetch their role rows
-   * in a single SQL query using a LEFT JOIN. Eliminates the N+1 pattern
-   * where AuthService.getAllJids() and the subsequent user_roles query
-   * were executed as two separate round trips.
-   *
-   * Returns the set of JIDs and the matching role rows.
-   */
-  static async getJidsAndRoles(jid: string, _chatId?: string): Promise<{
-    jids: string[];
-    roles: { scope: string; role: string }[];
-  }> {
-    try {
-      const { db, userRoles: ur } = this.deps;
-      if (!ur) {
-        // Fallback to separate lookups if userRoles not injected
-        const jids = await this.getAllJids(jid);
-        return { jids, roles: [] };
-      }
-
-      // Step 1: Get all mapped JIDs (LID ↔ PN) for this user
-      const jids = await this.getAllJids(jid);
-      const uniqueJids = [...new Set(jids)];
-
-      // Step 2: Batch-fetch roles for all JIDs in a single query
-      // (previously this was a separate DB call after getAllJids)
-      const roleRows = await db
-        .select({ scope: ur.scope, role: ur.role })
-        .from(ur)
-        .where(inArray(ur.userId, uniqueJids));
-
-      return { jids: uniqueJids, roles: roleRows };
-    } catch (err) {
-      logger.error({ err, jid }, '[IdentityService] Failed to look up identity + roles');
-      return { jids: [jid], roles: [] };
+    const staleIds = [...lidRows, ...pnRows]
+      .filter(candidate => candidate.updated_at < row.updated_at)
+      .map(candidate => candidate.updated_at.getTime());
+    for (const stale of staleIds) {
+      await deps.db.delete(deps.userIdentities).where(and(
+        eq(deps.userIdentities.platform, platform),
+        eq(deps.userIdentities.updated_at, new Date(stale)),
+      )).run();
     }
-  }
+    await deps.db.update(deps.userIdentities)
+      .set({
+        lid: normalizedLid ?? row.lid,
+        pn: normalizedPn ?? row.pn,
+        displayName: displayName ?? row.displayName,
+        updated_at: now,
+      })
+      .where(and(
+        eq(deps.userIdentities.platform, platform),
+        or(
+          ...(row.lid ? [eq(deps.userIdentities.lid, row.lid)] : []),
+          ...(row.pn ? [eq(deps.userIdentities.pn, row.pn)] : []),
+        ),
+      ))
+      .run();
+  },
 
-  static async getPnForLid(lid: string): Promise<string | undefined> {
-    try {
-      const { db, userIdentities } = this.deps;
-      const rows = await db
-        .select({ pn: userIdentities.pn })
-        .from(userIdentities)
-        .where(eq(userIdentities.lid, lid))
-        .limit(1);
-
-      return rows[0]?.pn ?? undefined;
-    } catch (err) {
-      logger.error({ err, lid }, '[IdentityService] Failed to get PN for LID');
-      return undefined;
+  async setDisplayName(jid: string, displayName: string): Promise<void> {
+    const identity = await this.getIdentity(jid);
+    if (!identity) return;
+    const now = new Date();
+    const nowMs = now.getTime();
+    if (deps.canonicalIdentities) {
+      await deps.db.update(deps.canonicalIdentities)
+        .set({ displayName, updated_at: nowMs })
+        .where(eq(deps.canonicalIdentities.id, identity.canonicalId))
+        .run();
     }
-  }
+    const jids = await this.getAllJids(jid);
+    await deps.db.update(deps.userIdentities)
+      .set({ displayName, updated_at: now })
+      .where(and(
+        eq(deps.userIdentities.platform, jid.endsWith('@lid') || jid.endsWith('@s.whatsapp.net') ? 'whatsapp' : 'discord'),
+        or(...jids.map(value => or(eq(deps.userIdentities.lid, value), eq(deps.userIdentities.pn, value)))),
+      )).run();
+  },
 
-  static async getLidForPn(pn: string): Promise<string | undefined> {
-    try {
-      const { db, userIdentities } = this.deps;
-      const rows = await db
-        .select({ lid: userIdentities.lid })
-        .from(userIdentities)
-        .where(eq(userIdentities.pn, pn))
-        .limit(1);
-
-      return rows[0]?.lid ?? undefined;
-    } catch (err) {
-      logger.error({ err, pn }, '[IdentityService] Failed to get LID for PN');
-      return undefined;
+  async clearUserIdentities(userId: string): Promise<void> {
+    const identity = await this.getIdentity(userId);
+    if (identity && deps.identityAliases) {
+      await deps.db.delete(deps.identityAliases).where(eq(deps.identityAliases.canonicalId, identity.canonicalId)).run();
     }
-  }
-
-  static async getIdentity(jid: string): Promise<{
-    lid: string | null;
-    pn: string | null;
-    displayName: string | null;
-    platform: string;
-  } | null> {
-    try {
-      const { db, userIdentities } = this.deps;
-      const isLid = jid.includes('@lid');
-      const condition = isLid ? eq(userIdentities.lid, jid) : eq(userIdentities.pn, jid);
-
-      const rows = await db.select().from(userIdentities).where(condition).limit(1);
-
-      if (rows.length === 0) return null;
-      return {
-        lid: rows[0].lid,
-        pn: rows[0].pn,
-        displayName: rows[0].displayName,
-        platform: rows[0].platform,
-      };
-    } catch (err) {
-      logger.error({ err, jid }, '[IdentityService] Failed to get identity');
-      return null;
-    }
-  }
-}
+    await deps.db.delete(deps.userIdentities).where(or(
+      eq(deps.userIdentities.lid, userId),
+      eq(deps.userIdentities.pn, userId),
+    )).run();
+  },
+};

@@ -4,8 +4,9 @@
 # 2. Edit the replica block below (bucket/region/endpoint + credentials via
 #    LITESTREAM_ACCESS_KEY_ID / LITESTREAM_SECRET_ACCESS_KEY env vars).
 # 3. Start the sidecar:  docker compose --profile backup up -d
-# 4. Restore onto a fresh host (bot stopped):
-#      docker compose --profile backup run --rm litestream restore -o /data/bot.db /data/bot.db
+# 4. Restore to a NEW file on a fresh host (bot stopped):
+#      docker compose --profile backup run --rm litestream restore -o /data/bot-restored.db /data/bot.db
+#    Validate the new file before any operator promotes it to the active path.
 #
 # Paths are in-container; ./data is mounted at /data by the compose service.
 # The retention block only affects replica housekeeping, not point-in-time
