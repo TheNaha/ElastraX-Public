@@ -23,19 +23,21 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
   override readonly cost = 2;
 
   /**
-   * Always registered, even when no provider is configured.
+   * Registered only once a provider is configured.
    *
-   * A registry-dropped tool makes `/speak` report "command not found", which is
-   * indistinguishable from a typo and reads as a broken feature. Reporting
-   * "voice replies are not configured, ask the owner to set TTS_API_KEY" is
-   * actionable instead. The tool is not `alwaysLoad`, so it is only advertised
-   * to the model when progressive disclosure reaches it.
+   * The registry filters on `isEnabled()` at load time, so an unconfigured bot
+   * never lists this tool: it is absent from `/menu`, from the model's tool
+   * list, and `/speak` reports an unknown command rather than offering a voice
+   * reply it cannot deliver. This matches how the other opt-in tools (game and
+   * software search, the media library, the piracy tools) already behave.
+   *
+   * Setting TTS_API_KEY and reloading the registry surfaces it.
    */
   isEnabled(): boolean {
-    return true;
+    return isTtsConfigured(readTtsConfig());
   }
 
-  /** Whether synthesis can actually run, used for the user-facing message. */
+  /** Whether synthesis can actually run. */
   isConfigured(): boolean {
     return isTtsConfigured(readTtsConfig());
   }
@@ -67,6 +69,10 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
 
   async execute(args: SpeakArgs, ctx: MessageContext): Promise<string> {
     const config = readTtsConfig();
+    // Defence in depth. The registry already withholds this tool when
+    // unconfigured, but config is read per call, so a key removed after load
+    // (or an instance captured before a reload) must still fail cleanly rather
+    // than issuing a request with no credentials.
     if (!isTtsConfigured(config)) {
       return t(ctx.language, 'speak.not_configured');
     }

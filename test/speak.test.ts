@@ -212,11 +212,54 @@ describe('SpeakTool delivery', () => {
 
   const configuredEnv = { TTS_API_KEY: 'test-key' } as NodeJS.ProcessEnv;
 
-  test('is always registered so an unconfigured bot explains itself', () => {
-    const tool = new SpeakTool();
-    // A registry-dropped tool makes /speak look like a typo.
-    expect(tool.isEnabled()).toBe(true);
-    expect(tool.isConfigured()).toBe(false);
+  test('is not registered until a provider is configured', () => {
+    const previous = { ...process.env };
+    for (const key of ['TTS_API_KEY', 'TTS_PROVIDER', 'TTS_BASE_URL']) delete process.env[key];
+    try {
+      const tool = new SpeakTool();
+      // The registry filters on isEnabled() at load time, so an unconfigured bot
+      // never lists the tool at all — it cannot offer a voice reply it cannot
+      // deliver, and /speak reads as an unknown command.
+      expect(tool.isEnabled()).toBe(false);
+      expect(tool.isConfigured()).toBe(false);
+    } finally {
+      Object.assign(process.env, previous);
+    }
+  });
+
+  test('is registered once a provider is configured', () => {
+    const previous = { ...process.env };
+    Object.assign(process.env, { TTS_API_KEY: 'test-key' });
+    try {
+      const tool = new SpeakTool();
+      expect(tool.isEnabled()).toBe(true);
+      expect(tool.isConfigured()).toBe(true);
+    } finally {
+      Object.assign(process.env, previous);
+    }
+  });
+
+  test('is absent from the registry when unconfigured, and present when configured', async () => {
+    const previous = { ...process.env };
+    for (const key of ['TTS_API_KEY', 'TTS_PROVIDER', 'TTS_BASE_URL']) delete process.env[key];
+    try {
+      const registry = await import('../src/tools/registry');
+      await registry.reloadRegistry();
+      expect(registry.tools.some(t => t.name === 'speak')).toBe(false);
+      expect(registry.getToolByAliasOrName('speak')).toBeUndefined();
+    } finally {
+      Object.assign(process.env, { TTS_API_KEY: 'test-key' });
+    }
+    try {
+      const registry = await import('../src/tools/registry');
+      await registry.reloadRegistry();
+      expect(registry.tools.some(t => t.name === 'speak')).toBe(true);
+      expect(registry.getToolByAliasOrName('speak')).toBeDefined();
+    } finally {
+      Object.assign(process.env, previous);
+      const registry = await import('../src/tools/registry');
+      await registry.reloadRegistry();
+    }
   });
 
   test('tells the user how to enable it when unconfigured, without calling the network', async () => {
