@@ -38,7 +38,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
   }
   readonly name = 'menu';
   readonly description = 'Displays the main menu of available commands, or detailed help for a specific command.';
-  readonly aliases = ['help', 'h', '?'];
+  readonly aliases = ['help', 'h', '?', 'commands'];
   readonly category = 'utility';
   readonly permissions = 'user';
   override readonly noArgAliases = ['menu', 'help', 'commands'];
