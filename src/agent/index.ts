@@ -51,7 +51,7 @@ import {
 
 const log = logger.child({ module: 'Agent' });
 import { FlowHandler } from '../core/FlowHandler';
-import { MAX_INJECTED_MEMORIES, UNLIMITED } from '../core/constants';
+import { MAX_INJECTED_MEMORIES, MAX_ROOM_KNOWLEDGE_CHUNKS, UNLIMITED } from '../core/constants';
 import { t } from '../utils/i18n';
 import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
@@ -70,6 +70,7 @@ import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTi
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { isUsableProviderMessageId } from './messageId';
+import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowledge';
 import { sanitizeRawMessage } from '../utils/rawMessage';
 import { OutboxService } from '../messaging/OutboxService';
 import { getInlineMediaEligibility } from '../providers/media';
@@ -699,20 +700,39 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const userContextLine = `\nCurrent user roles: ${roleLabel}.`;
 
     let memoryContext = '';
+    let roomKnowledgeContext = '';
     if (config.longTermMemory) {
-      const ownerId = ctx.senderId;
-      const ranked = await rankMemoriesForInjection(ownerId, userContent);
-      const mems = ranked
-        ? ranked.map(memory => ({ id: memory.id, content: memory.content }))
-        : (await db.select({ id: memories.id, content: memories.content }).from(memories).where(eq(memories.ownerId, ownerId))
-          .orderBy(desc(memories.created_at))
-          .limit(MAX_INJECTED_MEMORIES)).reverse();
-      if (mems.length > 0) {
-        const bounded = mems
-          .filter(memory => memory.content.length <= 2_000)
-          .slice(0, MAX_INJECTED_MEMORIES)
-          .map(memory => ({ id: memory.id, content: memory.content }));
-        memoryContext = `\n\n<untrusted_long_term_memory>${JSON.stringify(bounded)}</untrusted_long_term_memory>`;
+      if (isGroup) {
+        // In a group, inject the room's shared knowledge base rather than the
+        // sender's private memory. Personal memory was previously injected here
+        // and then folded into the room's rolling summary, which is group-visible
+        // state — so one participant's private notes became everyone's context.
+        // Shared documents are the room-scoped counterpart and are labelled as
+        // reference material, never as instructions.
+        if (ctx.roomKey) {
+          const hits = await retrieveRoomKnowledge({ roomKey: ctx.roomKey, query: userContent, limit: MAX_ROOM_KNOWLEDGE_CHUNKS });
+          const rendered = formatRoomKnowledge(hits);
+          if (rendered) roomKnowledgeContext = `\n\n${rendered}`;
+        }
+      } else {
+        const ownerId = ctx.senderId;
+        const ranked = await rankMemoriesForInjection(ownerId, userContent);
+        const mems = ranked
+          ? ranked.map(memory => ({ id: memory.id, content: memory.content }))
+          : (await db
+              .select({ id: memories.id, content: memories.content })
+              .from(memories)
+              .where(eq(memories.ownerId, ownerId))
+              .orderBy(desc(memories.created_at))
+              .limit(MAX_INJECTED_MEMORIES)
+            ).reverse();
+        if (mems.length > 0) {
+          const bounded = mems
+            .filter(memory => memory.content.length <= 2_000)
+            .slice(0, MAX_INJECTED_MEMORIES)
+            .map(memory => ({ id: memory.id, content: memory.content }));
+          memoryContext = `\n\n<untrusted_long_term_memory>${JSON.stringify(bounded)}</untrusted_long_term_memory>`;
+        }
       }
     }
 
@@ -841,10 +861,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         messagesForAI.length - 1,
         ...summaryContext,
         ...(memoryContext ? [{ role: 'user' as const, content: memoryContext }] : []),
+        ...(roomKnowledgeContext ? [{ role: 'user' as const, content: roomKnowledgeContext }] : []),
         ...summaryRun.activeHistory,
       );
     } else {
       messagesForAI.push(...historyMessages.slice(-effectiveContextLimit));
+      if (roomKnowledgeContext) messagesForAI.push({ role: 'user', content: roomKnowledgeContext });
     }
 
     // 4. Generate AI Response (Recursive for tools)

@@ -7,6 +7,7 @@ import { getErrorMessage } from '../utils/errorUtils';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolveTargetMedia } from '../utils/mediaResolve';
+import { extractPdfText, PdfTextExtractionUnavailableError } from '../utils/pdfText';
 
 const log = logger.child({ module: 'PDFTool' });
 
@@ -290,21 +291,15 @@ export class PDFTool extends BaseTool<PDFArgs> {
 
         case 'to_text': {
           await ctx.react?.('⏳');
-          let parser: { getText: () => Promise<{ text?: string }>; destroy?: () => Promise<void> | void } | undefined;
           try {
-            let PDFParse: typeof import('pdf-parse').PDFParse;
-            try {
-              ({ PDFParse } = await import('pdf-parse'));
-            } catch {
-              return t(lang, 'pdf.parse_not_installed') || 'pdf-parse is not installed. Run `bun add pdf-parse` to enable text extraction.';
-            }
-            parser = new PDFParse({ data: Buffer.from(pdfBytes) });
-            const data = await parser.getText();
-            const text = data.text?.trim();
+            const text = await extractPdfText(pdfBytes);
             if (!text) return t(lang, 'pdf.no_text');
             return text.length > 4000 ? text.slice(0, 4000) + '\n\n[... truncated]' : text;
-          } finally {
-            await parser?.destroy?.();
+          } catch (error: unknown) {
+            if (error instanceof PdfTextExtractionUnavailableError) {
+              return `${t(lang, 'pdf.parse_not_installed')} Run \`bun add pdf-parse\` to enable text extraction.`;
+            }
+            throw error;
           }
         }
 

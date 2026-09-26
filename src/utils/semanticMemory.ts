@@ -63,7 +63,7 @@ export function float32ToBytes(vec: Float32Array): Buffer {
   return Buffer.from(vec.buffer, vec.byteOffset, vec.byteLength);
 }
 
-async function embedInCurrentSpace(
+export async function embedInCurrentSpace(
   text: string,
   embed: (value: string) => Promise<Float32Array | null>,
 ): Promise<{ vector: Float32Array; space: EmbeddingSpace } | null> {
@@ -72,7 +72,7 @@ async function embedInCurrentSpace(
   return { vector, space: EmbeddingService.getCurrentSpace(vector.length) };
 }
 
-function vectorMatchesSpace(embedding: Buffer, space: EmbeddingSpace): Float32Array | null {
+export function vectorMatchesSpace(embedding: Buffer, space: EmbeddingSpace): Float32Array | null {
   if (embedding.byteLength !== space.dimension * Float32Array.BYTES_PER_ELEMENT) return null;
   return bytesToFloat32(embedding);
 }

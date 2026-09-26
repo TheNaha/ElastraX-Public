@@ -92,6 +92,34 @@ function argsForAction(tool: BaseTool, action: string): Record<string, unknown> 
 const ownerContext = { roles: ['owner'], isGroup: true, isOwner: true, platform: 'whatsapp' as const };
 const plainUserContext = { roles: ['user'], isGroup: false, isOwner: false, platform: 'whatsapp' as const };
 
+/**
+ * Validate a candidate argument object, retrying with a sample for any field the
+ * validator reports as missing.
+ *
+ * Per-action requirements (`ACTION_REQUIREMENTS`, e.g. knowledge.search requires
+ * `query`) are enforced by the validator but are not expressible in the tool's
+ * top-level `required` list, so a single attempt cannot satisfy them. The retry
+ * mirrors what a caller that reads the error would do, and still fails loudly if
+ * the requirement names a field the schema does not declare.
+ */
+function validateWithRetries(tool: BaseTool, seed: Record<string, unknown>): string[] {
+  const schema = schemaOf(tool);
+  const properties = schema.properties ?? {};
+  const args = { ...seed };
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const result = validateToolArguments(tool, args);
+    if (result.errors === undefined || result.errors.length === 0) return [];
+    const missing: string[] = [];
+    for (const error of result.errors) {
+      const field = /\$\.([A-Za-z0-9_]+)/.exec(error)?.[1];
+      if (field !== undefined && !(field in args)) missing.push(field);
+    }
+    if (missing.length === 0) return result.errors;
+    for (const field of missing) args[field] = sampleFor(properties[field], field);
+  }
+  return validateToolArguments(tool, args).errors ?? [];
+}
+
 describe('tool reachability', () => {
   beforeAll(async () => {
     await reloadRegistry();
@@ -111,16 +139,16 @@ describe('tool reachability', () => {
         if (!actions || actions.length === 0) {
           // No action discriminator: a single-shot tool. Required params must
           // still be individually satisfiable.
-          const result = validateToolArguments(tool, argsForAction(tool, ''));
-          expect(result.errors ?? []).toEqual([]);
+          const errors = validateWithRetries(tool, argsForAction(tool, ''));
+          expect(errors, `${tool.name}: ${errors.join('; ')}`).toEqual([]);
           return;
         }
         for (const raw of actions) {
           const action = String(raw);
-          const result = validateToolArguments(tool, argsForAction(tool, action));
+          const errors = validateWithRetries(tool, argsForAction(tool, action));
           expect(
-            result.errors ?? [],
-            `${tool.name}: action "${action}" is advertised in the schema but rejected by validation: ${(result.errors ?? []).join('; ')}`,
+            errors,
+            `${tool.name}: action "${action}" is advertised in the schema but rejected by validation: ${errors.join('; ')}`,
           ).toEqual([]);
         }
       });

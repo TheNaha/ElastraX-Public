@@ -70,6 +70,25 @@ export const translations: Record<Locale, Record<string, string>> = {
     'sticker.download_failed': '❌ Failed to download the media.',
     'sticker.unsupported_type': '❌ Unsupported media type ({mime}). Please provide an image or short video.',
     'sticker.send_not_supported': '❌ Your current chat platform does not support sending stickers natively through the bot adapter.',
+    'kb.no_room': '📚 The knowledge base is shared per room, so it is only available in group chats.',
+    'kb.no_document': '📎 Attach or quote a document to index it into this room\'s knowledge base.',
+    'kb.download_failed': '❌ Could not download that document.',
+    'kb.download_not_supported': '❌ This platform cannot download that document.',
+    'kb.empty_document': '📄 That document was empty.',
+    'kb.too_large': '❌ That document is larger than the {mb} MB indexing limit.',
+    'kb.image_unsupported': '🖼️ Images have no text to index. Send a PDF or a text file, or just ask about the image directly.',
+    'kb.unsupported_type': '❌ Cannot index a {mime} file. Send a PDF or a text file.',
+    'kb.pdf_unsupported': '❌ PDF text extraction is not available on this deployment.',
+    'kb.no_text': '📄 No text could be extracted. Scanned PDFs without a text layer cannot be indexed.',
+    'kb.indexed': '📚 Indexed "{source}" into this room\'s knowledge base ({chunks} chunks, {embedded} searchable).',
+    'kb.query_required': '🔍 Provide a query to search for.',
+    'kb.no_results': '🔍 Nothing in this room\'s knowledge base matched that.',
+    'kb.list_header': '📚 Documents indexed in this room:',
+    'kb.empty': '📚 This room has no indexed documents yet. Attach a document and use action=index.',
+    'kb.removed': '🗑️ Removed {count} chunk(s) from the knowledge base.',
+    'kb.cleared': '🗑️ Cleared the room knowledge base ({count} chunk(s) removed).',
+    'kb.usage': 'Use action index, search, list, or remove.',
+    'kb.error': '❌ Knowledge base error: {msg}',
     'speak.not_configured': '🔇 Voice replies are not configured on this bot. Ask the owner to set TTS_API_KEY.',
     'speak.empty': '🔇 There is nothing to speak.',
     'speak.error': '❌ Could not create a voice note: {msg}',
@@ -307,6 +326,25 @@ export const translations: Record<Locale, Record<string, string>> = {
     'sticker.download_failed': '❌ Gagal mengunduh media.',
     'sticker.unsupported_type': '❌ Jenis media tidak didukung ({mime}). Harap berikan gambar atau video pendek.',
     'sticker.send_not_supported': '❌ Platform chat Anda tidak mendukung pengiriman stiker secara native melalui adaptor bot.',
+    'kb.no_room': '📚 Basis pengetahuan bersifat bersama per room, jadi hanya tersedia di chat grup.',
+    'kb.no_document': '📎 Lampirkan atau kutip dokumen untuk mengindeksnya ke basis pengetahuan room ini.',
+    'kb.download_failed': '❌ Gagal mengunduh dokumen tersebut.',
+    'kb.download_not_supported': '❌ Platform ini tidak dapat mengunduh dokumen tersebut.',
+    'kb.empty_document': '📄 Dokumen tersebut kosong.',
+    'kb.too_large': '❌ Dokumen tersebut lebih besar dari batas indeks {mb} MB.',
+    'kb.image_unsupported': '🖼️ Gambar tidak memiliki teks untuk diindeks. Kirim PDF atau berkas teks, atau tanyakan gambarnya langsung.',
+    'kb.unsupported_type': '❌ Tidak dapat mengindeks berkas {mime}. Kirim PDF atau berkas teks.',
+    'kb.pdf_unsupported': '❌ Ekstraksi teks PDF tidak tersedia di deployment ini.',
+    'kb.no_text': '📄 Tidak ada teks yang dapat diekstraksi. PDF hasil pindai tanpa lapisan teks tidak dapat diindeks.',
+    'kb.indexed': '📚 Mengindeks "{source}" ke basis pengetahuan room ini ({chunks} chunk, {embedded} dapat dicari).',
+    'kb.query_required': '🔍 Berikan kueri untuk mencari.',
+    'kb.no_results': '🔍 Tidak ada yang cocok di basis pengetahuan room ini.',
+    'kb.list_header': '📚 Dokumen yang diindeks di room ini:',
+    'kb.empty': '📚 Room ini belum punya dokumen terindeks. Lampirkan dokumen dan gunakan action=index.',
+    'kb.removed': '🗑️ Menghapus {count} chunk dari basis pengetahuan.',
+    'kb.cleared': '🗑️ Membersihkan basis pengetahuan room ({count} chunk dihapus).',
+    'kb.usage': 'Gunakan action index, search, list, atau remove.',
+    'kb.error': '❌ Kesalahan basis pengetahuan: {msg}',
     'speak.not_configured': '🔇 Balasan suara belum dikonfigurasi di bot ini. Minta pemilik mengatur TTS_API_KEY.',
     'speak.empty': '🔇 Tidak ada yang perlu diucapkan.',
     'speak.error': '❌ Gagal membuat pesan suara: {msg}',
@@ -519,7 +557,7 @@ export const translations: Record<Locale, Record<string, string>> = {
  * @param key  - Translation key (e.g. 'menu.greeting')
  * @param vars - Optional map of {variable} placeholders to replace in the string
  */
-export function t(lang: string | undefined, key: string, vars: Record<string, string> = {}): string {
+export function t(lang: string | undefined, key: string, vars: Record<string, string | number> = {}): string {
   const locale: Locale = lang === 'id' ? 'id' : 'en';
   let str = translations[locale][key] ?? translations.en[key];
   if (str === undefined) {
@@ -531,7 +569,7 @@ export function t(lang: string | undefined, key: string, vars: Record<string, st
     // `$'` inside an interpolated value are expanded as substitution patterns,
     // so a value containing `$&` re-injected the matched placeholder
     // ('a$&b' became 'a{name}b'). Interpolated values can be user-controlled.
-    str = str.replaceAll(`{${k}}`, () => v);
+    str = str.replaceAll(`{${k}}`, () => String(v));
   }
   return str;
 }

@@ -18,6 +18,8 @@ export const CANCEL_COMMANDS = ['/cancel', '/batal'];
  * Prevents unbounded context growth in chatty rooms; most recent N win.
  */
 export const MAX_INJECTED_MEMORIES = 50;
+/** Room knowledge excerpts injected per AI turn. Kept small: these are verbatim document text. */
+export const MAX_ROOM_KNOWLEDGE_CHUNKS = 4;
 
 /** Upper bound on rows returned by the memory `retrieve` action. */
 export const MAX_LISTED_MEMORIES = 200;

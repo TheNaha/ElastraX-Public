@@ -129,6 +129,7 @@ const ACTION_REQUIREMENTS: Record<string, Record<string, readonly string[]>> = {
   pdf_tool: { split: ['start_page', 'end_page'], remove_pages: ['pages'], rotate: ['degrees'] },
   menfess: {},
   groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: ['user'], unmute: ['user'], promote: ['user'], demote: ['user'] },
+  knowledge: { search: ['query'] },
 };
 
 function validateActionRequirements(tool: BaseTool, args: Record<string, unknown>, result: ValidationResult): void {
