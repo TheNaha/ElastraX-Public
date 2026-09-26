@@ -3,6 +3,7 @@ import { MessageContext } from '../core/MessageContext';
 import { BotProvider } from '../providers/BotProvider';
 import { DiscordProvider } from '../providers/discord';
 import { TelegramProvider } from '../providers/telegram';
+import { createAdminHandler } from '../admin/routes';
 import { WhatsAppProvider } from '../providers/whatsapp';
 import { MessageQueue, type MessageQueueStats } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
@@ -46,6 +47,8 @@ type SenderRegistry = {
   unregisterSender?(platform: string): void;
   /** Present when the scheduler can execute agent tasks, not just send text. */
   registerTaskRunner?(fn: ScheduledTaskFn): void;
+  /** Optional so existing test doubles keep satisfying this structural type. */
+  registerAdminHandler?(handler: (req: Request, ip: string, server: unknown) => Promise<Response> | Response): void;
 };
 
 type QueueController = {
@@ -248,6 +251,7 @@ export class AppRuntime {
 
     this.started = true;
     try {
+      this.registerAdminDashboard();
       this.registerProviderSenders();
       this.registerScheduledTasks();
       const unregisterReadiness = this.webhookServer.registerReadinessCheck?.(() => this.getReadiness().ready);
@@ -408,6 +412,15 @@ export class AppRuntime {
       acceptedAt,
     };
   };
+
+  /**
+   * Mount the admin dashboard on this port. Registered unconditionally so the
+   * handler exists; it answers 404 for everything when no admin token is
+   * configured, so the surface disappears rather than existing unauthenticated.
+   */
+  private registerAdminDashboard(): void {
+    this.webhookServer.registerAdminHandler?.(createAdminHandler());
+  }
 
   private registerProviderSenders(): void {
     for (const provider of this.activeProviders) {

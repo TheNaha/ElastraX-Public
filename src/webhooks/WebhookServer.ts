@@ -65,6 +65,13 @@ export class WebhookServer {
   private accepting = false;
   private now: () => number;
 
+  /** Set by AppRuntime; absent in tests and in deployments without a token. */
+  private adminHandler: ((req: Request, ip: string, server: unknown) => Promise<Response> | Response) | null = null;
+
+  registerAdminHandler(handler: (req: Request, ip: string, server: unknown) => Promise<Response> | Response): void {
+    this.adminHandler = handler;
+  }
+
   constructor(options: { now?: () => number } = {}) {
     this.now = options.now ?? Date.now;
   }
@@ -518,6 +525,12 @@ export class WebhookServer {
 
   private async handleRequest(req: Request, server: ReturnType<typeof Bun.serve>): Promise<Response> {
     const url = new URL(req.url);
+    // The admin dashboard shares this port by design; delegating to one handler
+    // keeps all of its routing and auth out of the webhook ingress path.
+    if (this.adminHandler && (url.pathname === '/admin' || url.pathname.startsWith('/admin/'))) {
+      const ip = server.requestIP(req)?.address ?? 'unknown';
+      return this.adminHandler(req, ip, server);
+    }
     if (POST_PATHS.has(url.pathname)) {
       if (req.method !== 'POST') {
         return jsonResponse({ error: 'Method Not Allowed' }, 405, { Allow: 'POST' });
