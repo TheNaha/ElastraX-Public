@@ -12,6 +12,7 @@ import {
   formatRoomKnowledge,
 } from '../utils/roomKnowledge';
 import { extractPdfText, PdfTextExtractionUnavailableError } from '../utils/pdfText';
+import { transcribeImage, readOcrConfig } from '../utils/ocr';
 
 const log = logger.child({ module: 'KnowledgeTool' });
 
@@ -130,24 +131,47 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
 
     const mime = media.mime || target.mimeType || '';
     const isPdf = mime.includes('pdf') || /\.pdf$/i.test(media.path ?? '') || (args.title ?? '').toLowerCase().endsWith('.pdf');
+    const ocrConfig = readOcrConfig();
+
+    /** Transcribe an image (or a text-less PDF) with the vision model. */
+    const viaOcr = async (): Promise<string> => {
+      if (!ocrConfig.enabled) return '';
+      await ctx.react?.('👀').catch(() => {});
+      const { text } = await transcribeImage(buffer, mime || 'image/jpeg', { config: ocrConfig, signal: ctx.signal });
+      return text;
+    };
+
     let text: string;
     if (isPdf) {
       try {
         text = await extractPdfText(buffer);
       } catch (error: unknown) {
-        if (error instanceof PdfTextExtractionUnavailableError) return t(ctx.language, 'kb.pdf_unsupported');
-        log.debug({ err: error }, 'PDF text extraction failed');
-        text = '';
+        if (error instanceof PdfTextExtractionUnavailableError) {
+          text = ocrConfig.enabled ? await viaOcr() : '';
+        } else {
+          log.debug({ err: error }, 'PDF text extraction failed');
+          text = '';
+        }
       }
+      // A scan has no text layer; fall back to vision before giving up.
+      if (!text.trim() && ocrConfig.enabled) text = await viaOcr();
     } else if (mime.startsWith('text/') || /\.(txt|md|markdown|csv|json|log)$/i.test(media.path ?? '')) {
       text = buffer.toString('utf8');
     } else if (mime.startsWith('image/')) {
-      return t(ctx.language, 'kb.image_unsupported');
+      if (!ocrConfig.enabled) return t(ctx.language, 'kb.image_unsupported');
+      try {
+        text = await viaOcr();
+      } catch (error: unknown) {
+        log.warn({ err: error }, 'Image transcription failed');
+        return t(ctx.language, 'kb.ocr_failed', { msg: getErrorMessage(error) });
+      }
     } else {
       return t(ctx.language, 'kb.unsupported_type', { mime: mime || 'unknown' });
     }
 
-    if (!text.trim()) return t(ctx.language, 'kb.no_text');
+    if (!text.trim()) {
+      return mime.startsWith('image/') ? t(ctx.language, 'kb.ocr_no_text') : t(ctx.language, 'kb.no_text');
+    }
 
     const source = (args.title ?? '').trim() || basenameOf(media.path) || 'document';
     const result = await ingestRoomDocument({ roomKey: ctx.roomKey, source, text });
