@@ -66,6 +66,7 @@
     "discord.js": "14.27.0",
     "drizzle-orm": "0.45.3",
     "file-type": "21.3.4",
+    "grammy": "^1.46.0",
     "node-webpmux": "^3.2.1",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",

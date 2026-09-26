@@ -75,7 +75,8 @@ async function resolvePlatformAdmin(
   return isNativeGroupAdmin(platform, { chatId, senderId, isGroup, senderPn, sock });
 }
 
-export type PlatformName = 'whatsapp' | 'discord' | (string & {});
+export type { PlatformName } from '../core/MessageContext';
+import type { PlatformName } from '../core/MessageContext';
 export type NativeAdminResolver = (ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown; platform?: PlatformName }) => Promise<boolean>;
 
 const nativeAdminResolvers = new Map<string, NativeAdminResolver>();

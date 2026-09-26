@@ -2,6 +2,7 @@ import { handleIncomingMessage } from '../agent';
 import { MessageContext } from '../core/MessageContext';
 import { BotProvider } from '../providers/BotProvider';
 import { DiscordProvider } from '../providers/discord';
+import { TelegramProvider } from '../providers/telegram';
 import { WhatsAppProvider } from '../providers/whatsapp';
 import { MessageQueue, type MessageQueueStats } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
@@ -120,7 +121,9 @@ export class AppRuntime {
   private stopping = false;
 
   constructor(deps: AppRuntimeDeps = {}) {
-    this.providers = deps.providers ?? [new WhatsAppProvider(), new DiscordProvider()];
+    // Telegram is always constructed but reports `not_configured` without a
+    // token, so an operator sees the gap in readiness instead of a boot failure.
+    this.providers = deps.providers ?? [new WhatsAppProvider(), new DiscordProvider(), new TelegramProvider()];
     this.messageQueue = deps.messageQueue ?? new MessageQueue(1, 5 * 60 * 1000, getQueueConfig());
     this.webhookServer = deps.webhookServer ?? new WebhookServer();
     this.scheduler = deps.scheduler ?? Scheduler;

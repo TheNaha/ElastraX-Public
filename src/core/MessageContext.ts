@@ -1,3 +1,14 @@
+/**
+ * Messaging platforms this build can talk to.
+ *
+ * Deliberately open (`| (string & {})`) so a new provider does not require
+ * editing every type that mentions a platform, while still offering completion
+ * for the platforms we actually ship. A closed two-value union previously meant
+ * adding Telegram meant touching the provider contract, the message context and
+ * the permission resolver in three separate edits.
+ */
+export type PlatformName = 'whatsapp' | 'discord' | 'telegram' | (string & {});
+
 export interface SendMediaOptions {
   caption?: string;
   mimetype?: string;
@@ -58,7 +69,7 @@ export interface RawProviderMessage {
 }
 
 export interface MessageContext {
-  platform: 'whatsapp' | 'discord';
+  platform: PlatformName;
   /**
    * Raw provider room id (WhatsApp JID, Discord channel id).  This is the only
    * value providers may use for I/O.

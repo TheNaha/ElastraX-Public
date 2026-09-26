@@ -413,7 +413,9 @@ async function buildTargetRoleSummary(targetId: string, chatId: string, platform
   const allDbRoles = await AuthService.getUserRoles(targetId, platform);
   const visibleRoles = allDbRoles.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, chatId, platform) && (!entry.platform || entry.platform === platform));
   const effectiveRoles = new Set<string>(['user']);
-  const ownerJid = process.env.BOT_OWNER_JID;
+  // Platform-aware: BOT_OWNER_JID alone never matches a Telegram snowflake or a
+  // Discord id, which left a fresh non-WhatsApp deployment with zero owners.
+  const ownerJid = AuthService.resolveOwnerId(platform);
   const isEnvOwner = !!(ownerJid && (targetId === ownerJid || (targetPn && targetPn === ownerJid)));
 
   if (isEnvOwner) effectiveRoles.add('owner');

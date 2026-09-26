@@ -12,7 +12,7 @@
  *  3. Instantiate the provider in `src/index.ts` and call `onMessage(handleIncomingMessage)`.
  */
 
-import { MessageContext } from '../core/MessageContext';
+import { MessageContext, type PlatformName } from '../core/MessageContext';
 
 /** Implemented by every messaging-platform adapter (WhatsApp, Discord, etc.). */
 export type BotProviderStatus =
@@ -27,7 +27,7 @@ export interface BotProvider {
   /**
    * Name of the provider ('whatsapp' or 'discord')
    */
-  name: 'whatsapp' | 'discord';
+  name: PlatformName;
 
   readonly status?: BotProviderStatus;
 

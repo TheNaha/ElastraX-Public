@@ -107,6 +107,16 @@ function mergeMin(values: number[]): number {
   return Math.min(...finite);
 }
 
+/** Owner id per platform; see AuthService.resolveOwnerId. */
+function resolveOwnerIdForPlatform(platform: string): string | undefined {
+  const specific = platform === 'telegram'
+    ? process.env.BOT_OWNER_TELEGRAM_ID
+    : platform === 'discord'
+      ? process.env.BOT_OWNER_DISCORD_ID
+      : undefined;
+  return specific?.trim() || process.env.BOT_OWNER_JID?.trim();
+}
+
 function roomKeyFor(platform: string, scope: string): string {
   return `room:${platform}:${scope}`;
 }
@@ -150,6 +160,17 @@ export class AuthService {
 
   // ── Roles API ──────────────────────────────────────────────────────────
 
+  /**
+   * The configured owner identifier for a platform.
+   *
+   * `BOT_OWNER_TELEGRAM_ID` / `BOT_OWNER_DISCORD_ID` take precedence for their
+   * platform; otherwise `BOT_OWNER_JID` is used, which is what WhatsApp and any
+   * platform whose ids share that format rely on.
+   */
+  static resolveOwnerId(platform: string = 'whatsapp'): string | undefined {
+    return resolveOwnerIdForPlatform(platform);
+  }
+
   static async resolveRoles(
     userId: string,
     chatId?: string,
@@ -160,7 +181,10 @@ export class AuthService {
     const roles = new Set<string>(['user']);
 
     try {
-      const ownerJid = process.env.BOT_OWNER_JID?.trim();
+      // Owner ids are per-platform: a Telegram user id is a numeric snowflake
+      // and can never equal a WhatsApp JID, so a single variable would silently
+      // never match on one of the two.
+      const ownerJid = resolveOwnerIdForPlatform(platform);
       const ownerMatchUserId = ownerJid ? userId === ownerJid : false;
       const ownerMatchPn = ownerJid && senderPn ? senderPn === ownerJid : false;
 
