@@ -8,6 +8,7 @@ import makeWASocket, {
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { and, eq } from 'drizzle-orm';
+import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
@@ -44,6 +45,15 @@ type SocketWithSignalRepository = BaileysSocket & {
   };
 };
 type LidMapping = NonNullable<NonNullable<SocketWithSignalRepository['signalRepository']>['lidMapping']>;
+/**
+ * Baileys' event map is a wide union that does not include `messages.reaction`,
+ * so the handler parameter is inferred as the whole union. These narrow it to
+ * the fields this handler reads.
+ */
+/** `messages.reaction` delivers an array; `messages.reaction.update` is untyped. */
+type WaReactionItem = { key?: WAMessage['key']; reaction?: string | { text?: string | null } | null };
+type WaReactionUpdate = { key?: WAMessage['key']; reaction?: string; messages: WaReactionItem[] };
+
 type ExtendedMessageKey = WAMessage['key'] & {
   // `participantAlt` is the real Baileys field carrying the sender's phone
   // number in group stanzas. The previous `participantPn`/`senderLid` members
@@ -164,6 +174,29 @@ export class WhatsAppProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
+  /**
+   * Turn raw reaction entries into feedback records. Reactions to messages the
+   * bot did not send are dropped by the recorder itself, so this only has to
+   * unwrap the platform shape.
+   */
+  private collectReactionFeedback(platform: string, entries: ReadonlyArray<WaReactionItem>): void {
+    for (const entry of entries) {
+      const key = entry.key;
+      if (!key?.id) continue;
+      try {
+        recordReactionFeedback({
+          platform,
+          chatRoomId: key.remoteJid ?? '',
+          messageId: key.id,
+          reaction: typeof entry.reaction === 'string' ? entry.reaction : (entry.reaction?.text ?? ''),
+          removed: false,
+        });
+      } catch (error) {
+        logger.debug({ err: error }, '[WhatsApp] Failed to record reaction feedback');
+      }
+    }
+  }
+
   async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<void> {
     const sock = this.requireRunningSocket('sendMessage');
     for (const chunk of chunkWhatsAppText(text)) {
@@ -172,7 +205,9 @@ export class WhatsAppProvider implements BotProvider {
       // running and could still deliver after the outbox had already failed and
       // rescheduled the row, so the recipient got the message twice.
       signal?.throwIfAborted();
-      await sock.sendMessage(chatId, { text: chunk });
+      const sent = await sock.sendMessage(chatId, { text: chunk });
+      // Remember the id so a later reaction can be attributed to the bot.
+      noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
     }
   }
 
@@ -296,6 +331,23 @@ export class WhatsAppProvider implements BotProvider {
     socket.ev.on('group-participants.update', update => {
       if (update.id) invalidateNativeAdminCache(update.id, 'whatsapp');
     });
+
+    // Reactions on the bot's own replies are the cheapest quality signal
+    // available. Recorded only when the reacted-to message is one the bot sent
+    // recently, so a reaction to someone else's message is never attributed.
+    socket.ev.on('messages.reaction', (entries: ReadonlyArray<WaReactionItem>) => {
+      if (!this.isCurrent(socket, generation) || !Array.isArray(entries)) return;
+      this.collectReactionFeedback('whatsapp', entries);
+    });
+    // `messages.reaction.update` fires when a reaction is edited; it is not in
+    // Baileys' typed event map, so the name is cast rather than the whole chain.
+    (socket.ev.on as (name: string, handler: (update: WaReactionUpdate) => void) => void)(
+      'messages.reaction.update',
+      update => {
+        if (!this.isCurrent(socket, generation) || !Array.isArray(update?.messages)) return;
+        this.collectReactionFeedback('whatsapp', update.messages);
+      },
+    );
 
     socket.ev.on('messages.upsert', async event => {
       if (!this.isCurrent(socket, generation) || event.type !== 'notify') return;

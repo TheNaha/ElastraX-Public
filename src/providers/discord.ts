@@ -1,3 +1,4 @@
+import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import {
   AttachmentBuilder,
   Client,
@@ -189,6 +190,38 @@ export class DiscordProvider implements BotProvider {
       this.providerError = new Error(`Discord gateway closed unrecoverably (code ${event?.code ?? 'unknown'}): ${event?.reason ?? 'no reason given'}`);
       logger.error({ code: event?.code, reason: event?.reason }, '[Discord] Gateway disconnected unrecoverably');
     });
+    // Reactions on the bot's own replies are the cheapest quality signal
+    // available. The recorder drops anything that is not a recent bot message,
+    // so reactions to other people's messages are never attributed.
+    client.on(Events.MessageReactionAdd, (reaction, user) => {
+      if (this.client !== client || user.bot) return;
+      try {
+        recordReactionFeedback({
+          platform: 'discord',
+          chatRoomId: reaction.message.channelId,
+          messageId: reaction.message.id,
+          reaction: reaction.emoji.name ?? reaction.emoji.id ?? '',
+          removed: false,
+        });
+      } catch (error) {
+        logger.debug({ err: error }, '[Discord] Failed to record reaction feedback');
+      }
+    });
+    client.on(Events.MessageReactionRemove, (reaction, user) => {
+      if (this.client !== client || user.bot) return;
+      try {
+        recordReactionFeedback({
+          platform: 'discord',
+          chatRoomId: reaction.message.channelId,
+          messageId: reaction.message.id,
+          reaction: reaction.emoji.name ?? reaction.emoji.id ?? '',
+          removed: true,
+        });
+      } catch (error) {
+        logger.debug({ err: error }, '[Discord] Failed to record reaction removal');
+      }
+    });
+
     client.on('messageCreate', async (message: DiscordMessage) => {
       if (this.client !== client || generation !== this.generation || message.author.bot) return;
       try {
@@ -441,10 +474,12 @@ export class DiscordProvider implements BotProvider {
         ensureCurrentGeneration();
         const chunks = chunkDiscordText(replyText);
         for (let index = 0; index < chunks.length; index++) {
-          await msg.reply({
+          const sent = await msg.reply({
             content: chunks[index],
             allowedMentions: discordAllowedMentions(index === 0 ? options?.mentions : undefined),
           });
+          // Remember the id so a later reaction can be attributed to the bot.
+          noteBotMessageSent('discord', sent?.id ?? null);
         }
       },
 

@@ -73,6 +73,11 @@ export interface MetricsSnapshot {
     durationP95: number;
     durationP99: number;
   }>;
+  feedback: {
+    positive: number;
+    negative: number;
+    retracted: number;
+  };
   queue: {
     totalRooms: number;
     totalPending: number;
@@ -96,6 +101,10 @@ export class HealthMetricsCollector {
   private providerStats = new Map<string, { success: number; failures: number }>();
   private toolStats = new Map<string, ToolStats>();
   private serviceHealth = new Map<string, { status: 'healthy' | 'unhealthy'; lastChecked: number; error?: string }>();
+
+  private feedbackPositive = 0;
+  private feedbackNegative = 0;
+  private feedbackRetracted = 0;
 
   private queueStatsGetter: (() => { totalRooms: number; totalPending: number; totalRunning: number }) | null = null;
 
@@ -176,6 +185,21 @@ export class HealthMetricsCollector {
       this.toolStats.set(toolName, { invocations: 0, errors: 0, duration: { values: [], maxSize: 100, cursor: 0 } });
     }
     return this.toolStats.get(toolName)!;
+  }
+
+  /**
+   * Record a thumbs up/down on a bot reply. `retracted` counts reactions the
+   * user took back, so a withdrawn negative is not double-counted as praise.
+   */
+  recordFeedback(sentiment: 'positive' | 'negative', retracted = false): void {
+    if (retracted) {
+      this.feedbackRetracted++;
+      if (sentiment === 'positive') this.feedbackPositive = Math.max(0, this.feedbackPositive - 1);
+      else this.feedbackNegative = Math.max(0, this.feedbackNegative - 1);
+      return;
+    }
+    if (sentiment === 'positive') this.feedbackPositive++;
+    else this.feedbackNegative++;
   }
 
   recordToolInvocation(toolName: string): void {
@@ -284,6 +308,11 @@ export class HealthMetricsCollector {
       },
       providers,
       tools,
+      feedback: {
+        positive: this.feedbackPositive,
+        negative: this.feedbackNegative,
+        retracted: this.feedbackRetracted,
+      },
       queue: queueStats,
       services: Object.fromEntries(this.serviceHealth),
     };
@@ -303,6 +332,12 @@ export class HealthMetricsCollector {
     lines.push(`elastrax_messages_total{status="received"} ${m.messages.received}`);
     lines.push(`elastrax_messages_total{status="processed"} ${m.messages.processed}`);
     lines.push(`elastrax_messages_total{status="error"} ${m.messages.errors}`);
+
+    lines.push('# HELP elastrax_feedback_total User reaction feedback on bot replies');
+    lines.push('# TYPE elastrax_feedback_total counter');
+    lines.push(`elastrax_feedback_total{sentiment="positive"} ${m.feedback.positive}`);
+    lines.push(`elastrax_feedback_total{sentiment="negative"} ${m.feedback.negative}`);
+    lines.push(`elastrax_feedback_retracted_total ${m.feedback.retracted}`);
 
     lines.push('# HELP elastrax_llm_requests_total Total LLM requests');
     lines.push('# TYPE elastrax_llm_requests_total counter');
