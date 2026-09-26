@@ -6,7 +6,14 @@ import { WhatsAppProvider } from '../providers/whatsapp';
 import { MessageQueue, type MessageQueueStats } from '../utils/MessageQueue';
 import { MediaCleanup } from '../utils/MediaCleanup';
 import { RateLimiter } from '../utils/RateLimiter';
-import { Scheduler } from '../utils/Scheduler';
+import { Scheduler, type ScheduledTaskFn } from '../utils/Scheduler';
+import {
+  readScheduledTaskPolicy,
+  createTaskBudget,
+  consumeTaskBudget,
+  describePolicy,
+  logRefusal as logTaskRefusal,
+} from '../utils/scheduledTasks';
 import { DigestService } from '../utils/DigestService';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
@@ -36,6 +43,8 @@ type SenderRegistry = {
   registerReadinessCheck?(check: WebhookReadinessCheck): () => void;
   registerEnqueuer?(enqueuer: WebhookEnqueuer): () => void;
   unregisterSender?(platform: string): void;
+  /** Present when the scheduler can execute agent tasks, not just send text. */
+  registerTaskRunner?(fn: ScheduledTaskFn): void;
 };
 
 type QueueController = {
@@ -237,6 +246,7 @@ export class AppRuntime {
     this.started = true;
     try {
       this.registerProviderSenders();
+      this.registerScheduledTasks();
       const unregisterReadiness = this.webhookServer.registerReadinessCheck?.(() => this.getReadiness().ready);
       if (unregisterReadiness) this.unregisterWebhookHooks.push(unregisterReadiness);
       const unregisterEnqueuer = this.webhookServer.registerEnqueuer?.(this.enqueueWebhook);
@@ -407,6 +417,85 @@ export class AppRuntime {
       this.scheduler.registerSender(provider.name, send);
       this.digestService.registerSender(provider.name, send);
     }
+  }
+
+  /**
+   * Wire scheduled agent runs.
+   *
+   * A reminder whose text starts with the agent-task marker is executed as a
+   * model turn in its room instead of being delivered as text. The policy and
+   * budget are enforced here, before any model call, so a misconfigured
+   * recurrence cannot spend money unbounded.
+   */
+  private registerScheduledTasks(): void {
+    const policy = readScheduledTaskPolicy(process.env);
+    const budget = createTaskBudget();
+    if (!policy.enabled || policy.allowedRooms.length === 0) {
+      logger.info({ policy: describePolicy(policy) }, '[ScheduledTasks] Disabled');
+      return;
+    }
+    if (!this.scheduler.registerTaskRunner) {
+      logger.warn('[ScheduledTasks] Scheduler does not support task runs; ignoring configuration');
+      return;
+    }
+    logger.info({ policy: describePolicy(policy) }, '[ScheduledTasks] Enabled');
+
+    this.scheduler.registerTaskRunner(async request => {
+      const decision = consumeTaskBudget(budget, policy, request.roomKey);
+      if (!decision.allowed) {
+        logTaskRefusal(request.roomKey, decision.reason);
+        return;
+      }
+      const provider = this.operationalProviders().find(candidate => candidate.name === request.platform);
+      if (!provider) {
+        logTaskRefusal(request.roomKey, `platform ${request.platform} is not operational`);
+        return;
+      }
+      const ctx = this.buildScheduledTaskContext(request, provider, policy);
+      try {
+        await this.messageHandler(ctx);
+      } catch (error) {
+        logger.error({ err: error, roomKey: request.roomKey }, '[ScheduledTasks] Task run failed');
+      }
+    });
+  }
+
+  /**
+   * Build the synthetic context for an unattended run. It carries the
+   * instruction as the message text, the room's canonical key, and the policy's
+   * tool deny-list.
+   */
+  private buildScheduledTaskContext(
+    request: { platform: string; remoteRoomId: string; roomKey: string; language: string; instruction: string; signal?: AbortSignal },
+    provider: BotProvider,
+    policy: ReturnType<typeof readScheduledTaskPolicy>,
+  ): MessageContext {
+    const language = request.language === 'id' ? 'id' : 'en';
+    const sendText: NonNullable<MessageContext['reply']> = async text => {
+      if (request.signal?.aborted) return;
+      if (request.signal) await provider.sendMessage(request.remoteRoomId, text, request.signal);
+      else await provider.sendMessage(request.remoteRoomId, text);
+    };
+    return {
+      platform: request.platform as MessageContext['platform'],
+      chatId: request.remoteRoomId,
+      roomKey: request.roomKey,
+      deniedToolNames: policy.deniedTools,
+      senderId: 'scheduler',
+      senderName: 'scheduler',
+      text: request.instruction,
+      isGroup: true,
+      messageType: 'text',
+      hasMedia: false,
+      mediaReady: Promise.resolve(),
+      language,
+      receivedAt: Date.now(),
+      rawMessage: null,
+      signal: request.signal,
+      isBotMentioned: true,
+      reply: sendText,
+      sendMessage: sendText,
+    } as unknown as MessageContext;
   }
 
   private startBackgroundTasks(): void {

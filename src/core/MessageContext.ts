@@ -74,6 +74,13 @@ export interface MessageContext {
    */
   roomKey?: string;
 
+  /**
+   * Tool names that must not run for this message, whatever the room's config
+   * allows. Used by scheduled agent runs, where nobody is present to approve a
+   * destructive action.
+   */
+  deniedToolNames?: readonly string[];
+
   senderId: string;
   senderName: string;
   text: string;

@@ -878,6 +878,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup, platform) : [];
     const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
+    // Scheduled runs set this so an unattended agent cannot take destructive or
+    // admin actions with nobody watching.
+    for (const denied of ctx.deniedToolNames ?? []) allowedToolNames.delete(denied);
 
     // ── V7.14: Smart Tool Loading ──────────────────────────────────────────
     // Instead of sending ALL tool definitions to the LLM, we send only:

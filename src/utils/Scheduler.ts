@@ -12,11 +12,27 @@ import {
   remoteRoomIdFromKey,
   remoteRoomIdFromRoomKey,
 } from '../messaging/roomKeys';
+import { parseAgentTaskMessage } from './scheduledTasks';
 
 type SendFn = (chatRoomId: string, text: string, signal?: AbortSignal) => Promise<void>;
 
+/**
+ * Runs an agent instruction on a room's behalf. `instruction` is the reminder
+ * text with its marker stripped; the runner owns the policy, the budget and
+ * producing the reply.
+ */
+export type ScheduledTaskFn = (request: {
+  platform: string;
+  remoteRoomId: string;
+  roomKey: string;
+  language: string;
+  instruction: string;
+  signal?: AbortSignal;
+}) => Promise<void>;
+
 const STALE_CLAIM_MS = 2 * 60_000;
 const SEND_TIMEOUT_MS = 15_000;
+const TASK_TIMEOUT_MS = 120_000;
 const MIN_INTERVAL_MS = 60_000;
 const MAX_INTERVAL_MS = 5 * 365 * 86_400_000;
 const MAX_BATCH_SIZE = 50;
@@ -164,6 +180,7 @@ export function isValidRecurrence(recurrence: string): boolean {
 
 export class Scheduler {
   private static senders = new Map<string, SendFn>();
+  private static taskRunner: ScheduledTaskFn | null = null;
   private static timer: ReturnType<typeof setInterval> | null = null;
   private static processing = false;
   private static stopped = false;
@@ -174,6 +191,19 @@ export class Scheduler {
 
   static unregisterSender(platform: string): void {
     this.senders.delete(platform);
+  }
+
+  /**
+   * Register the handler for reminders whose message is an agent instruction
+   * (see `AGENT_TASK_PREFIX`). Without one, such a reminder is delivered as
+   * literal text so a misconfiguration degrades instead of losing the message.
+   */
+  static registerTaskRunner(fn: ScheduledTaskFn | null): void {
+    this.taskRunner = fn;
+  }
+
+  static hasTaskRunner(): boolean {
+    return this.taskRunner !== null;
   }
 
   static start(): void {
@@ -247,16 +277,35 @@ export class Scheduler {
             continue;
           }
 
-          const message = t(target.language ?? 'en', 'reminder.fired', {
-            name: reminder.senderName,
-            message: reminder.message,
-          });
-          // Providers receive the raw remote room id, never the canonical key.
-          await withCancellableTimeout(
-            signal => sender(target.remoteRoomId, message, signal),
-            SEND_TIMEOUT_MS,
-            'scheduler send',
-          );
+          const instruction = parseAgentTaskMessage(reminder.message);
+          if (instruction !== null && this.taskRunner) {
+            // An agent task: run the model in the room instead of sending the
+            // literal reminder text. The runner applies the scheduled-task policy
+            // and budget before spending anything.
+            await withCancellableTimeout(
+              signal => this.taskRunner!({
+                platform: reminder.platform,
+                remoteRoomId: target.remoteRoomId,
+                roomKey: target.roomKey,
+                language: target.language ?? 'en',
+                instruction,
+                signal,
+              }),
+              TASK_TIMEOUT_MS,
+              'scheduled agent task',
+            );
+          } else {
+            const message = t(target.language ?? 'en', 'reminder.fired', {
+              name: reminder.senderName,
+              message: reminder.message,
+            });
+            // Providers receive the raw remote room id, never the canonical key.
+            await withCancellableTimeout(
+              signal => sender(target.remoteRoomId, message, signal),
+              SEND_TIMEOUT_MS,
+              'scheduler send',
+            );
+          }
 
           if (reminder.recurrence) {
             const anchorDay = 'anchorDay' in reminder && Number.isInteger(reminder.anchorDay)
