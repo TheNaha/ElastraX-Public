@@ -34,7 +34,12 @@ function createFakeClient() {
 
   const client: FakeDiscordClient = {
     user: { id: 'bot-1', tag: 'bot#0001' },
-    login: mock(async () => {}),
+    // Real discord.js emits `clientReady` once the gateway sends READY, which is
+    // strictly after `login()` resolves. The provider only marks itself
+    // operational on that event, so the double has to model it.
+    login: mock(async () => {
+      await client.emit('clientReady');
+    }),
     destroy: mock(() => {}),
     channels: {
       fetch: mock(async () => null),

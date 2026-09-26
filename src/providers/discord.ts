@@ -1,6 +1,7 @@
 import {
   AttachmentBuilder,
   Client,
+  Events,
   GatewayIntentBits,
   Partials,
   PermissionsBitField,
@@ -154,16 +155,39 @@ export class DiscordProvider implements BotProvider {
   private async startForGeneration(token: string, generation: number): Promise<void> {
     const client = discordProviderDeps.createClient();
     this.client = client;
-    client.on('ready', () => {
+    // discord.js 14 emits the lifecycle events below. It does NOT emit 'error'
+    // on a non-sharded Client (the only emit site is inside ShardingManager's
+    // IPC responder), so a listener on 'error' could never fire — a revoked
+    // token or a missing MessageContent intent produced a permanently dead
+    // gateway that still reported 'running'.
+    const markReady = (): void => {
       if (this.client !== client || generation !== this.generation) return;
       this.providerStatus = 'running';
+      this.providerError = null;
       logger.info(`[Discord] Logged in as ${client.user?.tag ?? 'unknown'}.`);
-    });
-    client.on('error', error => {
+    };
+    // 'clientReady' is the current name; 'ready' is still emitted by the pinned
+    // version but is deprecated and removed in v15.
+    client.on('clientReady', markReady);
+    client.on('ready', markReady);
+    client.on(Events.ShardReconnecting, () => {
       if (this.client !== client) return;
-      this.providerStatus = 'error';
+      if (this.providerStatus === 'running') this.providerStatus = 'backoff';
+      logger.warn('[Discord] Gateway reconnecting');
+    });
+    client.on(Events.ShardError, (error: unknown) => {
+      if (this.client !== client) return;
       this.providerError = error instanceof Error ? error : new Error(String(error));
-      logger.error({ err: error }, '[Discord] Client error');
+      logger.error({ err: error }, '[Discord] Gateway shard error');
+    });
+    client.on(Events.ShardDisconnect, (event: { code?: number; reason?: string }) => {
+      if (this.client !== client) return;
+      // Emitted only for UNRECOVERABLE_CLOSE_CODES (bad token, disallowed
+      // intents, ...). discord.js does not reconnect after this, so surface it
+      // instead of leaving a zombie client that claims to be operational.
+      this.providerStatus = 'error';
+      this.providerError = new Error(`Discord gateway closed unrecoverably (code ${event?.code ?? 'unknown'}): ${event?.reason ?? 'no reason given'}`);
+      logger.error({ code: event?.code, reason: event?.reason }, '[Discord] Gateway disconnected unrecoverably');
     });
     client.on('messageCreate', async (message: DiscordMessage) => {
       if (this.client !== client || generation !== this.generation || message.author.bot) return;
@@ -181,7 +205,10 @@ export class DiscordProvider implements BotProvider {
         client.destroy();
         return;
       }
-      this.providerStatus = 'running';
+      // Deliberately NOT set to 'running' here: `login()` resolves once the raw
+      // WebSocket is up, before the gateway has sent READY. Only the clientReady
+      // handler above may declare the provider operational, so /ready cannot
+      // report success over a connection that never became usable.
     } catch (error) {
       if (this.client === client) this.client = null;
       client.destroy();
@@ -304,7 +331,8 @@ export class DiscordProvider implements BotProvider {
       const id = attachmentId ?? selectedAttachmentId;
       if (!id) return null;
       const descriptor = await selectMediaAttachment(id);
-      return descriptor.mediaPath ? readMediaBuffer(descriptor.mediaPath) : null;
+      // See whatsapp.ts: match the download cap, not readMediaBuffer's 32 MiB default.
+      return descriptor.mediaPath ? readMediaBuffer(descriptor.mediaPath, HARD_MEDIA_MAX_BYTES) : null;
     };
 
     let rolesCache: string[] | null = null;
@@ -450,7 +478,22 @@ export class DiscordProvider implements BotProvider {
       editMessage: async (key: unknown, text: string) => {
         ensureCurrentGeneration();
         if (!isEditableMessage(key)) throw new ProviderOperationError('discord', 'editMessage', 'Invalid Discord message handle.', undefined, 'INVALID_TARGET');
-        await key.edit({ content: truncateDiscordText(text), allowedMentions: { parse: [], users: [] } } as unknown as { content: string });
+        // The agent streams into a single live message and sends the final text
+        // through this same edit. Silently truncating at the 2000-char Discord
+        // limit dropped the tail of every long answer with no error, and because
+        // the edit "succeeded" the agent considered the reply already delivered.
+        // Send the head as the edit and the remainder as follow-up messages.
+        const head = truncateDiscordText(text);
+        await key.edit({ content: head, allowedMentions: { parse: [], users: [] } } as unknown as { content: string });
+        if (head.length < text.length) {
+          const channel = msg.channel;
+          if (!channel?.isTextBased() || !('send' in channel) || typeof channel.send !== 'function') {
+            throw new ProviderOperationError('discord', 'editMessage', 'Discord channel cannot send the remainder of an over-long edit.', undefined, 'UNSUPPORTED');
+          }
+          for (const chunk of chunkDiscordText(text.slice(head.length))) {
+            await channel.send({ content: chunk, allowedMentions: { parse: [] } });
+          }
+        }
       },
 
       react: async (emoji: string) => {

@@ -24,7 +24,7 @@
     "start": "bun run src/index.ts",
     "dev": "bun run --watch src/index.ts",
     "check": "bun run lint && bun run typecheck && bun run test && bun run db:check",
-    "lint": "eslint src test --max-warnings=0",
+    "lint": "eslint src test scripts --max-warnings=0",
     "lint:fix": "eslint src test --fix",
     "typecheck": "tsc --noEmit",
     "test": "bun test --no-env-file test/",

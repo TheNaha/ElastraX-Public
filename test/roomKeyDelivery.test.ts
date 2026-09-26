@@ -381,6 +381,12 @@ describe('provider send isolation', () => {
       receivedAt: new Date().toISOString(),
     });
 
+    // Start before enqueuing: in production the enqueuer is only registered
+    // during start(), so a webhook can never reach it before the provider set
+    // exists. The enqueuer refuses (accepted:false) rather than promising a
+    // 202 for a delivery nothing can perform.
+    await runtime.start();
+
     // Drive the durable enqueue path with the runtime's own webhook enqueuer.
     const enqueued: WebhookDeliveryJob = await webhookJob();
     const enqueuer = (runtime as unknown as { enqueueWebhook: (job: WebhookDeliveryJob, signal: AbortSignal) => Promise<{ accepted: boolean; deliveryId: string; acceptedAt: string }> }).enqueueWebhook;
@@ -388,7 +394,6 @@ describe('provider send isolation', () => {
     expect(result.accepted).toBe(true);
     expect(result.deliveryId.split(',')).toHaveLength(2);
 
-    await runtime.start();
     // Intervals: rate limiter, outbox pump, retention, media cleanup.
     intervals[1]?.();
     await new Promise(resolve => setTimeout(resolve, 25));

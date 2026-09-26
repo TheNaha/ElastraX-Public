@@ -128,12 +128,15 @@ export class MediaRequestTool extends BaseTool {
 
     try {
       switch (action) {
+        // These must be awaited: returning the promise from inside a `try` lets a
+        // rejection escape the `catch` entirely, so the user never saw the
+        // "Request failed" message this handler exists to produce.
         case 'request':
-          return this.handleRequest(seerr, args, ctx);
+          return await this.handleRequest(seerr, args, ctx);
         case 'status':
-          return this.handleStatus(seerr, args, ctx);
+          return await this.handleStatus(seerr, args, ctx);
         case 'my-requests':
-          return this.handleMyRequests(seerr, ctx);
+          return await this.handleMyRequests(seerr, ctx);
         default:
           return 'Available actions: request, status, my-requests';
       }

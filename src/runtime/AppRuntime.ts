@@ -208,18 +208,29 @@ export class AppRuntime {
     }
 
     const results = await Promise.allSettled(this.providers.map(provider => provider.start()));
+    // Admission is deliberately based on `start()` resolving, NOT on
+    // `isOperational`. A provider that connects asynchronously (WhatsApp only
+    // reports 'running' from its `connection.update` 'open' handler, which fires
+    // after the socket is created) is legitimately not operational at this
+    // instant. Freezing the set on `isOperational` here used to drop WhatsApp
+    // from the sender registry on every boot, leaving webhook and outbox
+    // delivery with no WhatsApp lane at all.
     this.activeProviders = results.flatMap((result, index) => {
       const provider = this.providers[index]!;
       if (result.status === 'fulfilled') {
-        if (provider.isOperational !== false) return [provider];
-        logger.error({ provider: provider.name, status: provider.status }, 'Provider did not become operational');
-        return [];
+        if (provider.isOperational === false) {
+          logger.info(
+            { provider: provider.name, status: provider.status },
+            'Provider started but is not operational yet; it will be used once it connects',
+          );
+        }
+        return [provider];
       }
       logger.error({ err: result.reason, provider: provider.name }, 'Provider failed to start; continuing in degraded mode');
       return [];
     });
 
-    if (this.activeProviders.length === 0) {
+    if (this.operationalProviders().length === 0) {
       logger.error('No messaging provider is ready');
     }
 
@@ -241,6 +252,17 @@ export class AppRuntime {
     }
 
     logger.info({ readyProviders: this.activeProviders.map(provider => provider.name) }, 'Bot is running');
+  }
+
+  /**
+   * Providers that are started AND currently able to accept an outbound send.
+   * `activeProviders` is the set whose `start()` resolved; a provider inside it
+   * may still be reconnecting, so delivery decisions consult this subset instead
+   * of the boot-time snapshot. Evaluating it lazily (rather than once at boot)
+   * is what lets a provider that connects late still receive traffic.
+   */
+  private operationalProviders(): BotProvider[] {
+    return this.activeProviders.filter(provider => provider.isOperational !== false);
   }
 
   getReadiness(): {
@@ -303,10 +325,23 @@ export class AppRuntime {
     }
   }
 
+  /**
+   * Determine the platform for a webhook destination that did not carry one.
+   *
+   * This deliberately refuses to guess. The previous fallback returned
+   * `activeProviders[0]`, which made the target platform depend on provider
+   * start order and produced a fabricated canonical room key that then sailed
+   * past `providerRoomTargetMismatch` — the invalid id was handed straight to
+   * the provider and only failed after the client had been told `202 queued`.
+   */
   private inferWebhookPlatform(chatRoomId: string): string {
-    if (chatRoomId.includes('@g.us') || chatRoomId.includes('@s.whatsapp.net')) return 'whatsapp';
+    if (chatRoomId.includes('@g.us') || chatRoomId.includes('@s.whatsapp.net') || chatRoomId.endsWith('@lid')) {
+      return 'whatsapp';
+    }
     if (/^\d+$/.test(chatRoomId)) return 'discord';
-    return this.activeProviders[0]?.name ?? 'whatsapp';
+    throw new Error(
+      `Cannot determine platform for webhook destination "${chatRoomId}"; it must be registered or carry an explicit platform`,
+    );
   }
 
   /**
@@ -332,6 +367,14 @@ export class AppRuntime {
   private readonly enqueueWebhook: WebhookEnqueuer = async (job, signal) => {
     if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
     if (job.destinations.length === 0) throw new Error('Webhook job has no destinations');
+    // A `202` promises eventual delivery. If nothing is currently able to
+    // deliver, say so instead of queueing rows no worker can claim — the
+    // WebhookServer turns `accepted: false` into a retryable 503.
+    const deliverable = new Set(this.operationalProviders().map(provider => provider.name));
+    if (deliverable.size === 0) {
+      logger.error({ route: job.route, destinations: job.destinations.length }, 'Rejecting webhook: no operational provider');
+      return { accepted: false, deliveryId: '', acceptedAt: new Date().toISOString() };
+    }
     const acceptedAt = new Date().toISOString();
     const eventKey = job.eventId ?? `${job.route}:${job.source}:${job.receivedAt}:${job.text}`;
     const deliveryIds = job.destinations.map(destination => {
@@ -416,7 +459,7 @@ export class AppRuntime {
 
   private processOutbox(): void {
     if (!hasDurableMessagingStore() || this.outboxPromise) return;
-    const providers = new Map<string, BotProvider>(this.activeProviders.map(provider => [provider.name, provider]));
+    const providers = new Map<string, BotProvider>(this.operationalProviders().map(provider => [provider.name, provider]));
     if (providers.size === 0) return;
     this.outboxPromise = (async () => {
       const claimed = OutboxService.claim(this.outboxOwner, [...providers.keys()], 10);

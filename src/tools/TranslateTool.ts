@@ -21,7 +21,7 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getModelRouter } from '../utils/ModelRouter';
-import { ParameterValidator } from '../utils/ParameterValidator';
+import { ParameterValidator } from './ParameterValidator';
 import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'TranslateTool' });

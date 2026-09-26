@@ -405,10 +405,13 @@ export class AuthService {
    */
   static async getEffectivePrivileges(roles: string[]): Promise<RolePrivileges> {
     const { db, rolePrivileges } = this.deps;
-    // Batch-load all DB overrides in one query if any are uncached
-    const uncachedRoles = roles.filter(
-      (r) => !this.dbCache.has(r) || Date.now() - this.cacheLoadedAt >= this.CACHE_TTL_MS,
-    );
+    // Expire the cache as a whole. A single shared `cacheLoadedAt` that is
+    // refreshed by *partial* loads meant an already-cached role was never
+    // revalidated as long as some other role was loaded more often than the TTL,
+    // so a privilege change could take unbounded time to take effect.
+    const now = Date.now();
+    if (now - this.cacheLoadedAt >= this.CACHE_TTL_MS) this.dbCache.clear();
+    const uncachedRoles = roles.filter(r => !this.dbCache.has(r));
     if (uncachedRoles.length >= 1) {
       try {
         const rows = await db
@@ -427,7 +430,7 @@ export class AuthService {
         for (const role of uncachedRoles) {
           if (!this.dbCache.has(role)) this.dbCache.set(role, {});
         }
-        this.cacheLoadedAt = Date.now();
+        this.cacheLoadedAt = now;
       } catch (err) {
         logger.error({ err, roles: uncachedRoles }, '[AuthService] Failed to batch-load DB overrides');
       }
@@ -513,8 +516,11 @@ export class AuthService {
 
   private static async getDbOverrides(role: string): Promise<Partial<RolePrivileges>> {
     const { db, rolePrivileges } = this.deps;
-    // Return from cache if fresh
-    if (this.dbCache.has(role) && Date.now() - this.cacheLoadedAt < this.CACHE_TTL_MS) {
+    // Whole-cache expiry, mirroring getEffectivePrivileges: a fresh entry for
+    // one role must not make a stale entry for another look fresh.
+    const now = Date.now();
+    if (now - this.cacheLoadedAt >= this.CACHE_TTL_MS) this.dbCache.clear();
+    if (this.dbCache.has(role)) {
       return this.dbCache.get(role)!;
     }
 
@@ -535,7 +541,7 @@ export class AuthService {
       }
 
       this.dbCache.set(role, overrides);
-      this.cacheLoadedAt = Date.now();
+      this.cacheLoadedAt = now;
       return overrides;
     } catch (err) {
       logger.error({ err, role }, '[AuthService] Failed to load DB overrides');

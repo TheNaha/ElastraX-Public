@@ -95,7 +95,12 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
     if (action === 'kick') action = 'remove';
 
     if (!ctx.isGroup) return t(lang, 'group.not_in_group');
-    if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions('admin'))) return '';
+    // Returning '' here made the agent skip delivery entirely while still
+    // reacting with a success check, so a denied user saw a green tick and no
+    // explanation. Say why.
+    if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions('admin'))) {
+      return t(lang, 'agent.no_permission');
+    }
 
     if (action === 'link') {
       if (!ctx.getGroupInviteLink) return t(lang, 'group.link_not_supported');

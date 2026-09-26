@@ -17,6 +17,12 @@ export const MEDIA_DIR = resolve(process.env.ELASTRAX_MEDIA_DIR || join(ROOT_DIR
 const TYPE_DETECTION_BYTES = 4100;
 const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
 const DEFAULT_STORAGE_MAX_FILES = 10_000;
+/**
+ * How long an orphaned `.media-*.tmp` file must sit untouched before the quota
+ * sweep may reclaim it. Must comfortably exceed the slowest legitimate media
+ * download so concurrent writers are never mistaken for abandoned ones.
+ */
+const TEMP_FILE_GRACE_MS = 5 * 60_000;
 
 export interface SavedMedia {
   path: string;
@@ -242,7 +248,22 @@ export async function reconcileMediaQuota(incomingBytes = 0, excludedPath?: stri
     const candidate = resolve(join(MEDIA_DIR, name));
     if (excluded && candidate === excluded) continue;
     if (name.startsWith('.media-') && name.endsWith('.tmp')) {
-      await mediaStorageDeps.unlink(join(MEDIA_DIR, name)).catch(() => undefined);
+      // Only reclaim genuinely abandoned temp files. Up to
+      // `globalMediaDownloadSlots` streams write their temp file concurrently
+      // outside the IO slot, so unconditionally unlinking every `.media-*.tmp`
+      // deleted the other in-flight writers' files; their later
+      // `rename(temp, final)` then failed ENOENT and the download surfaced as an
+      // error. A grace period keeps the stale-file cleanup without racing peers.
+      const tempPath = join(MEDIA_DIR, name);
+      let ageMs = Number.POSITIVE_INFINITY;
+      try {
+        ageMs = Date.now() - (await mediaStorageDeps.stat(tempPath)).mtimeMs;
+      } catch {
+        continue;
+      }
+      if (ageMs >= TEMP_FILE_GRACE_MS) {
+        await mediaStorageDeps.unlink(tempPath).catch(() => undefined);
+      }
       continue;
     }
     try {

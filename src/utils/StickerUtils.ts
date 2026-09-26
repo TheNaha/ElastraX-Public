@@ -15,13 +15,15 @@
  * Prerequisites: `ffmpeg` binary must be available on the system PATH.
  */
 
-import { FFmpegConverter } from './FFmpegConverter';
+import { FFmpegConverter, STICKER_WEBP_FILTER } from './FFmpegConverter';
 import { APP_VERSION } from '../config/version';
 import nodeWebpmux from 'node-webpmux';
 
 /** Utilities for converting images/videos to WhatsApp sticker WebP format. */
 export class StickerUtils {
-  private static readonly WEBP_FILTER = "scale='min(320,iw)':'min(320,ih)':force_original_aspect_ratio=decrease,fps=15,pad=320:320:-1:-1:color=white@0.0,split[a][b];[a]palettegen=reserve_transparent=on:transparency_color=ffffff[p];[b][p]paletteuse";
+  // Single source of truth: FFmpegConverter owns the allowlist that has to
+  // accept this filter, so the validated value and the executed value cannot drift.
+  private static readonly WEBP_FILTER = STICKER_WEBP_FILTER;
 
   /**
    * Translates a static image to WEBP formatted properly for WhatsApp Stickers.

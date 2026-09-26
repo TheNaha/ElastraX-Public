@@ -34,8 +34,10 @@ const FORCE = process.argv.includes('--force');
  * Strip large binary fields that make fixtures unreadable and bloat the repo.
  * We keep all structural fields intact so the parser can still process them.
  */
-function stripBlobs(raw: any): any {
-  if (typeof raw !== 'object' || raw === null) return raw;
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
+function stripBlobs(raw: unknown): JsonValue {
+  if (typeof raw !== 'object' || raw === null) return raw as JsonValue;
   const BLOB_KEYS = new Set([
     'jpegThumbnail',
     'firstFrameSidecar',
@@ -49,15 +51,25 @@ function stripBlobs(raw: any): any {
     'recipientKeyHash',
     'deviceListMetadata',
   ]);
-  const out: any = Array.isArray(raw) ? [] : {};
+  const out: JsonValue = Array.isArray(raw) ? [] : {};
   for (const [k, v] of Object.entries(raw)) {
     if (BLOB_KEYS.has(k)) continue;
-    out[k] = typeof v === 'object' ? stripBlobs(v) : v;
+    if (Array.isArray(out) || out === null || typeof out !== 'object') continue;
+    out[k] = typeof v === 'object' && v !== null ? stripBlobs(v) : (v as JsonValue);
   }
   return out;
 }
 
 async function main() {
+  // Same guard as startupDiagnostics.dumpFixtures. Without it this script had no
+  // protection at all, so `bun run scripts/dumpFixtures.ts` in production copied
+  // real WhatsApp message payloads out of the live database and into the repo.
+  // The npm script sets both variables, but the guard has to live here: the file
+  // is directly invokable.
+  if (process.env.NODE_ENV === 'production' || process.env.ALLOW_FIXTURE_DUMP !== 'true') {
+    throw new Error('Fixture dumping is disabled outside an explicit development environment');
+  }
+
   console.log('📦  ElastraX fixture dumper\n');
   console.log('Reading messages from database...');
 
@@ -110,7 +122,8 @@ async function main() {
   if (result.errors.length > 0) {
     console.log('\n❌  Parse errors (first 5):');
     for (const { error, raw } of result.errors.slice(0, 5)) {
-      const id = raw?.key?.id ?? '?';
+      const key = (raw as { key?: { id?: unknown } } | null)?.key;
+      const id = typeof key?.id === 'string' ? key.id : '?';
       console.log(`  [msg ${id}] ${error.message}`);
     }
   }
@@ -118,7 +131,8 @@ async function main() {
   if (result.unknownSamples.length > 0) {
     console.log('\n⚠️   Unknown type samples (first 5):');
     for (const { raw } of result.unknownSamples.slice(0, 5)) {
-      const keys = Object.keys(raw?.message ?? {}).join(', ') || '(no message body)';
+      const body = (raw as { message?: Record<string, unknown> } | null)?.message;
+      const keys = Object.keys(body ?? {}).join(', ') || '(no message body)';
       console.log(`  keys: ${keys}`);
     }
   }

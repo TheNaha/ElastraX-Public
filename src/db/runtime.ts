@@ -265,7 +265,11 @@ export function releaseFailedInbox(
       )
       .get(id, owner);
     if (!row) return 'not_owned';
-    const state: 'retry' | 'dead_letter' = Number(row.attempt_count) >= Math.max(1, maxAttempts) ? 'dead_letter' : 'retry';
+    const outcome: 'retry' | 'dead_letter' = Number(row.attempt_count) >= Math.max(1, maxAttempts) ? 'dead_letter' : 'retry';
+    // The table's CHECK constraint only accepts 'failed'/'dead_letter'; 'retry' is
+    // the caller-facing name for the same thing. Binding it directly threw
+    // "CHECK constraint failed" and left the row stuck in 'processing'.
+    const persistedState = outcome === 'retry' ? 'failed' : 'dead_letter';
     sqlite
       .query<never, [string, string, number, number, number, string]>(
         `UPDATE message_inbox
@@ -273,8 +277,8 @@ export function releaseFailedInbox(
              lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND state = 'processing' AND lease_owner = ?`,
       )
-      .run(state, error.slice(0, 2_000), retryAt, now, id, owner);
-    return state;
+      .run(persistedState, error.slice(0, 2_000), retryAt, now, id, owner);
+    return outcome;
   });
 }
 
@@ -446,7 +450,9 @@ export function releaseFailedDelivery(
       )
       .get(id, owner);
     if (!row) return 'not_owned';
-    const state: 'retry' | 'dead_letter' = Number(row.attempt_count) >= Math.max(1, maxAttempts) ? 'dead_letter' : 'retry';
+    const outcome: 'retry' | 'dead_letter' = Number(row.attempt_count) >= Math.max(1, maxAttempts) ? 'dead_letter' : 'retry';
+    // See releaseFailedInbox: the CHECK constraint permits 'failed', not 'retry'.
+    const persistedState = outcome === 'retry' ? 'failed' : 'dead_letter';
     sqlite
       .query<never, [string, string, number, number, string, string]>(
         `UPDATE ${table}
@@ -454,8 +460,8 @@ export function releaseFailedDelivery(
              lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
       )
-      .run(state, error.slice(0, 2_000), retryAt, now, id, owner);
-    return state;
+      .run(persistedState, error.slice(0, 2_000), retryAt, now, id, owner);
+    return outcome;
   });
 }
 

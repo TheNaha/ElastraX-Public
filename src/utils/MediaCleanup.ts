@@ -44,7 +44,12 @@ export class MediaCleanup {
       const quota = await reconcileMediaQuota(0, undefined, 0);
       deleted.push(...quota.deleted.filter(path => !deleted.includes(path)));
       if (options.clearReferences !== false) {
-        await MediaCleanup.clearStaleMediaReferences(deleted.length > 0 ? deleted : undefined);
+        // Always pass the pruned list. Passing `undefined` sent
+        // clearStaleMediaReferences down its full-scan branch, which selected
+        // every message row with a media path and issued a blocking
+        // `existsSync` per row — cost scaling with total history, on a job that
+        // runs at startup and every few hours even when nothing aged out.
+        await MediaCleanup.clearStaleMediaReferences(deleted);
       }
       if (deleted.length > 0) {
         logger.info({ deleted: deleted.length, maxAgeHours }, '[MediaCleanup] Pruned media files');

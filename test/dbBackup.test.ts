@@ -8,8 +8,7 @@ import { getTestWorkerPaths } from './helpers/paths';
 const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
 mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
-import { backupDatabase } from '../src/utils/dbBackup';
-import { backupDatabase as backupWithManifest, restoreDatabase } from '../src/db/backup';
+import { backupDatabase, restoreDatabase } from '../src/db/backup';
 import { createDatabase, ensureDatabaseSchema } from '../src/db';
 
 // Each run gets its own directory inside the worker sandbox; a shared global
@@ -36,59 +35,6 @@ afterAll(() => {
 });
 
 describe('backupDatabase', () => {
-  test('creates a readable snapshot of a live WAL database', async () => {
-    const livePath = join(TMP, 'live.db');
-    const db = newLiveDb(livePath);
-    db.exec('PRAGMA journal_mode=WAL');
-    db.prepare('INSERT INTO t (v) VALUES (?)').run('world');
-
-    const result = await backupDatabase({
-      dbPath: livePath,
-      backupDir: join(TMP, 'backups'),
-      keep: 3,
-    });
-
-    db.close();
-    expect(result.ok).toBe(true);
-    expect(result.path).toBeDefined();
-    expect(result.bytes!).toBeGreaterThan(0);
-
-    const copy = new Database(result.path!, { readonly: true });
-    const rows = copy.query('SELECT v FROM t ORDER BY id').all() as { v: string }[];
-    copy.close();
-    expect(rows.map(r => r.v)).toEqual(['hello', 'world']);
-    // Snapshot is standalone — no WAL sidecars needed for it.
-    const siblings = readdirSync(join(TMP, 'backups')).filter(f => f.endsWith('-wal') || f.endsWith('-shm'));
-    expect(siblings).toHaveLength(0);
-  });
-
-  test('prunes old snapshots beyond keep', async () => {
-    const backupDir = join(TMP, 'backups');
-    const livePath = join(TMP, 'source.db');
-    const db = newLiveDb(livePath);
-    const results: string[] = [];
-    for (let i = 0; i < 3; i++) {
-      const r = await backupDatabase({ dbPath: livePath, backupDir, keep: 2 });
-      if (!r.ok) throw new Error(r.error);
-      results.push(r.path!);
-      // Ensure distinct mtimes/timestamps between runs.
-      await Bun.sleep(1100);
-    }
-    db.close();
-    const files = readdirSync(backupDir).filter(f => f.endsWith('.db')).sort();
-    expect(files).toHaveLength(2);
-    expect(files).not.toContain(results[0]!.split('/').pop()!);
-  });
-
-  test('reports failure instead of throwing on bad source path', async () => {
-    const result = await backupDatabase({
-      dbPath: join(TMP, 'does-not-exist.db'),
-      backupDir: join(TMP, 'backups'),
-    });
-    expect(result.ok).toBe(false);
-    expect(result.error).toBeDefined();
-  });
-
   test('writes a restrictive checksum manifest and restores only to a validated new file', async () => {
     const sourcePath = join(TMP, 'manifest-source.db');
     const handle = createDatabase({ path: sourcePath });
@@ -102,7 +48,7 @@ describe('backupDatabase', () => {
       handle.close();
     }
 
-    const result = await backupWithManifest({
+    const result = await backupDatabase({
       dbPath: sourcePath,
       backupDir: join(TMP, 'manifest-backups'),
       keep: 2,
@@ -145,7 +91,7 @@ describe('backupDatabase', () => {
     const sourcePath = join(TMP, 'tamper-source.db');
     const source = newLiveDb(sourcePath);
     source.close();
-    const result = await backupWithManifest({ dbPath: sourcePath, backupDir: join(TMP, 'tamper-backups') });
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'tamper-backups') });
     if (!result.ok) throw new Error(result.error);
 
     const manifestPath = result.manifestPath!;

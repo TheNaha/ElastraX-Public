@@ -166,8 +166,12 @@ function getJpegDimensions(buffer: Buffer): { width: number; height: number } | 
 function getWebpDimensions(buffer: Buffer): { width: number; height: number } | null {
   const kind = buffer.toString('ascii', 12, 16);
   if (kind === 'VP8X' && buffer.length >= 30) {
-    const width = 1 + buffer[24] | buffer[25] << 8 | buffer[26] << 16;
-    const height = 1 + buffer[27] | buffer[28] << 8 | buffer[29] << 16;
+    // `+` binds tighter than `|`, so these need explicit grouping around the
+    // 24-bit little-endian read. Ungrouped, `(1 + b24) | b25 << 8` disagrees
+    // with `1 + (b24 | b25 << 8)` whenever b24 is 0xFF, skewing the reported
+    // size that the inline-media pixel guards depend on.
+    const width = 1 + (buffer[24]! | (buffer[25]! << 8) | (buffer[26]! << 16));
+    const height = 1 + (buffer[27]! | (buffer[28]! << 8) | (buffer[29]! << 16));
     return { width, height };
   }
   if (kind === 'VP8 ' && buffer.length >= 30 && buffer[23] === 0x9d && buffer[24] === 0x01 && buffer[25] === 0x2a) {

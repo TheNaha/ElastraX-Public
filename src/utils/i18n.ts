@@ -521,7 +521,11 @@ export function t(lang: string | undefined, key: string, vars: Record<string, st
     str = key;
   }
   for (const [k, v] of Object.entries(vars)) {
-    str = str.replaceAll(`{${k}}`, v);
+    // A function replacer is required: with a string replacement, `$&`, `$` and
+    // `$'` inside an interpolated value are expanded as substitution patterns,
+    // so a value containing `$&` re-injected the matched placeholder
+    // ('a$&b' became 'a{name}b'). Interpolated values can be user-controlled.
+    str = str.replaceAll(`{${k}}`, () => v);
   }
   return str;
 }

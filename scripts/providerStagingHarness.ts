@@ -367,7 +367,6 @@ export class FakeStagingProvider {
   }
 
   private buildContext(input: FakeMessageInput): HarnessMessageContext {
-    const provider = this;
     const generation = this.lifecycleGeneration;
     const descriptor = this.buildMedia(input);
     const attachments = descriptor ? [descriptor] : [];
@@ -377,7 +376,7 @@ export class FakeStagingProvider {
       if (input.mediaDownloadDelayMs && input.mediaDownloadDelayMs > 0) {
         await new Promise<void>(resolve => setTimeout(resolve, Math.max(0, Math.floor(input.mediaDownloadDelayMs!))));
       }
-      if (provider.abortedMedia.has(input.messageId)) {
+      if (this.abortedMedia.has(input.messageId)) {
         descriptor.state = 'error';
         descriptor.error = sanitize('media download aborted by shutdown');
         return;
@@ -396,12 +395,12 @@ export class FakeStagingProvider {
     });
 
     const ensureCurrent = (operation: string): void => {
-      if (generation !== provider.lifecycleGeneration || !provider.desiredRunning) {
+      if (generation !== this.lifecycleGeneration || !this.desiredRunning) {
         throw new ProviderError(
-          provider.platform,
+          this.platform,
           operation,
           'STALE_LIFECYCLE',
-          `${provider.platform} connection changed before ${operation} completed.`,
+          `${this.platform} connection changed before ${operation} completed.`,
           true,
         );
       }
@@ -426,12 +425,12 @@ export class FakeStagingProvider {
       mediaReady,
       mediaAttachments: attachments,
       reply: async (replyText: string, replyOptions?: { mentions?: string[]; signal?: AbortSignal }) => {
-        const chunks = chunkText(provider.platform, replyText, provider.sendLimit);
+        const chunks = chunkText(this.platform, replyText, this.sendLimit);
         for (let index = 0; index < chunks.length; index++) {
           replyOptions?.signal?.throwIfAborted();
           ensureCurrent('reply');
           const mentions = index === 0 ? replyOptions?.mentions : undefined;
-          provider.outgoingEnvelopes.push({
+          this.outgoingEnvelopes.push({
             chatId: input.chatId,
             text: chunks[index]!,
             kind: 'reply',
@@ -441,23 +440,23 @@ export class FakeStagingProvider {
       },
       sendTyping: async (): Promise<void> => {
         ensureCurrent('sendTyping');
-        provider.outgoingEnvelopes.push({ chatId: input.chatId, text: '', kind: 'typing' });
+        this.outgoingEnvelopes.push({ chatId: input.chatId, text: '', kind: 'typing' });
       },
       downloadMedia: async (attachmentId?: string): Promise<Buffer | null> => {        const target = attachmentId ? attachments.find(candidate => candidate.id === attachmentId) : descriptor;
         if (!target) {
           throw new ProviderError(
-            provider.platform,
+            this.platform,
             'selectMediaAttachment',
             'INVALID_TARGET',
-            `Unknown ${provider.platform} attachment: ${String(attachmentId)}.`,
+            `Unknown ${this.platform} attachment: ${String(attachmentId)}.`,
           );
         }
         if (target.state === 'skipped') {
-          throw new ProviderError(provider.platform, 'downloadMedia', 'OPERATION_FAILED', target.error ?? 'Media is unavailable.');
+          throw new ProviderError(this.platform, 'downloadMedia', 'OPERATION_FAILED', target.error ?? 'Media is unavailable.');
         }
         await acquire();
         if (target.state !== 'ready' || !target.mediaPath) {
-          throw new ProviderError(provider.platform, 'downloadMedia', 'OPERATION_FAILED', target.error ?? 'Media is unavailable.');
+          throw new ProviderError(this.platform, 'downloadMedia', 'OPERATION_FAILED', target.error ?? 'Media is unavailable.');
         }
         return Buffer.from(target.mediaPath);
       },

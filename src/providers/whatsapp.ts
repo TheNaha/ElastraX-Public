@@ -7,7 +7,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
@@ -45,8 +45,12 @@ type SocketWithSignalRepository = BaileysSocket & {
 };
 type LidMapping = NonNullable<NonNullable<SocketWithSignalRepository['signalRepository']>['lidMapping']>;
 type ExtendedMessageKey = WAMessage['key'] & {
-  participantPn?: string;
-  senderLid?: string;
+  // `participantAlt` is the real Baileys field carrying the sender's phone
+  // number in group stanzas. The previous `participantPn`/`senderLid` members
+  // did not exist on WAMessageKey, so they were always `undefined` at runtime
+  // (TypeScript accepted the fabricated extension), which left `senderPn`
+  // permanently empty for every group message.
+  participantAlt?: string;
   remoteJidAlt?: string;
 };
 type ProviderMessageKey = proto.IMessageKey & {
@@ -76,11 +80,21 @@ export const whatsAppProviderDeps = {
   fetchLatestVersion: fetchLatestBaileysVersion,
   createSocket: (options: Parameters<typeof makeWASocket>[0]) => makeWASocket(options),
   renderQr: (qr: string) => qrcode.generate(qr, { small: true }),
-  lookupStoredMessage: async (messageId: string): Promise<string | null> => {
+  lookupStoredMessage: async (messageId: string, remoteJid?: string | null): Promise<string | null> => {
+    // Scope the lookup to the conversation. WhatsApp message ids are unique per
+    // chat, not globally, so an unscoped `provider_message_id` match could return
+    // a different room's `raw_message` and splice it into this turn's context.
+    // Scoping also lets SQLite use `messages_platform_provider_message_id_unique`
+    // (platform, chat_room_id, provider_message_id) instead of scanning.
+    if (!remoteJid) return null;
     const rows = await db
       .select({ rawMessage: messages.rawMessage })
       .from(messages)
-      .where(eq(messages.providerMessageId, messageId))
+      .where(and(
+        eq(messages.platform, 'whatsapp'),
+        eq(messages.chatRoomId, remoteJid),
+        eq(messages.providerMessageId, messageId),
+      ))
       .limit(1);
     return rows[0]?.rawMessage ?? null;
   },
@@ -150,9 +164,14 @@ export class WhatsAppProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
-  async sendMessage(chatId: string, text: string): Promise<void> {
+  async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<void> {
     const sock = this.requireRunningSocket('sendMessage');
     for (const chunk of chunkWhatsAppText(text)) {
+      // Honour the signal between chunks. `AppRuntime.processOutbox` relies on
+      // it to cancel a slow send; without this the underlying Baileys call kept
+      // running and could still deliver after the outbox had already failed and
+      // rescheduled the row, so the recipient got the message twice.
+      signal?.throwIfAborted();
       await sock.sendMessage(chatId, { text: chunk });
     }
   }
@@ -203,7 +222,9 @@ export class WhatsAppProvider implements BotProvider {
         getMessage: async key => {
           if (!this.desiredRunning || generation !== this.generation || !key.id) return undefined;
           try {
-            return extractStoredMessage(await whatsAppProviderDeps.lookupStoredMessage(key.id));
+            return extractStoredMessage(
+              await whatsAppProviderDeps.lookupStoredMessage(key.id, key.remoteJid ?? null),
+            );
           } catch (error) {
             logger.warn({ err: error, id: key.id }, '[WhatsApp] Failed to load message for retry');
             return undefined;
@@ -361,9 +382,16 @@ export class WhatsAppProvider implements BotProvider {
     const key = message.key as ExtendedMessageKey;
     const rawSender = isGroup
       ? message.key.participant || message.key.remoteJid || jid
-      : key.senderLid || jid;
+      // In a DM the remote jid *is* the partner. `key.senderLid` never existed on
+      // WAMessageKey, so this always fell through to `jid`; `remoteJidAlt` is the
+      // genuine alternative identity when the chat is addressed by LID.
+      : key.remoteJidAlt || jid;
     const senderId = await resolveLid(rawSender);
-    const senderPn = isGroup ? key.participantPn : (!senderId.includes('@lid') ? jid : key.remoteJidAlt);
+    // Mirrors Baileys' own getKeyAuthor(): participantAlt holds the sender's
+    // phone number in group stanzas, with the remaining key fields as fallbacks.
+    const senderPn = isGroup
+      ? key.participantAlt || key.remoteJidAlt || key.participant || undefined
+      : (!senderId.includes('@lid') ? jid : key.remoteJidAlt);
     this.ensureSocket(socket, generation, 'createContext');
 
     let quoted: MessageContext['quoted'];
@@ -520,7 +548,11 @@ export class WhatsAppProvider implements BotProvider {
       const id = attachmentId ?? selectedAttachmentId;
       if (!id) return null;
       const descriptor = await selectMediaAttachment(id);
-      return descriptor.mediaPath ? readMediaBuffer(descriptor.mediaPath) : null;
+      // Match the cap this provider downloads with. The previous call used
+      // readMediaBuffer's 32 MiB default while the download allowed 200 MiB, so
+      // any attachment between the two was stored, reported 'ready', billed
+      // against the media budget, and then always threw on read.
+      return descriptor.mediaPath ? readMediaBuffer(descriptor.mediaPath, HARD_MEDIA_MAX_BYTES) : null;
     };
 
     const senderIdForRoles = senderId;

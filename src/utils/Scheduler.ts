@@ -20,6 +20,8 @@ const SEND_TIMEOUT_MS = 15_000;
 const MIN_INTERVAL_MS = 60_000;
 const MAX_INTERVAL_MS = 5 * 365 * 86_400_000;
 const MAX_BATCH_SIZE = 50;
+/** A reminder that cannot be routed is retired after this many failed attempts. */
+const MAX_DELIVERY_ATTEMPTS = 5;
 const retryAttempts = new Map<number, number>();
 
 type QueryRows = {
@@ -225,14 +227,23 @@ export class Scheduler {
         try {
           const sender = this.senders.get(reminder.platform);
           if (!sender) {
-            this.releaseClaim(reminder.id, new Date());
+            // No sender is registered for this platform. That is a configuration
+            // problem, not a transient send failure: releasing the claim with
+            // `remindAt = now` made the row immediately due again, so it was
+            // retried every tick for the life of the process. Route it through the
+            // normal backoff so it retries with growing delays and is retired
+            // after MAX_DELIVERY_ATTEMPTS.
+            this.deferOrRetire(reminder.id, `No sender registered for platform "${reminder.platform}"`);
             continue;
           }
 
           const target = resolveReminderTarget(reminder);
           if (target.mismatch) {
-            this.releaseClaim(reminder.id, new Date());
-            logger.error({ id: reminder.id, roomKey: target.roomKey, reason: target.mismatch }, 'Reminder delivery refused');
+            // A room_key/chat_room_id disagreement is permanent data corruption:
+            // no amount of retrying can resolve it, so retire on first sight
+            // rather than logging the same error every 30s forever.
+            this.retireClaim(reminder.id);
+            logger.error({ id: reminder.id, roomKey: target.roomKey, reason: target.mismatch }, 'Reminder delivery refused; reminder retired');
             continue;
           }
 
@@ -258,6 +269,7 @@ export class Scheduler {
                 .where(eq(reminders.id, reminder.id))
                 .run();
               logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
+              retryAttempts.delete(reminder.id);
               continue;
             }
             db.update(reminders)
@@ -290,5 +302,35 @@ export class Scheduler {
       .set({ claimedAt: null, remindAt: nextAttempt })
       .where(and(eq(reminders.id, id), eq(reminders.isSent, false)))
       .run();
+  }
+
+  /**
+   * Permanently retire a reminder that can never be delivered, so it stops being
+   * selected and stops occupying the in-memory retry map.
+   */
+  private static retireClaim(id: number): void {
+    retryAttempts.delete(id);
+    db.update(reminders)
+      .set({ isSent: true, claimedAt: null })
+      .where(and(eq(reminders.id, id), eq(reminders.isSent, false)))
+      .run();
+  }
+
+  /**
+   * Back off a delivery that could not be attempted, retiring it once
+   * MAX_DELIVERY_ATTEMPTS is reached. This is what keeps an undeliverable
+   * reminder from being reselected on every single scheduler tick.
+   */
+  private static deferOrRetire(id: number, reason: string): void {
+    const attempt = (retryAttempts.get(id) ?? 0) + 1;
+    if (attempt >= MAX_DELIVERY_ATTEMPTS) {
+      this.retireClaim(id);
+      logger.error({ id, reason, attempt }, 'Reminder undeliverable after repeated attempts; retired');
+      return;
+    }
+    retryAttempts.set(id, attempt);
+    const backoffMs = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempt - 1, 7));
+    this.releaseClaim(id, new Date(Date.now() + backoffMs));
+    logger.warn({ id, reason, attempt, retryInMs: backoffMs }, 'Reminder delivery deferred');
   }
 }

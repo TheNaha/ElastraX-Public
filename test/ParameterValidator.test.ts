@@ -1,5 +1,5 @@
 import { expect, test, describe } from 'bun:test';
-import { ParameterValidator } from '../src/utils/ParameterValidator';
+import { ParameterValidator } from '../src/tools/ParameterValidator';
 import { BaseTool, ToolDefinition } from '../src/tools/BaseTool';
 import { MessageContext } from '../src/core/MessageContext';
 

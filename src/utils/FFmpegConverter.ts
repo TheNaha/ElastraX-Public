@@ -18,6 +18,21 @@ const ALLOWED_VALUES = new Set([
   'libvpx-vp9', 'copy', 'fps=10,scale=320:-1:flags=lanczos', '0', '1', '2', '80', 'libwebp',
 ]);
 
+/**
+ * The WhatsApp sticker filter graph: scale to fit 320x320, pad to a square,
+ * cap at 15 fps, and quantise to a palette so transparency survives.
+ *
+ * It lives here, next to the allowlist that has to accept it, so the value that
+ * is validated and the value that is executed can never drift apart. It is a
+ * compile-time constant with no interpolation points, which is what makes it
+ * safe to allow verbatim.
+ */
+export const STICKER_WEBP_FILTER =
+  "scale='min(320,iw)':'min(320,ih)':force_original_aspect_ratio=decrease,fps=15,pad=320:320:-1:-1:color=white@0.0,split[a][b];[a]palettegen=reserve_transparent=on:transparency_color=ffffff[p];[b][p]paletteuse";
+
+/** Values the sticker graph above is always paired with. */
+const STICKER_ARG_VALUES = new Set(['00:00:00', '00:00:05', 'default', 'passthrough']);
+
 export interface FFmpegConvertOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -105,7 +120,12 @@ function validateArguments(args: string[]): void {
     if (arg.startsWith('-') && !ALLOWED_FLAGS.has(arg) && !/^-\d+$/.test(arg)) {
       throw new Error(`Unsafe or unsupported FFmpeg argument detected: ${arg}`);
     }
-    if (!arg.startsWith('-') && !ALLOWED_VALUES.has(arg) && !/^scale=\d{1,4}:\d{1,4}$/.test(arg) && !/^fps=\d{1,3}(?:,\d{1,4}:\d{1,4})?$/.test(arg)) {
+    if (!arg.startsWith('-')
+      && !ALLOWED_VALUES.has(arg)
+      && !STICKER_ARG_VALUES.has(arg)
+      && arg !== STICKER_WEBP_FILTER
+      && !/^scale=\d{1,4}:\d{1,4}$/.test(arg)
+      && !/^fps=\d{1,3}(?:,\d{1,4}:\d{1,4})?$/.test(arg)) {
       throw new Error(`Unsafe or unsupported FFmpeg value detected: ${arg}`);
     }
   }

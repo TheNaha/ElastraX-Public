@@ -152,6 +152,17 @@ const ACTION_ARGUMENTS: Record<string, Record<string, readonly string[]>> = {
   media_library: { search: ['query'], link: ['item_id'], info: ['item_id'] },
   memory: { consent: ['scope'], revoke: [], store: ['content', 'scope', 'consent'], retrieve: ['scope'], forget: ['id'] },
   groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: ['user'], unmute: ['user'], promote: ['user'], demote: ['user'] },
+  owner_admin: { broadcast: ['message'], leave: [], system_info: [] },
+  reminder: { list: [], cancel: ['number'] },
+  role: {
+    check: ['user'],
+    list: ['scope'],
+    grant: ['user', 'role', 'scope'],
+    revoke: ['user', 'role', 'scope'],
+    privs: ['role'],
+    setpriv: ['role', 'field', 'value'],
+    resetpriv: ['role'],
+  },
   pdf_tool: {
     split: ['start_page', 'end_page'],
     remove_pages: ['pages'],
@@ -415,7 +426,11 @@ export class ParameterValidator {
     const actionProperty = keys.length > 0 ? properties[keys[0]] : undefined;
     const actionValues = actionProperty?.enum?.map((value) => String(value).toLowerCase()) ?? [];
     let effectiveInferred = inferred;
-    if (noArg && normalizedCommand && actionValues.includes(normalizedCommand)) effectiveInferred = normalizedCommand;
+    // When the typed command is itself a valid action value (`/broadcast`,
+    // `/leave`), the command name *is* the action. Requiring `noArg` here meant
+    // that `/broadcast <text>` had no inferred action at all, so the first
+    // positional token was assigned to `action` and then rejected by the enum.
+    if (normalizedCommand && actionValues.includes(normalizedCommand)) effectiveInferred = normalizedCommand;
     if (!normalizedCommand && tool.name === 'media_search' && tokens.length > 0 && !actionValues.includes(tokens[0].toLowerCase())) effectiveInferred = 'search';
     if (!normalizedCommand && tool.name === 'role' && tokens.length > 0 && !actionValues.includes(tokens[0].toLowerCase())) effectiveInferred = 'check';
     if (tool.name === 'media_search' && normalizedCommand === 'find' && tokens.length > 0) effectiveInferred = 'search';
@@ -447,8 +462,12 @@ export class ParameterValidator {
     for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
       const key = keys[keyIndex];
       const property = properties[key];
-      if (keyIndex === 0 && effectiveInferred && actionValues.length > 0 && tokens.length > 0 && !actionValues.includes(tokens[0].toLowerCase())) {
-        result.action = effectiveInferred;
+      if (keyIndex === 0 && explicitAction && actionValues.length > 0 && tokens.length > 0 && !actionValues.includes(tokens[0].toLowerCase())) {
+        // Use the action that was actually resolved (token-detected first, then
+        // inferred). Reading `effectiveInferred` here discarded the token and
+        // re-derived the action, so a tool whose first positional token *was* a
+        // valid action fell back to the wrong default variant.
+        result.action = explicitAction;
         continue;
       }
       if (index >= tokens.length) break;

@@ -44,6 +44,8 @@ import {
   getToolsForContext,
   toolSearchIndex,
   executeAuthorizedCommand,
+  runMutatingTool,
+  secureDefinition,
   validateToolArguments,
 } from '../tools';
 
@@ -60,13 +62,14 @@ import { rankMemoriesForInjection } from '../utils/semanticMemory';
 import { RateLimiter } from '../utils/RateLimiter';
 import { AuthService } from '../utils/AuthService';
 import { createPersistentSummaryService } from '../ai/summaryStore';
-import { createTurnBudget, type TurnBudget } from '../ai/turnBudget';
+import { createTurnBudget, TurnBudgetExceededError, type TurnBudget } from '../ai/turnBudget';
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
 import type { BaseTool, ToolArgs, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs, getTurnBudgetConfig } from '../config/runtime';
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
+import { isUsableProviderMessageId } from './messageId';
 import { sanitizeRawMessage } from '../utils/rawMessage';
 import { OutboxService } from '../messaging/OutboxService';
 import { getInlineMediaEligibility } from '../providers/media';
@@ -156,7 +159,7 @@ function discoverMatchingTools(
     dynamicToolNames.add(entry.name);
     added.push(entry.name);
     if (availableTools && !availableTools.some((definition) => definition.function.name === entry.name)) {
-      availableTools.push(entry.tool.definition);
+      availableTools.push(secureDefinition(entry.tool));
     }
   }
 
@@ -179,7 +182,26 @@ async function executeRequestedToolCalls(
     mode?: 'stream';
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
-  options.turnBudget.claimToolCalls(toolCalls.length);
+  // The turn budget is a self-imposed guard, not a system failure. Claiming the
+  // calls can throw TurnBudgetExceededError, which must not escape this function
+  // and turn a normal turn into an "internal error": report it back to the model
+  // as a tool result so the loop can still finish with a real answer.
+  try {
+    options.turnBudget.claimToolCalls(toolCalls.length);
+  } catch (error) {
+    if (!(error instanceof TurnBudgetExceededError)) throw error;
+    const message = getErrorMessage(error);
+    log.warn({ chatId: options.chatId, requested: toolCalls.length }, 'Tool-call budget exhausted');
+    return {
+      toolResults: toolCalls.map(toolCall => ({
+        role: 'tool' as const,
+        tool_call_id: toolCall.id,
+        name: toolCall.function.name,
+        content: `Error: ${message}`,
+      })),
+      preferredTier: options.preferredTier,
+    };
+  }
 
   const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
   let preferredTier = options.preferredTier;
@@ -213,14 +235,22 @@ async function executeRequestedToolCalls(
           healthMetrics.recordToolInvocation(toolName);
           await options.ctx.react?.('🔧').catch(() => {});
           try {
-            const rawResult = await executeToolWithTimeout(tool, validArgs, options.ctx);
+            // Route through runMutatingTool so the LLM path shares the slash
+            // command path's mutation rate limit and per-user serialization.
+            // Without this, a mutating tool invoked by the model bypassed both.
+            const rawResult = await runMutatingTool(
+              tool,
+              options.ctx,
+              () => executeToolWithTimeout(tool, validArgs, options.ctx),
+            );
             toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
             resultTier = tool.modelTier;
           } catch (err: unknown) {
             log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
-            toolResultText = options.turnBudget.constrainTextResult(
-              `Error executing tool ${toolName}: ${getErrorMessage(err)}`,
-            ).value;
+            // Deliberately NOT routed through turnBudget.constrainTextResult: it
+            // throws once the result-byte budget is exhausted, so calling it here
+            // would throw out of this catch and discard the entire turn.
+            toolResultText = `Error executing tool ${toolName}: ${getErrorMessage(err)}`;
           }
 
           if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
@@ -613,7 +643,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
       if (shouldTriggerAI) {
         // Block execution so AI can see the media in context
-        await ctx.react?.('📥');
+        await ctx.react?.('📥').catch(() => {});
         await ctx.mediaReady;
         await syncDbMedia();
       } else {
@@ -759,7 +789,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
     // ⚡ Bolt: Use Promise.all to prevent sequential I/O bottlenecks when processing history with media
     const historyMessages = await Promise.all(history.map(async (m) => {
-      const isCurrentMessage = m.providerMessageId && m.providerMessageId === ctx.messageId;
+      // Placeholder ids carry no identity, and the dedupe index deliberately
+      // excludes them (see messages_provider_message_id_unique). Matching them
+      // here would mark every placeholder row as "current" and inline-embed up
+      // to INLINE_MEDIA_MAX_BYTES of media for each one.
+      const isCurrentMessage =
+        isUsableProviderMessageId(m.providerMessageId) &&
+        isUsableProviderMessageId(ctx.messageId) &&
+        m.providerMessageId === ctx.messageId;
       const textPrefix = m.role === 'user' ? '[Participant]: ' : '';
       const textContent = textPrefix + m.content;
 
@@ -861,7 +898,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       for (const t of getTriggeredTools(userContent, mimeHint, { roles: userRoles, isGroup, isOwner: userRoles.includes('owner'), platform })) {
         const toolName = t.name;
         if (allowedToolNames.has(toolName) && !seenNames.has(toolName)) {
-          availableTools.push(t.definition);
+          availableTools.push(secureDefinition(t));
           triggeredNames.push(toolName);
           seenNames.add(toolName);
         }
@@ -890,7 +927,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
         // Show typing indicator before each LLM call
-        await ctx.sendTyping?.();
+        await ctx.sendTyping?.().catch(() => {});
 
         // ── Streaming path ──────────────────────────────────────────────────
         // We only use streaming for the *final* response (no tool definitions)

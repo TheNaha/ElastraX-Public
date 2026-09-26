@@ -134,6 +134,15 @@ export function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & 
   const configured = Number.parseInt(process.env.TOOL_MUTATION_COST_LIMIT ?? '100', 10);
   const limit = Number.isFinite(configured) && configured > 0 ? configured : 100;
   const windowMs = 60_000;
+  // `rateWindows` is only ever added to, so without a sweep it grows by one
+  // entry per (tool, user) pair for the life of the process. Dropping windows
+  // that can no longer influence a decision keeps it bounded; the active one is
+  // re-created below on demand.
+  if (rateWindows.size > 64) {
+    for (const [existingKey, window] of rateWindows) {
+      if (now - window.startedAt >= windowMs) rateWindows.delete(existingKey);
+    }
+  }
   const key = `${tool.name}:${context.userId ?? 'global'}`;
   const current = rateWindows.get(key);
   const state = !current || now - current.startedAt >= windowMs ? { startedAt: now, cost: 0 } : current;
@@ -217,7 +226,14 @@ export function getToolMetadata(tool: BaseTool): ToolMetadata {
   return { ...metadata, access, command: { ...metadata.command, policies } };
 }
 
-function secureDefinition(tool: BaseTool): ToolDefinition {
+/**
+ * The definition as it should be advertised to a model: `additionalProperties`
+ * closed. `validateToolArguments` enforces this server-side regardless, so the
+ * risk of skipping it is spurious "Additional properties are not allowed"
+ * failures rather than an injection hole — but the model should never be told
+ * that unknown keys are acceptable.
+ */
+export function secureDefinition(tool: BaseTool): ToolDefinition {
   const definition = tool.definition;
   return {
     ...definition,
@@ -268,11 +284,6 @@ export function getToolDispatchContract(command: string, context?: ToolAccessCon
 export function getToolsForContext(context: ToolAccessContext = {}): BaseTool[] {
   return toolsList.filter((tool) => isToolAccessible(tool, context));
 }
-
-export const getAccessibleTools = getToolsForContext;
-
-export const getToolCatalogEntries = getToolCatalog;
-export const canAccessTool = isToolAccessible;
 
 export function getDiscoverableTools(context?: ToolAccessContext): BaseTool[] {
   const allowed = context ? getToolsForContext(context) : discoverableTools;
@@ -357,11 +368,6 @@ export function getAlwaysLoadedDefinitions(context?: ToolAccessContext): ToolDef
   if (!context) return cachedAlwaysLoadedDefinitions;
   return getToolsForContext(context).filter((tool) => tool.alwaysLoad).map((tool) => secureDefinition(tool));
 }
-
-export const getAlwaysLoadedToolDefinitions = getAlwaysLoadedDefinitions;
-export const getToolDefinitionsForContext = getToolDefinitions;
-export const getAlwaysLoadedDefinitionsForContext = getAlwaysLoadedDefinitions;
-export const getAccessibleToolDefinitions = getToolDefinitions;
 
 export function getTriggeredTools(text: string, mimeType?: string, context?: ToolAccessContext): BaseTool[] {
   const source = context ? getDiscoverableTools(context) : discoverableTools;
