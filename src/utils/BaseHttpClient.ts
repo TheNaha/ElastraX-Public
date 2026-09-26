@@ -39,6 +39,7 @@ export abstract class BaseHttpClient {
   protected readonly defaultTimeoutMs: number;
   protected readonly maxResponseBytes: number;
   private readonly moduleName: string;
+  private readonly binaryPaths = new Map<string, { maxBytes: number }>();
 
   constructor(
     baseUrl: string,
@@ -132,12 +133,31 @@ export abstract class BaseHttpClient {
       );
     }
     if (response.status === 204 || response.status === 205) return undefined as T;
+    const binary = this.binaryPaths.get(`${method} ${path}`);
+    if (binary) {
+      try {
+        return await readBinaryResponse(response, binary.maxBytes, service, method, path) as T;
+      } catch (error) {
+        if (error instanceof HttpClientError) throw error;
+        throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned an unreadable binary body: ${safeErrorMessage(error)}`, { cause: error });
+      }
+    }
     try {
       return await readJsonResponse<T>(response, this.maxResponseBytes, service, method, path);
     } catch (error) {
       if (error instanceof HttpClientError) throw error;
       throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned invalid JSON: ${safeErrorMessage(error)}`, { cause: error });
     }
+  }
+
+  /**
+   * Declare that a `METHOD path` returns binary rather than JSON, with its own
+   * size cap. This keeps binary downloads (text-to-speech audio) on the same
+   * timeout, redirect and protocol policy as everything else instead of
+   * introducing a second HTTP client with different rules.
+   */
+  protected expectBinary(method: string, path: string, maxBytes: number): void {
+    this.binaryPaths.set(`${method.toUpperCase()} ${path}`, { maxBytes: normalizePositiveInteger(maxBytes, this.maxResponseBytes) });
   }
 
   protected get<T>(path: string, extraHeaders?: Record<string, string>, options?: HttpRequestOptions): Promise<T> {
@@ -223,6 +243,42 @@ async function readJsonResponse<T>(response: Response, maxBytes: number, service
   }
   const body = Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total).toString('utf8');
   return JSON.parse(body) as T;
+}
+
+async function readBinaryResponse(response: Response, maxBytes: number, service: string, method: string, path: string): Promise<Buffer> {
+  const contentLength = response.headers?.get?.('content-length');
+  if (contentLength) {
+    const declared = Number(contentLength);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      throw new HttpClientError(service, method, path, 'RESPONSE_TOO_LARGE', `Upstream response exceeds ${maxBytes} bytes.`);
+    }
+  }
+  if (!response.body) {
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (buffer.byteLength > maxBytes) {
+      throw new HttpClientError(service, method, path, 'RESPONSE_TOO_LARGE', `Upstream response exceeds ${maxBytes} bytes.`);
+    }
+    return buffer;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        throw new HttpClientError(service, method, path, 'RESPONSE_TOO_LARGE', `Upstream response exceeds ${maxBytes} bytes.`);
+      }
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel(error).catch(() => undefined);
+    throw error;
+  }
+  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
 }
 
 function sanitizeResponseText(text: string): string {

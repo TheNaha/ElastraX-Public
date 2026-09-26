@@ -70,6 +70,9 @@ export const translations: Record<Locale, Record<string, string>> = {
     'sticker.download_failed': '❌ Failed to download the media.',
     'sticker.unsupported_type': '❌ Unsupported media type ({mime}). Please provide an image or short video.',
     'sticker.send_not_supported': '❌ Your current chat platform does not support sending stickers natively through the bot adapter.',
+    'speak.not_configured': '🔇 Voice replies are not configured on this bot. Ask the owner to set TTS_API_KEY.',
+    'speak.empty': '🔇 There is nothing to speak.',
+    'speak.error': '❌ Could not create a voice note: {msg}',
     'sticker.success': '✅ Sticker generated successfully!',
     'sticker.error': '❌ Error making sticker: {msg}',
 
@@ -304,6 +307,9 @@ export const translations: Record<Locale, Record<string, string>> = {
     'sticker.download_failed': '❌ Gagal mengunduh media.',
     'sticker.unsupported_type': '❌ Jenis media tidak didukung ({mime}). Harap berikan gambar atau video pendek.',
     'sticker.send_not_supported': '❌ Platform chat Anda tidak mendukung pengiriman stiker secara native melalui adaptor bot.',
+    'speak.not_configured': '🔇 Balasan suara belum dikonfigurasi di bot ini. Minta pemilik mengatur TTS_API_KEY.',
+    'speak.empty': '🔇 Tidak ada yang perlu diucapkan.',
+    'speak.error': '❌ Gagal membuat pesan suara: {msg}',
     'sticker.success': '✅ Stiker berhasil dibuat!',
     'sticker.error': '❌ Gagal membuat stiker: {msg}',
 

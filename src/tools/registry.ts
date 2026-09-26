@@ -22,6 +22,7 @@ import { RoleTool } from './RoleTool';
 import { TranscribeTool } from './TranscribeTool';
 import { OwnerTool } from './OwnerTool';
 import { FindToolsTool, setToolSearchIndex } from './FindToolsTool';
+import { SpeakTool } from './SpeakTool';
 import { MediaBindTool } from './MediaBindTool';
 import { MediaSearchTool } from './MediaSearchTool';
 import { MediaRequestTool } from './MediaRequestTool';
@@ -521,7 +522,7 @@ function buildCoreTools(): BaseTool[] {
     new TranscribeTool(), new MemoryTool(), new DigestTool(), new WebScrapeTool(), new MakeStickerTool(),
     new DownloadTool(), new MediaConvertTool(), new PDFTool(), new GroupAdminTool(), new LanguageTool(), new ConfigTool(),
     new RoleTool(), new MenfessTool(), new MediaBindTool(), new MediaSearchTool(), new MediaRequestTool(),
-    new MediaLibraryTool(), new OwnerTool(), new FindToolsTool(),
+    new MediaLibraryTool(), new OwnerTool(), new FindToolsTool(), new SpeakTool(),
   ];
 }
 
