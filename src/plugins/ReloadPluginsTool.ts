@@ -1,7 +1,20 @@
 import { BaseTool, type ToolArgs, ToolDefinition } from '../tools/BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { reloadRegistry } from '../tools/registry';
+import { getPluginLoadReports, reloadRegistry } from '../tools/registry';
 import { getErrorMessage } from '../utils/errorUtils';
+
+/**
+ * Declares what this plugin asks for so the loader can gate it. `owner` sits
+ * above the default allowlist, so this plugin only loads when an operator sets
+ * `PLUGIN_ALLOWED_PERMISSIONS=owner` — which is correct, because it is the tool
+ * that reloads the registry itself.
+ */
+export const pluginManifest = {
+  name: 'reload-plugins',
+  version: '1.0.0',
+  description: 'Owner-only registry reload and plugin listing.',
+  permissions: ['owner'],
+};
 
 export class ReloadPluginsTool extends BaseTool<ToolArgs> {
   readonly name = 'reload_plugins';
@@ -39,7 +52,19 @@ export class ReloadPluginsTool extends BaseTool<ToolArgs> {
     }
     try {
       await reloadRegistry();
-      return '✅ Plugins reloaded successfully! The new tools are now available.';
+      const reports = getPluginLoadReports();
+      const refused = reports.filter(report => report.status === 'refused');
+      const unreviewed = reports.filter(report => report.status === 'loaded-unreviewed');
+      const loaded = reports.filter(report => report.status === 'loaded');
+      const lines = [`✅ Registry reloaded: ${loaded.length} manifested plugin(s) loaded.`];
+      if (unreviewed.length > 0) {
+        lines.push(`⚠️ ${unreviewed.length} plugin(s) loaded with no manifest (unreviewed).`);
+      }
+      if (refused.length > 0) {
+        lines.push(`🚫 ${refused.length} plugin(s) refused:`);
+        for (const report of refused) lines.push(`   • ${report.reason ?? 'unknown reason'}`);
+      }
+      return lines.join('\n');
     } catch (err: unknown) {
       const msg = getErrorMessage(err);
       return `❌ Failed to reload plugins: ${msg}`;

@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, realpathSync } from 'fs';
+import { existsSync, readdirSync, realpathSync } from 'fs';
 import { join } from 'path';
+import { admitPluginManifest, resolveAllowedPluginPermissions } from '../plugins/manifest';
 import { BaseTool, type ToolDefinition, type ToolMetadata } from './BaseTool';
 import { WebSearchTool } from './WebSearchTool';
 import { MenuTool } from './MenuTool';
@@ -446,10 +447,27 @@ function instantiatePluginExports(module: Record<string, unknown>, file: string,
   return result;
 }
 
+/** What the loader accepted, refused, or could not review. Surfaced for operators. */
+export type PluginLoadReport = {
+  manifestName: string | null;
+  version: string | null;
+  tools: string[];
+  status: 'loaded' | 'loaded-unreviewed' | 'refused';
+  reason?: string;
+};
+
+const pluginReports: PluginLoadReport[] = [];
+
+export function getPluginLoadReports(): readonly PluginLoadReport[] {
+  return pluginReports;
+}
+
 async function loadPluginTools(): Promise<BaseTool[]> {
   const pluginsDir = join(import.meta.dir, '..', 'plugins');
   if (!existsSync(pluginsDir)) {
-    mkdirSync(pluginsDir, { recursive: true });
+    // No plugin directory is a normal deployment, not an error. Creating it here
+    // made plugin loading throw on a read-only container and silently reduced the
+    // bot to core tools.
     return [];
   }
   let root: string;
@@ -458,6 +476,7 @@ async function loadPluginTools(): Promise<BaseTool[]> {
   } catch {
     return [];
   }
+  const allowedPermissions = resolveAllowedPluginPermissions(process.env.PLUGIN_ALLOWED_PERMISSIONS);
   const files = readdirSync(pluginsDir).filter((file) => file.endsWith('.ts') && !file.endsWith('.d.ts')).sort();
   const loaded: BaseTool[] = [];
   const seenConstructors = new Set<new () => BaseTool>();
@@ -467,7 +486,27 @@ async function loadPluginTools(): Promise<BaseTool[]> {
     try {
       if (realpathSync(filePath).startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`) === false) continue;
       const module = await import(`${filePath}?update=${Date.now()}-${++reloadSequence}`);
-      loaded.push(...instantiatePluginExports(module as Record<string, unknown>, file, seenConstructors, seenInstances));
+      const admission = admitPluginManifest(
+        (module as Record<string, unknown>).pluginManifest,
+        allowedPermissions,
+      );
+      if (!admission.allowed) {
+        pluginReports.push({
+          manifestName: null, version: null, tools: [], status: 'refused',
+          reason: `${file}: ${admission.reason}`,
+        });
+        log.warn({ plugin: file, reason: admission.reason }, 'Refused plugin');
+        continue;
+      }
+      const tools = instantiatePluginExports(module as Record<string, unknown>, file, seenConstructors, seenInstances);
+      loaded.push(...tools);
+      pluginReports.push({
+        manifestName: admission.manifest?.name ?? null,
+        version: admission.manifest?.version ?? null,
+        tools: tools.map(tool => tool.name),
+        status: admission.manifest ? 'loaded' : 'loaded-unreviewed',
+        ...(admission.reason ? { reason: admission.reason } : {}),
+      });
     } catch (error: unknown) {
       log.error({ err: error, file }, 'Failed to load plugin');
     }
