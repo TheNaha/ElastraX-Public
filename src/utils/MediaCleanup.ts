@@ -1,23 +1,16 @@
-import { existsSync } from 'node:fs';
-import { stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { inArray, isNotNull } from 'drizzle-orm';
+import { logger } from './logger';
 import { db } from '../db';
 import { messages } from '../db/schema';
 import { getMediaRetentionHours } from '../config/runtime';
-import { logger } from './logger';
-import { MEDIA_DIR, mediaStorageDeps, reconcileMediaQuota } from './MediaStorage';
-
-export interface PruneMediaOptions {
-  now?: number;
-  clearReferences?: boolean;
-}
-
-export const mediaCleanupDeps = {
-  stat,
-  unlink,
-  existsSync,
-};
+import { inArray, isNotNull } from 'drizzle-orm';
+import {
+  MEDIA_DIR,
+  mediaCleanupDeps,
+  reconcileMediaQuota,
+  PruneMediaOptions,
+} from './mediaShared';
+import { setClearStaleMediaReferencesCallback } from './MediaStorage';
 
 export class MediaCleanup {
   static async pruneOldFiles(options: PruneMediaOptions = {}): Promise<void> {
@@ -27,7 +20,7 @@ export class MediaCleanup {
     const deleted: string[] = [];
 
     try {
-      const names = await mediaStorageDeps.readdir(MEDIA_DIR);
+      const names = await mediaCleanupDeps.readdir(MEDIA_DIR);
       for (const name of names) {
         const filePath = join(MEDIA_DIR, name);
         try {
@@ -44,11 +37,6 @@ export class MediaCleanup {
       const quota = await reconcileMediaQuota(0, undefined, 0);
       deleted.push(...quota.deleted.filter(path => !deleted.includes(path)));
       if (options.clearReferences !== false) {
-        // Always pass the pruned list. Passing `undefined` sent
-        // clearStaleMediaReferences down its full-scan branch, which selected
-        // every message row with a media path and issued a blocking
-        // `existsSync` per row — cost scaling with total history, on a job that
-        // runs at startup and every few hours even when nothing aged out.
         await MediaCleanup.clearStaleMediaReferences(deleted);
       }
       if (deleted.length > 0) {
@@ -89,3 +77,8 @@ export class MediaCleanup {
     }
   }
 }
+
+setClearStaleMediaReferencesCallback(MediaCleanup.clearStaleMediaReferences);
+
+// Re-export for backward compatibility with tests
+export { mediaCleanupDeps } from './mediaShared';

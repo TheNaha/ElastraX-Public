@@ -545,9 +545,14 @@ export class TelegramProvider implements BotProvider {
         const head = nextText.slice(0, TELEGRAM_TEXT_LIMIT);
         await activeBot.api.editMessageText(chatId, messageId, head);
         if (head.length < nextText.length) {
-          const extra = await activeBot.api.sendMessage(chatId, nextText.slice(head.length));
-          const id = (extra as { message_id?: number } | null)?.message_id;
-          if (typeof id === 'number') noteBotMessageSent('telegram', String(id));
+          const remainder = nextText.slice(head.length);
+          const chunks = chunkTelegramText(remainder);
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];
+            const extra = await activeBot.api.sendMessage(chatId, chunk);
+            const id = (extra as { message_id?: number } | null)?.message_id;
+            if (typeof id === 'number') noteBotMessageSent('telegram', String(id));
+          }
         }
       },
       sendMedia: async (buffer: Buffer, options = {}) => {

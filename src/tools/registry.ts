@@ -76,10 +76,32 @@ let cachedAllDefinitions: ToolDefinition[] = [];
 let cachedAlwaysLoadedDefinitions: ToolDefinition[] = [];
 let discoverableTools: BaseTool[] = [];
 let reloadChain: Promise<void> = Promise.resolve();
-let reloadSequence = 0;
 let registryGeneration = 0;
 const mutationQueues = new Map<string, Promise<unknown>>();
 const rateWindows = new Map<string, { startedAt: number; cost: number }>();
+let rateWindowCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function startRateWindowCleanup(): void {
+  if (rateWindowCleanupTimer) return;
+  rateWindowCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    const windowMs = 60_000;
+    for (const [key, window] of rateWindows) {
+      if (now - window.startedAt >= windowMs) rateWindows.delete(key);
+    }
+  }, 60_000);
+  rateWindowCleanupTimer.unref?.();
+}
+
+export function stopRateWindowCleanup(): void {
+  if (rateWindowCleanupTimer) {
+    clearInterval(rateWindowCleanupTimer);
+    rateWindowCleanupTimer = null;
+  }
+}
+
+// Called on module load to start the periodic cleanup
+startRateWindowCleanup();
 
 function hasRole(roles: readonly string[] | undefined, required: string): boolean {
   return roleSatisfies(roles, required);
@@ -178,15 +200,6 @@ export function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & 
   const configured = Number.parseInt(process.env.TOOL_MUTATION_COST_LIMIT ?? '100', 10);
   const limit = Number.isFinite(configured) && configured > 0 ? configured : 100;
   const windowMs = 60_000;
-  // `rateWindows` is only ever added to, so without a sweep it grows by one
-  // entry per (tool, user) pair for the life of the process. Dropping windows
-  // that can no longer influence a decision keeps it bounded; the active one is
-  // re-created below on demand.
-  if (rateWindows.size > 64) {
-    for (const [existingKey, window] of rateWindows) {
-      if (now - window.startedAt >= windowMs) rateWindows.delete(existingKey);
-    }
-  }
   const key = `${tool.name}:${context.userId ?? 'global'}`;
   const current = rateWindows.get(key);
   const state = !current || now - current.startedAt >= windowMs ? { startedAt: now, cost: 0 } : current;
@@ -199,6 +212,8 @@ export function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & 
   rateWindows.set(key, state);
   return { allowed: true, cost, remaining: Math.max(0, limit - state.cost) };
 }
+
+startRateWindowCleanup();
 
 export function resetToolRateLimits(): void {
   rateWindows.clear();
@@ -542,7 +557,7 @@ async function loadPluginTools(): Promise<BaseTool[]> {
     const filePath = join(pluginsDir, file);
     try {
       if (realpathSync(filePath).startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`) === false) continue;
-      const module = await import(`${filePath}?update=${Date.now()}-${++reloadSequence}`);
+      const module = await import(filePath);
       const admission = admitPluginManifest(
         (module as Record<string, unknown>).pluginManifest,
         allowedPermissions,

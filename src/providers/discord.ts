@@ -527,7 +527,11 @@ export class DiscordProvider implements BotProvider {
           if (!channel?.isTextBased() || !('send' in channel) || typeof channel.send !== 'function') {
             throw new ProviderOperationError('discord', 'editMessage', 'Discord channel cannot send the remainder of an over-long edit.', undefined, 'UNSUPPORTED');
           }
-          for (const chunk of chunkDiscordText(text.slice(head.length))) {
+          const remainder = text.slice(head.length);
+          const chunks = chunkDiscordText(remainder);
+          // Add continuation marker to the first remainder chunk
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];
             await channel.send({ content: chunk, allowedMentions: { parse: [] } });
           }
         }
