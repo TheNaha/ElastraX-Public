@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
-import { stat, unlink, readdir } from 'node:fs/promises';
+import { stat, unlink, readdir, mkdir, chmod, open, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { fileTypeFromBuffer } from 'file-type';
 export const MEDIA_DIR = resolve(process.env.ELASTRAX_MEDIA_DIR || join(process.cwd(), 'data/media'));
 export const TYPE_DETECTION_BYTES = 4100;
 export const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
@@ -48,17 +50,17 @@ export interface PruneMediaOptions {
 }
 
 export const mediaStorageDeps = {
-  mkdir: (() => import('node:fs/promises').then(m => m.mkdir)) as unknown as typeof import('node:fs/promises').mkdir,
-  chmod: (() => import('node:fs/promises').then(m => m.chmod)) as unknown as typeof import('node:fs/promises').chmod,
-  open: (() => import('node:fs/promises').then(m => m.open)) as unknown as typeof import('node:fs/promises').open,
+  mkdir,
+  chmod,
+  open,
   readdir,
-  rename: (() => import('node:fs/promises').then(m => m.rename)) as unknown as typeof import('node:fs/promises').rename,
-  rm: (() => import('node:fs/promises').then(m => m.rm)) as unknown as typeof import('node:fs/promises').rm,
+  rename,
+  rm,
   stat,
   unlink,
-  writeFile: (() => import('node:fs/promises').then(m => m.writeFile)) as unknown as typeof import('node:fs/promises').writeFile,
-  randomUUID: (() => import('node:crypto').then(m => m.randomUUID)) as unknown as typeof import('node:crypto').randomUUID,
-  fileTypeFromBuffer: (() => import('file-type').then(m => m.fileTypeFromBuffer)) as unknown as typeof import('file-type').fileTypeFromBuffer,
+  writeFile,
+  randomUUID,
+  fileTypeFromBuffer,
 };
 
 export const mediaCleanupDeps = {
