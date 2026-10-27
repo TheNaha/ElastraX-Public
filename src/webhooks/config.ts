@@ -1,3 +1,6 @@
+import { MIN_SHARED_SECRET_BYTES } from '../config/runtime';
+import { logger } from '../utils/logger';
+
 export type WebhookEnv = Record<string, string | undefined>;
 
 export type SecretCompatibilityWindow = {
@@ -49,7 +52,6 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX_SOURCES = 10_000;
 const DEFAULT_REPLAY_TTL_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_REPLAY_MAX_ENTRIES = 10_000;
-const MIN_SECRET_BYTES = 24;
 const ABSOLUTE_RFC3339 = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|([+-])(\d{2}):(\d{2}))$/;
 
 function parseAbsoluteRfc3339(value: string): number | null {
@@ -81,6 +83,12 @@ function readInteger(
 ): number {
   const raw = env[key];
   if (raw === undefined) return fallback;
+  // An empty value means "unset", matching `readSecret` here and `validateEnv`,
+  // which both return early on `''`. `.env.example` ships every one of these keys
+  // in the `KEY=` form, so uncommenting a line and clearing it produced
+  // "WEBHOOK_PORT must be a base-10 integer" — an error about a malformed value
+  // for a variable the operator had deliberately left blank.
+  if (raw.trim() === '') return fallback;
   if (!/^\d+$/.test(raw)) {
     throw new Error(`${key} must be a base-10 integer`);
   }
@@ -93,7 +101,7 @@ function readInteger(
 
 function readBoolean(env: WebhookEnv, key: string, fallback: boolean): boolean {
   const raw = env[key];
-  if (raw === undefined) return fallback;
+  if (raw === undefined || raw.trim() === '') return fallback;
   if (raw !== 'true' && raw !== 'false') {
     throw new Error(`${key} must be exactly "true" or "false"`);
   }
@@ -106,8 +114,34 @@ function readSecret(env: WebhookEnv, key: string): string | null {
   if (raw !== raw.trim()) {
     throw new Error(`${key} must not have leading or trailing whitespace`);
   }
-  if (Buffer.byteLength(raw, 'utf8') < MIN_SECRET_BYTES) {
-    throw new Error(`${key} must contain at least ${MIN_SECRET_BYTES} bytes`);
+  if (Buffer.byteLength(raw, 'utf8') < MIN_SHARED_SECRET_BYTES) {
+    throw new Error(`${key} must contain at least ${MIN_SHARED_SECRET_BYTES} bytes`);
+  }
+  return raw;
+}
+
+/**
+ * A shared operator secret that gates an *optional* surface.
+ *
+ * `METRICS_AUTH_TOKEN` protects `/metrics` and the admin dashboard, neither of
+ * which the bot needs in order to answer messages. Throwing here took the
+ * entire process down at startup over a token that only gates telemetry, so a
+ * token that is too short now disables those surfaces (they fail closed) and
+ * the bot keeps running. A malformed value — one with stray whitespace — is
+ * still a hard error, because that is a typo rather than a policy choice.
+ */
+function readOptionalSharedSecret(env: WebhookEnv, key: string): string | null {
+  const raw = env[key];
+  if (raw === undefined || raw === '') return null;
+  if (raw !== raw.trim()) {
+    throw new Error(`${key} must not have leading or trailing whitespace`);
+  }
+  if (Buffer.byteLength(raw, 'utf8') < MIN_SHARED_SECRET_BYTES) {
+    logger.warn(
+      { key, bytes: Buffer.byteLength(raw, 'utf8'), minimum: MIN_SHARED_SECRET_BYTES },
+      `[webhooks] ${key} is too short; the surfaces it guards stay disabled`,
+    );
+    return null;
   }
   return raw;
 }
@@ -161,7 +195,7 @@ export function parseWebhookConfig(
     sharedSecret: readSecret(env, 'WEBHOOK_SECRET'),
     seerrSecret: readSecret(env, 'SEERR_WEBHOOK_SECRET'),
     jellyfinSecret: readSecret(env, 'JELLYFIN_WEBHOOK_SECRET'),
-    metricsToken: readSecret(env, 'METRICS_AUTH_TOKEN'),
+    metricsToken: readOptionalSharedSecret(env, 'METRICS_AUTH_TOKEN'),
     bodySecretCompatibility: readCompatibilityWindow(env, 'WEBHOOK_BODY', now),
     querySecretCompatibility: readCompatibilityWindow(env, 'WEBHOOK_QUERY', now),
     maxBodyBytes: readInteger(env, 'WEBHOOK_MAX_BODY_BYTES', DEFAULT_MAX_BODY_BYTES, {

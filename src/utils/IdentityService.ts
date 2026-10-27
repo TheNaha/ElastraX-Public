@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db, type ElastraXDatabase } from '../db';
+import { toRoomKey } from '../core/roomKeyFormat';
 import {
   canonicalIdentities,
   identityAliases,
@@ -75,6 +76,25 @@ function normalized(value: string | null | undefined): string | null {
   return trimmed ? trimmed : null;
 }
 
+/**
+ * The platform an id belongs to, when the caller did not say.
+ *
+ * A WhatsApp id carries a `@s.whatsapp.net` / `@lid` suffix. Everything else
+ * was assumed to be Discord, which is why a Telegram id was always looked up
+ * under `platform = 'discord'` and never matched the row that Telegram had
+ * written under `platform = 'telegram'`.
+ */
+function inferIdentityPlatform(alias: string): string {
+  if (alias.endsWith('@lid') || alias.endsWith('@s.whatsapp.net')) return 'whatsapp';
+  // Telegram supergroups/channels start with -100, which no other platform produces.
+  if (/^-100\d+$/.test(alias)) return 'telegram';
+  // Telegram user ids are numeric and 5-32 digits; Discord snowflakes are 15-20 digits.
+  // Use the same discriminator as inferPlatformFromRoomId to avoid misclassification.
+  if (/^\d{5,32}$/.test(alias)) return 'telegram';
+  // Everything else falls back to Discord default.
+  return 'discord';
+}
+
 function aliasKinds(lid: string | null, pn: string | null): Array<{ value: string; kind: string }> {
   return [
     ...(lid ? [{ value: lid, kind: 'lid' }] : []),
@@ -115,7 +135,7 @@ export const IdentityService = {
   setDepsForTesting,
   upsert: (...args: [string | null | undefined, string | null | undefined, (string | null)?, (string)?]) =>
     IdentityService.upsertIdentity(args[0] ?? null, args[1] ?? null, args[2], args[3]),
-  async getIdentity(jid: string): Promise<IdentityInfo | null> {
+  async getIdentity(jid: string, platform?: string): Promise<IdentityInfo | null> {
     const alias = normalized(jid);
     if (!alias) return null;
     if (deps.canonicalIdentities && /^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(alias)) {
@@ -133,12 +153,12 @@ export const IdentityService = {
         };
       }
     }
-    const platform = alias.endsWith('@lid') || alias.endsWith('@s.whatsapp.net') ? 'whatsapp' : 'discord';
-    const canonical = await canonicalForAlias(alias, platform);
+    const resolvedPlatform = platform ?? inferIdentityPlatform(alias);
+    const canonical = await canonicalForAlias(alias, resolvedPlatform);
     if (canonical && deps.identityAliases) {
       const aliases = await deps.db.select().from(deps.identityAliases)
         .where(and(
-          eq(deps.identityAliases.platform, platform),
+          eq(deps.identityAliases.platform, resolvedPlatform),
           eq(deps.identityAliases.canonicalId, canonical.id),
         ));
       return {
@@ -146,7 +166,7 @@ export const IdentityService = {
         lid: aliases.find(row => row.aliasKind === 'lid')?.alias ?? null,
         pn: aliases.find(row => row.aliasKind === 'pn' || row.aliasKind === 'phone')?.alias ?? null,
         displayName: canonical.displayName,
-        platform,
+        platform: resolvedPlatform,
       };
     }
     const row = (await deps.db.select({
@@ -155,7 +175,7 @@ export const IdentityService = {
       displayName: deps.userIdentities.displayName,
       platform: deps.userIdentities.platform,
     }).from(deps.userIdentities).where(and(
-      eq(deps.userIdentities.platform, platform),
+      eq(deps.userIdentities.platform, resolvedPlatform),
       or(eq(deps.userIdentities.lid, alias), eq(deps.userIdentities.pn, alias)),
     )).limit(1))[0];
     if (!row) return null;
@@ -164,16 +184,16 @@ export const IdentityService = {
       lid: row.lid,
       pn: row.pn,
       displayName: row.displayName,
-      platform,
+      platform: resolvedPlatform,
     };
   },
 
-  async getCanonicalId(jid: string): Promise<string | null> {
-    return (await this.getIdentity(jid))?.canonicalId ?? null;
+  async getCanonicalId(jid: string, platform?: string): Promise<string | null> {
+    return (await this.getIdentity(jid, platform))?.canonicalId ?? null;
   },
 
-  async getAllJids(jid: string): Promise<string[]> {
-    const identity = await this.getIdentity(jid);
+  async getAllJids(jid: string, platform?: string): Promise<string[]> {
+    const identity = await this.getIdentity(jid, platform);
     if (!identity) return jid ? [jid] : [];
     const jids = [identity.canonicalId, identity.lid, identity.pn].filter((value): value is string => Boolean(value));
     if (!deps.identityAliases || !identity.canonicalId) return [...new Set(jids)];
@@ -184,9 +204,9 @@ export const IdentityService = {
   },
 
   async getJidsAndRoles(userId: string, chatId?: string, platform?: string): Promise<{ jids: string[]; roles: Array<{ scope: string; scopeRoomKey?: string | null; role: string }> }> {
-    const jids = await this.getAllJids(userId);
+    const jids = await this.getAllJids(userId, platform);
     if (jids.length === 0) return { jids, roles: [] };
-    const roomKey = chatId && platform ? `room:${platform}:${chatId}` : null;
+    const roomKey = chatId && platform ? toRoomKey(platform, chatId) : null;
     const scopeCondition = chatId
       ? or(
           eq(deps.userRoles.scope, 'global'),
@@ -205,13 +225,13 @@ export const IdentityService = {
     return { jids, roles: rows.map(row => row.scopeRoomKey ? row : { scope: row.scope, role: row.role }) };
   },
 
-  async getLidForPn(pn: string): Promise<string | undefined> {
-    const identity = await this.getIdentity(pn);
+  async getLidForPn(pn: string, platform?: string): Promise<string | undefined> {
+    const identity = await this.getIdentity(pn, platform);
     return identity?.lid ?? undefined;
   },
 
-  async getPnForLid(lid: string): Promise<string | undefined> {
-    const identity = await this.getIdentity(lid);
+  async getPnForLid(lid: string, platform?: string): Promise<string | undefined> {
+    const identity = await this.getIdentity(lid, platform);
     return identity?.pn ?? undefined;
   },
 
@@ -338,28 +358,29 @@ export const IdentityService = {
     });
   },
 
-  async setDisplayName(jid: string, displayName: string): Promise<void> {
-    const identity = await this.getIdentity(jid);
+  async setDisplayName(jid: string, displayName: string, platform?: string): Promise<void> {
+    const identity = await this.getIdentity(jid, platform);
     if (!identity) return;
     const now = new Date();
     const nowMs = now.getTime();
+    const resolvedPlatform = platform ?? identity.platform ?? inferIdentityPlatform(jid);
     if (deps.canonicalIdentities) {
       await deps.db.update(deps.canonicalIdentities)
         .set({ displayName, updated_at: nowMs })
         .where(eq(deps.canonicalIdentities.id, identity.canonicalId))
         .run();
     }
-    const jids = await this.getAllJids(jid);
+    const jids = await this.getAllJids(jid, resolvedPlatform);
     await deps.db.update(deps.userIdentities)
       .set({ displayName, updated_at: now })
       .where(and(
-        eq(deps.userIdentities.platform, jid.endsWith('@lid') || jid.endsWith('@s.whatsapp.net') ? 'whatsapp' : 'discord'),
+        eq(deps.userIdentities.platform, resolvedPlatform),
         or(...jids.map(value => or(eq(deps.userIdentities.lid, value), eq(deps.userIdentities.pn, value)))),
       )).run();
   },
 
-  async clearUserIdentities(userId: string): Promise<void> {
-    const identity = await this.getIdentity(userId);
+  async clearUserIdentities(userId: string, platform?: string): Promise<void> {
+    const identity = await this.getIdentity(userId, platform);
     if (identity && deps.identityAliases) {
       await deps.db.delete(deps.identityAliases).where(eq(deps.identityAliases.canonicalId, identity.canonicalId)).run();
     }

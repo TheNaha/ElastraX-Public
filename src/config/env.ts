@@ -154,7 +154,11 @@ export function validateEnv(env: Env = process.env): void {
   validateInteger(env.TRANSCRIBE_TIMEOUT_MS, 'TRANSCRIBE_TIMEOUT_MS', errors, { min: 1_000, max: 600_000 });
   validateInteger(env.WEBHOOK_MAX_BODY_BYTES, 'WEBHOOK_MAX_BODY_BYTES', errors, { min: 1_024, max: 10 * 1024 * 1024 });
   validateInteger(env.WEBHOOK_MAX_TEXT_LENGTH, 'WEBHOOK_MAX_TEXT_LENGTH', errors, { min: 200, max: 20_000 });
-  validateInteger(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors, { min: 1, max: 65_535 });
+  // 0 is legal: it binds an ephemeral port, which is what the CI webhook smoke
+  // test and any "pick a free port" operator script do. `parseWebhookConfig`
+  // already allowed `min: 0`, so this validator was the only thing rejecting a
+  // configuration the rest of the system — and the project's own CI — uses.
+  validateInteger(env.WEBHOOK_PORT, 'WEBHOOK_PORT', errors, { min: 0, max: 65_535 });
   validateInteger(env.RATE_LIMIT_MESSAGES, 'RATE_LIMIT_MESSAGES', errors, { min: 1, max: 100_000 });
   validateInteger(env.RATE_LIMIT_WINDOW_SEC, 'RATE_LIMIT_WINDOW_SEC', errors, { min: 1, max: 86_400 });
   validateInteger(env.DOWNLOAD_MAX_MB, 'DOWNLOAD_MAX_MB', errors, { min: 1, max: 1_024 });

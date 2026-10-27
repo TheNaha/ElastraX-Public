@@ -13,7 +13,10 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writ
 import { tmpdir } from 'node:os';
 import { test, describe, expect, beforeEach, afterEach } from 'bun:test';
 import * as schema from '../src/db/schema';
-import { inspectMigrationState } from '../src/db/migrations';
+import { inspectMigrationState, readMigrationJournal } from '../src/db/migrations';
+
+/** Hash `0008_calm_token_room` had before commit 8f08ac7 rewrote it. */
+const LEGACY_0008_HASH = '84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d';
 import { ROOT_DIR } from '../src/core/constants';
 
 describe('Database Migrations', () => {
@@ -42,8 +45,43 @@ describe('Database Migrations', () => {
       expect(colNames).toContain('recurrence');
       expect(colNames).toContain('claimed_at');
       expect(inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')).pending).toHaveLength(0);
-      sqlite.exec("UPDATE __drizzle_migrations SET hash = '84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d' WHERE created_at = 8");
-      expect(inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')).pending).toHaveLength(0);
+    });
+
+    /**
+     * `0008_calm_token_room` was rewritten after it shipped, so a database that
+     * ran the original records a hash that no longer matches the file. The
+     * allowance for that is keyed to the migration's position in the journal.
+     *
+     * This used to be asserted by writing the legacy hash to `created_at = 8`,
+     * which is the *eighth* applied row (index 7, `0007_keen_user_roles`) — the
+     * same off-by-one the source carried. It therefore only ever exercised the
+     * no-op path and never proved the genuinely drifted migration was accepted,
+     * which is how "Applied migration 0008_calm_token_room has an unexpected
+     * checksum" shipped and bricked every existing deployment.
+     */
+    test('accepts the pre-rewrite 0008 checksum at its own journal position', async () => {
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      const journal = readMigrationJournal(join(ROOT_DIR, 'drizzle/migrations'));
+      const driftedIndex = journal.findIndex(entry => entry.tag === '0008_calm_token_room');
+      expect(driftedIndex).toBe(8);
+      // `created_at` is 1-based, so the row for zero-based position 8 is 9.
+      sqlite
+        .prepare("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?")
+        .run(LEGACY_0008_HASH, driftedIndex + 1);
+
+      const state = inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations'));
+      expect(state.pending).toHaveLength(0);
+    });
+
+    test('the legacy-checksum allowance is scoped to its own migration', async () => {
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      // The same hash recorded against a *different* migration is drift, not
+      // history, and must still be rejected.
+      sqlite
+        .prepare("UPDATE __drizzle_migrations SET hash = ? WHERE created_at = ?")
+        .run(LEGACY_0008_HASH, 7);
+      expect(() => inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')))
+        .toThrow(/unexpected checksum/);
     });
 
     test('all migration files have corresponding journal entries', () => {

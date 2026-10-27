@@ -1,6 +1,6 @@
 # Canonical Room Identity Migration
 
-ElastraX `v8.1.0` introduces a platform-scoped canonical room key:
+ElastraX `v8.0.1` introduces a platform-scoped canonical room key:
 
 ```text
 room:<platform>:<remoteRoomId>

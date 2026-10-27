@@ -97,7 +97,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
               type: 'string',
               enum: [...ACTIONS],
               description:
-                'Operation: info | compress | merge (quote one PDF, attach another) | split (start_page, end_page) | rotate (degrees) | remove_pages (pages) | add_page_numbers | add_watermark (watermark_text) | img_to_pdf (attach image) | to_text | flatten | edit_metadata (title, author, subject)',
+                'Operation: info | compress | merge (quote one PDF, attach another) | split (start_page, end_page) | rotate (degrees) | remove_pages (pages) | add_page_numbers | add_watermark (watermark_text) | img_to_pdf (attach image) | to_text | flatten | edit_metadata (author, title, subject)',
             },
             start_page: { type: 'integer', minimum: 1, description: 'split: first page (1-based inclusive)' },
             end_page: { type: 'integer', minimum: 1, description: 'split: last page (1-based inclusive)' },

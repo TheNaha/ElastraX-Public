@@ -7,7 +7,7 @@
  * reported through an explicit allowlist of key names.
  */
 import { readFileSync } from 'fs';
-import { and, desc, eq, sql, count } from 'drizzle-orm';
+import { and, desc, eq, sql, count, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import {
   chatRooms,
@@ -150,24 +150,49 @@ export type RoomRow = {
 
 export function roomInventory(limit = MAX_TABLE_ROWS): { rooms: RoomRow[]; total: number; keyStats: unknown } {
   const rows = db.select().from(chatRooms).orderBy(desc(chatRooms.created_at)).limit(limit).all();
+  // The document and reminder counts used to be computed with one query per
+  // room — two `COUNT(*)` scans for every row in the page, so 400 queries for
+  // a 200-room page. The dashboard runs on the same event loop as message
+  // handling, so a single refresh could stall a burst of inbound messages.
+  //
+  // Both counts are now fetched in two grouped queries and looked up by key.
+  const documentCounts = new Map<string, number>();
+  if (rows.length > 0) {
+    const scopedKeys = rows.map(room => room.roomKey).filter((key): key is string => Boolean(key));
+    if (scopedKeys.length > 0) {
+      for (const row of db.select({ ownerId: memories.ownerId, n: count() })
+        .from(memories)
+        .where(and(
+          inArray(memories.ownerId, scopedKeys),
+          eq(memories.category, DOCUMENT_CATEGORY),
+        ))
+        .groupBy(memories.ownerId)
+        .all()) {
+        documentCounts.set(row.ownerId, row.n);
+      }
+    }
+  }
+  const reminderCounts = new Map<string, number>();
+  if (rows.length > 0) {
+    const roomIds = rows.map(room => room.id);
+    for (const row of db.select({ chatRoomId: reminders.chatRoomId, n: count() })
+      .from(reminders)
+      .where(inArray(reminders.chatRoomId, roomIds))
+      .groupBy(reminders.chatRoomId)
+      .all()) {
+      reminderCounts.set(row.chatRoomId, row.n);
+    }
+  }
   const rooms: RoomRow[] = rows.map(room => {
     const scopedKey = room.roomKey ?? null;
-    const documents = scopedKey
-      ? db.select({ n: count() }).from(memories)
-        .where(and(eq(memories.ownerId, scopedKey), eq(memories.category, DOCUMENT_CATEGORY)))
-        .all()[0]?.n ?? 0
-      : 0;
-    const remindersForRoom = db.select({ n: count() }).from(reminders)
-      .where(eq(reminders.chatRoomId, room.id))
-      .all()[0]?.n ?? 0;
     return {
       id: room.id,
       platform: room.platform ?? null,
       roomKey: scopedKey,
       label: clip(room.roomKey || room.id, 80),
       createdAt: room.created_at ? new Date(room.created_at.getTime() * 1000).toISOString() : null,
-      knowledgeDocuments: documents,
-      reminders: remindersForRoom,
+      knowledgeDocuments: scopedKey ? documentCounts.get(scopedKey) ?? 0 : 0,
+      reminders: reminderCounts.get(room.id) ?? 0,
     };
   });
   const total = db.select({ n: count() }).from(chatRooms).all()[0]?.n ?? 0;

@@ -1,1 +1,36 @@
 title = "ElastraX gitleaks configuration"
+
+# `--config` REPLACES the embedded default ruleset: gitleaks only loads its
+# built-in rules when no config file is given, and the detector iterates
+# `Config.Rules` — an empty map can never produce a finding. This file used to
+# declare a title and nothing else, so the "Secret gate" step scanned 378
+# commits and reported "no leaks found" unconditionally.
+[extend]
+useDefault = true
+
+# Documented placeholders and local test credentials. These are committed on
+# purpose: they are the values `.env.example` ships and the values the test
+# harness asserts against.
+[allowlist]
+description = "Documented placeholders and test-only credentials"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)test/fixtures/''',
+  '''^\.env\.example$''',
+  '''(^|/)bun\.lock$''',
+]
+regexes = [
+  # `.env.example` ships `sk-your-key-here` style placeholders.
+  '''sk-your-.*''',
+  '''dummy_token_here''',
+  '''Bearer test-token''',
+  # Discord snowflake fixtures in the room-key tests. A 17-18 digit channel id
+  # is structurally identical to a Discord client id, so the default rule fires on
+  # every one of them.
+  '''123456789012345678''',
+  '''111222333''',
+  # `test/MemoryTool.test.ts` asserts that an injected API key in a memory entry
+  # is redacted before the entry reaches the model, so the fake key has to look
+  # like a real one for the assertion to mean anything.
+  '''sk-abcdef123456''',
+]

@@ -28,7 +28,7 @@
 
 import { BaseTool, ToolDefinition, ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { AuthService, BUILTIN_ROLES, PRIVILEGE_FIELDS, isPrivilegeField } from '../utils/AuthService';
+import { AuthService, BUILTIN_ROLES, PRIVILEGE_FIELDS, isPrivilegeField, legacyScopeFor } from '../utils/AuthService';
 import type { RolePrivileges } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { resolveTargetUser } from '../utils/resolveTargetUser';
@@ -39,7 +39,7 @@ import { jidBareId as bareNumber } from '../utils/jid';
 
 const log = logger.child({ module: 'RoleTool' });
 
-function scopeMatches(entryScope: string, entryRoomKey: string | null | undefined, currentScope: string, platform = 'whatsapp'): boolean {
+function scopeMatches(entryScope: string, entryRoomKey: string | null | undefined, currentScope: string, platform: string): boolean {
   const currentKey = `room:${platform}:${currentScope}`;
   const legacyCurrent = currentScope.startsWith(`room:${platform}:`)
     ? currentScope.slice(`room:${platform}:`.length)
@@ -112,20 +112,20 @@ export function createRoleAccessAdapter(service: Pick<typeof AuthService, 'listR
   };
 }
 
-export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string): boolean {
+export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): boolean {
   if (actorRoles.includes('owner')) return targetScope === 'global' || targetScope === currentScope;
-  return actorRoles.includes('admin') && targetScope === currentScope;
+  return actorRoles.includes('admin') && targetScope === currentScope && legacyScopeFor(platform, targetScope) === legacyScopeFor(platform, currentScope);
 }
 
-export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform = 'whatsapp'): ScopedRoleView {
+export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform: string): ScopedRoleView {
   return {
     scope: currentScope,
     entries: entries.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, currentScope, platform) && (!platform || !entry.platform || entry.platform === platform)),
   };
 }
 
-export function assertRoleMutationAllowed(actorRoles: readonly string[], targetScope: string, currentScope: string): void {
-  if (!canManageRoleScope(actorRoles, targetScope, currentScope)) throw new Error('You are not allowed to manage roles in that scope');
+export function assertRoleMutationAllowed(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): void {
+  if (!canManageRoleScope(actorRoles, targetScope, currentScope, platform)) throw new Error('You are not allowed to manage roles in that scope');
 }
 
 export class RoleTool extends BaseTool {
@@ -338,7 +338,7 @@ export class RoleTool extends BaseTool {
       if (!resolved) return t(lang, 'role.no_user');
       const resolvedTarget = resolved.jid;
 
-      const identity = await IdentityService.getIdentity(resolvedTarget);
+      const identity = await IdentityService.getIdentity(resolvedTarget, ctx.platform);
       const targetId = identity?.lid ? identity.lid : resolvedTarget;
 
       const callerRoles = await ctx.resolveRoles();
@@ -368,7 +368,7 @@ export class RoleTool extends BaseTool {
       if (!resolved) return t(lang, 'role.no_user');
       const resolvedTarget = resolved.jid;
 
-      const identity = await IdentityService.getIdentity(resolvedTarget);
+      const identity = await IdentityService.getIdentity(resolvedTarget, ctx.platform);
       const targetId = identity?.lid ? identity.lid : resolvedTarget;
 
       const revokeRole = role; // which specific role to revoke

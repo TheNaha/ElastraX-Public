@@ -153,7 +153,7 @@ const ACTION_ARGUMENTS: Record<string, Record<string, readonly string[]>> = {
   media_library: { search: ['query'], link: ['item_id'], info: ['item_id'] },
   memory: { consent: ['scope'], revoke: [], store: ['content', 'scope', 'consent'], retrieve: ['scope'], forget: ['id'] },
   groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: ['user'], unmute: ['user'], promote: ['user'], demote: ['user'] },
-  owner_admin: { broadcast: ['message'], leave: [], system_info: [] },
+  owner_admin: { broadcast: ['message'], leave: [], system_info: [], pinout: [] },
   reminder: { list: [], cancel: ['number'] },
   role: {
     check: ['user'],
@@ -180,7 +180,15 @@ function parseActionSpecific(
   properties: Record<string, ToolParameter>,
   normalizedCommand: string,
 ): ParsedCommandArgs | null {
-  const fields = ACTION_ARGUMENTS[tool.name]?.[action];
+  // The tool's own command grammar is the authority on which arguments an
+  // action takes. `ACTION_ARGUMENTS` below is a second, parallel copy of the
+  // same information and the two had drifted: `media_library` had no `latest`
+  // entry there, so the generic positional parser ran instead and assigned the
+  // first token to `query` — which the grammar says `latest` does not accept.
+  const variant = tool.commandGrammar?.variants.find(entry => String(entry.value) === action);
+  const fields = variant
+    ? variant.arguments.map(argument => argument.name)
+    : ACTION_ARGUMENTS[tool.name]?.[action];
   if (!fields) return null;
   const values = [...tokens];
   if (values[0]?.toLowerCase() === action.toLowerCase()) values.shift();
@@ -204,7 +212,7 @@ function parseActionSpecific(
     if (index >= positional.length) break;
     const remaining = fields.slice(fieldIndex + 1).length;
     const parameter = properties[field];
-    const trailingField = ['query', 'message', 'content', 'watermark_text'].includes(field);
+    const trailingField = ['query', 'message', 'content', 'watermark_text', 'text'].includes(field);
     if (parameter?.type === 'string' && (fieldIndex === fields.length - 1 || remaining === 0 || trailingField)) {
       result[field] = positional.slice(index).join(' ');
       index = values.length;
@@ -290,7 +298,12 @@ function commandAction(toolName: string, command: string): string | undefined {
     media_search: { find: 'trending', 'search-media': 'search' },
     media_library: { library: 'latest', watching: 'latest' },
     media_account: { connect: 'connect', disconnect: 'disconnect', notify: 'notify' },
-    media_request: { status: 'status', 'my-requests': 'my-requests' },
+    // `request-media` is the alias advertised in MediaRequestTool's own docstring.
+    // Without a row here it got no inferred action, so the generic positional
+    // loop dropped the alias itself into `action` and the enum check threw
+    // "Parameter <action> must be one of request, status, my-requests" — two of
+    // the three documented slash routes to the tool's primary action were dead.
+    media_request: { request: 'request', 'request-media': 'request', status: 'status', 'my-requests': 'my-requests' },
     reminder: { remind: 'set', reminder: 'set' },
     memory: { remember: 'store', forget: 'forget', recall: 'retrieve' },
     role: { role: 'check', roles: 'check', permission: 'check', perm: 'check' },
@@ -475,7 +488,17 @@ export class ParameterValidator {
       const remainingRequired = keys.slice(keyIndex + 1).filter((next) => def.required?.includes(next)).length;
       const isFinal = keyIndex === keys.length - 1;
       const laterKeys = keys.slice(keyIndex + 1);
-      const trailingString = ['query', 'message', 'content', 'watermark_text'].includes(key) && !laterKeys.some((next) => def.required?.includes(next));
+      // A "take the rest" field is one that semantically swallows free text. The
+      // list is by field name because the validator has no other signal, so a
+      // tool with a differently-named free-text argument silently captured only
+      // the first token: `/speak how are you today` parsed as
+      // `{text: 'how', voice: 'are you today'}`, and `voice` was forwarded
+      // verbatim to the TTS provider as a voice id.
+      //
+      // `text` belongs here for exactly that reason. It is only consulted when
+      // this is the last field or no later field is required, so a tool whose
+      // `text` is a single token ahead of a required field is unaffected.
+      const trailingString = ['query', 'message', 'content', 'watermark_text', 'text'].includes(key) && !laterKeys.some((next) => def.required?.includes(next));
       const isLastString = (property?.type === 'string' && !laterKeys.some((next) => properties[next]?.type === 'string') && (isFinal || !laterKeys.some((next) => def.required?.includes(next)))) || trailingString;
       if (isLastString && tokens.length - index > remainingRequired) {
         result[key] = tokens.slice(index).join(' ');

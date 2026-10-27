@@ -7,7 +7,7 @@
  * single delegation branch.
  *
  * Security posture, since this shares a port with webhook intake:
- *  - disabled entirely unless `METRICS_AUTH_TOKEN` is a 16+ character secret
+ *  - disabled entirely unless `METRICS_AUTH_TOKEN` is a 24+ byte secret
  *  - the secret is never placed in a cookie, only an HMAC of a session id is
  *  - every mutating request needs same-origin, a valid session, and a CSRF token
  *  - login is rate limited per IP
@@ -19,6 +19,7 @@ import {
   LoginThrottle,
   isSameOrigin,
   readAdminAuthConfig,
+  shouldUseSecureCookie,
   ADMIN_CSRF_HEADER,
   ADMIN_SESSION_COOKIE,
 } from './auth';
@@ -81,6 +82,30 @@ function readCookie(req: Request, name: string): string | null {
   return null;
 }
 
+/**
+ * The host an `Origin` header must match for a mutation to be accepted.
+ *
+ * The request's own `Host` header is the authority here, because that is the
+ * name the browser used to reach us and it includes the port.
+ *
+ * The previous implementation preferred `server.hostname`, but Bun documents
+ * that as *the bind address without the port* — `"0.0.0.0"` in a normal
+ * deployment. Comparing a browser's `Origin: http://localhost:3500` against
+ * `"0.0.0.0"` never matches, so **every** browser mutation was answered with
+ * `403 Forbidden`: the operator could load the login page but could never
+ * sign in, and the whole dashboard was unreachable. The unit test missed it
+ * because it injected a fake server whose `hostname` included the port.
+ */
+function readExpectedHost(req: Request, url: URL, server: unknown): string {
+  const hostHeader = req.headers.get('host');
+  if (hostHeader) return hostHeader;
+  if (typeof server === 'object' && server !== null && 'hostname' in server) {
+    const hostname = String((server as { hostname: unknown }).hostname ?? '').trim();
+    if (hostname) return url.port ? `${hostname}:${url.port}` : hostname;
+  }
+  return url.host;
+}
+
 export type AdminHandler = (req: Request, ip: string, server: unknown) => Promise<Response> | Response;
 
 export type AdminDeps = {
@@ -101,7 +126,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
 
   const enabled = auth.isEnabled;
   if (!enabled) {
-    log.warn('[Admin] Dashboard disabled: set METRICS_AUTH_TOKEN (16+ characters) to enable it');
+    log.warn('[Admin] Dashboard disabled: set METRICS_AUTH_TOKEN (24+ bytes) to enable it');
   } else {
     log.info('[Admin] Dashboard enabled at /admin');
   }
@@ -115,9 +140,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       return json({ error: 'Method Not Allowed' }, 405, { Allow: 'GET, HEAD, POST' });
     }
 
-    const expectedHost = typeof server === 'object' && server !== null && 'hostname' in server
-      ? String((server as { hostname: unknown }).hostname)
-      : url.host;
+    const expectedHost = readExpectedHost(req, url, server);
 
     // ── Static assets (unauthenticated, but they contain no data) ──────────
     if (path === 'app.js') return asset('text/javascript; charset=utf-8', APP_JS);
@@ -155,11 +178,18 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       }
       const session = auth.login(presented, now());
       if (!session) return json({ error: 'Invalid token.' }, 401);
-      return json({ ok: true, csrf: session.csrf }, 200, { 'Set-Cookie': auth.buildCookie(session.cookieValue) });
+      return json({ ok: true, csrf: session.csrf }, 200, {
+        'Set-Cookie': auth.buildCookie(session.cookieValue, shouldUseSecureCookie(req, url, auth.cookieSecureByDefault)),
+      });
     }
 
     if (path === 'api/logout') {
       if (req.method !== 'POST') return json({ error: 'Method Not Allowed' }, 405, { Allow: 'POST' });
+      // Logout is a mutation, so it gets the same same-origin check as every
+      // other one. It needs no CSRF token — there is no session left to
+      // protect — but a cross-site POST must not be able to sign the operator
+      // out.
+      if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
       auth.logout(cookie);
       return json({ ok: true }, 200, { 'Set-Cookie': auth.clearCookie() });
     }
@@ -219,7 +249,10 @@ function handleRead(path: string, url: URL): Response {
 async function handleAction(req: Request, path: string, url: URL): Promise<Response> {
   let params: Record<string, unknown> = {};
   try {
-    params = (await req.json().catch(() => ({}))) as Record<string, unknown>;
+    const parsed: unknown = await req.json();
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      params = parsed as Record<string, unknown>;
+    }
   } catch {
     return json({ error: 'Invalid JSON body.' }, 400);
   }

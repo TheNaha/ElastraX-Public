@@ -26,15 +26,17 @@ import {
   type Context as GrammyContext,
 } from 'grammy';
 import { BotProvider, type BotProviderStatus } from './BotProvider';
-import { MessageContext, type PlatformName } from '../core/MessageContext';
+import { MessageContext, type PlatformName, type ReplyOptions } from '../core/MessageContext';
+import type { MediaAttachmentDescriptor } from '../core/MessageContext';
 import { ProviderError, ProviderLifecycleError, ProviderOperationError } from './errors';
 import { chunkTelegramText, TELEGRAM_TEXT_LIMIT } from './telegramText';
 import { logger } from '../utils/logger';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
-import { saveMediaResponse, type SavedMedia } from '../utils/MediaStorage';
+import { readMediaBuffer, saveMediaResponse, type SavedMedia } from '../utils/MediaStorage';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import { getErrorMessage } from '../utils/errorUtils';
+import { roleSatisfies } from '../core/roleAccess';
 
 const log = logger.child({ module: 'Telegram' });
 
@@ -123,6 +125,40 @@ function defaultFilename(mime: string | undefined): string {
   return 'file.bin';
 }
 
+/**
+ * The message id of a Bot API object that carries one.
+ *
+ * Used for the reaction recorder, which correlates a 👍/👎 with the *message*
+ * the bot sent. A media object (`photo`, `voice`, `video`, `document`,
+ * `sticker`) carries a `file_id`, which is a different id space entirely.
+ */
+function messageIdOf(sent: unknown): string {
+  const id = resolveSentMessageId(sent);
+  return id === undefined ? '' : String(id);
+}
+
+/**
+ * The id of a message this bot sent, from whatever handle `sendMessage`
+ * returned.
+ *
+ * grammy returns the Bot API's own `Message` object, so the field is
+ * `message_id` (snake_case). The previous code read `messageId` (camelCase),
+ * which is never present, and fell back to the *inbound* message id.
+ */
+function resolveSentMessageId(key: unknown): number | undefined {
+  if (typeof key === 'number' && Number.isSafeInteger(key)) return key;
+  if (typeof key === 'string' && /^-?\d+$/.test(key)) return Number(key);
+  if (typeof key !== 'object' || key === null) return undefined;
+  const candidate = key as { message_id?: unknown; messageId?: unknown };
+  if (typeof candidate.message_id === 'number' && Number.isSafeInteger(candidate.message_id)) {
+    return candidate.message_id;
+  }
+  if (typeof candidate.messageId === 'number' && Number.isSafeInteger(candidate.messageId)) {
+    return candidate.messageId;
+  }
+  return undefined;
+}
+
 export class TelegramProvider implements BotProvider {
   readonly name: PlatformName = 'telegram';
 
@@ -134,6 +170,8 @@ export class TelegramProvider implements BotProvider {
   private lifecycleGeneration = 0;
   private botUserId: string | null = null;
   private started: Promise<void> | null = null;
+  /** In-flight media downloads, aborted on `stop()`. */
+  private readonly mediaControllers = new Set<AbortController>();
 
   get status(): BotProviderStatus {
     return this.providerStatus;
@@ -222,6 +260,13 @@ export class TelegramProvider implements BotProvider {
     this.bot = null;
     this.botUserId = null;
     this.providerStatus = 'stopped';
+    // Abort in-flight media downloads: WhatsApp and Discord both do this, and a
+    // download that outlives the shutdown keeps writing into the media
+    // directory after the database has been closed.
+    for (const controller of this.mediaControllers) {
+      controller.abort(new ProviderLifecycleError('telegram', 'media download'));
+    }
+    this.mediaControllers.clear();
     if (bot) {
       try {
         bot.stop();
@@ -324,6 +369,7 @@ export class TelegramProvider implements BotProvider {
 
     const download = telegramProviderDeps.download ?? ((url: string, signal?: AbortSignal) => fetch(url, { signal }));
     const controller = new AbortController();
+    this.mediaControllers.add(controller);
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
     timer.unref?.();
     try {
@@ -341,6 +387,7 @@ export class TelegramProvider implements BotProvider {
       return { mediaPath: saved.path, mime: saved.mime || mime };
     } finally {
       clearTimeout(timer);
+      this.mediaControllers.delete(controller);
     }
   }
 
@@ -360,8 +407,12 @@ export class TelegramProvider implements BotProvider {
     const botId = this.botUserId;
     const isBotMentioned = Boolean(
       (botId && text.includes(botId))
-      || (ctx.me && text.includes(`@${ctx.me.username}`))
-      || (isGroup && /\/[a-z_]+\b/.test(text)),
+      || (ctx.me?.username && text.includes(`@${ctx.me.username}`))
+      // A leading slash is a command, not a mention. The previous heuristic
+      // matched any `/word` anywhere in the text, so "and/or", "he/she" and
+      // "input/output" in a group made the bot answer messages it was never
+      // addressed in — burning an LLM turn on ordinary chatter.
+      || (isGroup && /^\/[a-z_]+\b/.test(text.trim())),
     );
 
     let mediaPath: string | undefined;
@@ -377,6 +428,36 @@ export class TelegramProvider implements BotProvider {
       }
     })();
 
+    /**
+     * Telegram carries at most one attachment per message, so the descriptor
+     * list has a single entry. The shared media tools resolve their target
+     * through `ctx.mediaAttachments` / `ctx.selectMediaAttachment`, and without
+     * them every media tool failed with "Attachment not found" on Telegram.
+     */
+    const attachmentId = 'current:telegram:0';
+    let selectedAttachmentId: string | undefined;
+    const attachments: MediaAttachmentDescriptor[] = media
+      ? [{
+          id: attachmentId,
+          index: 0,
+          origin: 'current',
+          providerId: media.fileId,
+          filename: media.name,
+          mimeType: media.mime,
+          sizeBytes: media.size,
+          state: media.size && media.size > MAX_MEDIA_BYTES ? 'skipped' : 'pending',
+          ...(media.size && media.size > MAX_MEDIA_BYTES
+            ? { error: `Telegram attachment exceeds ${MAX_MEDIA_BYTES} bytes.` }
+            : {}),
+        }]
+      : [];
+    const selectMediaAttachment = async (id: string): Promise<MediaAttachmentDescriptor> => {
+      const descriptor = attachments.find(candidate => candidate.id === id);
+      if (!descriptor) throw new Error(`Attachment not found: ${id}`);
+      selectedAttachmentId = id;
+      return descriptor;
+    };
+
     let rolesPromise: Promise<string[]> | null = null;
     const resolveRoles = (): Promise<string[]> => {
       // Cached per message: the agent calls this from several places.
@@ -384,8 +465,9 @@ export class TelegramProvider implements BotProvider {
       return rolesPromise;
     };
 
-    const sendText = async (targetChatId: string, replyText: string): Promise<unknown> => {
+    const sendText = async (targetChatId: string, replyText: string, options?: ReplyOptions): Promise<unknown> => {
       const activeBot = this.requireBot('reply');
+      options?.signal?.throwIfAborted();
       const replied = await activeBot.api.sendMessage(targetChatId, replyText, {
         reply_parameters: { message_id: msg.message_id },
       });
@@ -417,12 +499,26 @@ export class TelegramProvider implements BotProvider {
       get mimeType() { return mimeType; },
       mediaReady,
       rawMessage: ctx.message as unknown as RawProviderMessage,
-      downloadMedia: () => this.downloadToStorage(ctx),
+      mediaAttachments: attachments,
+      get selectedAttachmentId() { return selectedAttachmentId; },
+      selectMediaAttachment,
+      getMediaAttachment: (id: string) => attachments.find(candidate => candidate.id === id),
+      /**
+       * The shared contract is `Promise<Buffer | null>`. This used to return the
+       * `{ mediaPath, mime }` object from the storage download, so every media
+       * tool that asked for bytes received an object and handed it to ffmpeg as
+       * if it were a buffer.
+       */
+      downloadMedia: async () => {
+        await mediaReady;
+        if (!mediaPath) return null;
+        return readMediaBuffer(mediaPath, MAX_MEDIA_BYTES);
+      },
       resolveRoles,
-      checkPermissions: async required => (await resolveRoles()).includes('owner') || (await resolveRoles()).includes(required),
-      reply: replyText => sendText(String(chatId), replyText),
+      checkPermissions: async required => roleSatisfies(await resolveRoles(), required),
+      reply: (replyText, options) => sendText(String(chatId), replyText, options),
       sendToChat: (targetChatId: string, replyText: string) => this.sendMessage(targetChatId, replyText),
-      sendMessage: replyText => sendText(String(chatId), replyText),
+      sendMessage: (replyText, options) => sendText(String(chatId), replyText, options),
       sendTyping: async () => {
         const activeBot = ensureCurrent();
         await activeBot.api.sendChatAction(chatId, 'typing');
@@ -438,13 +534,16 @@ export class TelegramProvider implements BotProvider {
       },
       editMessage: async (key: unknown, nextText: string) => {
         const activeBot = ensureCurrent();
-        const messageId = typeof key === 'object' && key !== null
-          ? (key as { messageId?: number }).messageId
-          : msg.message_id;
+        // The handle is the grammy `Message` object, whose id field is
+        // snake_case `message_id`. Reading `messageId` always produced
+        // `undefined`, so the fallback edited the *inbound user message* —
+        // which the Bot API rejects ("message can't be edited"), breaking the
+        // streaming path and delivering every answer twice.
+        const messageId = resolveSentMessageId(key) ?? msg.message_id;
         // Telegram caps an edit at the message limit; fall back to sending the
         // remainder rather than silently truncating the answer.
         const head = nextText.slice(0, TELEGRAM_TEXT_LIMIT);
-        await activeBot.api.editMessageText(chatId, messageId ?? msg.message_id, head);
+        await activeBot.api.editMessageText(chatId, messageId, head);
         if (head.length < nextText.length) {
           const extra = await activeBot.api.sendMessage(chatId, nextText.slice(head.length));
           const id = (extra as { message_id?: number } | null)?.message_id;
@@ -459,17 +558,20 @@ export class TelegramProvider implements BotProvider {
         // document, which has a much higher limit.
         if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('image/')) {
           const sent = await activeBot.api.sendPhoto(chatId, new InputFile(buffer), { caption: options.caption });
-          noteBotMessageSent('telegram', sent.photo.at(-1)?.file_id ?? '');
+          // The reaction recorder looks a message up by *message id*. Recording
+          // the media `file_id` instead made every reaction on a media reply
+          // invisible to the feedback recorder.
+          noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
         if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('audio/') && (options.ptt || mime.includes('ogg'))) {
           const sent = await activeBot.api.sendVoice(chatId, new InputFile(buffer), { caption: options.caption });
-          noteBotMessageSent('telegram', sent.voice.file_id);
+          noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
         if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('video/')) {
           const sent = await activeBot.api.sendVideo(chatId, new InputFile(buffer), { caption: options.caption });
-          noteBotMessageSent('telegram', sent.video.file_id);
+          noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
         const sent = await activeBot.api.sendDocument(
@@ -477,19 +579,17 @@ export class TelegramProvider implements BotProvider {
           new InputFile(new Uint8Array(buffer), filename),
           options.caption ? { caption: options.caption } : {},
         );
-        noteBotMessageSent('telegram', sent.document.file_id);
+        noteBotMessageSent('telegram', messageIdOf(sent));
       },
       sendSticker: async (buffer: Buffer) => {
         const activeBot = ensureCurrent();
         const sent = await activeBot.api.sendSticker(chatId, new InputFile(buffer));
-        noteBotMessageSent('telegram', sent.sticker.file_id);
+        noteBotMessageSent('telegram', messageIdOf(sent));
       },
       deleteMessage: async (key?: unknown) => {
         const activeBot = ensureCurrent();
-        const messageId = typeof key === 'object' && key !== null
-          ? (key as { messageId?: number }).messageId
-          : undefined;
-        await activeBot.api.deleteMessage(chatId, messageId ?? msg.message_id);
+        const messageId = resolveSentMessageId(key) ?? msg.message_id;
+        await activeBot.api.deleteMessage(chatId, messageId);
       },
       forwardMessage: async (targetChatId: string, forwardText?: string) => {
         const activeBot = ensureCurrent();

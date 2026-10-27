@@ -42,12 +42,14 @@ import {
   getToolDefinitions,
   getTriggeredTools,
   getToolsForContext,
+  hasBindingGatedTools,
   toolSearchIndex,
   executeAuthorizedCommand,
   runMutatingTool,
   secureDefinition,
   validateToolArguments,
 } from '../tools';
+import { ServiceBindingService } from '../utils/ServiceBindingService';
 
 const log = logger.child({ module: 'Agent' });
 import { FlowHandler } from '../core/FlowHandler';
@@ -72,7 +74,7 @@ import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { isUsableProviderMessageId } from './messageId';
 import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowledge';
 import { sanitizeRawMessage } from '../utils/rawMessage';
-import { OutboxService } from '../messaging/OutboxService';
+import { OutboxService, DIRECT_SEND_GRACE_MS } from '../messaging/OutboxService';
 import { getInlineMediaEligibility } from '../providers/media';
 import {
   chatRoomKeyInsertValues,
@@ -92,24 +94,79 @@ function getToolTimeoutMs(): number {
   return getConfiguredToolTimeoutMs();
 }
 
-function getAllowedTools(roles: string[], isGroup: boolean, platform = 'whatsapp'): BaseTool[] {
+function getAllowedTools(
+  roles: string[],
+  isGroup: boolean,
+  platform = 'whatsapp',
+  hasBinding?: boolean,
+): BaseTool[] {
   return getToolsForContext({
     roles,
     isGroup,
     platform,
     isOwner: roles.includes('owner'),
+    ...(hasBinding === undefined ? {} : { hasBinding }),
   });
 }
 
-function resolveToolResultText(result: ToolResult): string {
-  return typeof result === 'object' && result !== null && 'text' in result
+/**
+ * Whether the sender has a linked media-service account.
+ *
+ * A failure to read the binding table is treated as "no binding" so a
+ * database problem hides the media tools rather than exposing them.
+ */
+async function resolveSenderHasBinding(senderId: string, platform: string): Promise<boolean> {
+  try {
+    const binding = await ServiceBindingService.getBinding(senderId, platform, 'jellyfin');
+    if (binding) return true;
+    const seerr = await ServiceBindingService.getBinding(senderId, platform, 'seerr');
+    return Boolean(seerr);
+  } catch (error) {
+    log.debug({ err: error, senderId }, 'Binding lookup failed; treating sender as unbound');
+    return false;
+  }
+}
+
+function resolveToolResultText(result: ToolResult): string {  return typeof result === 'object' && result !== null && 'text' in result
     ? result.text
     : result;
 }
 
+/**
+ * Bound on the agent's own immediate send. Deliberately shorter than
+ * `DIRECT_SEND_GRACE_MS` so an abandoned direct send always gives up its row
+ * before the outbox poller is allowed to claim it.
+ */
+/**
+ * Extra history rows fetched beyond the context limit so the summarizer has
+ * material to work with, without turning every turn into a model call.
+ */
+/**
+ * True when `text` is a `/chat` marker rather than a command that merely starts
+ * with the same letters.
+ */
+function isChatCommand(text: string): boolean {
+  return /^\/chat(?=\s|$)/i.test(text);
+}
+
+const SUMMARY_LOOKAHEAD = 16;
+/** Smallest summarization batch worth a model call. */
+const SUMMARY_MIN_BATCH = 8;
+
+const DIRECT_SEND_TIMEOUT_MS = Math.max(1_000, DIRECT_SEND_GRACE_MS - 5_000);
+
+/**
+ * Fast path for an outgoing reply: enqueue it durably, send it immediately, and
+ * mark the row sent.
+ *
+ * The row is enqueued with a short grace period and the send is bounded to
+ * `DIRECT_SEND_TIMEOUT_MS`, which is strictly inside that grace. Without both
+ * halves the 1 s outbox poller could claim the row mid-send and deliver the same
+ * text a second time — the window was the whole provider round trip.
+ */
 async function deliverDurableText(ctx: MessageContext, text: string, source: string, mentions?: string[]): Promise<void> {
   if (!text.trim()) return;
-  const deliveryId = OutboxService.enqueueText(
+  const deliveryId = OutboxService.enqueueDirectText(
     ctx.platform,
     ctx.chatId,
     text,
@@ -118,9 +175,13 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
   try {
     const replyOptions = {
       ...(mentions?.length ? { mentions } : {}),
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
     };
-    const result = await ctx.reply(text, replyOptions);
+    const result = await withCancellableTimeout(
+      signal => ctx.reply(text, { ...replyOptions, signal }),
+      DIRECT_SEND_TIMEOUT_MS,
+      'direct reply',
+      ctx.signal,
+    );
     OutboxService.markEnqueuedSent(deliveryId, typeof result === 'string' ? result : null);
   } catch (error) {
     log.warn({ err: error, deliveryId, source }, 'Immediate delivery failed; outbox will retry');
@@ -470,7 +531,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       shouldTriggerAI = true;
     }
 
-    if (text.startsWith('/chat') || text.startsWith('/')) {
+    if (isChatCommand(text) || text.startsWith('/')) {
       shouldTriggerAI = true;
     }
     // Check if the bot was explicitly mentioned using its ID.
@@ -488,7 +549,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   if (inFlow) return;
 
   // Handle explicit commands (bypass AI conversation loop)
-  if (text.startsWith('/') && !text.toLowerCase().startsWith('/chat')) {
+  if (text.startsWith('/') && !isChatCommand(text)) {
     const spaceIdx = text.indexOf(' ');
     const command = (spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx)).toLowerCase();
     const queryStr = spaceIdx === -1 ? '' : text.slice(spaceIdx + 1).trim();
@@ -512,8 +573,22 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         await ctx.react?.('✅').catch(() => {});
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: unknown) {
-        log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
-        await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), `command:${command}:error`);
+        // A malformed command is a *usage* error, not a server fault. The
+        // registry and the parameter validator both throw a message that
+        // already contains the usage help, and that help was being thrown away
+        // in favour of "An internal error occurred" — so every typo looked
+        // like a crash.
+        const detail = getErrorMessage(err);
+        const isUsageError = /^Invalid \S+ arguments:/.test(detail)
+          || /Missing argument/i.test(detail)
+          || /Command access denied/i.test(detail);
+        if (isUsageError) {
+          log.info({ err, command, toolName: tool.name }, 'Slash command rejected: invalid usage');
+          await deliverDurableText(ctx, detail, `command:${command}:usage`);
+        } else {
+          log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
+          await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), `command:${command}:error`);
+        }
         await ctx.react?.('❌').catch(() => {});
       }
       return;
@@ -552,8 +627,13 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   }
 
   // Clean the text for conversational flow
-  let userContent = isGroup && text.toLowerCase().startsWith('/chat') 
-    ? text.substring(5).trim() 
+  // `/chat` is a marker, not a command: strip it wherever the AI is going to run.
+  // It was gated on `isGroup`, so a direct message — the one context where the AI
+  // always runs — forwarded the literal `/chat` marker to the model. The match is
+  // also anchored to a word boundary, so `/chatty` and `/chatops` are ordinary
+  // text rather than a `/chat` invocation with `ty` as its payload.
+  let userContent = isChatCommand(text)
+    ? text.slice('/chat'.length).trim()
     : text;
 
   // Emphasize quoted context by prepending it directly to the user's message payload
@@ -664,20 +744,41 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     await ctx.sendTyping?.().catch(() => {});
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
-    // V7.11: Use the higher of room config vs role privilege context limit.
-    // `-1` means unlimited (ROLE_PRIV_* convention) and always wins.
+    //
+    // The room's configured limit and the caller's role privilege compose as
+    // **ceiling**, not as a floor. The previous code used `Math.max`, which
+    // made the role privilege a *minimum*: the `user` role's built-in limit of
+    // 20 meant `/config set contextLimit 5` (and every value from 1 to 19)
+    // was accepted, stored, reported back by `/config get` — and then silently
+    // ignored. Only values of 20 or more ever had an effect.
+    //
+    // Now the room setting is the effective limit and the role privilege is
+    // the maximum the caller is allowed, so a room can ask for a smaller
+    // context window and a role can still widen it up to its own ceiling.
+    // `-1` means unlimited (the ROLE_PRIV_* convention).
     const turnBudgetConfig = getTurnBudgetConfig();
     const requestedContextLimit =
-      config.contextLimit === UNLIMITED || privileges.contextLimit === UNLIMITED
-        ? UNLIMITED
-        : Math.max(config.contextLimit, privileges.contextLimit);
+      config.contextLimit === UNLIMITED
+        ? privileges.contextLimit
+        : privileges.contextLimit === UNLIMITED
+          ? config.contextLimit
+          : Math.min(config.contextLimit, privileges.contextLimit);
     const effectiveContextLimit = requestedContextLimit === UNLIMITED
       ? turnBudgetConfig.operationalContextLimit
       : Math.max(1, Math.min(requestedContextLimit, turnBudgetConfig.operationalContextLimit));
 
     // Optimization: Select only necessary columns to avoid fetching large 'rawMessage' blobs
+    //
+    // The summarizing case used to fetch 3x the context limit so the summarizer
+    // would have spare material every turn. That made each turn pull 2x
+    // effectiveContextLimit rows of history out of SQLite *and* hand the model a
+    // batch big enough to summarize on every single message — so the rolling
+    // summary was rewritten once per inbound turn, roughly doubling LLM spend and
+    // re-sending the whole summary as the prompt prefix each time. A modest
+    // lookahead plus a batch threshold (see ConversationSummarizer) summarises
+    // every few turns instead, and the fetch is proportional to what is used.
     const historyFetchLimit = config.summarize
-      ? Math.min(effectiveContextLimit * 3, turnBudgetConfig.operationalContextLimit * 2)
+      ? Math.min(effectiveContextLimit + SUMMARY_LOOKAHEAD, turnBudgetConfig.operationalContextLimit * 2)
       : effectiveContextLimit;
     const historyDesc = await db.select({
       id: messages.id,
@@ -845,6 +946,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         scope: roomIdentity.roomKey,
         entries,
         keepCount: effectiveContextLimit,
+        minBatch: SUMMARY_MIN_BATCH,
         callLLM: async summaryMessages => {
           const response = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2, undefined, 'fast');
           return typeof response.content === 'string' ? response.content : '';
@@ -876,7 +978,18 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     let finalAiResponseText = '';
     let streamedResponseSent = false;
     const internalErrorText = t(ctx.language, 'agent.internal_error');
-    const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup, platform) : [];
+    // The media tools declare `requiresBinding`, but the access context never
+    // carried a `hasBinding` flag, so the gate could never fire: an unbound
+    // user was offered the library and request tools, the model called them,
+    // and the tool answered "link your account first" — a wasted round trip
+    // and a confusing answer for a feature the user cannot use.
+    //
+    // The lookup is a single indexed read and only happens when a
+    // binding-gated tool is actually registered.
+    const hasBinding = config.allowTools && hasBindingGatedTools()
+      ? await resolveSenderHasBinding(ctx.senderId, platform)
+      : undefined;
+    const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup, platform, hasBinding) : [];
     const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
     // Scheduled runs set this so an unattended agent cannot take destructive or
     // admin actions with nobody watching.
@@ -897,8 +1010,16 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     if (allowedTools.length === 0) {
       availableTools = undefined;
     } else if (toolLoadingMode === 'all') {
-      // Legacy: send all permitted tool definitions
-      availableTools = getToolDefinitions({ roles: userRoles, isGroup, isOwner: userRoles.includes('owner'), platform });
+      // Legacy: send all permitted tool definitions, but still honour the
+      // binding gate, scheduled-run denials, and the allowed-tool set so an
+      // unbound or unattended run is never offered tools it cannot use.
+      availableTools = getToolDefinitions({
+        roles: userRoles,
+        isGroup,
+        isOwner: userRoles.includes('owner'),
+        platform,
+        hasBinding,
+      }).filter((definition) => allowedToolNames.has(definition.function.name));
     } else {
       // ⚡ Bolt: Eliminate multiple intermediate arrays and O(N) filter/map chains by processing
       // tool definitions in a single pass. This significantly reduces garbage collection pressure
@@ -1168,14 +1289,18 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     if (replyAlreadyDelivered) {
       OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, [ctx.messageId, 'assistant']);
     } else {
-      const deliveryId = OutboxService.enqueueText(
+      const deliveryId = OutboxService.enqueueDirectText(
         platform,
         chatId,
         finalAiResponseText,
         [ctx.messageId, 'assistant'],
       );
       try {
-        const result = await ctx.reply(finalAiResponseText, ctx.signal ? { signal: ctx.signal } : undefined);
+        const result = await withCancellableTimeout(
+          signal => ctx.reply(finalAiResponseText, ctx.signal ? { signal: ctx.signal } : signal ? { signal } : undefined),
+          DIRECT_SEND_TIMEOUT_MS,
+          'direct reply',
+        );
         const providerMessageId = typeof result === 'string' ? result : null;
         OutboxService.markEnqueuedSent(deliveryId, providerMessageId);
       } catch (error) {

@@ -527,10 +527,24 @@ describe('webhook destinations', () => {
           'X-Webhook-Secret': WEBHOOK_SECRET,
           'X-Webhook-Id': `invalid-${run}`,
         },
-        body: JSON.stringify({ room_id: WHATSAPP_ONLY_ROOM, platform: 'telegram', text: 'hello' }),
+        body: JSON.stringify({ room_id: WHATSAPP_ONLY_ROOM, platform: 'mastodon', text: 'hello' }),
       });
       expect(invalid.status).toBe(400);
       expect(await invalid.json()).toEqual({ error: 'Invalid platform' });
+
+      // Telegram is a supported platform, so naming it is accepted by the
+      // intake — and then rejected because the room belongs to WhatsApp.
+      const telegramMismatch = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': WEBHOOK_SECRET,
+          'X-Webhook-Id': `telegram-${run}`,
+        },
+        body: JSON.stringify({ room_id: WHATSAPP_ONLY_ROOM, platform: 'telegram', text: 'hello' }),
+      });
+      expect(telegramMismatch.status).toBe(400);
+      expect(await telegramMismatch.json()).toEqual({ error: 'Destination platform mismatch' });
     }, server => {
       server.registerSender('whatsapp', send);
       server.registerSender('discord', discordSend);

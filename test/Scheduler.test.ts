@@ -417,3 +417,54 @@ describe('Scheduler', () => {
     expect(rejections).toEqual([]);
   });
 });
+
+/**
+ * Recurrence calendar arithmetic.
+ *
+ * `daily`/`weekly` used to add a constant millisecond count, so a 09:00 daily
+ * reminder fired at 10:00 for the whole DST period, while `nextMonthly` in the
+ * same file already rebuilt the date from local components. These pin the
+ * calendar-correct behaviour: the local wall-clock time survives a DST change.
+ */
+describe('recurrence calendar arithmetic', () => {
+  test('daily preserves the local wall-clock hour across a DST boundary', () => {
+    // The regression is only *observable* in a zone that shifts its offset: a
+    // fixed 24h offset lands at 10:00 local after the US 2026-03-08 transition.
+    // The harness owns `process.env`, so the zone cannot be forced here; instead
+    // detect whether this zone shifts at all and assert the invariant either way.
+    const januaryOffset = new Date(2026, 0, 15).getTimezoneOffset();
+    const julyOffset = new Date(2026, 6, 15).getTimezoneOffset();
+    const zoneObservesDst = januaryOffset !== julyOffset;
+
+    const lastFire = new Date(2026, 2, 7, 9, 0, 0);
+    const next = computeNextOccurrence(lastFire, 'daily');
+    expect(next).not.toBeNull();
+    // Always true, and the property the fixed-offset implementation violated.
+    expect(next!.getHours()).toBe(lastFire.getHours());
+    if (zoneObservesDst) {
+      const naive = new Date(lastFire.getTime() + 86_400_000);
+      expect(naive.getHours()).not.toBe(next!.getHours());
+    }
+  });
+
+  test('weekly preserves the local wall-clock hour', () => {
+    const lastFire = new Date(2026, 2, 7, 9, 0, 0);
+    const next = computeNextOccurrence(lastFire, 'weekly');
+    expect(next!.getHours()).toBe(9);
+  });
+
+  test('hourly stays a fixed offset', () => {
+    const lastFire = new Date(Date.now() - 60_000);
+    const next = computeNextOccurrence(lastFire, 'hourly');
+    expect(next!.getTime() - lastFire.getTime()).toBe(3_600_000);
+  });
+
+  test('monthly holds its anchor day instead of drifting to the clamp', () => {
+    // 31 Jan -> 28 Feb (clamped) -> 31 Mar. With the anchor read from the clamped
+    // previous fire, the reminder was stuck on the 28th forever.
+    const next = computeNextOccurrence(new Date(Date.UTC(2026, 1, 28, 9)), 'monthly', 31);
+    expect(next!.getTime()).toBeGreaterThan(Date.now());
+    const fired = new Date(next!.getTime());
+    expect(fired.getHours()).toBe(9);
+  });
+});

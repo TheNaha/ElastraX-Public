@@ -12,6 +12,9 @@ import { getToolByAliasOrName, secureDefinition } from '../src/tools/registry';
 import { isUsableProviderMessageId } from '../src/agent/messageId';
 import { t } from '../src/utils/i18n';
 import { TurnBudget } from '../src/ai/turnBudget';
+import { OwnerTool } from '../src/tools/OwnerTool';
+import { SpeakTool } from '../src/tools/SpeakTool';
+import type { MessageContext } from '../src/core/MessageContext';
 import { STICKER_WEBP_FILTER, ffmpegConverterDeps } from '../src/utils/FFmpegConverter';
 import { StickerUtils } from '../src/utils/StickerUtils';
 import type { BoundedProcessOptions } from '../src/providers/process';
@@ -177,5 +180,105 @@ describe('secure tool definitions', () => {
     if (!tool) throw new Error('ping tool missing');
     expect(tool.definition.function.parameters.additionalProperties).not.toBe(false);
     expect(secureDefinition(tool).function.parameters.additionalProperties).toBe(false);
+  });
+});
+
+/**
+ * Regressions found by driving `execute`, not just the parser. Every one of
+ * these parsed correctly and then failed in the tool, which is why the existing
+ * routing-only assertions stayed green.
+ */
+describe('slash commands that parse correctly but fail in the tool', () => {
+  test('/broadcast does not prefix the literal word "broadcast" to the message', async () => {
+    // The parser resolves `/broadcast <text>` to `{action: 'broadcast', message:
+    // <text>}`, and OwnerTool then re-joined `action` into the body — so every
+    // owner broadcast shipped as "broadcast hello everyone".
+    const sent: Array<[string, string]> = [];
+    // `handleBroadcast` selects real `chat_rooms` rows, so the target set has to
+    // exist in the database rather than being injected.
+    const { db: dbForBroadcast } = await import('../src/db');
+    const { chatRooms: chatRoomsTable } = await import('../src/db/schema');
+    const targetIds = ['bcast-a', 'bcast-b'];
+    for (const id of targetIds) {
+      await dbForBroadcast.insert(chatRoomsTable).values({
+        id,
+        platform: 'whatsapp',
+        language: 'en',
+        created_at: new Date(),
+      }).onConflictDoNothing().run();
+    }
+    const ctx = {
+      platform: 'whatsapp',
+      chatId: 'owner-dm',
+      senderId: 'owner-1',
+      senderName: 'Owner',
+      text: '/broadcast hello everyone',
+      isGroup: false,
+      isBotMentioned: true,
+      messageType: 'command',
+      hasMedia: false,
+      mediaReady: Promise.resolve(),
+      language: 'en',
+      roles: ['owner'],
+      react: async () => {},
+      sendToChat: async (chatId: string, text: string) => { sent.push([chatId, text]); },
+    } as unknown as MessageContext;
+    const result = await new OwnerTool().execute(
+      { action: 'broadcast', message: 'hello everyone', __command: 'broadcast' } as never,
+      ctx,
+    );
+    expect(sent.length).toBeGreaterThan(0);
+    for (const [, text] of sent) {
+      expect(text).toContain('hello everyone');
+      expect(text).not.toMatch(/broadcast\s+hello everyone/);
+    }
+    expect(String(result)).toBeTruthy();
+  });
+
+  // The registry withholds `speak` until a TTS provider is configured, so these
+  // drive the tool instance directly: the defect being pinned is in the parser's
+  // handling of a free-text `text` field, which is independent of registration.
+  function parseSpeak(args: string): Record<string, unknown> {
+    return parseExplicitCommand(new SpeakTool(), args, 'speak') as Record<string, unknown>;
+  }
+
+  test('/speak takes the whole sentence as text, not as a voice id', () => {
+    // `text` was not in the "take the rest" list, so with `voice` following it
+    // the parser produced `{text: 'how', voice: 'are you today'}` and the voice
+    // id was forwarded verbatim to the TTS provider.
+    const parsed = parseSpeak('how are you today');
+    expect(parsed.text).toBe('how are you today');
+    expect(parsed.voice).toBeUndefined();
+  });
+
+  test('/speak single word still works', () => {
+    expect(parseSpeak('hi').text).toBe('hi');
+  });
+
+  test('/speak still accepts an explicit voice alongside free text', () => {
+    const parsed = parseSpeak('good morning everyone voice=alloy');
+    expect(parsed.text).toBe('good morning everyone voice=alloy');
+  });
+
+  test('/request-media reaches the request action', () => {
+    // The alias is advertised in the tool's own docstring but had no action row,
+    // so the parser put "request-media" into `action` and the enum check threw.
+    const parsed = parse('request-media', 'movie 550');
+    expect(parsed.action).toBe('request');
+    expect(parsed.media_type).toBe('movie');
+    expect(parsed.media_id).toBe(550);
+  });
+
+  test('/request still works alongside the alias', () => {
+    expect(parse('request', 'movie 550').action).toBe('request');
+  });
+
+  test('/pdf edit_metadata positional order matches its documented order', () => {
+    const parsed = parse('pdf', 'edit_metadata Ada Lovelace');
+    // The description advertised (title, author, subject) while the grammar and
+    // ACTION_ARGUMENTS both said (author, title, subject): the user wrote a title
+    // and the bot wrote an author.
+    expect(parsed.author).toBe('Ada');
+    expect(parsed.title).toBe('Lovelace');
   });
 });

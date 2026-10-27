@@ -29,4 +29,18 @@ export type WebhookEnqueueResult = {
 
 export type WebhookEnqueuer = (job: WebhookDeliveryJob, signal: AbortSignal) => Promise<WebhookEnqueueResult>;
 
-export type WebhookReadinessCheck = () => boolean | Promise<boolean>;
+/**
+ * Readiness probe.
+ *
+ * Returning a detail object instead of a bare boolean lets `/ready` explain
+ * *which* dependency is down. A bare boolean produced `503 {"status":"not_ready"}`
+ * for a revoked Discord token or a missing intent, leaving an operator with no
+ * signal at all about which subsystem had failed.
+ */
+export type WebhookReadinessResult = {
+  ready: boolean;
+  /** Short, non-secret explanations keyed by component. */
+  details?: Record<string, unknown>;
+};
+
+export type WebhookReadinessCheck = () => boolean | WebhookReadinessResult | Promise<boolean | WebhookReadinessResult>;

@@ -17,6 +17,8 @@ type RoomQueue = {
 export type MessageQueueOptions = {
   perRoomLimit?: number;
   globalLimit?: number;
+  /** Maximum number of tasks executing concurrently across all rooms. */
+  maxRunning?: number;
   maxAgeMs?: number;
   shutdownGraceMs?: number;
 };
@@ -37,6 +39,15 @@ export class MessageQueue {
   private readonly idleTimeoutMs: number;
   private readonly perRoomLimit: number;
   private readonly globalLimit: number;
+  /**
+   * Maximum number of tasks executing at the same time, across all rooms.
+   *
+   * `globalLimit` is the *backlog* cap — how many tasks may be waiting. The
+   * running cap is a separate, much smaller number: each running task is a
+   * full agent turn with an LLM stream, a set of tool calls and its own
+   * database writes.
+   */
+  private readonly maxRunning: number;
   private readonly maxAgeMs: number;
   private readonly shutdownGraceMs: number;
   private pruneTimer: ReturnType<typeof setInterval> | null = null;
@@ -52,6 +63,7 @@ export class MessageQueue {
     this.idleTimeoutMs = Math.max(1_000, idleTimeoutMs);
     this.perRoomLimit = Math.max(1, options.perRoomLimit ?? 50);
     this.globalLimit = Math.max(this.perRoomLimit, options.globalLimit ?? 500);
+    this.maxRunning = Math.max(1, Math.floor(options.maxRunning ?? 8));
     this.maxAgeMs = Math.max(10_000, options.maxAgeMs ?? 5 * 60_000);
     this.shutdownGraceMs = Math.max(1_000, options.shutdownGraceMs ?? 15_000);
     this.pruneTimer = setInterval(() => this.prune(), Math.min(2 * 60_000, this.idleTimeoutMs));
@@ -84,6 +96,9 @@ export class MessageQueue {
     queue.tasks.push({ task, enqueuedAt: now, controller: new AbortController() });
     queue.lastActivity = now;
     this.processNext(roomId);
+    // A different room may have a free global slot while this one is at its
+    // per-room concurrency limit.
+    this.pumpAll();
     return true;
   }
 
@@ -95,6 +110,18 @@ export class MessageQueue {
     this.dropStale(queue);
     const entry = queue.tasks.shift();
     if (!entry) return;
+
+    // The global cap counts *running* tasks, not just pending ones. The
+    // per-room concurrency limit only bounds how many turns run at once in
+    // one room, so without this a message from each of N rooms produced N
+    // concurrent agent turns — N LLM streams, N sets of tool calls, N
+    // concurrent SQLite writers — with nothing anywhere throttling it.
+    // `globalLimit` read like a global cap but only ever bounded the backlog.
+    if (this.getRunningCount() >= this.maxRunning) {
+      // Put the task back: it has not been started, so it must not be lost.
+      queue.tasks.unshift(entry);
+      return;
+    }
 
     entry.controller.signal.throwIfAborted();
     queue.running++;
@@ -112,9 +139,19 @@ export class MessageQueue {
         queue.running = Math.max(0, queue.running - 1);
         queue.lastActivity = Date.now();
         this.processNext(roomId);
+        // A slot may have freed up in another room; let those queues advance.
+        this.pumpAll();
       });
 
     this.runningTasks.set(entry.controller, promise);
+  }
+
+  /** Let every room with a pending task start one, if the global cap allows. */
+  private pumpAll(): void {
+    for (const roomId of this.queues.keys()) {
+      if (this.getRunningCount() >= this.maxRunning) return;
+      this.processNext(roomId);
+    }
   }
 
   private dropStale(queue: RoomQueue): void {
@@ -139,6 +176,13 @@ export class MessageQueue {
   private getPendingCount(): number {
     let count = 0;
     for (const queue of this.queues.values()) count += queue.tasks.length;
+    return count;
+  }
+
+  /** How many tasks are executing right now, across every room. */
+  private getRunningCount(): number {
+    let count = 0;
+    for (const queue of this.queues.values()) count += queue.running;
     return count;
   }
 

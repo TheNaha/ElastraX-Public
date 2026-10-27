@@ -240,6 +240,9 @@ export class HealthMetricsCollector {
     this.providerStats.clear();
     this.toolStats.clear();
     this.serviceHealth.clear();
+    this.feedbackPositive = 0;
+    this.feedbackNegative = 0;
+    this.feedbackRetracted = 0;
   }
 
   getMetrics(): MetricsSnapshot {

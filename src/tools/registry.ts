@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, realpathSync } from 'fs';
 import { join } from 'path';
-import { admitPluginManifest, resolveAllowedPluginPermissions } from '../plugins/manifest';
+import { admitPluginManifest, admitPluginTools, resolveAllowedPluginPermissions } from '../plugins/manifest';
 import { BaseTool, type ToolDefinition, type ToolMetadata } from './BaseTool';
 import { WebSearchTool } from './WebSearchTool';
 import { MenuTool } from './MenuTool';
@@ -40,6 +40,7 @@ import { withCancellableTimeout } from '../utils/withTimeout';
 import type { MessageContext } from '../core/MessageContext';
 import { parseExplicitCommand, validateToolArguments, type ValidationResult } from './ParameterValidator';
 import type { ToolResult } from './BaseTool';
+import { roleSatisfies } from '../core/roleAccess';
 
 const log = logger.child({ module: 'ToolRegistry' });
 
@@ -81,9 +82,7 @@ const mutationQueues = new Map<string, Promise<unknown>>();
 const rateWindows = new Map<string, { startedAt: number; cost: number }>();
 
 function hasRole(roles: readonly string[] | undefined, required: string): boolean {
-  if (required === 'user') return true;
-  const set = new Set(roles ?? ['user']);
-  return set.has('owner') || set.has(required);
+  return roleSatisfies(roles, required);
 }
 
 export function getToolCost(tool: BaseTool): number {
@@ -94,11 +93,40 @@ export function getToolMutability(tool: BaseTool): ToolMetadata['access']['mutab
   return MUTABILITY_OVERRIDES[tool.name] ?? tool.metadata.access.mutability;
 }
 
+/**
+ * Names of every registered tool that can change state, derived from the
+ * registry's own mutability table.
+ *
+ * Consumers that must not let a tool write anything — the scheduled-agent
+ * deny-list, the `/tools` listing, an audit surface — should read this instead
+ * of maintaining a hand-written list of names, which silently rots the moment a
+ * tool is added or its mutability changes. `admin` and `external-mutation`
+ * change the world outside the process; `local-write` persists something a
+ * human did not ask for; only `read` is inert.
+ */
+export function mutatingToolNames(): string[] {
+  return toolsList
+    .filter(tool => getToolMutability(tool) !== 'read')
+    .map(tool => tool.name);
+}
+
 export function getToolAccess(tool: BaseTool): ToolMetadata['access'] {
   const access = tool.metadata.access;
   return { ...access, mutability: MUTABILITY_OVERRIDES[tool.name] ?? access.mutability };
 }
 
+/**
+ * Per-action permission requirements, keyed by tool name and then by the
+ * *action* within that tool.
+ *
+ * This table used to be looked up with the command **alias** (`COMMAND_POLICIES
+ * [tool.name]?.[alias]`), while its entries are keyed by action
+ * (`role.grant`, `config.set`, …). The two key spaces never intersect, so the
+ * table was inert: `/role grant` was authorised by the registry for an
+ * ordinary user and only stopped by the tool's own internal check. The policy
+ * is now enforced where the action is actually known — see
+ * {@link isToolInvocationAccessible}.
+ */
 const COMMAND_POLICIES: Record<string, Record<string, string>> = {
   language: { set: 'admin', reset: 'admin' },
   config: { set: 'admin', reset: 'admin' },
@@ -116,13 +144,26 @@ const MUTABILITY_OVERRIDES: Record<string, ToolMetadata['access']['mutability']>
   reminder: 'local-write',
   delete_message: 'external-mutation',
   download_media: 'external-mutation',
-  media_convert: 'local-write',
+  // The registered name is `convert_media`; the old key read `media_convert`,
+  // so the lookup silently fell through to the tool's own `mutability` of
+  // 'read'. Every FFmpeg conversion then ran with no admission check, no cost
+  // and no per-user serialization — unbounded concurrent CPU-heavy child
+  // processes — and `getToolAccess()` reported the wrong mutability to any
+  // operator-facing listing, including the scheduled-agent deny-list built on
+  // `mutatingToolNames()`. `test/registry.mutability.test.ts` now fails if any
+  // key here stops matching a registered tool.
+  convert_media: 'local-write',
+  group_admin: 'external-mutation',
+  knowledge: 'local-write',
+  media_bind: 'external-mutation',
+  media_request: 'external-mutation',
+  menfess: 'external-mutation',
+  pdf: 'local-write',
+  speak: 'external-mutation',
 };
 
 function hasRequiredRole(roles: readonly string[] | undefined, required: string): boolean {
-  if (required === 'user') return true;
-  const set = new Set(roles ?? []);
-  return set.has('owner') || set.has(required);
+  return roleSatisfies(roles, required);
 }
 
 export interface ToolAdmission {
@@ -211,8 +252,6 @@ export function isCommandAccessible(tool: BaseTool, command: string, context: To
   if (metadata.groupOnlyAliases.includes(normalized) && context.isGroup !== true) return false;
   if (COMMAND_GROUP_ONLY[tool.name]?.includes(normalized) && context.isGroup !== true) return false;
   if (metadata.dmOnlyAliases.includes(normalized) && context.isGroup === true) return false;
-  const required = COMMAND_POLICIES[tool.name]?.[normalized];
-  if (required && !hasRequiredRole(context.roles, required)) return false;
   return true;
 }
 
@@ -268,6 +307,15 @@ export function getToolCatalog(context?: ToolAccessContext): ToolCatalogEntry[] 
 export function isToolInvocationAccessible(tool: BaseTool, args: { action?: unknown; __command?: unknown } | null | undefined, context: ToolAccessContext = {}): boolean {
   const command = typeof args?.__command === 'string' ? args.__command : typeof args?.action === 'string' ? args.action : '';
   if (command && !isCommandAccessible(tool, command, context)) return false;
+  // The per-action policy is keyed by the action, which is only known once the
+  // arguments have been parsed. Enforcing it here makes the table effective
+  // for both entry points: the slash command (which parses before executing)
+  // and the model tool call.
+  const action = typeof args?.action === 'string' ? args.action.trim().toLowerCase() : '';
+  if (action) {
+    const required = COMMAND_POLICIES[tool.name]?.[action];
+    if (required && !hasRequiredRole(context.roles, required)) return false;
+  }
   return isToolAccessible(tool, context);
 }
 
@@ -286,6 +334,16 @@ export function getToolDispatchContract(command: string, context?: ToolAccessCon
 
 export function getToolsForContext(context: ToolAccessContext = {}): BaseTool[] {
   return toolsList.filter((tool) => isToolAccessible(tool, context));
+}
+
+/**
+ * Whether any registered tool requires a linked media-service account.
+ *
+ * The agent uses this to decide whether a binding lookup is worth a database
+ * round-trip for the current message.
+ */
+export function hasBindingGatedTools(): boolean {
+  return toolsList.some(tool => tool.requiresBinding);
 }
 
 export function getDiscoverableTools(context?: ToolAccessContext): BaseTool[] {
@@ -354,9 +412,6 @@ export function getAuthorizedTool(command: string, ctx: MessageContext): Promise
       if (tool.metadata.command.groupOnlyAliases.includes(normalized) && !ctx.isGroup) return undefined;
     }
     if (COMMAND_GROUP_ONLY[tool.name]?.includes(normalized) && !ctx.isGroup) return undefined;
-    const commandRoles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
-    const required = COMMAND_POLICIES[tool.name]?.[normalized];
-    if (required && !hasRequiredRole(commandRoles, required)) return undefined;
     if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) return undefined;
     return tool;
   })();
@@ -501,6 +556,31 @@ async function loadPluginTools(): Promise<BaseTool[]> {
         continue;
       }
       const tools = instantiatePluginExports(module as Record<string, unknown>, file, seenConstructors, seenInstances);
+      // A file that exports no tool is not a plugin. `src/plugins/` also holds
+      // plain modules (the manifest validator itself, and anything an operator
+      // drops in to share code), and reporting those as "refused" would be
+      // misleading noise on every boot.
+      if (tools.length === 0) continue;
+      // Bind the manifest to what the file actually exports. Without this a
+      // plugin could declare `permissions: ['user']` and still register an
+      // `owner` tool, because the manifest is written by the same untrusted
+      // file it is meant to constrain and `tool.permissions` was never read.
+      const toolAdmission = admitPluginTools(
+        admission.manifest,
+        tools.map(tool => ({ name: tool.name, permissions: tool.permissions })),
+        allowedPermissions,
+      );
+      if (!toolAdmission.ok) {
+        pluginReports.push({
+          manifestName: admission.manifest?.name ?? null,
+          version: admission.manifest?.version ?? null,
+          tools: tools.map(tool => tool.name),
+          status: 'refused',
+          reason: `${file}: ${toolAdmission.reason}`,
+        });
+        log.warn({ plugin: file, reason: toolAdmission.reason }, 'Refused plugin');
+        continue;
+      }
       loaded.push(...tools);
       pluginReports.push({
         manifestName: admission.manifest?.name ?? null,

@@ -22,8 +22,21 @@ function envInteger(name: string, fallback: number, min: number, max: number): n
   return value;
 }
 
+/**
+ * Whether retention is running in report-only mode.
+ *
+ * The default is `true`: silently deleting a deployment's message history on
+ * upgrade is not a decision a release should make on the operator's behalf.
+ * The cost of that safety is that nothing is ever reclaimed unless the
+ * operator sets `RETENTION_DRY_RUN=false`, so the state is surfaced at
+ * startup and in the admin dashboard rather than left as a silent no-op.
+ */
+export function isRetentionDryRun(): boolean {
+  return envBoolean('RETENTION_DRY_RUN', true);
+}
+
 export function runRetentionMaintenance(overrides: Partial<RetentionOptions> = {}): RetentionResult {
-  const dryRun = overrides.dryRun ?? envBoolean('RETENTION_DRY_RUN', true);
+  const dryRun = overrides.dryRun ?? isRetentionDryRun();
   const result = applyRetentionPolicy(sqlite, {
     messagesDays: envInteger('RETENTION_MESSAGES_DAYS', 180, 30, 3_650),
     messageDeleteGraceDays: envInteger('RETENTION_MESSAGE_GRACE_DAYS', 30, 0, 365),

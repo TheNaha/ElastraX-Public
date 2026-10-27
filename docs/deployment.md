@@ -73,6 +73,30 @@ bot.example.com {
 
 For a reverse proxy running directly on the Docker host, use `reverse_proxy 127.0.0.1:3500` instead. Preserve the original request body because GitHub HMAC verification runs over the exact bytes received. Apply a proxy body limit at least as restrictive as `WEBHOOK_MAX_BODY_BYTES`, and avoid logging query strings while compatibility authentication is enabled.
 
+### The admin dashboard needs its own proxy rule
+
+The admin dashboard at `/admin` lives on the same listener as the webhook intake, so the `respond 404` fallback above makes it unreachable in that topology. Proxy it explicitly, and restrict it to the operator's network — it is the telemetry surface, and the session cookie is the only thing standing between it and the public Internet:
+
+```caddyfile
+bot.example.com {
+    encode zstd gzip
+
+    @webhooks path /webhook /webhook/*
+    handle @webhooks {
+        reverse_proxy bot:3500
+    }
+
+    @admin path /admin /admin/*
+    handle @admin {
+        reverse_proxy bot:3500
+    }
+
+    respond 404
+}
+```
+
+The dashboard requires `METRICS_AUTH_TOKEN` to be set to at least 24 bytes; without it every `/admin` path answers `404`.
+
 ## Migrations
 
 Migrations run forward-only at application startup. CI runs `bun run db:generate` and fails if it changes `drizzle.config.ts`, `drizzle/`, or `src/db/schema.ts`; this makes schema/migration drift fatal rather than silently accepting an uncommitted migration.

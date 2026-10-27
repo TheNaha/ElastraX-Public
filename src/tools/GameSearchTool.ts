@@ -21,6 +21,8 @@ export class GameSearchTool extends SearxSearchToolBase {
   readonly category = 'utility';
   readonly permissions = 'user';
   override readonly optIn = true;
+  /** Governed by its own flag: enabling software search no longer enables this. */
+  override readonly optInFlag = 'ENABLE_GAME_SEARCH';
   override readonly alwaysLoad = false;
   override readonly cost = 2;
 

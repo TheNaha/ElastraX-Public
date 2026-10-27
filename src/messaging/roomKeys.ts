@@ -15,18 +15,33 @@
  */
 
 import {
-  parseRoomKey,
   resolveOrCreateRoomKey,
   resolveOrCreateRoomKeySync,
   resolveRoomKeySync,
-  toRoomKey,
   type ResolvedRoomKey,
 } from '../db/rooms';
+import { parseRoomReference, toRoomKey as toRoomKeyFormat } from '../core/roomKeyFormat';
 import { sqlite } from '../db';
 import { logger } from '../utils/logger';
+import {
+  SUPPORTED_PLATFORMS,
+  inferPlatformFromRoomId,
+  isSupportedPlatform,
+  normalizePlatform,
+  type SupportedPlatform,
+} from '../core/platforms';
 
-export const ROOM_PLATFORMS = ['whatsapp', 'discord'] as const;
-export type RoomPlatform = (typeof ROOM_PLATFORMS)[number];
+/**
+ * Every platform a room can belong to.
+ *
+ * This used to be `['whatsapp', 'discord']`, which predated the Telegram
+ * provider. A Telegram room was therefore invisible to the registry: it was
+ * never reported as "known", a numeric Telegram chat id was inferred as
+ * Discord, and a Telegram reminder was resolved as a WhatsApp room and retired
+ * on its first delivery attempt.
+ */
+export const ROOM_PLATFORMS = SUPPORTED_PLATFORMS;
+export type RoomPlatform = SupportedPlatform;
 export const DEFAULT_ROOM_PLATFORM: RoomPlatform = 'whatsapp';
 
 const ROOM_KEY_COLUMN = 'room_key';
@@ -60,7 +75,7 @@ function stringField(value: unknown, field: string): string | null {
 function asResolution(value: unknown): ResolvedRoomKey | null {
   if (typeof value === 'string') {
     const roomKey = value.trim();
-    const parts = parseRoomKey(roomKey);
+    const parts = parseRoomReference(roomKey);
     if (!roomKey || !parts) return null;
     return {
       roomKey,
@@ -72,7 +87,7 @@ function asResolution(value: unknown): ResolvedRoomKey | null {
   }
   const roomKey = stringField(value, 'roomKey') ?? stringField(value, 'key') ?? stringField(value, 'id');
   if (!roomKey) return null;
-  const parts = parseRoomKey(roomKey);
+  const parts = parseRoomReference(roomKey);
   return {
     roomKey,
     platform: stringField(value, 'platform') ?? parts?.platform ?? '',
@@ -82,36 +97,41 @@ function asResolution(value: unknown): ResolvedRoomKey | null {
   };
 }
 
+/**
+ * Whether a value names a platform this build supports.
+ *
+ * Delegates to the shared helper in `src/core/platforms.ts` — the copy that
+ * lived here had already drifted once, which is exactly how Telegram ended up
+ * invisible to the room registry.
+ */
 export function isRoomPlatform(value: unknown): value is RoomPlatform {
-  return typeof value === 'string' && (ROOM_PLATFORMS as readonly string[]).includes(value);
+  return isSupportedPlatform(value);
 }
 
+/** Normalise a platform name, or `null` when it is not a supported platform. */
 export function normalizeRoomPlatform(value: unknown): RoomPlatform | null {
-  if (typeof value !== 'string') return null;
-  const normalized = value.trim().toLowerCase();
-  return isRoomPlatform(normalized) ? normalized : null;
+  return normalizePlatform(value);
 }
 
-/** Best-effort platform guess from the shape of a raw provider room id. */
+/**
+ * Best-effort platform guess from the shape of a raw provider room id.
+ *
+ * Delegates to the shared helper in `src/core/platforms.ts` so the webhook
+ * lane, the scheduler and the runtime all read the same rules.
+ */
 export function inferRoomPlatform(remoteRoomId: string): RoomPlatform | null {
-  const value = remoteRoomId.trim();
-  if (!value) return null;
-  if (value.includes('@')) {
-    return value.endsWith('@g.us') || value.includes('@s.whatsapp.net') ? 'whatsapp' : null;
-  }
-  return /^\d{5,32}$/.test(value) ? 'discord' : null;
+  return inferPlatformFromRoomId(remoteRoomId);
 }
 
 /** The platform encoded in a canonical room key, if it names a known platform. */
 export function platformPrefixOf(value: string): RoomPlatform | null {
-  return normalizeRoomPlatform(parseRoomKey(value)?.platform);
+  return normalizeRoomPlatform(parseRoomReference(value)?.platform);
 }
 
 /** The platform encoded in a canonical room key, without validating the name. */
 export function keyPlatformOf(value: string): string | null {
-  return parseRoomKey(value)?.platform ?? null;
+  return parseRoomReference(value)?.platform ?? null;
 }
-
 /**
  * Interpret a stored room reference.
  *  - `key`     — a canonical room key (even for an unknown platform);
@@ -123,7 +143,7 @@ function storedRoomReference(
 ): { kind: 'key'; platform: string; remoteRoomId: string } | { kind: 'raw' } | { kind: 'empty' } {
   const value = storedRoomId.trim();
   if (!value) return { kind: 'empty' };
-  const parts = parseRoomKey(value);
+  const parts = parseRoomReference(value);
   return parts ? { kind: 'key', platform: parts.platform, remoteRoomId: parts.remoteRoomId } : { kind: 'raw' };
 }
 
@@ -131,17 +151,12 @@ function storedRoomReference(
 export function canonicalRoomKey(platform: string, remoteRoomId: string): string {
   const remote = remoteRoomId.trim();
   if (!remote) return '';
-  try {
-    return toRoomKey(platform, remote);
-  } catch (error) {
-    logger.warn({ err: error, platform, remoteRoomId: remote }, '[rooms] toRoomKey failed; using derived key');
-    return `room:${platform}:${remote}`;
-  }
+  return toRoomKeyFormat(platform, remote);
 }
 
 /** The remote room id encoded in a canonical key, or `null` for other input. */
 export function remoteRoomIdFromKey(value: string): string | null {
-  return parseRoomKey(value)?.remoteRoomId ?? null;
+  return parseRoomReference(value)?.remoteRoomId ?? null;
 }
 
 /**

@@ -9,6 +9,7 @@
 import { describe, test, expect } from 'bun:test';
 import {
   admitPluginManifest,
+  admitPluginTools,
   highestClaimedPermission,
   resolveAllowedPluginPermissions,
   validatePluginManifest,
@@ -128,16 +129,26 @@ describe('allowlist resolution', () => {
     expect(resolveAllowedPluginPermissions('  ')).toEqual(['user', 'premium']);
   });
 
-  test('parses a comma-separated list, trimming and de-duplicating', () => {
-    expect(resolveAllowedPluginPermissions(' owner , user ,owner')).toEqual(['owner', 'user']);
+  /**
+   * The allowlist is a *floor*, not a replacement set. `.env.example` documents
+   * the levels as ordered and tells operators to set
+   * `PLUGIN_ALLOWED_PERMISSIONS=owner` to load the bundled `reload_plugins`
+   * tool; as a replacement set, `owner` removed `user` and `premium`, so the
+   * only supported configuration for `/reload` refused every other plugin and
+   * the tool was dead code in any real deployment.
+   */
+  test('raises the floor to the highest named level without dropping lower ones', () => {
+    expect(resolveAllowedPluginPermissions('owner')).toEqual(['user', 'premium', 'admin', 'owner']);
+    expect(resolveAllowedPluginPermissions('admin')).toEqual(['user', 'premium', 'admin']);
+    expect(resolveAllowedPluginPermissions(' user , admin ,owner')).toEqual([...PLUGIN_PERMISSION_LEVELS]);
   });
 
   test('ignores unrecognised entries but keeps the valid ones', () => {
-    expect(resolveAllowedPluginPermissions('user,root,admin')).toEqual(['user', 'admin']);
+    expect(resolveAllowedPluginPermissions('user,root,admin')).toEqual(['user', 'premium', 'admin']);
   });
 
   test('is case-insensitive', () => {
-    expect(resolveAllowedPluginPermissions('OWNER')).toEqual(['owner']);
+    expect(resolveAllowedPluginPermissions('OWNER')).toEqual([...PLUGIN_PERMISSION_LEVELS]);
   });
 
   test('falls back when every entry is invalid', () => {
@@ -146,5 +157,60 @@ describe('allowlist resolution', () => {
 
   test('every declared level is representable in the allowlist', () => {
     expect(resolveAllowedPluginPermissions(PLUGIN_PERMISSION_LEVELS.join(','))).toEqual([...PLUGIN_PERMISSION_LEVELS]);
+  });
+});
+
+/**
+ * The manifest gate is written by the same untrusted file it constrains, so on
+ * its own it constrained nothing: a file could declare `permissions: ['user']`
+ * and export a tool whose `permissions` is `owner`, and the loader registered it
+ * without ever reading `tool.permissions`. These pin the property that was
+ * missing — the manifest must cover what the file actually exports.
+ */
+describe('plugin tool admission', () => {
+  test('refuses a tool whose real permission exceeds the manifest', () => {
+    const result = admitPluginTools(
+      { name: 'probe', version: '1.0.0', permissions: ['user'] },
+      [{ name: 'probe_tool', permissions: 'owner' }],
+      ['user', 'premium'],
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test('refuses an elevated tool from an unmanifested plugin', () => {
+    const result = admitPluginTools(
+      null,
+      [{ name: 'probe_tool', permissions: 'owner' }],
+      ['user', 'premium'],
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  test('admits a tool the manifest covers', () => {
+    const result = admitPluginTools(
+      { name: 'probe', version: '1.0.0', permissions: ['user'] },
+      [{ name: 'probe_tool', permissions: 'user' }],
+      ['user', 'premium'],
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  test('admits the bundled owner tool once the operator floor reaches owner', () => {
+    const allowed = resolveAllowedPluginPermissions('owner');
+    const result = admitPluginTools(
+      { name: 'reload-plugins', version: '1.0.0', permissions: ['owner'] },
+      [{ name: 'reload_plugins', permissions: 'owner' }],
+      allowed,
+    );
+    expect(result.ok).toBe(true);
+    expect(allowed).toContain('user');
+  });
+
+  test('admits a module that exports no tools', () => {
+    // The loader skips tool-free modules before calling this, so an empty tool
+    // list must not be an error here: `src/plugins/` also holds plain modules
+    // and reporting one as a refused plugin would be misleading noise.
+    const result = admitPluginTools({ name: 'probe', version: '1.0.0', permissions: ['user'] }, [], ['user']);
+    expect(result.ok).toBe(true);
   });
 });

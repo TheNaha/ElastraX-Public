@@ -342,6 +342,38 @@ describe('tool reachability', () => {
       const dupes = [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
       expect(dupes).toEqual([]);
     });
+
+    /**
+     * A parameter that the schema advertises but no command-grammar variant
+     * lists can never be passed: the validator rejects every argument a
+     * variant does not name ("$.limit: unexpected for action search"). The
+     * model then asks for the parameter, is refused, and falls back to the
+     * default — while the schema keeps advertising something that does
+     * nothing.
+     *
+     * The reachability harness above builds its sample arguments *from* the
+     * grammar, so it structurally cannot see this class of drift. This test
+     * closes the gap.
+     */
+    test('every advertised parameter is accepted by at least one action variant', () => {
+      const dead: string[] = [];
+      for (const tool of tools) {
+        const grammar = tool.commandGrammar;
+        if (!grammar) continue;
+        const properties = Object.keys(schemaOf(tool).properties ?? {});
+        const variantArguments = new Set<string>();
+        for (const variant of grammar.variants) {
+          for (const argument of variant.arguments) variantArguments.add(argument.name);
+        }
+        for (const property of properties) {
+          if (property === grammar.discriminator) continue;
+          if (!variantArguments.has(property)) {
+            dead.push(`${tool.name}.${property} is advertised but no action accepts it`);
+          }
+        }
+      }
+      expect(dead).toEqual([]);
+    });
   });
 
   describe('i18n coverage', () => {

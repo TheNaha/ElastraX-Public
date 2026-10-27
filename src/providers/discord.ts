@@ -146,7 +146,8 @@ export class DiscordProvider implements BotProvider {
       }
       for (const chunk of chunkDiscordText(text)) {
         signal?.throwIfAborted();
-        await channel.send({ content: chunk, allowedMentions: { parse: [] } });
+        const sent = await channel.send({ content: chunk, allowedMentions: { parse: [] } });
+        noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
       }
     } catch (error) {
       throw new ProviderOperationError('discord', 'sendMessage', `Discord sendMessage failed: ${errorMessage(error)}`, error);
@@ -500,6 +501,7 @@ export class DiscordProvider implements BotProvider {
             content: chunks[index],
             allowedMentions: discordAllowedMentions(index === 0 ? options?.mentions : undefined),
           });
+          noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
         }
         return sent;
       },

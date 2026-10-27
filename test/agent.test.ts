@@ -155,6 +155,26 @@ type MockCtx = MessageContext & {
   verifyRoomMembership: MockFn;
 };
 
+/**
+ * Assert that `ctx.reply` was called with `text`.
+ *
+ * The second argument is deliberately not asserted. The agent's immediate send
+ * is wrapped in `withCancellableTimeout` so a slow provider cannot outlive the
+ * outbox row it is racing, which means every reply now carries an
+ * `AbortSignal` in its options. The previous `undefined` assertion encoded the
+ * weaker contract where an in-flight reply could not be cancelled at all.
+ */
+function expectReply(reply: MockFn, text: string | unknown): void {
+  expect(reply).toHaveBeenCalled();
+  const [actualText, options] = reply.mock.calls.at(-1) as [unknown, { signal?: AbortSignal } | undefined];
+  if (typeof text === 'string') {
+    expect(actualText).toBe(text);
+  } else {
+    expect(actualText).toEqual(text);
+  }
+  expect(options?.signal).toBeInstanceOf(AbortSignal);
+}
+
 const makeCtx = (overrides: Partial<MessageContext> = {}): MockCtx => ({
   platform: 'whatsapp',
   chatId: nextId('room'),
@@ -310,7 +330,7 @@ describe('handleIncomingMessage', () => {
     test('sends the AI reply for a private DM', async () => {
       const ctx = makeCtx({ isGroup: false, text: 'Hello' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
+      expectReply(ctx.reply, 'Hello, I am ElastraX!');
     });
 
     test('reacts with ⏳ before the AI response and ✅ after', async () => {
@@ -338,7 +358,7 @@ describe('handleIncomingMessage', () => {
       process.env.AI_STREAMING = 'true';
       const ctx = makeCtx({ isGroup: false, text: 'Hello' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
+      expectReply(ctx.reply, 'Hello, I am ElastraX!');
     });
 
     test('ignores a duplicate provider event instead of replying twice', async () => {
@@ -436,10 +456,27 @@ describe('handleIncomingMessage', () => {
     test('strips the /chat prefix from the user content', async () => {
       const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Hello, I am ElastraX!', undefined);
+      expectReply(ctx.reply, 'Hello, I am ElastraX!');
 
       const stored = await messagesFor(ctx.chatId);
       expect(stored.find(row => row.role === 'user')?.content).toBe('What is AI?');
+    });
+
+    test('strips /chat in a direct message too', async () => {
+      // The strip was gated on `isGroup`, so a DM — the one context where the AI
+      // always runs — forwarded the literal marker to the model.
+      const ctx = makeCtx({ isGroup: false, text: '/chat What is AI?' });
+      await handleIncomingMessage(ctx);
+      const stored = await messagesFor(ctx.chatId);
+      expect(stored.find(row => row.role === 'user')?.content).toBe('What is AI?');
+    });
+
+    test('does not treat a command that merely starts with /chat as a /chat marker', async () => {
+      // `/chatty` used to match `startsWith('/chat')`, so a group user typing it
+      // got `shouldTriggerAI = true` with `ty something` as the prompt.
+      const ctx = makeCtx({ isGroup: true, text: '/chatty something', mentionedIds: [] });
+      await handleIncomingMessage(ctx);
+      expectReply(ctx.reply, expect.stringContaining('Unknown command'));
     });
   });
 
@@ -463,7 +500,7 @@ describe('handleIncomingMessage', () => {
       expect(ctx.reply).toHaveBeenCalled();
       const stored = await messagesFor(ctx.chatId);
       expect(stored).toHaveLength(0);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.any(String), {});
+      expectReply(ctx.reply, expect.any(String));
     });
 
     test('reacts with 🔧 before executing a command and ✅ after', async () => {
@@ -510,7 +547,7 @@ describe('handleIncomingMessage', () => {
 
       const ctx = makeCtx({ text: '/boom', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', {});
+      expectReply(ctx.reply, 'An internal error occurred while processing your message.');
       const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
@@ -523,7 +560,7 @@ describe('handleIncomingMessage', () => {
 
       const ctx = makeCtx({ text: '/stuck', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', {});
+      expectReply(ctx.reply, 'An internal error occurred while processing your message.');
       const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
@@ -531,19 +568,19 @@ describe('handleIncomingMessage', () => {
     test('replies "Unknown command" for an unrecognised slash command', async () => {
       const ctx = makeCtx({ text: '/xyzzy_super_random_command_123', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Unknown command'), {});
+      expectReply(ctx.reply, expect.stringContaining('Unknown command'));
     });
 
     test('suggests a similar command when a typo is made (/men -> /menu)', async () => {
       const ctx = makeCtx({ text: '/men', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/menu`*'), {});
+      expectReply(ctx.reply, expect.stringContaining('Did you mean *`/menu`*'));
     });
 
     test('suggests a similar command based on an alias (/hlp -> /help)', async () => {
       const ctx = makeCtx({ text: '/hlp', isGroup: false });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('Did you mean *`/help`*'), {});
+      expectReply(ctx.reply, expect.stringContaining('Did you mean *`/help`*'));
     });
   });
 
@@ -583,7 +620,7 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
 
       expect(execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Here are the results!', undefined);
+      expectReply(ctx.reply, 'Here are the results!');
     });
 
     test('reports an unknown tool name to the model instead of crashing', async () => {
@@ -600,7 +637,7 @@ describe('handleIncomingMessage', () => {
 
       const ctx = makeCtx({ isGroup: false, text: 'Do something' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('Fallback answer', undefined);
+      expectReply(ctx.reply, 'Fallback answer');
     });
 
     test('rejects malformed tool arguments and tells the model', async () => {
@@ -619,7 +656,7 @@ describe('handleIncomingMessage', () => {
       const ctx = makeCtx({ isGroup: false, text: 'trigger malformed args' });
       await handleIncomingMessage(ctx);
       expect(execute).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Done', undefined);
+      expectReply(ctx.reply, 'Done');
 
       const [, fetchInit] = (global.fetch as unknown as ReturnType<typeof mock>).mock.calls[1]!;
       const body = JSON.parse(fetchInit.body as string) as { messages: Array<{ role: string; content: string }> };
@@ -645,7 +682,7 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
 
       expect(execute).not.toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith('Denied', undefined);
+      expectReply(ctx.reply, 'Denied');
     });
 
     test('times out AI-requested tools and falls back with an error response', async () => {
@@ -659,7 +696,7 @@ describe('handleIncomingMessage', () => {
       await handleIncomingMessage(ctx);
 
       expect(execute).toHaveBeenCalled();
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('An internal error occurred'), undefined);
+      expectReply(ctx.reply, expect.stringContaining('An internal error occurred'));
     });
   });
 
@@ -897,7 +934,7 @@ describe('handleIncomingMessage', () => {
       });
       await handleIncomingMessage(ctx);
 
-      expect(ctx.reply).toHaveBeenCalledWith(expect.stringContaining('internal error'), {});
+      expectReply(ctx.reply, expect.stringContaining('internal error'));
       const calls = ctx.react.mock.calls.map(call => call[0]);
       expect(calls).toContain('❌');
     });
@@ -916,7 +953,7 @@ describe('handleIncomingMessage', () => {
       )) as unknown as typeof global.fetch;
       const ctx = makeCtx({ isGroup: false, text: 'empty response' });
       await handleIncomingMessage(ctx);
-      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.', undefined);
+      expectReply(ctx.reply, 'An internal error occurred while processing your message.');
     });
   });
 });

@@ -28,6 +28,31 @@ const log = logger.child({ module: 'Tts' });
 const MAX_AUDIO_BYTES = 8 * 1024 * 1024;
 /** WhatsApp voice notes cap out well below this; refuse earlier with a clear error. */
 const DEFAULT_MAX_CHARS = 2_000;
+/**
+ * ElevenLabs output format that is already a WhatsApp voice note. Requesting it
+ * removes the need for a local transcode on the path where the container was
+ * previously mislabelled.
+ */
+const ELEVENLABS_OUTPUT_FORMAT = 'opus_48000_128';
+
+/**
+ * Identify an audio container from its magic bytes.
+ *
+ * Returns `null` for anything unrecognised so the caller keeps its requested
+ * label rather than silently switching to a wrong one.
+ */
+export function detectAudioContainer(buffer: Buffer): 'ogg' | 'mp3' | 'wav' | 'flac' | 'm4a' | null {
+  if (buffer.length >= 4 && buffer.toString('latin1', 0, 4) === 'OggS') return 'ogg';
+  if (buffer.length >= 3 && buffer.toString('latin1', 0, 3) === 'ID3') return 'mp3';
+  // Raw MPEG audio frame sync: 11 set bits.
+  if (buffer.length >= 2 && buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0) return 'mp3';
+  if (buffer.length >= 12 && buffer.toString('latin1', 0, 4) === 'RIFF' && buffer.toString('latin1', 8, 12) === 'WAVE') {
+    return 'wav';
+  }
+  if (buffer.length >= 4 && buffer.toString('latin1', 0, 4) === 'fLaC') return 'flac';
+  if (buffer.length >= 12 && buffer.toString('latin1', 4, 8) === 'ftyp') return 'm4a';
+  return null;
+}
 
 export type TtsProviderName = 'openai' | 'elevenlabs';
 
@@ -107,10 +132,25 @@ class TtsClient extends BaseHttpClient {
     }, { 'Content-Type': 'application/json', Accept: 'audio/*' }, { signal });
   }
 
-  async elevenlabsSpeech(text: string, voiceId: string, signal?: AbortSignal): Promise<Buffer> {
+  async elevenlabsSpeech(
+    text: string,
+    voiceId: string,
+    model: string,
+    outputFormat: string,
+    signal?: AbortSignal,
+  ): Promise<Buffer> {
     const path = `/v1/text-to-speech/${encodeURIComponent(voiceId)}`;
     this.expectBinary('POST', path, MAX_AUDIO_BYTES);
-    return this.post<Buffer>(path, { text, model_id: undefined }, { Accept: 'audio/ogg' }, { signal });
+    return this.post<Buffer>(path, {
+      text,
+      // Both fields used to be missing: `model_id: undefined` is dropped by
+      // `JSON.stringify`, so `TTS_MODEL` was read, logged and never transmitted
+      // and the API silently used its own default voice model. ElevenLabs also
+      // defaults `output_format` to `mp3_44100_128`, which the caller then
+      // mislabelled as OGG.
+      model_id: model,
+      output_format: outputFormat,
+    }, { Accept: 'audio/ogg' }, { signal });
   }
 }
 
@@ -147,7 +187,19 @@ export async function synthesizeSpeech(options: SynthesizeOptions): Promise<TtsA
   let raw: Buffer;
   let rawExtension: string;
   if (config.provider === 'elevenlabs') {
-    raw = await client.elevenlabsSpeech(text, options.voice || config.voice, options.signal);
+    // Ask for Opus natively instead of guessing the container afterwards. The
+    // previous code requested no `output_format`, received the API's default
+    // MP3, and still hard-coded `rawExtension = 'ogg'` — which made the
+    // `extension !== 'ogg'` guard below skip `toOpus()` entirely, so the one
+    // provider that most needs normalising was the one that never got it, and
+    // the MP3 bytes were delivered as `audio/ogg; codecs=opus`.
+    raw = await client.elevenlabsSpeech(
+      text,
+      options.voice || config.voice,
+      config.model,
+      ELEVENLABS_OUTPUT_FORMAT,
+      options.signal,
+    );
     rawExtension = 'ogg';
   } else {
     raw = await client.openaiSpeech(text, config.model, options.voice || config.voice, 'mp3', options.signal);
@@ -156,6 +208,18 @@ export async function synthesizeSpeech(options: SynthesizeOptions): Promise<TtsA
   if (raw.byteLength === 0) throw new Error('The speech provider returned an empty audio body.');
   if (raw.byteLength > MAX_AUDIO_BYTES) {
     throw new Error(`Synthesised audio exceeds the ${MAX_AUDIO_BYTES} byte limit.`);
+  }
+
+  // Trust the bytes, not the label: if the provider ignored the requested Opus
+  // container the header will not be Ogg, and relabelling MP3 as
+  // `audio/ogg; codecs=opus` produces a voice note no player can decode.
+  const detected = detectAudioContainer(raw);
+  if (detected && detected !== rawExtension) {
+    log.warn(
+      { requested: rawExtension, detected },
+      'Speech provider returned a different container than requested',
+    );
+    rawExtension = detected;
   }
 
   let buffer = raw;

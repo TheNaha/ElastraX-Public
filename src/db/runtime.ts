@@ -1,3 +1,21 @@
+/**
+ * @file src/db/runtime.ts
+ * @description Low-level SQL helpers for the durable messaging tables.
+ *
+ * ⚠️ **This module is not the production inbox/outbox.** The runtime uses
+ * `src/messaging/InboxService.ts` and `src/messaging/OutboxService.ts`, which
+ * own admission, claiming, lease handling, payload validation and the
+ * dead-letter policy. The functions here are a *second* implementation of the
+ * same operations with different semantics — for example
+ * `enqueueInboxEvent` upserts on conflict while `InboxService.admit` does
+ * nothing, and `claimOutboxMessages` applies no platform filter and returns
+ * opaque payloads that the caller cannot decode.
+ *
+ * Everything in this file is currently exercised only by the schema
+ * compatibility tests. Do not call it from production code: use the
+ * `src/messaging/` services, which the outbox worker and the agent loop
+ * already drive.
+ */
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 

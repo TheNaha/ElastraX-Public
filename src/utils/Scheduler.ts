@@ -33,6 +33,8 @@ export type ScheduledTaskFn = (request: {
 const STALE_CLAIM_MS = 2 * 60_000;
 const SEND_TIMEOUT_MS = 15_000;
 const TASK_TIMEOUT_MS = 120_000;
+/** Upper bound on catch-up steps when a recurring reminder was missed for a long time. */
+const MAX_CATCHUP_STEPS = 400;
 const MIN_INTERVAL_MS = 60_000;
 const MAX_INTERVAL_MS = 5 * 365 * 86_400_000;
 const MAX_BATCH_SIZE = 50;
@@ -137,6 +139,47 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
   return null;
 }
 
+/**
+ * Next occurrence for a fixed calendar cadence, rebuilt from local wall-clock
+ * components.
+ *
+ * `hourly`/`daily`/`weekly` used to add a constant millisecond count
+ * (`24h`, `7d`). A fixed ms offset is not a calendar day: across a DST boundary
+ * the local fire time moves by an hour, so a 09:00 daily reminder ran at 10:00
+ * for the whole DST period. `nextMonthly` in this same file already rebuilt the
+ * date from components — two implementations of "next occurrence" in one file,
+ * disagreeing.
+ *
+ * The local date is advanced by whole days, then the *original* local clock time
+ * is re-applied, so the wall-clock time is preserved across a DST shift.
+ */
+function nextCalendarOccurrence(lastFire: Date, days: number, now: number): Date {
+  const next = new Date(
+    lastFire.getFullYear(),
+    lastFire.getMonth(),
+    lastFire.getDate() + days,
+    lastFire.getHours(),
+    lastFire.getMinutes(),
+    lastFire.getSeconds(),
+    lastFire.getMilliseconds(),
+  );
+  // Re-apply the wall clock: `Date(y, m, d, h)` already resolves to the local
+  // time on that date, which is what keeps 09:00 at 09:00 across a DST change.
+  return next.getTime() > now ? next : addCalendarDays(next, days);
+}
+
+function addCalendarDays(from: Date, days: number): Date {
+  return new Date(
+    from.getFullYear(),
+    from.getMonth(),
+    from.getDate() + days,
+    from.getHours(),
+    from.getMinutes(),
+    from.getSeconds(),
+    from.getMilliseconds(),
+  );
+}
+
 export function computeNextOccurrence(
   lastFire: Date,
   recurrence: string,
@@ -149,10 +192,29 @@ export function computeNextOccurrence(
     return nextMonthly(lastFire, anchorDay, now);
   }
 
+  // Calendar cadences keep their local wall-clock time across DST.
+  if (lower === 'daily') {
+    let next = nextCalendarOccurrence(lastFire, 1, now);
+    // Catch up if the bot was down for several days, without a loop per day.
+    let guard = 0;
+    while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
+      next = addCalendarDays(next, 1);
+      guard += 1;
+    }
+    return next;
+  }
+  if (lower === 'weekly') {
+    let next = nextCalendarOccurrence(lastFire, 7, now);
+    let guard = 0;
+    while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
+      next = addCalendarDays(next, 7);
+      guard += 1;
+    }
+    return next;
+  }
+
   let intervalMs: number;
   if (lower === 'hourly') intervalMs = 3_600_000;
-  else if (lower === 'daily') intervalMs = 86_400_000;
-  else if (lower === 'weekly') intervalMs = 7 * 86_400_000;
   else {
     const match = lower.match(/^every\s+(\d+(?:\.\d+)?)\s*(m|min|minutes?|h|hours?|d|days?)$/);
     if (!match) return null;
@@ -197,6 +259,9 @@ export class Scheduler {
    * Register the handler for reminders whose message is an agent instruction
    * (see `AGENT_TASK_PREFIX`). Without one, such a reminder is delivered as
    * literal text so a misconfiguration degrades instead of losing the message.
+   *
+   * `null` clears the runner. The scheduler is a process-global singleton, so a
+   * stop/start cycle in one process must be able to remove the previous owner.
    */
   static registerTaskRunner(fn: ScheduledTaskFn | null): void {
     this.taskRunner = fn;
@@ -204,6 +269,23 @@ export class Scheduler {
 
   static hasTaskRunner(): boolean {
     return this.taskRunner !== null;
+  }
+
+  /**
+   * Bound for a single scheduled agent run.
+   *
+   * `SCHEDULED_TASKS_TIMEOUT_MS` is a documented, validated operator setting,
+   * so it has to be the thing that actually applies. A hard-coded constant meant
+   * the env var was parsed, asserted in a unit test and then ignored: an
+   * operator who raised it to allow a long analysis silently got a two-minute
+   * abort, and one who lowered it got none of the protection.
+   */
+  static taskTimeoutMs(): number {
+    const configured = Number(process.env.SCHEDULED_TASKS_TIMEOUT_MS);
+    if (Number.isFinite(configured) && configured >= 5_000 && configured <= 900_000) {
+      return Math.floor(configured);
+    }
+    return TASK_TIMEOUT_MS;
   }
 
   static start(): void {
@@ -291,7 +373,7 @@ export class Scheduler {
                 instruction,
                 signal,
               }),
-              TASK_TIMEOUT_MS,
+              this.taskTimeoutMs(),
               'scheduled agent task',
             );
           } else {
@@ -308,9 +390,16 @@ export class Scheduler {
           }
 
           if (reminder.recurrence) {
-            const anchorDay = 'anchorDay' in reminder && Number.isInteger(reminder.anchorDay)
-              ? Number(reminder.anchorDay)
-              : reminder.remindAt.getDate();
+            // Anchor the monthly cadence to a day-of-month that does not move.
+            // `'anchorDay' in reminder` was always false — no such column exists
+            // in the schema, in any migration, or in ReminderTool — so the anchor
+            // always fell back to `remindAt.getDate()`, which is the *clamped*
+            // date the previous fire produced. A reminder set for the 31st went
+            // Jan 31 -> Feb 28 -> Mar 28 -> Apr 28 for the rest of its life.
+            //
+            // `created_at` is immutable, so it is the stable anchor; `remindAt` is
+            // only a fallback for rows that predate it.
+            const anchorDay = reminder.created_at?.getDate() ?? reminder.remindAt.getDate();
             const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
             if (!nextFire) {
               db.update(reminders)
@@ -337,7 +426,34 @@ export class Scheduler {
           const attempt = (retryAttempts.get(reminder.id) ?? 0) + 1;
           retryAttempts.set(reminder.id, attempt);
           const backoffMs = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempt - 1, 7));
-          this.releaseClaim(reminder.id, new Date(Date.now() + backoffMs));
+          // A recurring reminder that keeps failing must not be retried on
+          // every 30 s tick forever. The backoff was computed and then thrown
+          // away: `preserveSchedule` left `claimedAt` null, so the row was
+          // immediately due again and the retry storm ran for the lifetime of
+          // the process — one provider send per recurring reminder per tick,
+          // for every broken reminder, with no attempt limit.
+          //
+          // The claim is now held until the backoff expires, which paces the
+          // retries, and a reminder that has exhausted its attempts is
+          // retired instead of retried forever.
+          if (attempt >= MAX_DELIVERY_ATTEMPTS) {
+            this.retireClaim(reminder.id);
+            logger.error({ err, id: reminder.id, attempt }, 'Reminder delivery failed permanently; retiring');
+            continue;
+          }
+          this.releaseClaim(reminder.id, new Date(Date.now() + backoffMs), {
+            // `remindAt` is the recurrence anchor, so overwriting it with a retry
+            // time permanently re-based the schedule: one transient send error on
+            // a 09:00 daily reminder moved it to 15:00 forever, because the next
+            // successful fire computed from the retry time. Retry pacing now lives
+            // in `claimedAt` (an in-memory attempt counter plus a non-null claim
+            // already gates reselection) and the anchor is left alone.
+            //
+            // One exception: a one-shot reminder has no anchor to protect, and
+            // leaving `remindAt` in the past would make it immediately due again
+            // and burn a provider send per tick.
+            preserveSchedule: Boolean(reminder.recurrence),
+          });
           logger.error({ err, id: reminder.id, attempt }, 'Reminder delivery failed');
         }
       }
@@ -346,9 +462,16 @@ export class Scheduler {
     }
   }
 
-  private static releaseClaim(id: number, nextAttempt: Date): void {
+  private static releaseClaim(id: number, nextAttempt: Date, options: { preserveSchedule?: boolean } = {}): void {
     db.update(reminders)
-      .set({ claimedAt: null, remindAt: nextAttempt })
+      .set(options.preserveSchedule
+        ? // Keep `remindAt` as the recurrence anchor, but hold the claim until
+          // the backoff expires. The claim is what gates reselection, so
+          // setting it to the next attempt time is what actually paces the
+          // retries; leaving it null made every failed recurring reminder
+          // immediately due again.
+          { claimedAt: nextAttempt }
+        : { claimedAt: null, remindAt: nextAttempt })
       .where(and(eq(reminders.id, id), eq(reminders.isSent, false)))
       .run();
   }

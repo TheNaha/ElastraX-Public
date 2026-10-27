@@ -24,7 +24,6 @@ export class StreamingToolCallAccumulator {
           arguments: fragment.function?.arguments ?? '',
         },
       };
-      if (created.id && fragment.id) created.id = fragment.id;
       this.calls.set(fragment.index, created);
       return { ...created, function: { ...created.function } };
     }

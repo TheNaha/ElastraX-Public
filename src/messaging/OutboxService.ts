@@ -7,6 +7,23 @@ const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
 const MAX_TEXT_BYTES = 100_000;
 
+/**
+ * How long a directly-sent message is invisible to the outbox poller.
+ *
+ * The agent's fast path enqueues a row and then sends the same text itself, so
+ * the row exists for the duration of a provider round trip. With the default
+ * `available_at = now` the 1 s poller could claim that row in the gap, deliver
+ * it, and the agent's own send would deliver it again — the exposure window was
+ * the full provider latency, and `markEnqueuedSent` could not rescue it because
+ * its predicate excludes `leased`. The row is now parked for this long instead,
+ * and the direct send is bounded to `DIRECT_SEND_TIMEOUT_MS` (see
+ * `withCancellableTimeout` in the agent), which is comfortably shorter: either
+ * the send finishes and the row is marked sent, or it is aborted and the outbox
+ * picks the message up on the next tick. The small margin keeps the abort
+ * strictly ahead of the claim.
+ */
+export const DIRECT_SEND_GRACE_MS = 20_000;
+
 export type OutboxEnqueueOptions = {
   availableAt?: number;
   /** Canonical room key; derived from platform + chatRoomId when omitted. */
@@ -102,6 +119,26 @@ export class OutboxService {
     return String(existing.id);
   }
 
+  /**
+   * Enqueue a message the caller is about to send itself.
+   *
+   * Identical to {@link enqueueText} except that the row is not claimable for
+   * {@link DIRECT_SEND_GRACE_MS}, which removes the double-delivery race between
+   * the agent's immediate send and the outbox poller.
+   */
+  static enqueueDirectText(
+    platform: string,
+    chatRoomId: string,
+    text: string,
+    keyParts: string[],
+    options?: OutboxEnqueueOptions,
+  ): string {
+    return this.enqueueText(platform, chatRoomId, text, keyParts, {
+      ...enqueueOptions(options),
+      availableAt: Date.now() + DIRECT_SEND_GRACE_MS,
+    });
+  }
+
   static recordTextDelivered(
     platform: string,
     chatRoomId: string,
@@ -189,8 +226,32 @@ export class OutboxService {
         try {
           const payload = JSON.parse(row.payload) as { text?: unknown };
           text = typeof payload.text === 'string' ? payload.text : '';
-        } catch {
-          text = '';
+        } catch (error) {
+          // A row whose payload cannot be decoded is permanently undeliverable.
+          // Claiming it and handing the worker an empty string produced a blank
+          // message that was then marked `sent` — silent, permanent loss with no
+          // error anywhere. Retire it with the reason instead.
+          const message = error instanceof Error ? error.message : String(error);
+          sqlite
+            .query<never, [string, number, number, string]>(
+              `UPDATE message_outbox
+               SET state = 'dead_letter', last_error = ?, available_at = ?, updated_at = ?,
+                   lease_owner = NULL, lease_expires_at = NULL
+               WHERE id = ? AND state = 'leased'`,
+            )
+            .run(`Undecodable outbox payload: ${message}`.slice(0, 2_000), now, now, candidate.id);
+          continue;
+        }
+        if (text.length === 0) {
+          sqlite
+            .query<never, [string, number, number, string]>(
+              `UPDATE message_outbox
+               SET state = 'dead_letter', last_error = ?, available_at = ?, updated_at = ?,
+                   lease_owner = NULL, lease_expires_at = NULL
+               WHERE id = ? AND state = 'leased'`,
+            )
+            .run('Outbox payload contained no text', now, now, candidate.id);
+          continue;
         }
         claimed.push({ ...row, roomKey: row.roomKey ?? '', text });
       }
@@ -224,10 +285,15 @@ export class OutboxService {
 
   static markEnqueuedSent(id: string, providerMessageId: string | null = null): boolean {
     const now = Date.now();
+    // The lease fields are cleared here too. `markSent` does it, and this
+    // path did not, so a row that had previously been leased and then failed
+    // kept a stale `lease_owner`/`lease_expires_at` while sitting in `sent` —
+    // a row that claims to be owned by a worker that no longer holds it.
     const result = sqlite
       .query<never, [string | null, number, number, string]>(
         `UPDATE message_outbox
-         SET state = 'sent', provider_message_id = ?, sent_at = ?, updated_at = ?
+         SET state = 'sent', provider_message_id = ?, sent_at = ?, updated_at = ?,
+             lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
          WHERE id = ? AND state IN ('pending', 'failed')`,
       )
       .run(providerMessageId, now, now, id);

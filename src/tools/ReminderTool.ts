@@ -72,6 +72,43 @@ type ReminderArgs = ToolArgs & {
  *   "at HH:MM" / "HH:MM" (today or tomorrow if time is past)
  *   ISO strings
  */
+/**
+ * A leading time expression in a free-text reminder command.
+ *
+ * `/remind in 30 minutes take your medication` is the command the tool
+ * documents, but the generic positional parser splits it into
+ * `action='set'`, `time='in'`, `message='30 minutes take your medication'` —
+ * the preposition is swallowed by the action slot and the time never parses.
+ */
+const REMINDER_TIME_PREFIX = new RegExp([
+  // "in 30 minutes", "30 minutes", "2 hours"
+  '^(?:in\\s+)?\\d+(?:\\.\\d+)?\\s*(?:seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\\b',
+  // "at 18:00", "at 6pm", "18:00"
+  '^(?:at\\s+)?\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)\\b',
+  '^(?:at\\s+)?\\d{1,2}:\\d{2}\\b',
+  // "tomorrow", "tomorrow at 3pm", "tomorrow at 15:00"
+  '^tomorrow(?:\\s+at\\s+\\d{1,2}(?::\\d{2})?\\s*(?:am|pm)?)?\\b',
+  // ISO timestamp
+  '^\\d{4}-\\d{2}-\\d{2}(?:[T ]\\d{2}:\\d{2}(?::\\d{2})?)?',
+].join('|'), 'i');
+
+/**
+ * Split a free-text reminder command into its time expression and message.
+ *
+ * Returns `null` when the text does not start with a recognisable time
+ * expression, in which case the caller keeps the arguments it already had.
+ */
+export function splitReminderTimeAndMessage(input: string): { time: string; message: string } | null {
+  const text = input.trim();
+  if (!text) return null;
+  const match = REMINDER_TIME_PREFIX.exec(text);
+  if (!match) return null;
+  const time = match[0].trim();
+  const message = text.slice(match[0].length).trim().replace(/^[-:,—]\s*/, '');
+  if (!time) return null;
+  return { time, message };
+}
+
 export function parseRelativeTime(input: string): Date | null {
   const now = Date.now();
   const lower = input.toLowerCase().trim();
@@ -91,14 +128,17 @@ export function parseRelativeTime(input: string): Date | null {
   }
 
   if (lower.startsWith('tomorrow')) {
-    const timeMatch = lower.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/);
+    // "3pm" and "15:30" are both accepted. The previous pattern required a
+    // colon, so "tomorrow at 3pm" — the exact form the tool's own schema and
+    // its error message tell the user to use — silently fell back to 09:00.
+    const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
     const date = new Date(now);
     date.setDate(date.getDate() + 1);
-    if (timeMatch) {
+    if (timeMatch && timeMatch[0].trim()) {
       let hours = Number(timeMatch[1]);
-      const minutes = Number(timeMatch[2]);
+      const minutes = Number(timeMatch[2] ?? 0);
       const hasMeridiem = Boolean(timeMatch[3]);
-    if ((hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
+      if (!Number.isSafeInteger(hours) || (hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
       if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
       if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
       date.setHours(hours, minutes, 0, 0);
@@ -109,12 +149,13 @@ export function parseRelativeTime(input: string): Date | null {
     return delay >= MIN_REMINDER_DELAY_MS && delay <= MAX_REMINDER_HORIZON_MS ? date : null;
   }
 
-  const timeMatch = lower.match(/^(?:at\s+)?(\d{1,2}):(\d{2})\s*(am|pm)?$/);
+  // "18:00", "at 18:00", "6pm", "at 6pm"
+  const timeMatch = lower.match(/^(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (timeMatch) {
     let hours = Number(timeMatch[1]);
-    const minutes = Number(timeMatch[2]);
+    const minutes = Number(timeMatch[2] ?? 0);
     const hasMeridiem = Boolean(timeMatch[3]);
-    if ((hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
+    if (!Number.isSafeInteger(hours) || (hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
     if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
     if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
     const date = new Date(now);
@@ -183,7 +224,9 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
   }
 
   async execute(args: ReminderArgs, ctx: MessageContext): Promise<string> {
-    let { action, time, message } = args;
+    const { action, time: rawTime, message: rawMessage } = args;
+    let time = rawTime;
+    let message = rawMessage;
     const { number, recurrence } = args;
     const lang = ctx.language ?? 'en';
     const roomIdentity = resolveRoomIdentity(ctx);
@@ -193,25 +236,24 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
 
     // Slash shorthand support:
     // /remind in 30 minutes take a break
-    // With positional parsing, this often arrives as action='in', time='30', message='minutes'
-    // For command path we normalize unknown action to 'set'.
-    const validActions = new Set(['set', 'list', 'cancel']);
-    if (!validActions.has(String(action))) {
+    // The generic positional parser splits this into action='set', time='in',
+    // message='30 minutes take a break' — the preposition lands in the action
+    // slot and the time never parses. The heuristic below used to be guarded
+    // by "the action is not one of set/list/cancel", but on the slash path the
+    // action is *always* 'set' (the validator maps `remind` to `set`), so the
+    // guard never fired and the command the tool documents always failed with
+    // "Could not understand the time".
+    //
+    // The split is now driven by the *time expression* rather than by the
+    // action, which is what actually identifies the boundary.
+    if (String(action) === 'set') {
       const cmd = String(args.__command || '').toLowerCase();
-      if (cmd === 'remind' || cmd === 'reminder') {
-        const original = [action, time, message, number].filter(Boolean).join(' ').trim();
-        action = 'set';
-
-        // Heuristic split around " to " (e.g., "in 30 minutes to call mom")
-        const toIdx = original.toLowerCase().indexOf(' to ');
-        if (toIdx > 0) {
-          time = original.slice(0, toIdx).trim();
-          message = original.slice(toIdx + 4).trim();
-        } else {
-          // fallback: first 2 tokens as time, rest as message
-          const parts = original.split(/\s+/);
-          time = parts.slice(0, 2).join(' ');
-          message = parts.slice(2).join(' ');
+      if (cmd === 'remind' || cmd === 'reminder' || cmd === '') {
+        const combined = [time, message, number].filter(part => typeof part === 'string' && part.trim()).join(' ').trim();
+        const split = splitReminderTimeAndMessage(combined);
+        if (split) {
+          time = split.time;
+          message = split.message;
         }
       }
     }

@@ -36,10 +36,17 @@
 import { and, eq, isNull, or, type Column, type SQL } from 'drizzle-orm';
 import { chatRooms, messages, notificationSubscriptions, reminders } from '../db/schema';
 import type { MessageContext } from '../core/MessageContext';
+import {
+  ROOM_KEY_PREFIX,
+  ROOM_KEY_SEPARATOR,
+  isRoomKeyFor as isRoomKeyForFormat,
+  normalizeRoomId as normalizeRoomIdFormat,
+  parseRoomReference,
+  roomIdFromRoomKey as roomIdFromRoomKeyFormat,
+  toRoomKey as toRoomKeyFormat,
+} from '../core/roomKeyFormat';
 
-export const ROOM_KEY_SEPARATOR = ':';
-/** Every canonical room key starts with this marker, so keys are self-describing. */
-export const ROOM_KEY_PREFIX = 'room';
+export { ROOM_KEY_SEPARATOR, ROOM_KEY_PREFIX };
 /** The drizzle symbol that holds a table's column map. */
 const DRIZZLE_COLUMNS = Symbol.for('drizzle:Columns');
 
@@ -66,10 +73,12 @@ export interface ParsedRoomKey {
 
 /**
  * Canonical room key for a provider chat id: `room:<platform>:<chatId>`.
- * Identical to `toRoomKey()` from `src/db/rooms` — see the module header.
+ *
+ * The format itself is owned by `src/core/roomKeyFormat.ts`; this module only
+ * re-exports it so the tool layer keeps a single import site.
  */
 export function toRoomKey(platform: string, chatId: string): string {
-  return `${ROOM_KEY_PREFIX}${ROOM_KEY_SEPARATOR}${platform}${ROOM_KEY_SEPARATOR}${chatId}`;
+  return toRoomKeyFormat(platform, chatId);
 }
 
 /**
@@ -79,24 +88,12 @@ export function toRoomKey(platform: string, chatId: string): string {
  * does not parse as a key.
  */
 export function parseRoomKey(value: string | null | undefined): ParsedRoomKey | null {
-  if (typeof value !== 'string') return null;
-  const raw = value.trim();
-  if (raw.length === 0) return null;
-  const body = raw.startsWith(`${ROOM_KEY_PREFIX}${ROOM_KEY_SEPARATOR}`)
-    ? raw.slice(ROOM_KEY_PREFIX.length + 1)
-    : raw;
-  const separator = body.indexOf(ROOM_KEY_SEPARATOR);
-  if (separator <= 0) return null;
-  const platform = body.slice(0, separator);
-  const remoteRoomId = body.slice(separator + 1);
-  if (platform.length === 0 || remoteRoomId.length === 0) return null;
-  return { platform, remoteRoomId };
+  return parseRoomReference(value);
 }
 
 /** True when `value` is a room key that belongs to `platform`. */
 export function isRoomKeyFor(value: string | null | undefined, platform: string): boolean {
-  const parsed = parseRoomKey(value);
-  return parsed !== null && parsed.platform === platform;
+  return isRoomKeyForFormat(value, platform);
 }
 
 /**
@@ -105,9 +102,7 @@ export function isRoomKeyFor(value: string | null | undefined, platform: string)
  * platform — such a value must never be handed to a provider.
  */
 export function roomIdFromRoomKey(value: string | null | undefined, platform: string): string | null {
-  const parsed = parseRoomKey(value);
-  if (parsed === null || parsed.platform !== platform) return null;
-  return parsed.remoteRoomId;
+  return roomIdFromRoomKeyFormat(value, platform);
 }
 
 /**
@@ -117,10 +112,7 @@ export function roomIdFromRoomKey(value: string | null | undefined, platform: st
  * to another platform is returned untouched and must fail authorization later.
  */
 export function normalizeRoomId(platform: string, room: string): string {
-  if (typeof room !== 'string') return room;
-  const parsed = parseRoomKey(room);
-  if (parsed === null || parsed.platform !== platform) return room;
-  return parsed.remoteRoomId;
+  return normalizeRoomIdFormat(platform, room);
 }
 
 /** Canonical room key for a context: `ctx.roomKey ?? toRoomKey(platform, chatId)`. */

@@ -8,6 +8,7 @@ import { userRoles, rolePrivileges } from '../db/schema';
 import { eq, and, inArray, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
+import { roleSatisfies } from '../core/roleAccess';
 
 export type RoleName = 'user' | 'premium' | 'admin' | 'owner';
 
@@ -121,7 +122,7 @@ function roomKeyFor(platform: string, scope: string): string {
   return `room:${platform}:${scope}`;
 }
 
-function legacyScopeFor(platform: string, scope: string): string {
+export function legacyScopeFor(platform: string, scope: string): string {
   const prefix = `room:${platform}:`;
   return scope.startsWith(prefix) ? scope.slice(prefix.length) : scope;
 }
@@ -255,9 +256,7 @@ export class AuthService {
   }
 
   static hasPermission(roles: string[], required: string): boolean {
-    if (required === 'user') return true;
-    if (roles.includes('owner')) return true;
-    return roles.includes(required);
+    return roleSatisfies(roles, required);
   }
 
   static async getAccessProfile(roles: string[]): Promise<AccessProfile> {
@@ -265,9 +264,16 @@ export class AuthService {
     return { roles, privileges };
   }
 
+  /**
+   * Whether a single role satisfies a requirement.
+   *
+   * This used to use a weighted ladder under which `premium` satisfied
+   * `admin` — a rule that disagreed with every other implementation of the
+   * same question in the codebase. It now delegates to the single canonical
+   * predicate in `src/core/roleAccess.ts`.
+   */
   static meetsRequirement(role: RoleName, required: RoleName): boolean {
-    const WEIGHT: Record<string, number> = { user: 0, premium: 1, admin: 1, owner: 2 };
-    return (WEIGHT[role] ?? 0) >= (WEIGHT[required] ?? 0);
+    return roleSatisfies([role], required);
   }
 
   static async setRole(
@@ -385,7 +391,10 @@ export class AuthService {
     const { db, userRoles } = this.deps;
     let userIds: string[];
     try {
-      userIds = await IdentityService.getAllJids(userId);
+      // The platform must be threaded through: a Telegram id is numeric and
+      // looks exactly like a Discord id, so the identity lookup has to be told
+      // which platform it is resolving.
+      userIds = await IdentityService.getAllJids(userId, platform);
     } catch {
       userIds = [userId];
     }

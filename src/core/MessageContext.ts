@@ -77,11 +77,18 @@ export interface MessageContext {
   chatId: string;
 
   /**
-   * Canonical, platform-scoped room key (the `chat_rooms` primary key) used for
-   * every database lookup: inbox/outbox rows, room configuration, and message
-   * history.  Optional because providers and test fixtures construct contexts
-   * directly; production `AppRuntime` resolves and attaches it before the
-   * message is admitted to the inbox.
+   * Canonical, platform-scoped room key — `room:<platform>:<remoteRoomId>`.
+   *
+   * It is the identity used for every database lookup: inbox/outbox rows, room
+   * configuration, and message history. It is *not* always the `chat_rooms`
+   * primary key: for a room created before the V8.1 identity migration that
+   * primary key is still the raw provider room id, so the two differ for
+   * exactly the legacy rows the dual-read path exists to support. Use this
+   * field, never `chat_rooms.id`, to address a room.
+   *
+   * Optional because providers and test fixtures construct contexts directly;
+   * production `AppRuntime` resolves and attaches it before the message is
+   * admitted to the inbox.
    */
   roomKey?: string;
 
@@ -283,8 +290,12 @@ export interface MessageContext {
   /**
    * The raw original message metadata/object from the provider.
    * Useful for provider-specific edge cases.
+   *
+   * Nullable: the scheduled-task path builds a synthetic context with no
+   * provider message behind it, and forcing that through a non-null type
+   * required a double cast that defeated the type checker at every call site.
    */
-  rawMessage: RawProviderMessage;
+  rawMessage: RawProviderMessage | null;
 
   signal?: AbortSignal;
 }

@@ -12,8 +12,31 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `GET` | `/live` | Minimal liveness: `{"status":"ok"}` |
 | `GET` | `/ready` | Readiness compatibility hook |
 | `GET` | `/metrics` | Protected Prometheus metrics |
+| `GET` | `/admin` | Admin dashboard (redirects to `/admin/login` without a session) |
+| `GET` | `/admin/login` | Dashboard login page |
+| `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
+| `POST` | `/admin/api/logout` | End the session |
+| `GET` | `/admin/api/*` | Dashboard views (overview, rooms, deliveries, config, feedback, …) |
+| `POST` | `/admin/api/action/*` | Dashboard actions (registry reload, retention report, outbox retry) |
 
-All other paths return `404`. A known path with the wrong method returns `405` and an `Allow` header. Every POST route requires `Content-Type: application/json`; other media types return `415`.
+All other paths return `404`. On the webhook routes a known path with the wrong method returns `405` and an `Allow` header. Every POST route requires `Content-Type: application/json`; other media types return `415`.
+
+## Admin dashboard
+
+The dashboard is served on the same port as the webhook intake and is enabled only when `METRICS_AUTH_TOKEN` is set to at least 24 bytes. A shorter token disables `/metrics` and `/admin` (both fail closed) and logs a warning; it does not stop the bot from starting.
+
+Sign in with the token itself:
+
+```http
+POST /admin/api/login
+Content-Type: application/json
+
+{"token": "<METRICS_AUTH_TOKEN>"}
+```
+
+The response carries an `HttpOnly; SameSite=Strict` session cookie and a CSRF token. Send the CSRF token in the `x-admin-csrf` header on every mutating request. The cookie carries the `Secure` attribute except for a loopback request over plain HTTP, because a browser silently refuses to store a `Secure` cookie without TLS.
+
+If the dashboard is served through a reverse proxy, proxy `/admin` as well as `/webhook` — the deployment example in `docs/deployment.md` only proxies `/webhook`, which leaves the dashboard unreachable.
 
 ## Authentication
 

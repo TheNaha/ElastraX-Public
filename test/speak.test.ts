@@ -7,7 +7,7 @@
  * arrives at the context with voice-note options set.
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-import { readTtsConfig, isTtsConfigured, estimateDurationSeconds, synthesizeSpeech } from '../src/utils/tts';
+import { readTtsConfig, isTtsConfigured, estimateDurationSeconds, synthesizeSpeech, detectAudioContainer } from '../src/utils/tts';
 import { SpeakTool } from '../src/tools/SpeakTool';
 import { FFmpegConverter, ffmpegConverterDeps } from '../src/utils/FFmpegConverter';
 import { HttpClientError, BaseHttpClient } from '../src/utils/BaseHttpClient';
@@ -384,5 +384,81 @@ describe('FFmpegConverter opus support', () => {
   test('accepts the opus argument set the TTS path uses', async () => {
     const result = await FFmpegConverter.convert(Buffer.from('mp3'), ['-vn', '-acodec', 'libopus'], 'mp3', 'ogg');
     expect(result.toString()).toBe('opus-bytes');
+  });
+});
+
+/**
+ * The ElevenLabs branch had no coverage at all, which is how three defects in
+ * it shipped together: the request body omitted `model_id` (so `TTS_MODEL` was
+ * never transmitted), no `output_format` was requested (so the API's default
+ * MP3 came back), and the container was hard-coded to `ogg` — which made the
+ * `extension !== 'ogg'` guard skip the Opus transcode, delivering MP3 bytes
+ * labelled `audio/ogg; codecs=opus`.
+ */
+describe('ElevenLabs speech request', () => {
+  const config = {
+    provider: 'elevenlabs' as const,
+    baseUrl: 'https://api.elevenlabs.io',
+    apiKey: 'key-123',
+    model: 'eleven_turbo_v2_5',
+    voice: 'voice-id-123',
+    maxChars: 2_000,
+    timeoutMs: 5_000,
+  };
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  test('sends the configured model and asks for an Opus container', async () => {
+    let capturedUrl = '';
+    let capturedBody: Record<string, unknown> = {};
+    globalThis.fetch = mock(async (input: unknown, init?: { body?: unknown }) => {
+      capturedUrl = String(input);
+      capturedBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      // A genuine Ogg/Opus body: magic bytes are what detectAudioContainer reads.
+      return new Response(Buffer.concat([Buffer.from('OggS'), Buffer.alloc(64)]), {
+        status: 200,
+        headers: { 'content-type': 'audio/ogg' },
+      });
+    }) as unknown as typeof fetch;
+
+    const audio = await synthesizeSpeech({ text: 'hello from elevenlabs', config });
+
+    expect(capturedUrl).toBe('https://api.elevenlabs.io/v1/text-to-speech/voice-id-123');
+    expect(capturedBody.text).toBe('hello from elevenlabs');
+    expect(capturedBody.model_id).toBe('eleven_turbo_v2_5');
+    expect(String(capturedBody.output_format)).toContain('opus');
+    expect(audio.extension).toBe('ogg');
+    expect(audio.mimeType).toBe('audio/ogg; codecs=opus');
+  });
+
+  test('does not relabel an MP3 body as Ogg/Opus', async () => {
+    // A provider (or proxy) that ignores `output_format` and returns MP3 must
+    // not produce a "voice note" whose declared container is wrong.
+    globalThis.fetch = mock(async () => new Response(
+      Buffer.concat([Buffer.from('ID3'), Buffer.alloc(64)]),
+      { status: 200, headers: { 'content-type': 'audio/mpeg' } },
+    )) as unknown as typeof fetch;
+
+    const audio = await synthesizeSpeech({ text: 'hello', config });
+    expect(audio.extension).not.toBe('ogg');
+    expect(audio.mimeType).not.toBe('audio/ogg; codecs=opus');
+  });
+});
+
+describe('detectAudioContainer', () => {
+  test('identifies the containers the TTS providers can return', () => {
+    expect(detectAudioContainer(Buffer.from('OggS....'))).toBe('ogg');
+    expect(detectAudioContainer(Buffer.from('ID3....'))).toBe('mp3');
+    expect(detectAudioContainer(Buffer.from([0xff, 0xfb, 0x00, 0x00]))).toBe('mp3');
+    expect(detectAudioContainer(Buffer.from('RIFF0000WAVE'))).toBe('wav');
+    expect(detectAudioContainer(Buffer.from('fLaC0000'))).toBe('flac');
+    expect(detectAudioContainer(Buffer.from('0000ftypM4A '))).toBe('m4a');
+  });
+
+  test('returns null rather than guessing', () => {
+    expect(detectAudioContainer(Buffer.from('not audio at all'))).toBeNull();
+    expect(detectAudioContainer(Buffer.alloc(0))).toBeNull();
   });
 });

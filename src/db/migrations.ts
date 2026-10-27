@@ -23,8 +23,28 @@ export interface MigrationState {
   fingerprint: string | null;
 }
 
+/**
+ * Applied-migration checksums that are known-good but no longer match the file
+ * on disk, keyed by the migration's ZERO-BASED position in the journal.
+ *
+ * `0008_calm_token_room` was rewritten after it had already shipped (commit
+ * 8f08ac7 added the `messages`/`reminders` rebuilds and reformatted the file),
+ * so every database that ran the original records a hash that no longer matches
+ * the file. Both contents converge on the same schema: the original left the
+ * `messages`/`reminders` tables and their indexes exactly as `0002` created
+ * them, while the rewrite recreates those tables with the same columns and the
+ * same four index definitions. Either content is therefore accepted.
+ *
+ * The position is load-bearing. This allowance used to be registered at
+ * position 7 (`0007_keen_user_roles`), where the recorded hash already matched
+ * the file on disk. That made it a no-op that silently disabled 0007's
+ * integrity check, while the genuinely drifted 0008 aborted startup with
+ * "Applied migration 0008_calm_token_room has an unexpected checksum" — the
+ * bot could not open its own database. `test/migration.test.ts` pins both the
+ * position and the recorded hashes so this cannot drift again.
+ */
 const LEGACY_MIGRATION_HASHES = new Map<number, Set<string>>([
-  [7, new Set(['84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d'])],
+  [8, new Set(['84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d'])],
 ]);
 
 /** Tag of the migration that introduced canonical room identity. */
@@ -252,14 +272,21 @@ function validateKnownUpgradeState(sqlite: Database, state: MigrationState): voi
     }
   }
 
-  if (appliedCount >= 8) {
+  // `appliedCount` is the number of applied journal entries and the entries are
+  // zero-indexed, so `entries[k]` is applied iff `appliedCount > k`. These
+  // checks used `>=`, which meant they fired while the very migration they
+  // describe was still *pending*: at `appliedCount === 8` migration 0008 had
+  // not run yet, and the check demanded the column 0008 adds. The 0007→0008
+  // upgrade could therefore never run, and at `appliedCount === 19` one of
+  // the two 0019 branches always threw, so that database could never boot.
+  if (appliedCount > 8) {
     const columns = tableColumns(sqlite, 'chat_rooms');
     if (!columns.has('max_tokens')) {
       throw new Error('Migration 0008 is recorded as applied but chat_rooms.max_tokens is missing');
     }
   }
 
-  if (appliedCount >= 19 && !tableColumns(sqlite, 'reminders').has('language')) {
+  if (appliedCount > 19 && !tableColumns(sqlite, 'reminders').has('language')) {
     throw new Error('Migration 0019 is recorded as applied but reminders.language is missing');
   }
   if (appliedCount === 19 && tableColumns(sqlite, 'reminders').has('language')) {

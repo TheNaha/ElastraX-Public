@@ -13,7 +13,11 @@ export interface RetentionResult {
   messages: number;
   reminders: number;
   inbox: number;
+  /** Inbox rows stuck in a non-terminal state past the retention window. */
+  inboxStale: number;
   outbox: number;
+  /** Outbox rows stuck in a non-terminal state past the retention window. */
+  outboxStale: number;
   scheduledDeliveries: number;
   flowSessions: number;
   dryRun: boolean;
@@ -152,10 +156,32 @@ export function applyRetentionPolicy(
       batchSize,
       dryRun,
     ),
+    // Rows that are still `pending`/`failed`/`leased` were never swept, so
+    // they were immortal: a delivery for a platform that never came back
+    // operational stays `pending` forever, its attempt counter never advances,
+    // and the table grows without bound. Everything that has been sitting in a
+    // non-terminal state for longer than the terminal window is garbage by
+    // definition — the lease has long expired and nothing will claim it.
+    inboxStale: deleteBatches(
+      sqlite,
+      'message_inbox',
+      "state IN ('received', 'processing', 'failed') AND COALESCE(completed_at, updated_at) < ?",
+      nowMs - policy.terminalDeliveriesDays * dayMs,
+      batchSize,
+      dryRun,
+    ),
     outbox: deleteBatches(
       sqlite,
       'message_outbox',
       "state IN ('sent', 'dead_letter') AND COALESCE(sent_at, updated_at) < ?",
+      nowMs - policy.terminalDeliveriesDays * dayMs,
+      batchSize,
+      dryRun,
+    ),
+    outboxStale: deleteBatches(
+      sqlite,
+      'message_outbox',
+      "state IN ('pending', 'failed', 'leased') AND COALESCE(sent_at, updated_at) < ?",
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,

@@ -70,7 +70,10 @@ function parseTier(raw?: string): ModelTier {
 
 function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
   if (raw === undefined) return defaultVal;
-  return raw.trim().toLowerCase() === 'true';
+  const normalized = raw.trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return defaultVal;
 }
 
 function readStringEnv(rawValue: string | undefined, fallback: string = ''): string {
@@ -90,10 +93,10 @@ function readStringEnv(rawValue: string | undefined, fallback: string = ''): str
  * @returns Array of resolved provider configs, in priority order
  */
 export function resolveLLMProviders(env: RuntimeEnv = process.env): LLMTarget[] {
-  const providerList = env.AI_PROVIDERS;
+  const providerList = env.AI_PROVIDERS?.trim();
 
   // Legacy single-provider fallback
-  if (!providerList || providerList.trim() === '') {
+  if (!providerList) {
     const legacyCfBase = buildCloudflareBaseUrl(env.AI_CF_ACCOUNT_ID);
     const defaults = defaultMediaSupport('default');
     const baseUrl = readStringEnv(env.AI_API_BASE_URL, legacyCfBase);

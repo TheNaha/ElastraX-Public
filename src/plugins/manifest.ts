@@ -139,17 +139,77 @@ export function admitPluginManifest(
     return {
       allowed: false,
       reason: `declares permission(s) not in the operator allowlist: ${denied.join(', ')} `
-        + `(allowed: ${allowedPermissions.join(', ') || 'none'})`,
+        + `(allowed: ${allowedPermissions.join(', ') || 'none'}) `
+        + '— raise PLUGIN_ALLOWED_PERMISSIONS to admit it',
     };
   }
   return { allowed: true, manifest };
 }
 
-/** Parse `PLUGIN_ALLOWED_PERMISSIONS`, falling back to the safe default set. */
+/**
+ * Parse `PLUGIN_ALLOWED_PERMISSIONS`, falling back to the safe default set.
+ *
+ * The parsed list is a *floor*, not a replacement set. The documented
+ * instruction for enabling the bundled `reload_plugins` tool is
+ * `PLUGIN_ALLOWED_PERMISSIONS=owner`, and treating that as a replacement meant
+ * `owner` *removed* `user` and `premium` from the allowlist: the only supported
+ * configuration for `/reload` simultaneously refused every other plugin in the
+ * directory, so in any real deployment the reload tool was dead code. A floor
+ * reads the way the ordering in `.env.example` promises — "levels are ordered:
+ * user < premium < admin < owner" — and admits everything at or below the
+ * highest level the operator named.
+ */
 export function resolveAllowedPluginPermissions(raw: string | undefined): PluginPermission[] {
   const parsed = (raw ?? '')
     .split(',')
     .map(value => value.trim().toLowerCase())
     .filter(value => PLUGIN_PERMISSION_LEVELS.includes(value as PluginPermission)) as PluginPermission[];
-  return parsed.length > 0 ? [...new Set(parsed)] : [...DEFAULT_PLUGIN_ALLOWED_PERMISSIONS];
+  if (parsed.length === 0) return [...DEFAULT_PLUGIN_ALLOWED_PERMISSIONS];
+  const highest = parsed.reduce((best, level) => (
+    PLUGIN_PERMISSION_LEVELS.indexOf(level) > PLUGIN_PERMISSION_LEVELS.indexOf(best) ? level : best
+  ), parsed[0]!);
+  return PLUGIN_PERMISSION_LEVELS.slice(0, PLUGIN_PERMISSION_LEVELS.indexOf(highest) + 1) as PluginPermission[];
+}
+
+/**
+ * Check the manifest's claim against the tools the file actually exports.
+ *
+ * The manifest gate alone was advisory: a file could declare
+ * `permissions: ['user']` and still export a tool whose `permissions` is
+ * `owner`, and `loadPluginTools` registered the instance without ever reading
+ * `tool.permissions`. The manifest is written by the same untrusted file it is
+ * supposed to constrain, so the self-declaration constrained nothing and
+ * `.env.example`'s claim that "a file dropped into the directory cannot
+ * silently claim elevated access" was false. Admission now requires the *tool's*
+ * real permission to be covered by both the manifest and the operator floor.
+ *
+ * A tool is a plugin's own code path, so this is a review gate rather than a
+ * sandbox: it guarantees that what an operator reviewed (the manifest) matches
+ * what is actually registered, which is the property that was missing.
+ */
+export function admitPluginTools(
+  manifest: PluginManifest | null,
+  tools: readonly { name: string; permissions: string }[],
+  allowedPermissions: readonly PluginPermission[],
+): { ok: true } | { ok: false; reason: string } {
+  const covered = new Set<string>([
+    ...(manifest?.permissions ?? []),
+    // An unmanifested plugin claims nothing, so only the baseline is covered
+    // and an elevated tool is refused rather than silently registered.
+    ...(manifest ? [] : ['user']),
+  ]);
+
+  for (const tool of tools) {
+    const required = tool.permissions;
+    if (!covered.has(required)) {
+      return {
+        ok: false,
+        reason: `tool "${tool.name}" requires permission "${required}" `
+          + `but the manifest declares ${manifest ? `[${[...covered].join(', ')}]` : 'no manifest'}`
+          + ' and the operator allowlist is '
+          + `[${allowedPermissions.join(', ') || 'none'}]`,
+      };
+    }
+  }
+  return { ok: true };
 }

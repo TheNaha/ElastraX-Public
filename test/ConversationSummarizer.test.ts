@@ -118,3 +118,86 @@ describe('ConversationSummaryService', () => {
     expect(await service.getWatermark('room-2')).toBeNull();
   });
 });
+
+/**
+ * The agent re-fetches a rolling history window on every turn, so only the few
+ * messages that fell out of that window are new. Folding that handful
+ * immediately put a model call on *every* inbound message in every summarizing
+ * room — and each call re-carried the entire rolling summary as its prompt
+ * prefix, so cost per call grew with the conversation.
+ *
+ * These use the real window arithmetic the agent uses (context limit + lookahead)
+ * and count the model calls.
+ */
+describe('summarization batching', () => {
+  const keepCount = 10;
+  const lookahead = 16;
+  const minBatch = 8;
+
+  function rollingWindowService() {
+    let saved: SummaryWatermark | null = null;
+    const store: SummaryStore = {
+      load: async () => saved,
+      save: async (_scope, watermark) => { saved = watermark; },
+      delete: async () => { saved = null; },
+    };
+    return new ConversationSummaryService(store);
+  }
+
+  test('does not call the model on every turn', async () => {
+    const service = rollingWindowService();
+    let llmCalls = 0;
+    const callLLM = async (): Promise<string> => {
+      llmCalls += 1;
+      return `summary ${llmCalls}`;
+    };
+    const window: SummaryEntry[] = [];
+    let maxActive = 0;
+
+    for (let turn = 0; turn < 12; turn += 1) {
+      for (let added = 0; added < 2; added += 1) {
+        window.push({ id: String(window.length + 1), message: { role: 'user', content: `m${window.length}` } });
+      }
+      const slice = window.slice(-(keepCount + lookahead));
+      const run = await service.summarize({ scope: 'room:batch', entries: slice, keepCount, minBatch, callLLM });
+      maxActive = Math.max(maxActive, run.activeHistory.length);
+    }
+
+    expect(llmCalls).toBeGreaterThan(0);
+    expect(llmCalls).toBeLessThanOrEqual(2);
+    // The context limit still holds even on the turns that skip summarization.
+    expect(maxActive).toBeLessThanOrEqual(keepCount);
+  });
+
+  test('a large batch is still summarized immediately', async () => {
+    const service = rollingWindowService();
+    let llmCalls = 0;
+    const callLLM = async (): Promise<string> => {
+      llmCalls += 1;
+      return 'summary';
+    };
+    const entries: SummaryEntry[] = Array.from({ length: keepCount + 20 }, (_, index) => ({
+      id: String(index + 1),
+      message: { role: 'user', content: `m${index}` },
+    }));
+    const run = await service.summarize({ scope: 'room:bulk', entries, keepCount, minBatch, callLLM });
+    expect(llmCalls).toBe(1);
+    expect(run.summarizedCount).toBe(20);
+    expect(run.activeHistory).toHaveLength(keepCount);
+  });
+
+  test('entries below the threshold are carried forward, not dropped', async () => {
+    const service = rollingWindowService();
+    const callLLM = mock(async (): Promise<string> => 'summary');
+    const entries: SummaryEntry[] = Array.from({ length: keepCount + 2 }, (_, index) => ({
+      id: String(index + 1),
+      message: { role: 'user', content: `m${index}` },
+    }));
+    const first = await service.summarize({ scope: 'room:carry', entries, keepCount, minBatch, callLLM });
+    expect(callLLM).not.toHaveBeenCalled();
+    // The watermark must not advance, or the carried entries would be lost.
+    expect(first.watermark).toBeNull();
+    // And they are still visible in the active window.
+    expect(first.activeHistory).toHaveLength(keepCount);
+  });
+});

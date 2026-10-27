@@ -53,8 +53,14 @@ jobs:
           tar -xzf "$archive" -C "$RUNNER_TEMP" gitleaks
           printf '%s\n' "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
+      # `--timeout` does not exist on the `git` subcommand in gitleaks 8.28.0
+      # (verified against the checksum-pinned binary: `unknown flag: --timeout`,
+      # exit 126). Because this is a hard failure, the Secret gate aborted the
+      # job on step one and Lint, Typecheck, Tests, the provider staging harness,
+      # the Docker build and the container smoke never ran. The bound is enforced
+      # by the job-level `timeout-minutes` instead.
       - name: Secret gate
-        run: gitleaks git . --config .gitleaks.toml --redact --no-banner --timeout 120
+        run: gitleaks git . --config .gitleaks.toml --redact --no-banner
 
       - name: Dependency advisory gate
         run: bun audit --audit-level=high

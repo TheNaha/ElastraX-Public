@@ -72,8 +72,13 @@ export class MediaLibraryTool extends BaseTool {
   override readonly commandGrammar: ToolCommandGrammar = {
     discriminator: 'action',
     variants: [
-      { value: 'search', arguments: [{ name: 'query', kind: 'string', required: true }] },
-      { value: 'latest', arguments: [] },
+      // `limit` is declared in the schema and honoured by `execute`, so it has
+      // to be part of the variant as well. The validator rejects any argument
+      // the variant does not list, so without this the parameter was
+      // permanently unreachable: the model asked for `limit` and got
+      // "$.limit: unexpected for action search" back, every time.
+      { value: 'search', arguments: [{ name: 'query', kind: 'string', required: true }, { name: 'limit', kind: 'number', required: false }] },
+      { value: 'latest', arguments: [{ name: 'limit', kind: 'number', required: false }] },
       { value: 'link', arguments: [{ name: 'item_id', kind: 'string', required: true }] },
       { value: 'info', arguments: [{ name: 'item_id', kind: 'string', required: true }] },
     ],

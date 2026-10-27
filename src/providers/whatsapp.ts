@@ -7,7 +7,7 @@ import makeWASocket, {
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, or } from 'drizzle-orm';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
@@ -31,6 +31,7 @@ import { useDBAuthState } from '../utils/useDBAuthState';
 import { syncHistoricalDatabase } from '../utils/syncHistoricalDatabase';
 import { db } from '../db';
 import { messages } from '../db/schema';
+import { toRoomKey } from '../core/roomKeyFormat';
 import { IdentityService } from '../utils/IdentityService';
 import { AuthService } from '../utils/AuthService';
 
@@ -97,12 +98,18 @@ export const whatsAppProviderDeps = {
     // Scoping also lets SQLite use `messages_platform_provider_message_id_unique`
     // (platform, chat_room_id, provider_message_id) instead of scanning.
     if (!remoteJid) return null;
+    // `messages.chat_room_id` holds the *canonical* room key for every room
+    // created since the V8.1 identity migration, and the raw provider id only
+    // for legacy rows. Matching the raw id alone therefore missed every
+    // post-migration room, which broke Baileys' retry/reconnect message
+    // recovery: the lookup always returned null. Both forms are accepted.
+    const roomKey = toRoomKey('whatsapp', remoteJid);
     const rows = await db
       .select({ rawMessage: messages.rawMessage })
       .from(messages)
       .where(and(
         eq(messages.platform, 'whatsapp'),
-        eq(messages.chatRoomId, remoteJid),
+        or(eq(messages.chatRoomId, roomKey), eq(messages.chatRoomId, remoteJid)),
         eq(messages.providerMessageId, messageId),
       ))
       .limit(1);
@@ -651,20 +658,22 @@ export class WhatsAppProvider implements BotProvider {
       sendMedia: async (buffer: Buffer, options: SendMediaOptions = {}) => {
         assertSocket();
         const mime = options.mimetype || 'application/octet-stream';
+        let sent: WAMessage | undefined;
         if (options.ptt || mime.startsWith('audio/')) {
-          await socket.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: !!options.ptt }, { quoted: message });
+          sent = await socket.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: !!options.ptt }, { quoted: message });
         } else if (mime.startsWith('video/')) {
-          await socket.sendMessage(jid, { video: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+          sent = await socket.sendMessage(jid, { video: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
         } else if (mime.startsWith('image/')) {
-          await socket.sendMessage(jid, { image: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+          sent = await socket.sendMessage(jid, { image: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
         } else {
-          await socket.sendMessage(jid, {
+          sent = await socket.sendMessage(jid, {
             document: buffer,
             mimetype: mime,
             fileName: options.filename || 'file',
             caption: options.caption,
           }, { quoted: message });
         }
+        noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
       },
 
       reply: async (replyText: string, options?: ReplyOptions) => {
@@ -672,7 +681,8 @@ export class WhatsAppProvider implements BotProvider {
         const chunks = chunkWhatsAppText(replyText);
         for (let index = 0; index < chunks.length; index++) {
           options?.signal?.throwIfAborted();
-          await socket.sendMessage(jid, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined }, { quoted: message });
+          const sent = await socket.sendMessage(jid, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined }, { quoted: message });
+          noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
         }
       },
 
@@ -687,6 +697,7 @@ export class WhatsAppProvider implements BotProvider {
         let sent: WAMessage | undefined;
         for (let index = 0; index < chunks.length; index++) {
           sent = await socket.sendMessage(jid, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined }, { quoted: message });
+          noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
         }
         return sent?.key;
       },
@@ -698,6 +709,7 @@ export class WhatsAppProvider implements BotProvider {
         for (const chunk of chunks) {
           options?.signal?.throwIfAborted();
           sent = await socket.sendMessage(targetChatId, { text: chunk });
+          noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
         }
         return sent?.key;
       },

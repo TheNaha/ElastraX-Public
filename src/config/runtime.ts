@@ -5,6 +5,32 @@
 
 export type RuntimeEnv = Record<string, string | undefined>;
 
+/**
+ * Minimum length, in bytes, for a shared operator secret.
+ *
+ * `METRICS_AUTH_TOKEN` is read by two modules that used to disagree about the
+ * limit: the admin dashboard accepted 16 characters while the webhook
+ * configuration demanded 24 and *threw*. A 16–23 character token therefore
+ * passed the admin check and then killed the whole process at startup, and
+ * the shipped documentation quoted three different numbers.
+ *
+ * One constant, one rule: a shared secret must be at least this long, and a
+ * token that is too short disables the surfaces it guards instead of taking
+ * the bot down.
+ */
+export const MIN_SHARED_SECRET_BYTES = 24;
+
+/**
+ * Whether a shared secret is long enough to be accepted.
+ *
+ * `Buffer.byteLength` is used rather than `.length` so a multi-byte secret is
+ * measured the same way the webhook configuration measured it.
+ */
+export function isUsableSharedSecret(secret: string | null | undefined): boolean {
+  if (!secret) return false;
+  return Buffer.byteLength(secret, 'utf8') >= MIN_SHARED_SECRET_BYTES;
+}
+
 export function readIntegerEnv(
   rawValue: string | undefined,
   fallback: number,
@@ -112,7 +138,7 @@ export function getWebhookMaxBodyBytes(env: RuntimeEnv = process.env): number {
 }
 
 export function getDownloadMaxMb(env: RuntimeEnv = process.env): number {
-  return readIntegerEnv(env.DOWNLOAD_MAX_MB, 50, { min: 1, max: 200 });
+  return readIntegerEnv(env.DOWNLOAD_MAX_MB, 50, { min: 1, max: 1_024 });
 }
 
 export function getRateLimitConfig(env: RuntimeEnv = process.env) {

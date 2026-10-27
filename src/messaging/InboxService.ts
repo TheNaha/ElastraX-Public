@@ -168,6 +168,20 @@ export class InboxService {
       .run(MAX_ATTEMPTS, message.slice(0, 2_000), now + delayMs, now, id);
   }
 
+  /**
+   * Release a claimed row after a failed turn.
+   *
+   * The returned value is the caller-facing verdict (`'retry'` /
+   * `'dead_letter'` / `'not_owned'`), but the value written to `state` must come
+   * from the table's own vocabulary: the CHECK constraint permits only
+   * `received | processing | completed | failed | dead_letter`. Binding the
+   * caller-facing name directly meant every non-dead-lettered failure raised
+   * `CHECK constraint failed: state`, which propagated out of
+   * `AppRuntime`'s catch block and *replaced* the original handler error, while
+   * the row stayed `processing` with no `last_error` and an `attempt_count` that
+   * could never advance far enough to escalate. The ledger's retry path was
+   * therefore unreachable in production.
+   */
   static fail(id: number, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now();
     const row = sqlite
@@ -177,7 +191,9 @@ export class InboxService {
       )
       .get(id, owner);
     if (!row) return 'not_owned';
-    const state: 'retry' | 'dead_letter' = row.attemptCount >= MAX_ATTEMPTS ? 'dead_letter' : 'retry';
+    const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
+    const persistedState = deadLettered ? 'dead_letter' : 'failed';
+    const outcome: 'retry' | 'dead_letter' = deadLettered ? 'dead_letter' : 'retry';
     const retryDelay = Math.min(60 * 60_000, 5_000 * 2 ** Math.max(0, row.attemptCount - 1));
     const message = error instanceof Error ? error.message : String(error);
     sqlite
@@ -187,7 +203,7 @@ export class InboxService {
              lease_expires_at = NULL, updated_at = ?
          WHERE id = ? AND state = 'processing' AND lease_owner = ?`,
       )
-      .run(state, message.slice(0, 2_000), now + retryDelay, now, id, owner);
-    return state;
+      .run(persistedState, message.slice(0, 2_000), now + retryDelay, now, id, owner);
+    return outcome;
   }
 }

@@ -24,16 +24,23 @@ import type { Database } from 'bun:sqlite';
 import { withImmediateTransaction } from './runtime';
 import { getDefaultDatabase } from './index';
 import { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WHEN } from './migrations';
+import {
+  parseCanonicalRoomKey,
+  toRoomKey as toRoomKeyFormat,
+} from '../core/roomKeyFormat';
+import type { RoomKeyParts } from '../core/roomKeyFormat';
 
-/** Canonical prefix of every room key. */
+/**
+ * Canonical prefix of every room key.
+ *
+ * The format is owned by `src/core/roomKeyFormat.ts`; this module adds the
+ * database lane's validation on top of it.
+ */
 export const ROOM_KEY_PREFIX = 'room:';
 
 export { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WHEN };
 
-export interface RoomKeyParts {
-  platform: string;
-  remoteRoomId: string;
-}
+export type { RoomKeyParts };
 
 export interface RoomKeyStats {
   /** Total registry rows. */
@@ -119,11 +126,15 @@ function hasColumn(sqlite: Database, table: string, column: string): boolean {
 /**
  * Build the canonical key for a platform/remote-id pair. Pure, deterministic,
  * and safe to call on hot paths or before the database is ready.
+ *
+ * The *format* comes from `src/core/roomKeyFormat.ts`; the validation below is
+ * the database lane's own policy and is deliberately stricter than the shared
+ * format helper.
  */
 export function toRoomKey(platform: string, remoteRoomId: string): string {
   const normalizedPlatform = trimValue(platform, 'platform');
   const normalizedRemoteRoomId = trimValue(remoteRoomId, 'remoteRoomId');
-  return `${ROOM_KEY_PREFIX}${normalizedPlatform}:${normalizedRemoteRoomId}`;
+  return toRoomKeyFormat(normalizedPlatform, normalizedRemoteRoomId);
 }
 
 /**
@@ -131,16 +142,7 @@ export function toRoomKey(platform: string, remoteRoomId: string): string {
  * Returns `null` for anything that is not a well-formed canonical key.
  */
 export function parseRoomKey(roomKey: string | null | undefined): RoomKeyParts | null {
-  if (typeof roomKey !== 'string') return null;
-  const value = roomKey.trim();
-  if (!value.startsWith(ROOM_KEY_PREFIX)) return null;
-  const body = value.slice(ROOM_KEY_PREFIX.length);
-  const separator = body.indexOf(':');
-  if (separator <= 0) return null;
-  const platform = body.slice(0, separator);
-  const remoteRoomId = body.slice(separator + 1);
-  if (platform.length === 0 || remoteRoomId.length === 0) return null;
-  return { platform, remoteRoomId };
+  return parseCanonicalRoomKey(roomKey);
 }
 
 /** True when `roomKey` is exactly the canonical key for this platform/remote pair. */

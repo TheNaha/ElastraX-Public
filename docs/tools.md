@@ -50,7 +50,7 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 | **Language** | `/language` | Switches reply language (`en`/`id`) per chat. |
 | **Delete Message** | `/del` | Deletes a quoted bot message (WhatsApp) or the quoted message (Discord). |
 | **Menfess** | `/menfess` | Anonymous confession relay to configured target chats. |
-| **Game Search** | — | Searches trusted repack sites for PC games (always loaded). |
-| **Software Search** | — | Searches trusted sites for desktop software (always loaded). |
+| **Game Search** | — | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
+| **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
 | **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/`. |
 | **Owner Admin** | `/broadcast`, `/leave` | Owner-only: broadcast to all chats / leave a group. |

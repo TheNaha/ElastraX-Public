@@ -156,7 +156,14 @@ describe("Config Validation", () => {
 
   test("should throw if WEBHOOK_PORT is outside the valid range", () => {
     expect(() => validateEnv({ ...baseValidEnv, WEBHOOK_PORT: "70000" })).toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("WEBHOOK_PORT must be an integer between 1 and 65535");
+    // Port 0 is legal: it binds an ephemeral port, which `parseWebhookConfig`
+    // already accepted and which the project's own CI webhook smoke test uses.
+    // This validator was the only thing rejecting it.
+    expect(mockLoggerError).toHaveBeenCalledWith("WEBHOOK_PORT must be an integer between 0 and 65535");
+  });
+
+  test("accepts WEBHOOK_PORT=0 for an ephemeral port", () => {
+    expect(() => validateEnv({ ...baseValidEnv, WEBHOOK_PORT: "0" })).not.toThrow();
   });
 
   test("should throw if WEBHOOK_MAX_BODY_BYTES is not a positive integer", () => {

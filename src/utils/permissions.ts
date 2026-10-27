@@ -93,10 +93,9 @@ export function registerNativeAdminResolver(platform: PlatformName, resolver: Na
 export const setNativeAdminResolver = registerNativeAdminResolver;
 
 export function invalidateNativeAdminCache(chatId?: string, platform?: PlatformName): void {
-  if (platform === undefined && (chatId === 'whatsapp' || chatId === 'discord')) {
-    platform = chatId;
-    chatId = undefined;
-  }
+  // `chatId` and `platform` are distinct parameters; a chat id is never
+  // reinterpreted as a platform name, so a room whose id happens to be a
+  // platform word cannot wipe the wrong cache scope.
   const platformKey = platform ? String(platform).trim().toLowerCase() : undefined;
   if (platformKey && chatId) {
     groupMetadataCache.delete(`${platformKey}:${chatId}`);

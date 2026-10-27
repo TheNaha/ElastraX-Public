@@ -290,10 +290,16 @@ export class WebhookRateLimiter {
     this.prune(now);
     const uniqueKeys = [...new Set(keys)];
 
-    for (const key of uniqueKeys) {
-      if (!this.buckets.has(key) && this.buckets.size >= this.maxSources) {
-        return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(this.windowMs / 1000)) };
-      }
+    // Only an *unseen* key can be refused for capacity. Refusing a request
+    // because some other, already-tracked key would have to be added let a single
+    // authenticated client lock every other source out: `x-webhook-source` is
+    // caller-supplied, so varying it on each request exhausted `maxSources` and
+    // then every legitimate sender's request was rejected with a retry hint for a
+    // bucket that was not itself full. A known key is always rate-limited on its
+    // own tokens.
+    const unseen = uniqueKeys.filter(key => !this.buckets.has(key));
+    if (unseen.length > 0 && this.buckets.size + unseen.length > this.maxSources) {
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(this.windowMs / 1000)) };
     }
 
     let retryAfterMs = 0;
@@ -366,7 +372,19 @@ export class WebhookReplayCache {
     this.pending.clear();
   }
 
+  /**
+   * Drop expired entries.
+   *
+   * `reserve()` calls this on every request, so the scan has to stay off the hot
+   * path: the rate limiter next door guards its identical loop with
+   * `if (this.buckets.size < this.maxSources) return;`, and this one did not, so
+   * every webhook request walked the whole cache (measured at 257 µs/request once
+   * a 10 000-entry default cache was full — linear in cache size, on the one path
+   * that must be cheap). Eviction also only *needs* to happen at capacity, since
+   * an expired entry is otherwise treated as absent by `reserve()`.
+   */
   private prune(now: number): void {
+    if (this.completed.size < this.maxEntries) return;
     for (const [key, expiresAt] of this.completed) {
       if (expiresAt <= now) this.completed.delete(key);
     }

@@ -45,7 +45,8 @@ export type OcrConfig = {
 };
 
 export function readOcrConfig(env: NodeJS.ProcessEnv = process.env): OcrConfig {
-  const tier = (readIntegerEnv(env.KB_OCR_TIER, 0, { min: 0, max: 2 }) === 0 ? 'standard' : 'fast') as ModelTier;
+  const tierValue = readIntegerEnv(env.KB_OCR_TIER, 0, { min: 0, max: 2 });
+  const tier = (tierValue === 0 ? 'standard' : tierValue === 2 ? 'powerful' : 'fast') as ModelTier;
   return {
     // On by default: indexing a document is already an explicit request to spend
     // tokens, and refusing images outright left the feature half-built.
@@ -109,7 +110,11 @@ export async function transcribeImage(
     config.maxOutputTokens,
     config.tier,
   );
-  const text = cleanTranscription(typeof response === 'string' ? response : String(response.content ?? ''));
+  const rawContent = typeof response === 'string' ? response : response.content;
+  const contentText = Array.isArray(rawContent)
+    ? rawContent.map(part => (typeof part === 'string' ? part : (part?.text ?? ''))).join('')
+    : String(rawContent ?? '');
+  const text = cleanTranscription(contentText);
   log.debug({ bytes: buffer.byteLength, mimeType, chars: text.length }, 'OCR transcription complete');
   return { text, empty: text.length === 0 };
 }

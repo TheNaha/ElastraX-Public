@@ -31,6 +31,15 @@ export interface ConversationSummaryRequest {
   entries: readonly SummaryEntry[];
   keepCount: number;
   callLLM: (messages: AIChatMessage[]) => Promise<string>;
+  /**
+   * Smallest batch worth paying a model call for. Entries below the threshold
+   * stay in the active window instead of being summarized, and are carried into a
+   * later batch once they accumulate. Defaults to 1, i.e. "summarise whenever
+   * anything fell out of the window", which is correct for a caller with a
+   * one-shot entry list; the agent passes a real threshold because it re-feeds a
+   * rolling window on every turn.
+   */
+  minBatch?: number;
 }
 
 export interface ConversationSummaryRun extends SummaryResult {
@@ -75,6 +84,9 @@ export function buildSummaryMessages(
   ];
 }
 
+/** Default batch threshold: summarize any overflow, preserving the original contract. */
+export const DEFAULT_MIN_BATCH = 1;
+
 function validateKeepCount(value: number): number {
   if (!Number.isFinite(value)) return 1;
   return Math.max(1, Math.floor(value));
@@ -107,10 +119,27 @@ export class ConversationSummaryService {
 
   async summarize(request: ConversationSummaryRequest): Promise<ConversationSummaryRun> {
     const keepCount = validateKeepCount(request.keepCount);
+    const minBatch = Math.max(1, Math.floor(Number.isFinite(request.minBatch) ? request.minBatch! : DEFAULT_MIN_BATCH));
     const previous = await this.store.load(request.scope);
     const entries = entriesAfterWatermark(request.entries, previous);
     const activeEntries = entries.slice(-keepCount);
-    const summarizedEntries = entries.slice(0, Math.max(0, entries.length - keepCount));
+    let summarizedEntries = entries.slice(0, Math.max(0, entries.length - keepCount));
+
+    // Batch threshold.
+    //
+    // The agent re-fetches a rolling history window on every turn, so after the
+    // first summary each turn contributes only the handful of messages that
+    // fell out of the window. Folding that handful immediately meant a model call
+    // on *every* inbound message in every summarizing room — roughly double the
+    // LLM spend, and each call re-carried the entire rolling summary as its
+    // prompt prefix, so the cost per call grew with the conversation.
+    //
+    // Below the threshold the entries stay in the active window (still capped at
+    // `keepCount`, so the context limit holds) and are picked up by a later,
+    // larger batch. The watermark is not advanced, so nothing is lost.
+    if (summarizedEntries.length > 0 && summarizedEntries.length < minBatch) {
+      summarizedEntries = [];
+    }
 
     if (summarizedEntries.length === 0) {
       return {

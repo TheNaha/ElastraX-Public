@@ -58,22 +58,25 @@ function isConfigKey(value: string | undefined): value is ConfigKey {
 }
 
 function parseBooleanValue(value: string): boolean {
-  const normalized = value.toLowerCase();
+  const normalized = value.trim().toLowerCase();
   if (normalized === 'true' || normalized === '1') return true;
   if (normalized === 'false' || normalized === '0') return false;
   throw new Error('Must be true or false.');
 }
 
 function parseIntegerValue(value: string, min: number, max: number): number {
-  const parsed = parseInt(value, 10);
-  if (Number.isNaN(parsed)) throw new Error('Must be an integer.');
+  const trimmed = value.trim();
+  if (!/^[+-]?\d+$/.test(trimmed)) throw new Error('Must be an integer.');
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed)) throw new Error('Must be an integer.');
   if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
   return parsed;
 }
 
 function parseFloatValue(value: string, min: number, max: number): number {
-  const parsed = parseFloat(value);
-  if (Number.isNaN(parsed)) throw new Error('Must be a number.');
+  const trimmed = value.trim();
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) throw new Error('Must be a number.');
   if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
   return parsed;
 }

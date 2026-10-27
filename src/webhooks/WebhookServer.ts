@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { healthMetrics } from '../utils/HealthMetrics';
+import { isSupportedPlatform } from '../core/platforms';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../utils/NotificationSubscriptionService';
 import { withCancellableTimeout, withTimeout } from '../utils/withTimeout.js';
@@ -116,19 +117,29 @@ export class WebhookServer {
       return deliver(platform, this.senders.get(platform)!);
     }
 
-    if (roomId.includes('@g.us') || roomId.includes('@s.whatsapp.net')) {
-      const whatsapp = this.senders.get('whatsapp');
-      if (whatsapp) return deliver('whatsapp', whatsapp);
+    // A destination with no explicit platform is resolved against the senders
+    // that actually exist, and only when that is unambiguous.
+    //
+    // The previous fallback always preferred WhatsApp when any WhatsApp sender
+    // existed and otherwise took the *first* registered sender, so a destination
+    // whose platform could not be determined was delivered through whichever
+    // provider happened to be registered first — a fabricated routing decision.
+    // `AppRuntime.inferWebhookPlatform` had already been changed to refuse the
+    // same guess, leaving the two halves of one subsystem disagreeing. With a
+    // single registered sender the answer is unambiguous and is still served; with
+    // several, the caller must name the platform, and the destination is reported
+    // as failed rather than sent somewhere it was never addressed to.
+    if (!platform && this.senders.size === 1) {
+      const [onlyName, onlySend] = [...this.senders.entries()][0]!;
+      return deliver(onlyName, onlySend);
     }
 
-    if (/^\d+$/.test(roomId)) {
-      const discord = this.senders.get('discord');
-      if (discord) return deliver('discord', discord);
-    }
-
-    const fallbackName = this.senders.has('whatsapp') ? 'whatsapp' : this.senders.keys().next().value;
-    if (fallbackName) return deliver(fallbackName, this.senders.get(fallbackName)!);
-    throw new Error(`No sender available for room_id: ${roomId}`);
+    const available = [...this.senders.keys()].join(', ') || 'none';
+    throw new Error(
+      `No sender for room_id ${roomId}`
+      + (platform ? ` on platform "${platform}"` : ' without an explicit platform')
+      + ` (registered senders: ${available})`,
+    );
   }
 
   private isCompatibilityActive(window: SecretCompatibilityWindow, now: number): boolean {
@@ -391,7 +402,10 @@ export class WebhookServer {
       ? textBody
       : buildWebhookMessage(Object.fromEntries(req.headers.entries()), sanitizeWebhookBody(body));
     const requestedPlatform = route === 'generic' ? asNonEmptyString(body.platform)?.toLowerCase() : null;
-    if (requestedPlatform && requestedPlatform !== 'discord' && requestedPlatform !== 'whatsapp') {
+    // The allow-list used to be a hard-coded `!== 'discord' && !== 'whatsapp'`,
+    // so a destination that explicitly named Telegram was rejected with a 400
+    // even though the platform ships and works.
+    if (requestedPlatform && !isSupportedPlatform(requestedPlatform)) {
       throw new WebhookRequestError(400, 'Invalid platform');
     }
 
@@ -407,20 +421,46 @@ export class WebhookServer {
 
   private async handleReadiness(): Promise<Response> {
     const config = this.requireConfig();
+    const payload = { status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG };
     if (this.readinessChecks.size === 0) {
-      return jsonResponse({ status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG });
+      return jsonResponse(payload);
     }
 
     try {
       const checks = [...this.readinessChecks].map(check => Promise.resolve().then(check));
-      const result = await withTimeout(
-        Promise.all(checks).then(values => values.every(Boolean)),
+      const results = await withTimeout(
+        Promise.all(checks),
         config.readinessTimeoutMs,
         'webhook:readiness',
       );
-      return result
-        ? jsonResponse({ status: 'ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG })
-        : jsonResponse({ status: 'not_ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG }, 503);
+      const normalised = results.map(value => {
+        if (typeof value === 'boolean') return { ready: value };
+        if (value && typeof value === 'object') {
+          const result = value as { ready?: boolean; details?: Record<string, unknown> };
+          return { ...result, ready: result.ready !== false };
+        }
+        // A probe that returns nothing (or a non-object) did not report a
+        // failure, so it does not make readiness false.
+        return { ready: value !== false && value !== null && value !== undefined };
+      });
+      const ready = normalised.every(result => result.ready);
+      const details: Record<string, unknown> = {};
+      for (const result of normalised) {
+        for (const [key, value] of Object.entries(result.details ?? {})) details[key] = value;
+      }
+      // `checks` is only added when a probe actually reported something. A bare
+      // `false` from a probe must not change the response shape at all.
+      return ready
+        ? jsonResponse({ ...payload, ...(Object.keys(details).length > 0 ? { checks: details } : {}) })
+        : jsonResponse(
+          {
+            status: 'not_ready',
+            version: APP_VERSION,
+            releaseTag: APP_RELEASE_TAG,
+            ...(Object.keys(details).length > 0 ? { checks: details } : {}),
+          },
+          503,
+        );
     } catch {
       return jsonResponse({ status: 'not_ready', version: APP_VERSION, releaseTag: APP_RELEASE_TAG }, 503);
     }

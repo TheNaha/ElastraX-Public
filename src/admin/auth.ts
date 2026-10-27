@@ -19,7 +19,7 @@
  *  - login attempts are rate limited per IP
  */
 import { createHmac, randomBytes, timingSafeEqual } from 'crypto';
-import { readStringEnv } from '../config/runtime';
+import { isUsableSharedSecret, readStringEnv } from '../config/runtime';
 
 export const ADMIN_SESSION_COOKIE = 'elastrax_admin';
 export const ADMIN_CSRF_HEADER = 'x-admin-csrf';
@@ -44,22 +44,24 @@ export function readAdminAuthConfig(env: NodeJS.ProcessEnv = process.env): Admin
 }
 
 export function isAdminEnabled(config: AdminAuthConfig): boolean {
-  return config.secret.length >= 16;
+  return isUsableSharedSecret(config.secret);
 }
 
 function sign(secret: string, value: string): string {
   return createHmac('sha256', secret).update(value).digest('base64url');
 }
 
-/** Constant-time compare that does not leak length through early exit. */
+/**
+ * Constant-time comparison that does not leak length through early exit.
+ *
+ * Both sides are hashed first, so the comparison always runs over two
+ * fixed-size digests. Comparing the raw buffers leaked the secret's length
+ * through the early return on a length mismatch — exactly the signal the
+ * previous comment claimed to prevent.
+ */
 function safeEqual(a: string, b: string): boolean {
-  const left = Buffer.from(a);
-  const right = Buffer.from(b);
-  if (left.length !== right.length) {
-    // Still burn a comparison so timing does not distinguish the two cases.
-    timingSafeEqual(left, left);
-    return false;
-  }
+  const left = createHmac('sha256', 'elastrax-admin-compare').update(a).digest();
+  const right = createHmac('sha256', 'elastrax-admin-compare').update(b).digest();
   return timingSafeEqual(left, right);
 }
 
@@ -77,6 +79,17 @@ export class AdminAuth {
    */
   get isEnabled(): boolean {
     return isAdminEnabled(this.config);
+  }
+
+  /**
+   * Whether the `Secure` cookie attribute is on by default.
+   *
+   * The router combines this with the transport of the individual request, so
+   * a loopback deployment over plain HTTP is not locked out while a remote
+   * deployment keeps the attribute.
+   */
+  get cookieSecureByDefault(): boolean {
+    return this.config.cookieSecure;
   }
 
   /** The CSRF token to hand out alongside a freshly minted session cookie. */
@@ -140,7 +153,17 @@ export class AdminAuth {
     if (separator > 0) this.sessions.delete(cookieValue.slice(0, separator));
   }
 
-  buildCookie(cookieValue: string): string {
+  /**
+   * Build the session cookie.
+   *
+   * `secure` lets the caller downgrade the `Secure` attribute for a request
+   * that arrived over plain HTTP on loopback. A browser silently refuses to
+   * store a `Secure` cookie over plain HTTP, so a loopback-only deployment
+   * could never keep a session — the operator would sign in, the cookie would
+   * be dropped, and every subsequent request would come back 401. Remote
+   * deployments keep the attribute.
+   */
+  buildCookie(cookieValue: string, secure: boolean = this.config.cookieSecure): string {
     // The session TTL is a constant, so the cookie's Max-Age is that TTL. It is
     // deliberately not derived from the current time: doing so produced Max-Age=0
     // and a browser would drop the session on the very next request. A live
@@ -154,13 +177,44 @@ export class AdminAuth {
       'SameSite=Strict',
       `Max-Age=${maxAge}`,
     ];
-    if (this.config.cookieSecure) parts.push('Secure');
+    if (secure) parts.push('Secure');
     return parts.join('; ');
   }
 
   clearCookie(): string {
     return `${ADMIN_SESSION_COOKIE}=; Path=/admin; HttpOnly; SameSite=Strict; Max-Age=0`;
   }
+}
+
+/** Whether a `Host` value names the local machine. */
+export function isLoopbackHost(host: string): boolean {
+  const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  return name === 'localhost' || name === '127.0.0.1' || name === '::1';
+}
+
+/**
+ * Whether the session cookie should carry the `Secure` attribute.
+ *
+ * A browser refuses to store a `Secure` cookie that arrives over plain HTTP,
+ * so the attribute can only be set when the request really is secure (direct
+ * TLS, or a proxy that says so) — or when the operator explicitly opted out
+ * with `ADMIN_COOKIE_INSECURE`.
+ *
+ * The one exception is loopback over plain HTTP: that is the standard local
+ * deployment, and demanding TLS there locked the operator out of the
+ * dashboard entirely.
+ */
+export function shouldUseSecureCookie(
+  req: Request,
+  url: URL,
+  secureByDefault: boolean,
+): boolean {
+  if (!secureByDefault) return false;
+  const forwarded = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
+  if (forwarded === 'https') return true;
+  if (url.protocol === 'https:') return true;
+  const host = (req.headers.get('host') ?? url.host).split(':')[0] ?? '';
+  return !isLoopbackHost(host);
 }
 
 /** Per-IP token bucket for login attempts. */
@@ -201,14 +255,18 @@ export class LoginThrottle {
  * The session cookie is `SameSite=Strict`, which already blocks most cross-site
  * delivery, but an explicit origin check means a browser that ignores the cookie
  * policy still cannot drive a mutation.
+ *
+ * The comparison is case-insensitive because a host is case-insensitive, and
+ * `new URL(...).host` lower-cases while a raw `Host` header may not.
  */
 export function isSameOrigin(req: Request, expectedHost: string | null): boolean {
   const origin = req.headers.get('origin');
   // A missing Origin is a non-browser client (curl, the test suite) which cannot
   // be a CSRF vector; the cookie+CSRF pair still applies.
   if (!origin) return true;
+  if (!expectedHost) return false;
   try {
-    return new URL(origin).host === expectedHost;
+    return new URL(origin).host.toLowerCase() === expectedHost.toLowerCase();
   } catch {
     return false;
   }

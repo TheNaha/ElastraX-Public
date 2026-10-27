@@ -112,6 +112,7 @@ Exact routes, limits, replay behavior, and the optional durable-outbox `202` con
 - `GET /health` and `GET /live` return minimal liveness only.
 - `GET /ready` is a compatibility readiness hook.
 - `GET /metrics` is hidden unless `METRICS_AUTH_TOKEN` is configured and protected with a Bearer token.
+- `/admin` is a read-mostly operator dashboard on the same port. It needs `METRICS_AUTH_TOKEN` (24+ bytes) and answers `404` on every path without it. A reverse proxy must forward `/admin` as well as `/webhook` — see [docs/deployment.md](docs/deployment.md).
 - Native startup binds loopback by default. Never publish the webhook port directly to the Internet.
 - Unknown paths return `404`; wrong methods and non-JSON webhook posts fail explicitly.
 
