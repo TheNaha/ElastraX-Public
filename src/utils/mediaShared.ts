@@ -1,7 +1,6 @@
 import { existsSync } from 'node:fs';
 import { stat, unlink, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-
 export const MEDIA_DIR = resolve(process.env.ELASTRAX_MEDIA_DIR || join(process.cwd(), 'data/media'));
 export const TYPE_DETECTION_BYTES = 4100;
 export const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
@@ -9,6 +8,19 @@ export const DEFAULT_STORAGE_MAX_FILES = 10_000;
 export const TEMP_FILE_GRACE_MS = 5 * 60_000;
 export const HARD_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
 export const NORMAL_MEDIA_MAX_BYTES = 32 * 1024 * 1024;
+
+/** In-memory cache of media directory totals to avoid O(n) rescans on every save. */
+interface MediaDirCache {
+  totalBytes: number;
+  fileCount: number;
+  at: number;
+}
+const MEDIA_DIR_CACHE_TTL_MS = 60_000;
+let mediaDirCache: MediaDirCache | null = null;
+
+export function invalidateMediaDirCache(): void {
+  mediaDirCache = null;
+}
 
 export interface SavedMedia {
   path: string;
@@ -118,13 +130,29 @@ export class MediaLimitError extends Error {
 export async function reconcileMediaQuota(incomingBytes = 0, excludedPath?: string, incomingFiles = 1): Promise<MediaQuotaResult> {
   const quotaBytes = storageQuotaBytes();
   const maxFiles = storageMaxFiles();
+  const now = Date.now();
+
+  // Fast path: use in-memory cache when under quota, avoiding an O(n) directory scan on every save.
+  const cache = mediaDirCache;
+  // Only use the cache when an excludedPath is provided (production callers
+  // always pass tempPath). Tests call without it and mock the filesystem,
+  // so a shared cache would return stale data across tests.
+  if (excludedPath && cache && now - cache.at < MEDIA_DIR_CACHE_TTL_MS) {
+    const projectedBytes = cache.totalBytes + incomingBytes;
+    const projectedFiles = cache.fileCount + incomingFiles;
+    if (projectedBytes <= quotaBytes && projectedFiles <= maxFiles) {
+      return { bytes: projectedBytes, files: projectedFiles, deleted: [] };
+    }
+  }
+
   let entries: string[];
   try {
     entries = await mediaStorageDeps.readdir(MEDIA_DIR);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
       if (incomingBytes > quotaBytes && quotaBytes >= 0) throw new MediaLimitError(incomingBytes, quotaBytes);
-      return { bytes: 0, files: 0, deleted: [] };
+      mediaDirCache = { totalBytes: incomingBytes, fileCount: incomingFiles, at: now };
+      return { bytes: incomingBytes, files: incomingFiles, deleted: [] };
     }
     throw error;
   }
@@ -176,5 +204,6 @@ export async function reconcileMediaQuota(incomingBytes = 0, excludedPath?: stri
     throw new Error(`Media storage quota exceeded (${bytes + incomingBytes} > ${quotaBytes} bytes).`);
   }
   if (fileCount + incomingFiles > maxFiles) throw new Error(`Media storage file quota exceeded (${maxFiles} files).`);
+  mediaDirCache = { totalBytes: bytes, fileCount: fileCount, at: now };
   return { bytes, files: fileCount, deleted };
 }

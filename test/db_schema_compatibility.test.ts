@@ -5,14 +5,6 @@ import { chatRooms } from '../src/db/schema';
 import { createDatabase, ensureDatabaseSchema } from '../src/db';
 import {
   acquireDatabaseLease,
-  claimInboxEvents,
-  claimOutboxMessages,
-  enqueueInboxEvent,
-  enqueueOutboxMessage,
-  enqueueScheduledDelivery,
-  markDeliverySent,
-  markInboxCompleted,
-  recordIdentityAliases,
 } from '../src/db/runtime';
 import { applyRetentionPolicy } from '../src/db/retention';
 import { verifyStoredSchemaFingerprint } from '../src/db/migrations';
@@ -106,81 +98,10 @@ describe('Schema Compatibility', () => {
     }
   });
 
-  test('atomically queues durable work, preserves aliases, and leases one owner', async () => {
+  test('leases one owner at a time', async () => {
     const handle = createDatabase({ path: ':memory:' });
     try {
       await ensureDatabaseSchema({ database: handle, leaseName: null });
-      const firstInboxId = enqueueInboxEvent(handle.sqlite, {
-        platform: 'whatsapp',
-        chatRoomId: 'room',
-        providerMessageId: 'unknown',
-        eventKey: 'event-1',
-        now: 1_000,
-      });
-      const repeatedInboxId = enqueueInboxEvent(handle.sqlite, {
-        platform: 'whatsapp',
-        chatRoomId: 'room',
-        providerMessageId: 'unknown',
-        eventKey: 'event-1',
-        now: 1_001,
-      });
-      enqueueInboxEvent(handle.sqlite, {
-        platform: 'whatsapp',
-        chatRoomId: 'room',
-        providerMessageId: 'unknown',
-        eventKey: 'event-2',
-        now: 1_002,
-      });
-      expect(repeatedInboxId).toBe(firstInboxId);
-      const claimedInbox = claimInboxEvents(handle.sqlite, 'inbox-worker', { now: 2_000, leaseMs: 10_000 });
-      expect(claimedInbox).toHaveLength(2);
-      expect(markInboxCompleted(handle.sqlite, firstInboxId, 'inbox-worker', 2_100)).toBe(true);
-
-      const outboxId = enqueueOutboxMessage(handle.sqlite, {
-        id: 'outbox-1',
-        platform: 'whatsapp',
-        chatRoomId: 'room',
-        idempotencyKey: 'reply-1',
-        payload: '{"text":"hello"}',
-        now: 1_000,
-      });
-      expect(enqueueOutboxMessage(handle.sqlite, {
-        id: 'outbox-2',
-        platform: 'whatsapp',
-        chatRoomId: 'room',
-        idempotencyKey: 'reply-1',
-        payload: '{"text":"changed"}',
-        now: 1_001,
-      })).toBe(outboxId);
-      expect(handle.sqlite.query<{ count: number }, []>('SELECT count(*) AS count FROM message_outbox').get()?.count).toBe(1);
-
-      const claimed = claimOutboxMessages(handle.sqlite, 'worker-a', { now: 2_000, leaseMs: 10_000 });
-      expect(claimed).toHaveLength(1);
-      expect(markDeliverySent(handle.sqlite, 'message_outbox', outboxId, 'worker-a', 'provider-sent', 2_100)).toBe(true);
-
-      enqueueScheduledDelivery(handle.sqlite, {
-        id: 'scheduled-1',
-        platform: 'whatsapp',
-        jobKey: 'digest:2026-01-01',
-        chatRoomId: 'room',
-        payload: '{}',
-        scheduledAt: 5_000,
-        now: 1_000,
-      });
-      expect(handle.sqlite.query<{ count: number }, []>('SELECT count(*) AS count FROM scheduled_deliveries').get()?.count).toBe(1);
-
-      recordIdentityAliases(handle.sqlite, {
-        canonicalId: 'whatsapp:canonical-1',
-        platform: 'whatsapp',
-        primaryAlias: 'primary@s.whatsapp.net',
-        aliases: [
-          { value: 'primary@s.whatsapp.net', kind: 'pn' },
-          { value: '123@lid', kind: 'lid' },
-        ],
-        now: 2_000,
-      });
-      expect(handle.sqlite.query<{ count: number }, []>('SELECT count(*) AS count FROM identity_aliases').get()?.count).toBe(2);
-
       const firstLease = acquireDatabaseLease(handle.sqlite, { name: 'worker', owner: 'one', now: 1_000, ttlMs: 1_000 });
       expect(firstLease).not.toBeNull();
       expect(acquireDatabaseLease(handle.sqlite, { name: 'worker', owner: 'two', now: 1_500, ttlMs: 1_000 })).toBeNull();

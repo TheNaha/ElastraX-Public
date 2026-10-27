@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite, withImmediateTransaction } from '../db';
+import { exponentialBackoff } from '../utils/backoff';
 import { hasRoomKeyColumn, remoteRoomIdFromKey, resolveCanonicalRoomKey } from './roomKeys';
 
 const LEASE_MS = 120_000;
@@ -325,7 +326,7 @@ export class OutboxService {
     const outcome: 'retry' | 'dead_letter' = row.attemptCount >= MAX_ATTEMPTS ? 'dead_letter' : 'retry';
     // The table only accepts 'failed'/'dead_letter'; 'retry' is the caller-facing name.
     const persistedState = outcome === 'retry' ? 'failed' : 'dead_letter';
-    const delay = Math.min(60 * 60_000, 5_000 * 2 ** Math.max(0, row.attemptCount - 1));
+    const delay = exponentialBackoff(row.attemptCount, { baseMs: 5_000 });
     const message = error instanceof Error ? error.message : String(error);
     sqlite
       .query<never, [string, string, number, number, string, string]>(

@@ -17,6 +17,8 @@ import { readMediaBuffer, saveMediaResponse } from '../utils/MediaStorage';
 import { MessageContext, ReplyOptions, type MediaAttachmentDescriptor, type RawProviderMessage } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { AuthService } from '../utils/AuthService';
+import { IdentityService } from '../utils/IdentityService';
+import { chunkTextDiscord } from '../utils/textChunking';
 
 export const DISCORD_TEXT_LIMIT = 2000;
 
@@ -55,23 +57,7 @@ export const discordProviderDeps = {
 };
 
 export function chunkDiscordText(text: string, limit = DISCORD_TEXT_LIMIT): string[] {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('Discord chunk limit must be positive.');
-  const characters = Array.from(text);
-  if (characters.length === 0) return [''];
-  const chunks: string[] = [];
-  for (let offset = 0; offset < characters.length; offset += limit) {
-    let end = Math.min(offset + limit, characters.length);
-    if (end < characters.length) {
-      const searchStart = Math.max(offset + Math.floor(limit / 2), offset + 1);
-      const boundary = characters.slice(searchStart, end);
-      const lastBreak = boundary.lastIndexOf('\n');
-      const lastSpace = boundary.lastIndexOf(' ');
-      const breakAt = Math.max(lastBreak, lastSpace);
-      if (breakAt >= 0) end = searchStart + breakAt + 1;
-    }
-    chunks.push(characters.slice(offset, end).join(''));
-  }
-  return chunks;
+  return chunkTextDiscord(text, limit);
 }
 
 export class DiscordProvider implements BotProvider {
@@ -154,6 +140,19 @@ export class DiscordProvider implements BotProvider {
     }
   }
 
+  private async seedOwner(generation: number): Promise<void> {
+    const ownerId = AuthService.resolveOwnerId('discord')?.trim();
+    if (!ownerId) return;
+    try {
+      await IdentityService.upsertIdentity(ownerId, ownerId, undefined, 'discord');
+      if (generation !== this.generation) return;
+      await AuthService.setRole(ownerId, 'owner', 'global', 'discord', 'system:startup');
+      logger.info({ ownerId }, '[Discord] Owner role seeded');
+    } catch (error) {
+      logger.error({ err: error, ownerId }, '[Discord] Failed to seed owner role');
+    }
+  }
+
   private async startForGeneration(token: string, generation: number): Promise<void> {
     const client = discordProviderDeps.createClient();
     this.client = client;
@@ -167,6 +166,7 @@ export class DiscordProvider implements BotProvider {
       this.providerStatus = 'running';
       this.providerError = null;
       logger.info(`[Discord] Logged in as ${client.user?.tag ?? 'unknown'}.`);
+      void this.seedOwner(generation);
     };
     // 'clientReady' is the current name; 'ready' is still emitted by the pinned
     // version but is deprecated and removed in v15.
@@ -460,7 +460,11 @@ export class DiscordProvider implements BotProvider {
             }
             return;
           }
-          const files = Array.from(msg.attachments.values(), attachment => attachment.url);
+          const files = await Promise.all(Array.from(msg.attachments.values(), async attachment => {
+            const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error' });
+            const buffer = Buffer.from(await response.arrayBuffer());
+            return new AttachmentBuilder(buffer, { name: attachment.name });
+          }));
           await targetChannel.send({
             content: truncateDiscordText(msg.content || ''),
             ...(files.length > 0 ? { files } : {}),

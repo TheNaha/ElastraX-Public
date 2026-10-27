@@ -3,6 +3,7 @@ import { chatRooms, reminders } from '../db/schema';
 import { asc, eq, lte, and, or, isNull } from 'drizzle-orm';
 import { logger } from './logger';
 import { t } from './i18n';
+import { exponentialBackoff } from './backoff';
 import { withCancellableTimeout } from './withTimeout.js';
 import {
   canonicalRoomKeyForStoredRoom,
@@ -425,7 +426,7 @@ export class Scheduler {
         } catch (err) {
           const attempt = (retryAttempts.get(reminder.id) ?? 0) + 1;
           retryAttempts.set(reminder.id, attempt);
-          const backoffMs = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempt - 1, 7));
+          const backoffMs = exponentialBackoff(attempt, { baseMs: 30_000, maxExponent: 7 });
           // A recurring reminder that keeps failing must not be retried on
           // every 30 s tick forever. The backoff was computed and then thrown
           // away: `preserveSchedule` left `claimedAt` null, so the row was

@@ -34,6 +34,7 @@ import { messages } from '../db/schema';
 import { toRoomKey } from '../core/roomKeyFormat';
 import { IdentityService } from '../utils/IdentityService';
 import { AuthService } from '../utils/AuthService';
+import { chunkTextFixed } from '../utils/textChunking';
 
 type BaileysSocket = ReturnType<typeof makeWASocket>;
 type SocketLogger = Parameters<typeof makeWASocket>[0]['logger'];
@@ -76,14 +77,7 @@ type MediaSource = {
 export const WHATSAPP_TEXT_LIMIT = 65_536;
 
 export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('WhatsApp chunk limit must be positive.');
-  const characters = Array.from(text);
-  if (characters.length === 0) return [''];
-  const chunks: string[] = [];
-  for (let offset = 0; offset < characters.length; offset += limit) {
-    chunks.push(characters.slice(offset, offset + limit).join(''));
-  }
-  return chunks;
+  return chunkTextFixed(text, limit);
 }
 
 export const whatsAppProviderDeps = {
@@ -186,7 +180,7 @@ export class WhatsAppProvider implements BotProvider {
    * bot did not send are dropped by the recorder itself, so this only has to
    * unwrap the platform shape.
    */
-  private collectReactionFeedback(platform: string, entries: ReadonlyArray<WaReactionItem>): void {
+  private collectReactionFeedback(platform: string, entries: ReadonlyArray<WaReactionItem>, removed: boolean): void {
     for (const entry of entries) {
       const key = entry.key;
       if (!key?.id) continue;
@@ -196,7 +190,7 @@ export class WhatsAppProvider implements BotProvider {
           chatRoomId: key.remoteJid ?? '',
           messageId: key.id,
           reaction: typeof entry.reaction === 'string' ? entry.reaction : (entry.reaction?.text ?? ''),
-          removed: false,
+          removed,
         });
       } catch (error) {
         logger.debug({ err: error }, '[WhatsApp] Failed to record reaction feedback');
@@ -344,15 +338,17 @@ export class WhatsAppProvider implements BotProvider {
     // recently, so a reaction to someone else's message is never attributed.
     socket.ev.on('messages.reaction', (entries: ReadonlyArray<WaReactionItem>) => {
       if (!this.isCurrent(socket, generation) || !Array.isArray(entries)) return;
-      this.collectReactionFeedback('whatsapp', entries);
+      this.collectReactionFeedback('whatsapp', entries, false);
     });
-    // `messages.reaction.update` fires when a reaction is edited; it is not in
-    // Baileys' typed event map, so the name is cast rather than the whole chain.
+    // `messages.reaction.update` fires when a reaction is edited or removed; it
+    // is not in Baileys' typed event map, so the name is cast rather than the
+    // whole chain. A null/empty reaction means the reaction was removed.
     (socket.ev.on as (name: string, handler: (update: WaReactionUpdate) => void) => void)(
       'messages.reaction.update',
       update => {
         if (!this.isCurrent(socket, generation) || !Array.isArray(update?.messages)) return;
-        this.collectReactionFeedback('whatsapp', update.messages);
+        const removed = update.messages.every(entry => !entry.reaction);
+        this.collectReactionFeedback('whatsapp', update.messages, removed);
       },
     );
 

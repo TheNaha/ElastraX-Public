@@ -21,6 +21,7 @@ import {
   throwIfAborted,
   MediaLimitError,
   reconcileMediaQuota,
+  invalidateMediaDirCache,
 } from './mediaShared';
 
 let clearStaleMediaReferencesCallback: ((paths: string[]) => Promise<number>) | null = null;
@@ -206,6 +207,7 @@ export async function deleteSavedMedia(path: string): Promise<boolean> {
     const info = await mediaStorageDeps.stat(target);
     if (!info.isFile()) return false;
     await mediaStorageDeps.unlink(target);
+    invalidateMediaDirCache();
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;

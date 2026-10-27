@@ -23,6 +23,8 @@
  *   bun run scripts/providerStagingHarness.ts --only long_reply,shutdown
  */
 
+import { chunkTextDiscord, chunkTextFixed } from '../src/utils/textChunking';
+
 export type Platform = 'whatsapp' | 'discord';
 
 export type ProviderStatus = 'stopped' | 'starting' | 'running' | 'backoff' | 'not_configured' | 'error';
@@ -155,40 +157,8 @@ export interface StagingReport {
   ok: boolean;
 }
 
-function units(text: string): string[] {
-  return Array.from(text);
-}
-
-export function chunkFixedText(text: string, limit: number): string[] {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('chunk limit must be a positive integer');
-  const parts = units(text);
-  if (parts.length === 0) return [''];
-  const chunks: string[] = [];
-  for (let offset = 0; offset < parts.length; offset += limit) chunks.push(parts.slice(offset, offset + limit).join(''));
-  return chunks;
-}
-
-export function chunkBoundaryText(text: string, limit: number): string[] {
-  if (!Number.isSafeInteger(limit) || limit <= 0) throw new Error('chunk limit must be a positive integer');
-  const parts = units(text);
-  if (parts.length === 0) return [''];
-  const chunks: string[] = [];
-  let offset = 0;
-  while (offset < parts.length) {
-    let end = Math.min(offset + limit, parts.length);
-    if (end < parts.length) {
-      const searchStart = Math.max(offset + Math.floor(limit / 2), offset + 1);
-      const boundary = parts.slice(searchStart, end);
-      const lastBreak = boundary.lastIndexOf('\n');
-      const lastSpace = boundary.lastIndexOf(' ');
-      const breakAt = Math.max(lastBreak, lastSpace);
-      if (breakAt >= 0) end = searchStart + breakAt + 1;
-    }
-    chunks.push(parts.slice(offset, end).join(''));
-    offset = end;
-  }
-  return chunks;
-}
+export const chunkFixedText = chunkTextFixed;
+export const chunkBoundaryText = chunkTextDiscord;
 
 export function chunkText(platform: Platform, text: string, limit: number): string[] {
   return platform === 'whatsapp' ? chunkFixedText(text, limit) : chunkBoundaryText(text, limit);
@@ -223,7 +193,7 @@ export function createLazyPromise<T>(operation: () => Promise<T>): Promise<T> {
 }
 
 function sanitize(text: string): string {
-  return units(text)
+  return Array.from(text)
     .map(character => {
       const code = character.charCodeAt(0);
       return code < 32 || code === 127 ? ' ' : character;

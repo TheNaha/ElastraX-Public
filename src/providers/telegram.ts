@@ -453,7 +453,7 @@ export class TelegramProvider implements BotProvider {
       : [];
     const selectMediaAttachment = async (id: string): Promise<MediaAttachmentDescriptor> => {
       const descriptor = attachments.find(candidate => candidate.id === id);
-      if (!descriptor) throw new Error(`Attachment not found: ${id}`);
+      if (!descriptor) throw new ProviderOperationError('telegram', 'selectMediaAttachment', `Attachment not found: ${id}`, undefined, 'INVALID_TARGET');
       selectedAttachmentId = id;
       return descriptor;
     };
@@ -517,7 +517,7 @@ export class TelegramProvider implements BotProvider {
       resolveRoles,
       checkPermissions: async required => roleSatisfies(await resolveRoles(), required),
       reply: (replyText, options) => sendText(String(chatId), replyText, options),
-      sendToChat: (targetChatId: string, replyText: string) => this.sendMessage(targetChatId, replyText),
+      sendToChat: (targetChatId: string, replyText: string) => sendText(targetChatId, replyText),
       sendMessage: (replyText, options) => sendText(String(chatId), replyText, options),
       sendTyping: async () => {
         const activeBot = ensureCurrent();
@@ -534,14 +534,8 @@ export class TelegramProvider implements BotProvider {
       },
       editMessage: async (key: unknown, nextText: string) => {
         const activeBot = ensureCurrent();
-        // The handle is the grammy `Message` object, whose id field is
-        // snake_case `message_id`. Reading `messageId` always produced
-        // `undefined`, so the fallback edited the *inbound user message* —
-        // which the Bot API rejects ("message can't be edited"), breaking the
-        // streaming path and delivering every answer twice.
-        const messageId = resolveSentMessageId(key) ?? msg.message_id;
-        // Telegram caps an edit at the message limit; fall back to sending the
-        // remainder rather than silently truncating the answer.
+        const messageId = resolveSentMessageId(key);
+        if (!messageId) throw new ProviderOperationError('telegram', 'editMessage', `Cannot resolve message id for edit key: ${String(key)}`, undefined, 'INVALID_TARGET');
         const head = nextText.slice(0, TELEGRAM_TEXT_LIMIT);
         await activeBot.api.editMessageText(chatId, messageId, head);
         if (head.length < nextText.length) {

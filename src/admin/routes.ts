@@ -166,6 +166,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
     if (path === 'api/login') {
       if (req.method !== 'POST') return json({ error: 'Method Not Allowed' }, 405, { Allow: 'POST' });
       if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
+      throttle.prune(now());
       if (!throttle.attempt(ip, now())) {
         return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': '60' });
       }

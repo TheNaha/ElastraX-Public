@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite } from '../db';
+import { exponentialBackoff } from '../utils/backoff';
 import type { MessageContext } from '../core/MessageContext';
 import { hasRoomKeyColumn, remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 
@@ -194,7 +195,7 @@ export class InboxService {
     const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
     const persistedState = deadLettered ? 'dead_letter' : 'failed';
     const outcome: 'retry' | 'dead_letter' = deadLettered ? 'dead_letter' : 'retry';
-    const retryDelay = Math.min(60 * 60_000, 5_000 * 2 ** Math.max(0, row.attemptCount - 1));
+    const retryDelay = exponentialBackoff(row.attemptCount, { baseMs: 5_000 });
     const message = error instanceof Error ? error.message : String(error);
     sqlite
       .query<never, [string, string, number, number, number, string]>(
