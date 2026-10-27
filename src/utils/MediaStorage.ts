@@ -131,7 +131,7 @@ export async function saveMediaStream(
       if (bytesWritten === 0) throw new Error('Media stream was empty.');
       await handle.sync();
     } finally {
-      await handle.close();
+      await handle.close?.();
     }
 
     const prefix = Buffer.concat(prefixChunks, prefixLength);
