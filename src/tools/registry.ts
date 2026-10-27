@@ -385,7 +385,7 @@ export async function executeAuthorizedCommand(command: string, argsString: stri
   try {
     args = parseExplicitCommand(tool, argsString, command) as Record<string, unknown>;
   } catch (error: unknown) {
-    throw new Error(`Invalid ${command} arguments: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(`Invalid ${command} arguments: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
   }
   const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
   const context: ToolAccessContext = { roles, isGroup: ctx.isGroup, isOwner: roles.includes('owner'), platform: ctx.platform, userId: ctx.senderId };

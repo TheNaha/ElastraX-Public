@@ -113,7 +113,7 @@ export async function syncHistoricalDatabase(
     where?: (condition: unknown) => Promise<typeof chatRooms.$inferSelect[]> | typeof chatRooms.$inferSelect[];
     then?: (resolve: (value: typeof chatRooms.$inferSelect[]) => unknown) => unknown;
   };
-  let existingRoomRows: Array<typeof chatRooms.$inferSelect> = [];
+  let existingRoomRows: Array<typeof chatRooms.$inferSelect>;
   if (roomConditions.length === 1 && typeof roomQuery.where === 'function') {
     existingRoomRows = await roomQuery.where(roomConditions[0]);
   } else if (roomConditions.length > 1 && typeof roomQuery.where === 'function') {

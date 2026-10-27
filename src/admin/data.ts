@@ -196,7 +196,7 @@ export function roomInventory(limit = MAX_TABLE_ROWS): { rooms: RoomRow[]; total
     };
   });
   const total = db.select({ n: count() }).from(chatRooms).all()[0]?.n ?? 0;
-  let keyStats: unknown = null;
+  let keyStats: unknown;
   try {
     keyStats = getRoomKeyStats();
   } catch (error) {

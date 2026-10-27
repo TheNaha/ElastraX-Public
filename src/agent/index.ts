@@ -271,7 +271,7 @@ async function executeRequestedToolCalls(
   for (const toolCall of toolCalls) {
     const toolName = toolCall.function.name;
     const tool = getToolByName(toolName);
-    let toolResultText = '';
+    let toolResultText: string;
     let resultTier: ModelTier | undefined;
 
     if (!tool) {

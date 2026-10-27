@@ -60,14 +60,14 @@ export type EnvironmentSnapshot = Record<string, string | undefined>;
 
 function dotEnvKeys(): Set<string> {
   const keys = new Set<string>();
-  let files: string[] = [];
+  let files: string[];
   try {
     files = readdirSync(REPOSITORY_ROOT).filter((name) => name === '.env' || name.startsWith('.env.'));
   } catch {
     return keys;
   }
   for (const file of files) {
-    let content = '';
+    let content: string;
     try {
       content = readFileSync(join(REPOSITORY_ROOT, file), 'utf8');
     } catch {

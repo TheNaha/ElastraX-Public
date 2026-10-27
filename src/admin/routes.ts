@@ -169,7 +169,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       if (!throttle.attempt(ip, now())) {
         return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': '60' });
       }
-      let presented = '';
+      let presented: string;
       try {
         const body = await req.json() as { token?: unknown };
         presented = typeof body?.token === 'string' ? body.token : '';

@@ -365,7 +365,7 @@ export async function retrieveRoomKnowledge(options: {
   if (isBlank(options.roomKey) || query.length === 0) return [];
 
   const embed = options.embed ?? ((value: string) => EmbeddingService.tryEmbed(value));
-  let rows: Array<{ id: string; content: string; embedding: Buffer | null; embeddingModel: string | null }> = [];
+  let rows: Array<{ id: string; content: string; embedding: Buffer | null; embeddingModel: string | null }>;
   try {
     // The window is ordered by age, so a fixed cap made an older document
     // permanently unretrievable the moment newer ones arrived — and a single

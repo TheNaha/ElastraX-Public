@@ -30,7 +30,7 @@ export const useDBAuthState = async (): Promise<{
       return JSON.parse(data, BufferJSON.reviver);
     } catch (error) {
       logger.error({ id, err: error }, 'Corrupt WhatsApp auth state row');
-      throw new Error(`Corrupt WhatsApp auth state row: ${id}`);
+      throw new Error(`Corrupt WhatsApp auth state row: ${id}`, { cause: error });
     }
   };
 

@@ -222,7 +222,7 @@ export class OutboxService {
           )
           .get(candidate.id);
         if (!row) continue;
-        let text = '';
+        let text: string;
         try {
           const payload = JSON.parse(row.payload) as { text?: unknown };
           text = typeof payload.text === 'string' ? payload.text : '';

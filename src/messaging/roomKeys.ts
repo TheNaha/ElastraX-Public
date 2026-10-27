@@ -296,7 +296,7 @@ export function platformsForRemoteRoomId(remoteRoomId: string): RoomPlatform[] {
   if (!remote || !handle) return [];
   const found: RoomPlatform[] = [];
   for (const platform of ROOM_PLATFORMS) {
-    let known = false;
+    let known: boolean;
     try {
       known = resolveRoomKeySync(platform, remote, handle as never) !== null;
     } catch {
@@ -403,7 +403,7 @@ export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox' | 'sc
   const cached = cache.get(table);
   const now = Date.now();
   if (cached && (cached.present || now - cached.at < COLUMN_CACHE_TTL_MS)) return cached.present;
-  let present = false;
+  let present: boolean;
   try {
     const rows = handle.query(`PRAGMA table_info(\`${table}\`)`).all() as Array<{ name?: unknown }>;
     present = rows.some(row => row?.name === ROOM_KEY_COLUMN);

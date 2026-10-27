@@ -255,7 +255,7 @@ export async function reconcileMediaQuota(incomingBytes = 0, excludedPath?: stri
       // `rename(temp, final)` then failed ENOENT and the download surfaced as an
       // error. A grace period keeps the stale-file cleanup without racing peers.
       const tempPath = join(MEDIA_DIR, name);
-      let ageMs = Number.POSITIVE_INFINITY;
+      let ageMs: number;
       try {
         ageMs = Date.now() - (await mediaStorageDeps.stat(tempPath)).mtimeMs;
       } catch {
