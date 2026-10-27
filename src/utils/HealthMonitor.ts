@@ -2,6 +2,7 @@ import { logger } from './logger';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
 import { resolveLLMTargets } from '../config/llm';
+import { spawn } from 'node:child_process';
 
 const log = logger.child({ module: 'HealthMonitor' });
 const PING_INTERVAL_MS = 60_000;
@@ -64,6 +65,8 @@ export class HealthMonitor {
     for (const target of resolveLLMTargets()) {
       this.schedule(target.key, () => this.pingLLM(target));
     }
+
+    this.schedule('yt-dlp', () => this.pingYtDlp());
   }
 
   stop(): void {
@@ -159,6 +162,37 @@ export class HealthMonitor {
       );
     } catch (error) {
       healthMetrics.setServiceHealth(target.key, 'unhealthy', getErrorMessage(error));
+    }
+  }
+
+  private async pingYtDlp(): Promise<void> {
+    const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const child = spawn(ytDlpPath, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (chunk: Buffer | string) => {
+          stdout += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        });
+        child.stderr?.on('data', (chunk: Buffer | string) => {
+          stderr += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+        });
+        child.on('close', (code) => {
+          if (code === 0) resolve();
+          else reject(new Error(`exit code ${code}: ${stderr.trim() || stdout.trim()}`));
+        });
+        child.on('error', (error) => {
+          reject(new Error(`spawn failed: ${error.message}`));
+        });
+        setTimeout(() => {
+          child.kill('SIGTERM');
+          reject(new Error('timed out'));
+        }, 10_000).unref?.();
+      });
+      healthMetrics.setServiceHealth('yt-dlp', 'healthy');
+    } catch (error) {
+      healthMetrics.setServiceHealth('yt-dlp', 'unhealthy', getErrorMessage(error));
     }
   }
 }

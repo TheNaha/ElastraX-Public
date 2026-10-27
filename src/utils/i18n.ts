@@ -176,6 +176,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.error': '❌ Download failed: {msg}',
     'download.not_supported': '❌ Sending media is not supported on this platform adapter.',
     'download.ytdlp_missing': '❌ yt-dlp is not installed. Ask the bot owner to install it.',
+    'download.ytdlp_broken': '❌ yt-dlp is installed but cannot start (missing system library). Ask the bot owner to install zlib1g ({msg}).',
 
     // Media Convert
     'convert.no_media': '❌ Please attach or reply to a media file to convert.',
@@ -434,6 +435,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.error': '❌ Unduhan gagal: {msg}',
     'download.not_supported': '❌ Pengiriman media tidak didukung oleh adaptor platform ini.',
     'download.ytdlp_missing': '❌ yt-dlp tidak terpasang. Minta pemilik bot untuk memasangnya.',
+    'download.ytdlp_broken': '❌ yt-dlp sudah terpasang tapi tidak dapat dijalankan (pustaka sistem yang hilang). Minta pemilik bot untuk memasang zlib1g ({msg}).',
 
     // Media Convert
     'convert.no_media': '❌ Lampirkan atau balas file media untuk dikonversi.',

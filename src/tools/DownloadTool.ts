@@ -91,6 +91,7 @@ export async function downloadViaYtDlp(
   const outputTemplate = downloadToolDeps.path.join(workDir, `${outputId}.%(ext)s`);
   const proxy = createProxy();
   let proxyStarted = false;
+  const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
 
   try {
     await downloadToolDeps.fs.mkdir(parentDir, { recursive: true, mode: 0o700 });
@@ -117,7 +118,7 @@ export async function downloadViaYtDlp(
     args.push('--', url);
     const run = downloadToolDeps.runProcess || (runOptions => runBoundedProcess(runOptions));
     await run({
-      command: process.env.YTDLP_PATH || 'yt-dlp',
+      command: ytDlpPath,
       args,
       cwd: workDir,
       kind: 'yt-dlp',
@@ -222,6 +223,11 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
       const errorMessage = getErrorMessage(error);
       log.error({ err: error, url: redactUrl(url), format }, 'Download failed');
       if (errorMessage.includes('not found') || errorMessage.includes('YTDLP_PATH')) return t(language, 'download.ytdlp_missing');
+      if (errorMessage.includes('error while loading shared libraries')) {
+        return t(language, 'download.ytdlp_broken', {
+          msg: errorMessage.slice(0, 200),
+        });
+      }
       return t(language, 'download.error', { msg: errorMessage.slice(0, 200) });
     }
   }
