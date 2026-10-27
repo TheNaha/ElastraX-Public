@@ -53,7 +53,7 @@ FROM ${BUN_IMAGE} AS release
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates; \
+    apt-get install -y --no-install-recommends ca-certificates zlib1g; \
     rm -rf /var/lib/apt/lists/*; \
     update-ca-certificates; \
     mkdir -p /app/data; \
