@@ -361,12 +361,15 @@ export class WhatsAppProvider implements BotProvider {
       await Promise.all(event.messages.map(async message => {
         if (!message.message || message.key.fromMe) return;
         if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
+        const ctx = await this.createContext(message, generation);
+        if (!ctx || !this.isCurrent(socket, generation)) return;
+        // Send read receipt immediately after context creation, before handler runs
+        // This ensures the message is marked read even if handler throws
+        await socket.readMessages([message.key]).catch(err => 
+          logger.debug({ err, key: message.key }, '[WhatsApp] Failed to send read receipt')
+        );
         try {
-          const ctx = await this.createContext(message, generation);
-          if (ctx && this.isCurrent(socket, generation)) {
-            await this.messageHandler(ctx);
-            await socket.readMessages([message.key]);
-          }
+          await this.messageHandler(ctx);
         } catch (error) {
           logger.error({ err: error, key: message.key }, '[WhatsApp] Error processing message');
         }
