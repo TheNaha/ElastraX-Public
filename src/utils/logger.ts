@@ -24,10 +24,12 @@
 
 import pino from 'pino';
 
+const isProduction = process.env.NODE_ENV === 'production';
+
 /** Application-wide logger.  Import this in every module that emits log output. */
 export const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
-  ...(process.env.NODE_ENV === 'production'
+  ...(isProduction
     ? {}
     : {
         transport: {
@@ -35,8 +37,13 @@ export const logger = pino({
           options: {
             colorize: true,
             singleLine: true,
-            ignore: 'pid,hostname',
-            translateTime: 'SYS:standard',
+            ignore: 'pid,hostname,time',
+            translateTime: 'HH:MM:ss.l',
+            messageFormat: '{module} {msg}',
+            errorLikeObjectKeys: ['err', 'error'],
+            customPrettifiers: {
+              time: () => '',
+            },
           },
         },
       }),
