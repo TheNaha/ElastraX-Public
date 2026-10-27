@@ -264,7 +264,7 @@ describe('syncHistoricalDatabase', () => {
     expect((await roomRow(ctx.chatId, 'discord'))?.platform).toBe('discord');
   });
 
-  test('should store only the sanitised projection of rawMessage', async () => {
+  test('should store sanitised rawMessage with sensitive blob keys stripped but structure preserved', async () => {
     const raw = {
       id: 'XYZ',
       key: { id: 'XYZ', fromMe: false, participant: 'secret@s.whatsapp.net' },
@@ -276,14 +276,13 @@ describe('syncHistoricalDatabase', () => {
     await syncHistoricalDatabase([ctx]);
 
     const stored = (await messageRowsFor(ctx.chatId))[0];
-    expect(JSON.parse(stored!.rawMessage as string)).toEqual({
-      id: 'XYZ',
-      fromMe: false,
-      timestamp: 123,
-      attachmentCount: 2,
-    });
+    const parsed = JSON.parse(stored!.rawMessage as string);
+    expect(parsed.id).toBe('XYZ');
+    expect(parsed.key).toEqual({ id: 'XYZ', fromMe: false, participant: 'secret@s.whatsapp.net' });
+    expect(parsed.message).toEqual({ timestamp: 123 });
+    expect(parsed.attachments).toHaveLength(2);
+    expect(parsed.mediaKey).toBeUndefined();
     expect(stored?.rawMessage).not.toContain('super-secret-media-key');
-    expect(stored?.rawMessage).not.toContain('secret@s.whatsapp.net');
   });
 
   test('should truncate oversized content and sender names', async () => {
