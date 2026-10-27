@@ -25,11 +25,12 @@
 import pino from 'pino';
 
 const isProduction = process.env.NODE_ENV === 'production';
+const isTest = process.env.NODE_ENV === 'test' || process.env.VITEST || process.env.BUN_TEST;
 
 /** Application-wide logger.  Import this in every module that emits log output. */
 export const logger = pino({
   level: process.env.LOG_LEVEL || 'info',
-  ...(isProduction
+  ...(isProduction || isTest
     ? {}
     : {
         transport: {
