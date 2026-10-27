@@ -460,45 +460,65 @@ export class WhatsAppProvider implements BotProvider {
     let quotedSource: MediaSource | null = null;
     if (parsed.quoted) {
       const q = parsed.quoted;
-      quotedSource = q.hasMedia ? {
-        descriptor: {
-          id: `quoted:${q.stanzaId || 'unknown'}`,
-          index: 0,
-          origin: 'quoted',
-          providerId: q.stanzaId || undefined,
-          mimeType: getMessageMediaInfo(q.rawMessage)?.mimeType,
-          sizeBytes: getMessageMediaInfo(q.rawMessage)?.sizeBytes,
-          state: q.hasMedia ? 'pending' : 'pending',
-        },
-        message: {
-          key: {
-            remoteJid: jid,
-            fromMe: q.fromMe,
-            id: q.stanzaId || undefined,
-            participant: q.senderId,
+      if (q.hasMedia) {
+        quotedSource = {
+          descriptor: {
+            id: `quoted:${q.stanzaId || 'unknown'}`,
+            index: 0,
+            origin: 'quoted',
+            providerId: q.stanzaId || undefined,
+            mimeType: getMessageMediaInfo(q.rawMessage)?.mimeType,
+            sizeBytes: getMessageMediaInfo(q.rawMessage)?.sizeBytes,
+            state: 'pending',
           },
-          message: q.rawMessage,
-        } as WAMessage,
-        info: getMessageMediaInfo(q.rawMessage) || {
+          message: {
+            key: {
+              remoteJid: jid,
+              fromMe: q.fromMe,
+              id: q.stanzaId || undefined,
+              participant: q.senderId,
+            },
+            message: q.rawMessage,
+          } as WAMessage,
+          info: getMessageMediaInfo(q.rawMessage) || {
+            messageType: q.messageType,
+            mimeType: undefined,
+            fileName: undefined,
+            sizeBytes: undefined,
+            ptt: false,
+          },
+        };
+        quoted = {
           messageType: q.messageType,
-          mimeType: undefined,
-          fileName: undefined,
-          sizeBytes: undefined,
-          ptt: false,
-        },
-      } : null;
-      quoted = {
-        messageType: q.messageType,
-        body: q.body,
-        text: q.body,
-        senderId: q.senderId,
-        hasMedia: q.hasMedia,
-        stanzaId: q.stanzaId || undefined,
-        rawMessage: {
-          key: quotedSource!.message.key as RawProviderMessage['key'],
-          message: q.rawMessage as Record<string, unknown>,
-        },
-      };
+          body: q.body,
+          text: q.body,
+          senderId: q.senderId,
+          hasMedia: true,
+          stanzaId: q.stanzaId || undefined,
+          rawMessage: {
+            key: quotedSource.message.key as RawProviderMessage['key'],
+            message: q.rawMessage as Record<string, unknown>,
+          },
+        };
+      } else {
+        quoted = {
+          messageType: q.messageType,
+          body: q.body,
+          text: q.body,
+          senderId: q.senderId,
+          hasMedia: false,
+          stanzaId: q.stanzaId || undefined,
+          rawMessage: {
+            key: {
+              remoteJid: jid,
+              fromMe: q.fromMe,
+              id: q.stanzaId || undefined,
+              participant: q.senderId,
+            } as RawProviderMessage['key'],
+            message: q.rawMessage as Record<string, unknown>,
+          },
+        };
+      }
     }
 
     const currentInfo = getMessageMediaInfo(message.message);
