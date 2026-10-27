@@ -85,6 +85,7 @@ describe('scanParserCoverage', () => {
     const result = await scanParserCoverage(rows, null);
     expect(result.unknownSamples.length).toBe(1);
     expect(result.unknownSamples[0].index).toBe(0);
+    expect(result.unknownSamples[0].baileysType).toBeNull();
     expect(result.uniqueByType.has('unknown')).toBe(true);
   });
 
@@ -109,6 +110,8 @@ describe('scanParserCoverage', () => {
     expect(result.uniqueByType.size).toBe(2); // 'conversation' + 'unknown'
     expect(result.errors.length).toBe(1);
     expect(result.unknownSamples.length).toBe(1);
+    // baileysType reflects what's actually in the raw message (conversation), not the mocked parser result
+    expect(result.unknownSamples[0].baileysType).toBe('conversation');
 
     spy.mockRestore();
   });
@@ -154,7 +157,7 @@ describe('logCoverageSummary', () => {
         { index: 6, raw: {}, error: new Error('fail 5') },
         { index: 7, raw: {}, error: new Error('fail 6') }, // > 5, should truncate
       ],
-      unknownSamples: [{ index: 10, raw: {} }],
+      unknownSamples: [{ index: 10, raw: {}, baileysType: null }],
       total: 10,
     };
     expect(() => logCoverageSummary(result)).not.toThrow();
@@ -166,7 +169,7 @@ describe('logCoverageSummary', () => {
         ['unknown', { raw: {}, parsed: { messageType: 'unknown', text: '', hasMedia: false, mentionedIds: [], quoted: undefined } }],
       ]),
       errors: [],
-      unknownSamples: [{ index: 0, raw: {} }, { index: 1, raw: {} }],
+      unknownSamples: [{ index: 0, raw: {}, baileysType: null }, { index: 1, raw: {}, baileysType: null }],
       total: 2,
     };
     expect(() => logCoverageSummary(result)).not.toThrow();
