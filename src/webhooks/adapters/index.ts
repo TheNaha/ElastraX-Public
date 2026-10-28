@@ -11,7 +11,7 @@ export function buildWebhookMessage(headers: Record<string, string | undefined>,
   if (githubEvent) return adaptGitHub(githubEvent, safeBody);
 
   const grafanaOrigin = headers['x-grafana-origin'];
-  if (grafanaOrigin || safeBody.alerts) return adaptGrafana(safeBody);
+  if (grafanaOrigin) return adaptGrafana(safeBody);
 
   if (isApprisePayload(headers, safeBody)) return adaptApprise(safeBody);
 
