@@ -36,7 +36,7 @@ import { SoftwareSearchTool } from './SoftwareSearchTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
 import { getToolTimeoutMs, readIntegerEnv } from '../config/runtime';
-import { withCancellableTimeout } from '../utils/withTimeout';
+import { withCancellableTimeout } from '../utils/withTimeout.js';
 import type { MessageContext } from '../core/MessageContext';
 import { parseExplicitCommand, validateToolArguments, type ValidationResult } from './ParameterValidator';
 import type { ToolResult } from './BaseTool';

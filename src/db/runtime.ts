@@ -106,6 +106,13 @@ export function withImmediateTransaction<T>(sqlite: Database, operation: () => T
   sqlite.exec('BEGIN IMMEDIATE');
   try {
     const result = operation();
+    if (result instanceof Promise) {
+      sqlite.exec('ROLLBACK');
+      throw new TypeError(
+        'withImmediateTransaction: operation returned a Promise — the callback is synchronous. '
+        + 'Use an async wrapper or restructure to avoid awaiting inside.',
+      );
+    }
     sqlite.exec('COMMIT');
     return result;
   } catch (error) {

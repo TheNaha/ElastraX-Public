@@ -50,7 +50,7 @@ export function estimateToolResultBytes(value: unknown): number {
   if (typeof value === 'string') return Buffer.byteLength(value, 'utf8');
   if (value instanceof Uint8Array) return value.byteLength;
   try {
-    return Buffer.byteLength(JSON.stringify(value) ?? '', 'utf8');
+    return Buffer.byteLength(JSON.stringify(value), 'utf8');
   } catch {
     return Number.MAX_SAFE_INTEGER;
   }

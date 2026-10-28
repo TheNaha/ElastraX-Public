@@ -16,6 +16,7 @@ import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
 import { readMediaBuffer, saveMediaResponse } from '../utils/MediaStorage';
 import { MessageContext, ReplyOptions, type MediaAttachmentDescriptor, type RawProviderMessage } from '../core/MessageContext';
 import { logger } from '../utils/logger';
+import { safeErrorMessage } from '../utils/errorUtils.js';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { chunkTextDiscord } from '../utils/textChunking';
@@ -136,7 +137,7 @@ export class DiscordProvider implements BotProvider {
         noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
       }
     } catch (error) {
-      throw new ProviderOperationError('discord', 'sendMessage', `Discord sendMessage failed: ${errorMessage(error)}`, error);
+      throw new ProviderOperationError('discord', 'sendMessage', `Discord sendMessage failed: ${safeErrorMessage(error)}`, error);
     }
   }
 
@@ -249,7 +250,7 @@ export class DiscordProvider implements BotProvider {
       if (generation !== this.generation || this.providerStatus === 'stopped') return;
       this.providerStatus = 'error';
       this.providerError = error instanceof Error ? error : new Error(String(error));
-      throw new ProviderStartError('discord', `Discord login failed: ${errorMessage(error)}`, error);
+      throw new ProviderStartError('discord', `Discord login failed: ${safeErrorMessage(error)}`, error);
     }
   }
 
@@ -339,7 +340,7 @@ export class DiscordProvider implements BotProvider {
         return descriptor;
       } catch (error) {
         descriptor.state = 'error';
-        descriptor.error = errorMessage(error).slice(0, 500);
+        descriptor.error = safeErrorMessage(error);
         logger.warn({ attachmentId: descriptor.id, err: error }, '[Discord] Failed to download attachment');
         if (throwOnFailure) throw new ProviderOperationError('discord', 'downloadMedia', descriptor.error, error);
         return null;
@@ -443,7 +444,7 @@ export class DiscordProvider implements BotProvider {
           }
           await msg.delete();
         } catch (error) {
-          throw new ProviderOperationError('discord', 'deleteMessage', `Discord delete failed: ${errorMessage(error)}`, error);
+          throw new ProviderOperationError('discord', 'deleteMessage', `Discord delete failed: ${safeErrorMessage(error)}`, error);
         }
       },
 
@@ -461,7 +462,7 @@ export class DiscordProvider implements BotProvider {
             return;
           }
           const files = await Promise.all(Array.from(msg.attachments.values(), async attachment => {
-            const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error' });
+            const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
             const buffer = Buffer.from(await response.arrayBuffer());
             return new AttachmentBuilder(buffer, { name: attachment.name });
           }));
@@ -471,7 +472,7 @@ export class DiscordProvider implements BotProvider {
             allowedMentions: { parse: [] },
           });
         } catch (error) {
-          throw new ProviderOperationError('discord', 'forwardMessage', `Discord forward failed: ${errorMessage(error)}`, error);
+          throw new ProviderOperationError('discord', 'forwardMessage', `Discord forward failed: ${safeErrorMessage(error)}`, error);
         }
       },
 
@@ -647,15 +648,4 @@ function hasSendTyping(channel: DiscordMessage['channel']): channel is DiscordMe
 
 function isEditableMessage(value: unknown): value is DiscordEditableMessage {
   return typeof value === 'object' && value !== null && 'edit' in value && typeof (value as { edit?: unknown }).edit === 'function';
-}
-
-function errorMessage(error: unknown): string {
-  return sanitizeErrorText(error instanceof Error ? error.message : String(error)).slice(0, 500);
-}
-
-function sanitizeErrorText(text: string): string {
-  return Array.from(text, character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? ' ' : character;
-  }).join('');
 }

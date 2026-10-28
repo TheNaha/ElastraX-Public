@@ -14,6 +14,7 @@ import {
 import { basename, dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
+import { safeErrorMessage } from '../utils/errorUtils.js';
 import {
   fingerprintSchema,
   readMigrationJournal,
@@ -72,10 +73,6 @@ export interface RestoreResult {
   path?: string;
   manifest?: BackupManifest;
   error?: string;
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 function quoteSqlString(value: string): string {
@@ -290,7 +287,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
   } catch (error) {
     if (temporaryDatabase) removeFile(temporaryDatabase);
     if (temporaryManifest) removeFile(temporaryManifest);
-    return { ok: false, pruned: [], error: errorMessage(error) };
+    return { ok: false, pruned: [], error: safeErrorMessage(error) };
   }
 }
 
@@ -327,6 +324,6 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
     return { ok: true, path: options.destination, manifest };
   } catch (error) {
     if (temporaryPath) removeFile(temporaryPath);
-    return { ok: false, error: errorMessage(error) };
+    return { ok: false, error: safeErrorMessage(error) };
   }
 }

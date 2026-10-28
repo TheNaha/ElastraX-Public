@@ -37,7 +37,9 @@ export class SSEDecoder {
 
   push(chunk: string): SSEEvent[] {
     if (!chunk) return [];
-    if (chunk.length > this.maxBufferBytes || this.buffer.length + chunk.length > this.maxBufferBytes) {
+    const chunkBytes = Buffer.byteLength(chunk, 'utf8');
+    const bufferBytes = Buffer.byteLength(this.buffer, 'utf8');
+    if (chunkBytes > this.maxBufferBytes || bufferBytes + chunkBytes > this.maxBufferBytes) {
       throw new AIProtocolError('sse_buffer_limit', 'SSE input exceeded the configured buffer limit.', {
         limit: this.maxBufferBytes,
       });
@@ -81,7 +83,9 @@ export class SSEDecoder {
       if (event) events.push(event);
     }
 
-    if (this.buffer.length > this.maxBufferBytes) {
+    // Measure buffer capacity in bytes (not chars) to account for multi-byte content
+    const bufferBytes = Buffer.byteLength(this.buffer, 'utf8');
+    if (bufferBytes > this.maxBufferBytes) {
       throw new AIProtocolError('sse_buffer_limit', 'SSE input exceeded the configured buffer limit.', {
         limit: this.maxBufferBytes,
       });
@@ -90,7 +94,7 @@ export class SSEDecoder {
   }
 
   private processLine(line: string): SSEEvent | null {
-    this.eventBytes += line.length + 1;
+    this.eventBytes += Buffer.byteLength(line, 'utf8') + 1;
     if (this.eventBytes > this.maxEventBytes) {
       throw new AIProtocolError('sse_buffer_limit', 'SSE event exceeded the configured size limit.', {
         limit: this.maxEventBytes,

@@ -61,6 +61,14 @@ const migratePromises = new WeakMap<Database, Promise<void>>();
 const runtimeLeases = new WeakMap<Database, Lease>();
 const leaseTimers = new WeakMap<Database, ReturnType<typeof setInterval>>();
 
+/**
+ * Callbacks invoked after a database schema migration completes.
+ * Allows modules with schema-aware caches (e.g. room-key column detection)
+ * to invalidate their caches so they pick up the new schema without requiring
+ * a separate registration step or a circular import.
+ */
+export const afterMigrationCallbacks: Array<() => void> = [];
+
 function integerSetting(name: string, fallback: number, minimum: number, maximum: number): number {
   const value = process.env[name];
   if (!value?.trim()) return fallback;
@@ -239,6 +247,10 @@ function migrateHandle(
 
       const after = inspectMigrationState(sqlite, migrationsFolder);
       validateSchemaContract(sqlite);
+      // Invalidate schema-aware caches now that migrations may have added columns.
+      for (const cb of afterMigrationCallbacks) {
+        try { cb(); } catch (e) { logger.warn({ err: e }, 'Migration cache invalidation callback failed'); }
+      }
       const fingerprint = recordSchemaFingerprint(
         sqlite,
         readMigrationJournal(migrationsFolder).at(-1)?.when ?? after.latestCreatedAt ?? 0,
