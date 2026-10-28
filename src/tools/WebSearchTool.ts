@@ -12,8 +12,7 @@
 
 import { SearxSearchToolBase } from './SearxSearchToolBase';
 import type { SearXngRawResult } from './searchUtils';
-
-const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
+import { t } from '../utils/i18n';
 
 export class WebSearchTool extends SearxSearchToolBase {
   readonly name = 'web_search';
@@ -33,26 +32,26 @@ export class WebSearchTool extends SearxSearchToolBase {
   }
 
   /** Plain web search: no trusted-site tagging, markdown-escaped output. */
-  protected override formatResults(results: SearXngRawResult[], query: string): string {
+  protected override formatResults(lang: string, results: SearXngRawResult[], query: string): string {
     const textResults = results.map((item, idx) => {
       return ` • *[${idx + 1}] Title:* ${item.title || ''}\n   *URL:* ${item.url || ''}\n   *Excerpt:* ${item.content || item.snippet || ''}`;
     }).join('\n\n');
-    return `${this.resultsHeader(query)}\n\n${textResults}`;
+    return `${this.resultsHeader(lang, query)}\n\n${textResults}`;
   }
 
-  protected override resultsHeader(query: string): string {
-    return `Search results for "${esc(query)}":`;
+  protected override resultsHeader(lang: string, query: string): string {
+    return t(lang, 'search.web.header', { query });
   }
 
-  protected override noResultsMessage(query: string): string {
-    return `No results found on the web for: ${esc(query)}`;
+  protected override noResultsMessage(lang: string, query: string): string {
+    return t(lang, 'search.web.no_results', { query });
   }
 
-  protected override failureMessage(query: string): string {
-    return `Failed to search the web for "${esc(query)}" due to an internal error. Make sure the SearXNG instance is reachable.`;
+  protected override failureMessage(lang: string, query: string): string {
+    return t(lang, 'search.web.failed', { query });
   }
 
-  protected override missingConfigMessage(): string {
-    return 'Error: SEARXNG_URL environment variable is not configured. Web search is unavailable.';
+  protected override missingConfigMessage(lang: string): string {
+    return t(lang, 'search.searxng_not_configured');
   }
 }

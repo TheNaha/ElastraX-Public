@@ -11,6 +11,7 @@ import { BaseTool, type ToolArgs, type ToolDefinition } from './BaseTool';
 import type { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { searchSearXng, type SearXngRawResult } from './searchUtils';
+import { t } from '../utils/i18n';
 
 const log = logger.child({ module: 'SearxSearchToolBase' });
 
@@ -49,10 +50,11 @@ export abstract class SearxSearchToolBase extends BaseTool<SearchToolArgs> {
     };
   }
 
-  async execute(args: SearchToolArgs, _ctx: MessageContext): Promise<string> {
+  async execute(args: SearchToolArgs, ctx: MessageContext): Promise<string> {
+    const lang = ctx.language ?? 'en';
     const query = args.query;
-    if (!query) return 'Error: query parameter is missing.';
-    if (!this.searxngUrl) return this.missingConfigMessage();
+    if (!query) return t(lang, 'search.query_missing');
+    if (!this.searxngUrl) return this.missingConfigMessage(lang);
 
     let baseUrl: URL;
     try {
@@ -62,7 +64,7 @@ export abstract class SearxSearchToolBase extends BaseTool<SearchToolArgs> {
       }
     } catch (err) {
       log.error({ err, url: this.searxngUrl }, 'Invalid SEARXNG_URL');
-      return this.failureMessage(query);
+      return this.failureMessage(lang, query);
     }
 
     log.debug({ query }, `${this.name} initiated`);
@@ -73,11 +75,11 @@ export abstract class SearxSearchToolBase extends BaseTool<SearchToolArgs> {
         generalQuerySuffix: this.generalQuerySuffix,
         maxResults: this.maxResults,
       });
-      if (results.length === 0) return this.noResultsMessage(query);
-      return this.formatResults(results, query);
+      if (results.length === 0) return this.noResultsMessage(lang, query);
+      return this.formatResults(lang, results, query);
     } catch (err) {
       log.error({ err, query }, `${this.name} failed`);
-      return this.failureMessage(query);
+      return this.failureMessage(lang, query);
     }
   }
 
@@ -85,21 +87,21 @@ export abstract class SearxSearchToolBase extends BaseTool<SearchToolArgs> {
    * Default formatting shared by game/software search: numbered list with a
    * TRUSTED/UNTRUSTED tag per result based on {@link trustedSites}.
    */
-  protected formatResults(results: SearXngRawResult[], query: string): string {
+  protected formatResults(lang: string, results: SearXngRawResult[], query: string): string {
     const textResults = results.map((item, idx) => {
       const itemUrl = item.url || '';
       const isTrusted = this.trustedSites.some((site) => itemUrl.includes(site));
-      const status = isTrusted ? '[✅ TRUSTED]' : '[⚠️ UNTRUSTED - USE CAUTION]';
-      return ` • *[${idx + 1}] ${status} ${item.title || 'Unknown'}*\n   *URL:* ${itemUrl}\n   *Info:* ${item.content || item.snippet || ''}`;
+      const status = isTrusted ? t(lang, 'search.trusted') : t(lang, 'search.untrusted');
+      return ` • *[${idx + 1}] ${status} ${item.title || t(lang, 'search.unknown')}*\n   *URL:* ${itemUrl}\n   *Info:* ${item.content || item.snippet || ''}`;
     }).join('\n\n');
-    return `${this.resultsHeader(query)}\n\n${textResults}`;
+    return `${this.resultsHeader(lang, query)}\n\n${textResults}`;
   }
 
-  protected abstract resultsHeader(query: string): string;
-  protected abstract noResultsMessage(query: string): string;
-  protected abstract failureMessage(query: string): string;
+  protected abstract resultsHeader(lang: string, query: string): string;
+  protected abstract noResultsMessage(lang: string, query: string): string;
+  protected abstract failureMessage(lang: string, query: string): string;
 
-  protected missingConfigMessage(): string {
-    return 'Error: SEARXNG_URL environment variable is not configured.';
+  protected missingConfigMessage(lang: string): string {
+    return t(lang, 'search.searxng_not_configured');
   }
 }

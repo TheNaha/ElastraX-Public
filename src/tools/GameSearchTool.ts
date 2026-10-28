@@ -3,6 +3,7 @@ import { logger } from '../utils/logger';
 import { SearxSearchToolBase, type SearchToolArgs } from './SearxSearchToolBase';
 import type { MessageContext } from '../core/MessageContext';
 import type { SearXngRawResult } from './searchUtils';
+import { t } from '../utils/i18n';
 
 const log = logger.child({ module: 'GameSearchTool' });
 
@@ -42,20 +43,20 @@ export class GameSearchTool extends SearxSearchToolBase {
     return super.execute(args, ctx);
   }
 
-  protected override formatResults(results: SearXngRawResult[], query: string): string {
-    return super.formatResults(results.filter((result) => result.url ? isTrustedGameUrl(result.url) : false), query);
+  protected override formatResults(lang: string, results: SearXngRawResult[], query: string): string {
+    return super.formatResults(lang, results.filter((result) => result.url ? isTrustedGameUrl(result.url) : false), query);
   }
 
-  protected override resultsHeader(query: string): string {
+  protected override resultsHeader(lang: string, query: string): string {
     return `Game Search Results for "${query}":`;
   }
 
-  protected override noResultsMessage(query: string): string {
-    return `No game downloads found for: "${query}".`;
+  protected override noResultsMessage(lang: string, query: string): string {
+    return t(lang, 'search.game.no_results', { query });
   }
 
-  protected override failureMessage(query: string): string {
+  protected override failureMessage(lang: string, query: string): string {
     log.debug({ query }, 'failure message returned');
-    return `Failed to search games for "${query}".`;
+    return t(lang, 'search.game.failed', { query });
   }
 }
