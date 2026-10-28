@@ -35,6 +35,7 @@ describe('MediaCleanup', () => {
     mediaStorageDeps.unlink = mocks.unlink as never;
     mediaCleanupDeps.stat = mocks.stat as never;
     mediaCleanupDeps.unlink = mocks.unlink as never;
+    mediaCleanupDeps.readdir = mocks.readdir as never;
   });
 
   afterEach(() => {

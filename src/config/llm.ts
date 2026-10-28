@@ -11,7 +11,7 @@
  *   import { resolveLLMProviders, buildCloudflareBaseUrl } from '../config/llm';
  */
 
-import type { RuntimeEnv } from './runtime';
+import { readBooleanEnv, readStringEnv, type RuntimeEnv } from './runtime';
 import type { ModelTier } from '../types/ai';
 
 export interface LLMTarget {
@@ -68,19 +68,6 @@ function parseTier(raw?: string): ModelTier {
   return 'standard';
 }
 
-function parseBool(raw: string | undefined, defaultVal: boolean): boolean {
-  if (raw === undefined) return defaultVal;
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === 'true') return true;
-  if (normalized === 'false') return false;
-  return defaultVal;
-}
-
-function readStringEnv(rawValue: string | undefined, fallback: string = ''): string {
-  const trimmed = (rawValue ?? '').trim();
-  return trimmed || fallback;
-}
-
 /**
  * Resolve all configured LLM providers from environment variables.
  *
@@ -109,8 +96,8 @@ export function resolveLLMProviders(env: RuntimeEnv = process.env): LLMTarget[] 
       apiKey: env.AI_API_KEY || env.AI_CF_API_TOKEN || '',
       modelName: readStringEnv(env.AI_MODEL_NAME, PROVIDER_DEFAULT_MODELS.default),
       tier: parseTier(env.AI_TIER),
-      supportsVideo: parseBool(env.AI_SUPPORTS_VIDEO, defaults.supportsVideo),
-      supportsAudio: parseBool(env.AI_SUPPORTS_AUDIO, defaults.supportsAudio),
+      supportsVideo: readBooleanEnv(env.AI_SUPPORTS_VIDEO, defaults.supportsVideo),
+      supportsAudio: readBooleanEnv(env.AI_SUPPORTS_AUDIO, defaults.supportsAudio),
     }];
   }
 
@@ -132,8 +119,8 @@ export function resolveLLMProviders(env: RuntimeEnv = process.env): LLMTarget[] 
         apiKey: env[`AI_${upper}_API_KEY`] || env[`AI_${upper}_CF_API_TOKEN`] || '',
         modelName: readStringEnv(env[`AI_${upper}_MODEL`], PROVIDER_DEFAULT_MODELS[name] || 'gpt-4o-mini'),
         tier: parseTier(env[`AI_${upper}_TIER`]),
-        supportsVideo: parseBool(env[`AI_${upper}_SUPPORTS_VIDEO`], defaults.supportsVideo),
-        supportsAudio: parseBool(env[`AI_${upper}_SUPPORTS_AUDIO`], defaults.supportsAudio),
+        supportsVideo: readBooleanEnv(env[`AI_${upper}_SUPPORTS_VIDEO`], defaults.supportsVideo),
+        supportsAudio: readBooleanEnv(env[`AI_${upper}_SUPPORTS_AUDIO`], defaults.supportsAudio),
       };
     })
     .filter((t): t is LLMTarget => t !== null);

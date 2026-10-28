@@ -129,14 +129,6 @@ export function getTranscriptionConfig(env: RuntimeEnv = process.env) {
   };
 }
 
-export function getWebhookMaxTextLength(env: RuntimeEnv = process.env): number {
-  return readIntegerEnv(env.WEBHOOK_MAX_TEXT_LENGTH, 3500, { min: 200, max: 20_000 });
-}
-
-export function getWebhookMaxBodyBytes(env: RuntimeEnv = process.env): number {
-  return readIntegerEnv(env.WEBHOOK_MAX_BODY_BYTES, 256 * 1024, { min: 1_024, max: 10 * 1024 * 1024 });
-}
-
 export function getDownloadMaxMb(env: RuntimeEnv = process.env): number {
   return readIntegerEnv(env.DOWNLOAD_MAX_MB, 50, { min: 1, max: 1_024 });
 }

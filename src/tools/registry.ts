@@ -35,7 +35,7 @@ import { GameSearchTool } from './GameSearchTool';
 import { SoftwareSearchTool } from './SoftwareSearchTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
-import { getToolTimeoutMs } from '../config/runtime';
+import { getToolTimeoutMs, readIntegerEnv } from '../config/runtime';
 import { withCancellableTimeout } from '../utils/withTimeout';
 import type { MessageContext } from '../core/MessageContext';
 import { parseExplicitCommand, validateToolArguments, type ValidationResult } from './ParameterValidator';
@@ -159,28 +159,26 @@ const COMMAND_POLICIES: Record<string, Record<string, string>> = {
 const COMMAND_GROUP_ONLY: Record<string, readonly string[]> = {
   owner_admin: ['leave', 'botleave'],
 };
-const MUTABILITY_OVERRIDES: Record<string, ToolMetadata['access']['mutability']> = {
+export const MUTABILITY_OVERRIDES: Record<string, ToolMetadata['access']['mutability']> = {
   owner_admin: 'admin',
   config: 'admin',
   language: 'local-write',
   reminder: 'local-write',
   delete_message: 'external-mutation',
   download_media: 'external-mutation',
-  // The registered name is `convert_media`; the old key read `media_convert`,
-  // so the lookup silently fell through to the tool's own `mutability` of
-  // 'read'. Every FFmpeg conversion then ran with no admission check, no cost
-  // and no per-user serialization — unbounded concurrent CPU-heavy child
-  // processes — and `getToolAccess()` reported the wrong mutability to any
-  // operator-facing listing, including the scheduled-agent deny-list built on
-  // `mutatingToolNames()`. `test/registry.mutability.test.ts` now fails if any
-  // key here stops matching a registered tool.
+  // Three keys previously didn't match actual tool names: `group_admin`
+  // should be `groupadmin`, `media_bind` should be `media_account`, and `pdf`
+  // should be `pdf_tool`. Each mismatch caused the lookup to silently fall
+  // through to the tool's own `mutability` of 'read', with no admission check,
+  // no cost and no per-user serialization. `test/registry.mutability.test.ts`
+  // now fails if any key here stops matching a registered tool.
   convert_media: 'local-write',
-  group_admin: 'external-mutation',
+  groupadmin: 'external-mutation',
   knowledge: 'local-write',
-  media_bind: 'external-mutation',
+  media_account: 'external-mutation',
   media_request: 'external-mutation',
   menfess: 'external-mutation',
-  pdf: 'local-write',
+  pdf_tool: 'local-write',
   speak: 'external-mutation',
 };
 
@@ -197,8 +195,7 @@ export interface ToolAdmission {
 
 export function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & { userId?: string } = {}, now = Date.now()): ToolAdmission {
   if (getToolMutability(tool) === 'read') return { allowed: true, cost: 0, remaining: Number.POSITIVE_INFINITY };
-  const configured = Number.parseInt(process.env.TOOL_MUTATION_COST_LIMIT ?? '100', 10);
-  const limit = Number.isFinite(configured) && configured > 0 ? configured : 100;
+  const limit = readIntegerEnv(process.env.TOOL_MUTATION_COST_LIMIT, 100, { min: 1 });
   const windowMs = 60_000;
   const key = `${tool.name}:${context.userId ?? 'global'}`;
   const current = rateWindows.get(key);

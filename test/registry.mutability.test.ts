@@ -4,33 +4,41 @@
  * `MUTABILITY_OVERRIDES`, `COMMAND_POLICIES` and `COMMAND_GROUP_ONLY` are keyed
  * by tool name and looked up with `table[tool.name]`. A key that does not match
  * a registered name is not a compile error and not a test failure — the lookup
- * silently falls through. That is exactly how `media_convert` sat next to a tool
- * called `convert_media` while the tool declared itself `read`: every FFmpeg
- * conversion then ran with no admission check, no cost, no per-user
- * serialization, and no presence in any mutability-derived deny-list.
+ * silently falls through. That is exactly how `media_convert` sat next to a
+ * tool called `convert_media`, how `group_admin` sat next to `groupadmin`, how
+ * `media_bind` sat next to `media_account`, and how `pdf` sat next to `pdf_tool`
+ * — each lookup fell through to the tool's own mutability, running with no
+ * admission check, no cost, no per-user serialization, and no presence in any
+ * mutability-derived deny-list.
  */
 import { describe, test, expect } from 'bun:test';
 import {
   getToolAccess,
   getToolMutability,
-  getToolsForContext,
   mutatingToolNames,
   registryReady,
+  MUTABILITY_OVERRIDES,
+  toolsList,
+  reloadRegistry,
 } from '../src/tools/registry';
 import type { BaseTool } from '../src/tools/BaseTool';
 
 /** Every enabled registered tool, with no access filtering. */
 function allTools(): BaseTool[] {
-  return getToolsForContext({ roles: ['owner'], platform: 'whatsapp', isGroup: false });
+  return toolsList;
 }
 
-/** Mirrors the private tables in registry.ts, re-declared so a rename is visible. */
+// SpeakTool is conditionally enabled (requires TTS_API_KEY); set it so the
+// tool is loaded and its name appears in toolsList.
+process.env.TTS_API_KEY ??= 'test-key';
+await reloadRegistry();
+/** Every enabled registered tool name. */
 const KNOWN_TOOL_NAMES = allTools().map(tool => tool.name);
 
 const TABLES: ReadonlyArray<{ table: string; keys: readonly string[] }> = [
   {
     table: 'MUTABILITY_OVERRIDES',
-    keys: ['owner_admin', 'config', 'language', 'reminder', 'delete_message', 'download_media', 'convert_media'],
+    keys: ['owner_admin', 'config', 'language', 'reminder', 'delete_message', 'download_media', 'convert_media', 'groupadmin', 'knowledge', 'media_account', 'media_request', 'menfess', 'pdf_tool', 'speak'],
   },
   {
     table: 'COMMAND_POLICIES',
@@ -56,6 +64,15 @@ describe('registry table keys resolve to registered tools', () => {
     // Sanity check on the fixture itself, not on a coverage requirement.
     expect(mentioned.has('convert_media')).toBe(true);
     expect(unmentioned.length).toBeGreaterThan(0);
+  });
+
+  test('every MUTABILITY_OVERRIDES key auto-discovered from the live table matches a registered tool', () => {
+    // Reads the actual exported table so a stale fixture can't hide a mismatch.
+    const registeredNames = new Set(KNOWN_TOOL_NAMES);
+    for (const key of Object.keys(MUTABILITY_OVERRIDES)) {
+      expect({ key, registered: registeredNames.has(key) })
+        .toEqual({ key, registered: true });
+    }
   });
 });
 

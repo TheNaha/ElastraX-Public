@@ -25,7 +25,7 @@ import { ROOT_DIR } from '../src/core/constants';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const MIGRATIONS_DIR = join(ROOT_DIR, 'drizzle/migrations');
-const ROOM_KEY_MIGRATION_WHEN = 23;
+const ROOM_KEY_MIGRATION_WHEN = 24;
 
 const temporaryDirectories: string[] = [];
 
@@ -50,7 +50,7 @@ function createPreRoomKeyDatabase(): LegacyFixture {
 
   const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8'));
   const entries = (journal.entries as Array<{ tag: string }>).filter(
-    entry => entry.tag !== '0022_room_keys',
+    entry => entry.tag !== '0022_room_keys' && entry.tag !== '0023_add_user_identities_pk',
   );
   writeFileSync(join(metaDirectory, '_journal.json'), JSON.stringify({ ...journal, entries }));
   for (const entry of entries) {
@@ -112,7 +112,7 @@ describe('migration 0022 canonical room identity', () => {
       entries: Array<{ tag: string; when: number }>;
     };
     const last = journal.entries.at(-1)!;
-    expect(last.tag).toBe('0022_room_keys');
+    expect(last.tag).toBe('0023_add_user_identities_pk');
     expect(last.when).toBe(ROOM_KEY_MIGRATION_WHEN);
     expect(journal.entries.filter(entry => entry.tag === '0022_room_keys')).toHaveLength(1);
     expect(new Set(journal.entries.map(entry => entry.when)).size).toBe(journal.entries.length);
@@ -134,7 +134,7 @@ describe('migration 0022 canonical room identity', () => {
     try {
       expect(
         inspectMigrationState(legacy.sqlite, MIGRATIONS_DIR).pending.map(entry => entry.tag),
-      ).toEqual(['0022_room_keys']);
+      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk']);
       seedPreRoomKeyRows(legacy.sqlite);
       expect(columnNames(legacy.sqlite, 'chat_rooms')).not.toContain('room_key');
 

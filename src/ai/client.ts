@@ -9,6 +9,7 @@ import type {
   ToolCall,
 } from '../types/ai';
 import { getAIRequestConfig } from '../config/runtime';
+import { resolveLLMProviders } from '../config/llm';
 import { AIProtocolError, AINoChoiceError } from './errors';
 import { SSEDecoder, type SSEDecoderOptions } from './sse';
 import {
@@ -139,9 +140,11 @@ export class AIClient {
   private readonly sseOptions: SSEDecoderOptions;
 
   constructor(config?: AIClientConfig) {
-    this.baseUrl = config?.baseUrl ?? process.env.AI_API_BASE_URL ?? '';
-    this.apiKey = config?.apiKey || process.env.AI_API_KEY || '';
-    this.modelName = config?.modelName || process.env.AI_MODEL_NAME || 'meta-llama/Meta-Llama-3-8B-Instruct';
+    const providers = resolveLLMProviders();
+    const provider = providers[0];
+    this.baseUrl = config?.baseUrl ?? provider?.baseUrl ?? '';
+    this.apiKey = config?.apiKey || provider?.apiKey || '';
+    this.modelName = config?.modelName || provider?.modelName || 'meta-llama/Meta-Llama-3-8B-Instruct';
     this.maxTokensParam = config?.maxTokensParam === 'max_completion_tokens'
       ? 'max_completion_tokens'
       : 'max_tokens';

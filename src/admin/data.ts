@@ -26,7 +26,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import { removeRoomDocument, listRoomDocuments, DOCUMENT_CATEGORY } from '../utils/roomKnowledge';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { readIntegerEnv } from '../config/runtime';
+import { readIntegerEnv, readStringEnv } from '../config/runtime';
 import { APP_RELEASE_TAG, APP_VERSION } from '../config/version';
 
 const log = logger.child({ module: 'AdminData' });
@@ -357,7 +357,7 @@ export function feedbackInventory(limit = 100): {
   const entries: Array<Record<string, unknown>> = [];
   let malformedLines = 0;
   try {
-    const path = readStringEnvOrDefault(process.env.FEEDBACK_LOG_PATH, 'data/feedback.jsonl');
+    const path = readStringEnv(process.env.FEEDBACK_LOG_PATH, 'data/feedback.jsonl');
     const text = readTextSafe(path);
     const lines = text.split('\n').filter(line => line.trim().length > 0);
     for (const line of lines.slice(-limit)) {
@@ -383,11 +383,6 @@ export function feedbackInventory(limit = 100): {
   const total = positive + negative;
   entries.reverse();
   return { positive, negative, ratio: total > 0 ? Number((positive / total).toFixed(3)) : null, malformedLines, entries };
-}
-
-function readStringEnvOrDefault(value: string | undefined, fallback: string): string {
-  const trimmed = (value ?? '').trim();
-  return trimmed || fallback;
 }
 
 function readTextSafe(path: string): string {

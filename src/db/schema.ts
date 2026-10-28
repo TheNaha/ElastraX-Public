@@ -23,7 +23,7 @@ import { sql } from 'drizzle-orm';
 
 export const chatRooms = sqliteTable('chat_rooms', {
   id: text('id').primaryKey(), // Legacy remote JID/ID, or the canonical room key for new V8.1 rooms
-  platform: text('platform').notNull(), // 'whatsapp' | 'discord'
+  platform: text('platform').notNull(), // 'whatsapp' | 'discord' | 'telegram'
   language: text('language').default('en').notNull(), // 'en' | 'id'
   
   // V7.5 Dynamic Configuration Overrides (nullable means fallback to .env)
@@ -218,12 +218,13 @@ export type FlowSessionRow = typeof flowSessions.$inferSelect;
 // role lookups, owner checks, and /role check can resolve all JIDs for a user
 // even when the Baileys signal store doesn't have the mapping yet.
 export const userIdentities = sqliteTable('user_identities', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
   canonicalId: text('canonical_id'),
   /** LID JID (e.g. "265841933336713@lid") — the canonical Baileys V7 identifier. */
   lid: text('lid'),
   /** Phone-number JID (e.g. "6281234567890@s.whatsapp.net"). */
   pn: text('pn'),
-  /** Platform — always 'whatsapp' for now but could extend to 'discord'. */
+  /** Platform — always 'whatsapp' for now but could extend to 'discord' | 'telegram'. */
   platform: text('platform').notNull().default('whatsapp'),
   /** Last known display name (pushName). */
   displayName: text('display_name'),
@@ -242,7 +243,7 @@ export const serviceBindings = sqliteTable('service_bindings', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   /** Bot user ID (WA JID or Discord ID). */
   userId: text('user_id').notNull(),
-  /** 'whatsapp' | 'discord' */
+  /** 'whatsapp' | 'discord' | 'telegram' */
   platform: text('platform').notNull(),
   /** 'jellyfin' | 'seerr' | extensible */
   serviceType: text('service_type').notNull(),

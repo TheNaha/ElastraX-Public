@@ -54,6 +54,9 @@ export const ROOM_KEY_MIGRATION_WHEN = 23;
 /** Zero-based position of the canonical room identity migration in the journal. */
 export const ROOM_KEY_MIGRATION_INDEX = 22;
 
+/** `when` value of the migration that added a synthetic PK to user_identities. */
+export const IDENTITY_PK_MIGRATION_WHEN = 24;
+
 /** Tables/columns the canonical room identity migration adds. */
 const ROOM_KEY_COLUMN_TARGETS: Array<[string, string]> = [
   ['chat_rooms', 'room_key'],
@@ -313,6 +316,14 @@ function validateKnownUpgradeState(sqlite: Database, state: MigrationState): voi
   }
   if (appliedCount === ROOM_KEY_MIGRATION_INDEX && tableExists(sqlite, 'room_keys')) {
     throw new Error('Migration 0022 is unapplied but room_keys already exists; explicit adoption is required');
+  }
+  // 0023 adds a synthetic PK (id) to user_identities. Once that migration is
+  // recorded as applied, the column must exist — table recreation is atomic, so
+  // a half-applied state is a corrupted database.
+  if (appliedCount > ROOM_KEY_MIGRATION_INDEX + 1) {
+    if (!tableColumns(sqlite, 'user_identities').has('id')) {
+      throw new Error('Migration 0023 is recorded as applied but user_identities.id is missing');
+    }
   }
 }
 

@@ -31,6 +31,7 @@ import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { chatRooms, type ChatRoom } from '../db/schema';
 import { ConfigService } from '../utils/ConfigService';
+import { readBooleanEnv } from '../config/runtime';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 import { getErrorMessage } from '../utils/errorUtils';
@@ -55,13 +56,6 @@ type ConfigArgs = {
 
 function isConfigKey(value: string | undefined): value is ConfigKey {
   return value !== undefined && CONFIG_KEYS.includes(value as ConfigKey);
-}
-
-function parseBooleanValue(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'true' || normalized === '1') return true;
-  if (normalized === 'false' || normalized === '0') return false;
-  throw new Error('Must be true or false.');
 }
 
 function parseIntegerValue(value: string, min: number, max: number): number {
@@ -99,8 +93,13 @@ function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
     case 'allowTools':
     case 'autoReplyAll':
     case 'summarize':
-    case 'longTermMemory':
-      return parseBooleanValue(value);
+    case 'longTermMemory': {
+      const normalized = value.trim().toLowerCase();
+      if (normalized === '1') return true;
+      if (normalized === '0') return false;
+      if (normalized !== 'true' && normalized !== 'false') throw new Error('Must be true or false.');
+      return readBooleanEnv(normalized, false);
+    }
   }
 }
 

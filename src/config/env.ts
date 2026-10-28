@@ -164,6 +164,19 @@ export function validateEnv(env: Env = process.env): void {
   validateInteger(env.DOWNLOAD_MAX_MB, 'DOWNLOAD_MAX_MB', errors, { min: 1, max: 1_024 });
   validateInteger(env.MEDIA_CLEANUP_INTERVAL_MS, 'MEDIA_CLEANUP_INTERVAL_MS', errors, { min: 60_000, max: 86_400_000 });
   validateInteger(env.MEDIA_RETENTION_HOURS, 'MEDIA_RETENTION_HOURS', errors, { min: 1, max: 8_760 });
+  if (env.YTDLP_PATH && !env.YTDLP_PATH.trim()) {
+    errors.push('YTDLP_PATH must not be empty');
+  }
+
+  validateInteger(env.TOOL_MUTATION_COST_LIMIT, 'TOOL_MUTATION_COST_LIMIT', errors, { min: 1, max: 1000 });
+
+  const syncMode = env.ELASTRAX_DB_SYNCHRONOUS?.trim().toUpperCase();
+  if (syncMode && syncMode !== 'OFF' && syncMode !== 'NORMAL' && syncMode !== 'FULL') {
+    errors.push('ELASTRAX_DB_SYNCHRONOUS must be OFF, NORMAL, or FULL');
+  }
+
+  validateBoolean(env.AI_VERBOSE_LOGS, 'AI_VERBOSE_LOGS', errors);
+
   validateFloat(env.AI_TEMPERATURE, 'AI_TEMPERATURE', errors, { min: 0, max: 2 });
 
   for (const key of [

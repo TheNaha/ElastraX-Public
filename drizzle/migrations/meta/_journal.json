@@ -122,6 +122,13 @@
       "when": 23,
       "tag": "0022_room_keys",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 24,
+      "tag": "0023_add_user_identities_pk",
+      "breakpoints": true
     }
   ]
 }

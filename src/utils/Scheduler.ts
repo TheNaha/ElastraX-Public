@@ -1,6 +1,7 @@
 import { db } from '../db';
 import { chatRooms, reminders } from '../db/schema';
 import { asc, eq, lte, and, or, isNull } from 'drizzle-orm';
+import { readIntegerEnv } from '../config/runtime';
 import { logger } from './logger';
 import { t } from './i18n';
 import { exponentialBackoff } from './backoff';
@@ -282,11 +283,7 @@ export class Scheduler {
    * abort, and one who lowered it got none of the protection.
    */
   static taskTimeoutMs(): number {
-    const configured = Number(process.env.SCHEDULED_TASKS_TIMEOUT_MS);
-    if (Number.isFinite(configured) && configured >= 5_000 && configured <= 900_000) {
-      return Math.floor(configured);
-    }
-    return TASK_TIMEOUT_MS;
+    return readIntegerEnv(process.env.SCHEDULED_TASKS_TIMEOUT_MS, TASK_TIMEOUT_MS, { min: 5_000, max: 900_000 });
   }
 
   static start(): void {

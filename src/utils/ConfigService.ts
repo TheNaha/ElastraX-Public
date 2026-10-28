@@ -6,6 +6,7 @@ import {
   readFloatEnv,
   readIntegerEnv,
   readStringEnv,
+  type RuntimeEnv,
 } from '../config/runtime';
 
 export type ResolvedRoomConfig = {
@@ -20,21 +21,21 @@ export type ResolvedRoomConfig = {
 };
 
 export class ConfigService {
-  static getDefaults(isGroup: boolean = false): ResolvedRoomConfig {
+  static getDefaults(isGroup: boolean = false, env: RuntimeEnv = process.env): ResolvedRoomConfig {
     return {
-      systemPrompt: readStringEnv(process.env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt()),
-      contextLimit: readIntegerEnv(process.env.CONTEXT_MESSAGE_LIMIT, 10, { min: -1, max: 10_000 }),
-      temperature: readFloatEnv(process.env.AI_TEMPERATURE, 0.7, { min: 0, max: 2 }),
-      maxTokens: getAIRequestConfig().maxTokens,
-      allowTools: readBooleanEnv(process.env.ALLOW_TOOLS, true),
-      autoReplyAll: readBooleanEnv(process.env.AUTO_REPLY_ALL, false),
-      summarize: readBooleanEnv(process.env.CONTEXT_SUMMARIZE, true),
-      longTermMemory: readBooleanEnv(process.env.LONG_TERM_MEMORY, !isGroup),
+      systemPrompt: readStringEnv(env.DEFAULT_SYSTEM_PROMPT, getDefaultSystemPrompt()),
+      contextLimit: readIntegerEnv(env.CONTEXT_MESSAGE_LIMIT, 10, { min: -1, max: 10_000 }),
+      temperature: readFloatEnv(env.AI_TEMPERATURE, 0.7, { min: 0, max: 2 }),
+      maxTokens: getAIRequestConfig(env).maxTokens,
+      allowTools: readBooleanEnv(env.ALLOW_TOOLS, true),
+      autoReplyAll: readBooleanEnv(env.AUTO_REPLY_ALL, false),
+      summarize: readBooleanEnv(env.CONTEXT_SUMMARIZE, true),
+      longTermMemory: readBooleanEnv(env.LONG_TERM_MEMORY, !isGroup),
     };
   }
 
-  static getResolvedConfig(room: Partial<ChatRoom>, isGroup: boolean = false): ResolvedRoomConfig {
-    const defaults = this.getDefaults(isGroup);
+  static getResolvedConfig(room: Partial<ChatRoom>, isGroup: boolean = false, env: RuntimeEnv = process.env): ResolvedRoomConfig {
+    const defaults = this.getDefaults(isGroup, env);
     const contextLimit = room.contextLimit === 0 ? defaults.contextLimit : room.contextLimit;
     const maxTokens = room.maxTokens === 0 ? defaults.maxTokens : room.maxTokens;
     const temperature = room.temperature ?? defaults.temperature;

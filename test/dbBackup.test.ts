@@ -60,7 +60,7 @@ describe('backupDatabase', () => {
 
     const manifest = JSON.parse(readFileSync(result.manifestPath!, 'utf8'));
     expect(manifest.formatVersion).toBe(1);
-    expect(manifest.database.migrationCount).toBe(23);
+    expect(manifest.database.migrationCount).toBe(24);
     expect(manifest.snapshot.sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const destination = join(TMP, 'restored-new.db');
@@ -69,7 +69,7 @@ describe('backupDatabase', () => {
       manifestPath: result.manifestPath,
       destination,
       requireCurrentSchema: true,
-      expectedSchemaVersion: 23,
+      expectedSchemaVersion: 24,
     });
     expect(restored.ok).toBe(true);
     expect(readdirSync(TMP).some(name => name.includes('.tmp'))).toBe(false);
