@@ -185,26 +185,26 @@ export class InboxService {
    */
   static fail(id: number, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now();
+    const message = error instanceof Error ? error.message : String(error);
+    const deadline = now + exponentialBackoff(0, { baseMs: 5_000 });
+    // Single atomic UPDATE: eliminates the TOCTOU window from the previous
+    // SELECT-then-UPDATE pattern. If another worker already processed the row,
+    // the predicates won't match and 0 rows are returned — caller gets 'not_owned'.
     const row = sqlite
-      .query<{ attemptCount: number }, [number, string]>(
-        `SELECT attempt_count AS attemptCount FROM message_inbox
-         WHERE id = ? AND state = 'processing' AND lease_owner = ?`,
+      .query<{ attemptCount: number }, [number, string, number, number, number, number, number, string]>(
+        `UPDATE message_inbox
+         SET state = CASE WHEN attempt_count >= ? THEN 'dead_letter' ELSE 'failed' END,
+             last_error = ?,
+             available_at = CASE WHEN attempt_count >= ? THEN ? ELSE ? END,
+             lease_owner = NULL,
+             lease_expires_at = NULL,
+             updated_at = ?
+         WHERE id = ? AND state = 'processing' AND lease_owner = ?
+         RETURNING attempt_count AS attemptCount`,
       )
-      .get(id, owner);
+      .get(MAX_ATTEMPTS, message.slice(0, 2_000), MAX_ATTEMPTS, deadline, deadline, now, id, owner);
     if (!row) return 'not_owned';
     const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
-    const persistedState = deadLettered ? 'dead_letter' : 'failed';
-    const outcome: 'retry' | 'dead_letter' = deadLettered ? 'dead_letter' : 'retry';
-    const retryDelay = exponentialBackoff(row.attemptCount, { baseMs: 5_000 });
-    const message = error instanceof Error ? error.message : String(error);
-    sqlite
-      .query<never, [string, string, number, number, number, string]>(
-        `UPDATE message_inbox
-         SET state = ?, last_error = ?, available_at = ?, lease_owner = NULL,
-             lease_expires_at = NULL, updated_at = ?
-         WHERE id = ? AND state = 'processing' AND lease_owner = ?`,
-      )
-      .run(persistedState, message.slice(0, 2_000), now + retryDelay, now, id, owner);
-    return outcome;
+    return deadLettered ? 'dead_letter' : 'retry';
   }
 }

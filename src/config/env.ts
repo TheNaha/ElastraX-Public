@@ -197,6 +197,7 @@ export function validateEnv(env: Env = process.env): void {
   validateSecret(env.WEBHOOK_SECRET, 'WEBHOOK_SECRET', errors, false);
   validateSecret(env.SEERR_WEBHOOK_SECRET, 'SEERR_WEBHOOK_SECRET', errors, false);
   validateSecret(env.JELLYFIN_WEBHOOK_SECRET, 'JELLYFIN_WEBHOOK_SECRET', errors, false);
+  validateSecret(env.METRICS_AUTH_TOKEN, 'METRICS_AUTH_TOKEN', errors, false);
 
   if (errors.length > 0) {
     for (const error of errors) logger.error(error);

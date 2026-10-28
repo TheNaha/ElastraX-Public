@@ -20,8 +20,12 @@ import {
   resolveRoomKeySync,
   type ResolvedRoomKey,
 } from '../db/rooms';
-import { parseRoomReference, toRoomKey as toRoomKeyFormat } from '../core/roomKeyFormat';
-import { sqlite } from '../db';
+import {
+  parseCanonicalRoomKey,
+  parseRoomReference,
+  toRoomKey as toRoomKeyFormat,
+} from '../core/roomKeyFormat';
+import { sqlite, afterMigrationCallbacks } from '../db';
 import { logger } from '../utils/logger';
 import {
   SUPPORTED_PLATFORMS,
@@ -230,7 +234,12 @@ export async function resolveCanonicalRoomKeyAsync(
 /** Canonical key for a context that may already carry one (production always does). */
 export function roomKeyForContext(ctx: { platform: string; chatId: string; roomKey?: string | null }): string {
   const explicit = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
-  if (explicit) return explicit;
+  if (explicit) {
+    // Validate that an explicit key belongs to the context's platform so a
+    // stale or cross-platform key can never route a message to the wrong room.
+    const parsed = parseCanonicalRoomKey(explicit);
+    if (parsed && parsed.platform === ctx.platform) return explicit;
+  }
   return resolveCanonicalRoomKey(ctx.platform, ctx.chatId);
 }
 
@@ -418,3 +427,7 @@ export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox' | 'sc
 export function resetRoomKeyColumnCache(): void {
   columnPresence.get(databaseHandle() ?? ({} as SqliteLike))?.clear();
 }
+
+// Invalidate the column-presence cache after migrations so `hasRoomKeyColumn`
+// reflects newly-added columns on the same database handle (rolling upgrades).
+afterMigrationCallbacks.push(resetRoomKeyColumnCache);

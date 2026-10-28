@@ -9,6 +9,7 @@ import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { and, eq, or } from 'drizzle-orm';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
+import { safeErrorMessage } from '../utils/errorUtils';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
@@ -142,8 +143,14 @@ export class WhatsAppProvider implements BotProvider {
   }
 
   async start(): Promise<void> {
+    if (this.startPromise) {
+      // If a start is already in flight, return its promise rather than racing
+      // a second connection that would overwrite the socket and the start
+      // promise, discarding the first connection's result.
+      return this.startPromise;
+    }
     this.desiredRunning = true;
-    if (this.sock && (this.providerStatus === 'running' || this.providerStatus === 'starting')) return;
+    this.providerStatus = 'starting';
     const generation = ++this.generation;
     const run = this.startForGeneration(generation);
     this.startPromise = run;
@@ -276,7 +283,7 @@ export class WhatsAppProvider implements BotProvider {
       this.providerStatus = 'backoff';
       this.providerError = error instanceof Error ? error : new Error(String(error));
       this.scheduleReconnect(generation);
-      throw new ProviderStartError('whatsapp', `WhatsApp startup failed: ${errorMessage(error)}`, error);
+      throw new ProviderStartError('whatsapp', `WhatsApp startup failed: ${safeErrorMessage(error)}`, error);
     }
   }
 
@@ -599,7 +606,7 @@ export class WhatsAppProvider implements BotProvider {
       } catch (error) {
         if (savedPath) await deleteSavedMedia(savedPath).catch(() => false);
         descriptor.state = 'error';
-        descriptor.error = errorMessage(error).slice(0, 500);
+        descriptor.error = safeErrorMessage(error);
         logger.warn({ err: error, attachmentId: descriptor.id }, '[WhatsApp] Failed to download media');
         if (throwOnFailure) throw new ProviderOperationError('whatsapp', 'downloadMedia', descriptor.error, error);
         return null;
@@ -856,11 +863,4 @@ function extractStoredMessage(rawMessage: string | null): proto.IMessage | undef
   } catch {
     return undefined;
   }
-}
-
-function errorMessage(error: unknown): string {
-  return Array.from(error instanceof Error ? error.message : String(error), character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? ' ' : character;
-  }).join('').slice(0, 500);
 }

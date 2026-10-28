@@ -29,7 +29,7 @@ function isWatermark(value: unknown, scope: string): value is SummaryWatermark {
 
 export class AppKvSummaryStore implements SummaryStore {
   async load(scope: string): Promise<SummaryWatermark | null> {
-    const rows = db.select({ value: appKv.value })
+    const rows = await db.select({ value: appKv.value })
       .from(appKv)
       .where(eq(appKv.id, storageKey(scope)))
       .limit(1)
@@ -51,7 +51,7 @@ export class AppKvSummaryStore implements SummaryStore {
     }
     const now = new Date();
     const value = JSON.stringify(watermark);
-    db.insert(appKv)
+    await db.insert(appKv)
       .values({
         id: storageKey(scope),
         value,
@@ -68,7 +68,7 @@ export class AppKvSummaryStore implements SummaryStore {
   }
 
   async delete(scope: string): Promise<void> {
-    db.delete(appKv).where(eq(appKv.id, storageKey(scope))).run();
+    await db.delete(appKv).where(eq(appKv.id, storageKey(scope))).run();
   }
 }
 

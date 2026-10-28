@@ -42,6 +42,7 @@ import {
   type RoomPlatform,
 } from '../messaging/roomKeys';
 
+import { readIntegerEnv } from '../config/runtime';
 import { withCancellableTimeout } from './withTimeout.js';
 
 const log = logger.child({ module: 'DigestService' });
@@ -69,19 +70,16 @@ interface DigestConfig {
 }
 
 function readDigestConfig(): DigestConfig {
-  const hourRaw = Number(process.env.DIGEST_HOUR_UTC);
-  const lookbackRaw = Number(process.env.DIGEST_LOOKBACK_HOURS);
-  const maxRaw = Number(process.env.DIGEST_MAX_MESSAGES);
   return {
     enabled: process.env.DIGEST_ENABLED === 'true',
     mediaEnabled: process.env.DIGEST_MEDIA_ENABLED === 'true',
-    hourUtc: Number.isFinite(hourRaw) && hourRaw >= 0 && hourRaw <= 23 ? hourRaw : 8,
+    hourUtc: readIntegerEnv(process.env.DIGEST_HOUR_UTC, 8, { min: 0, max: 23 }),
     rooms: (process.env.DIGEST_ROOMS ?? '')
       .split(',')
       .map(r => r.trim())
       .filter(Boolean),
-    lookbackHours: Number.isInteger(lookbackRaw) && lookbackRaw > 0 && lookbackRaw <= 720 ? lookbackRaw : 24,
-    maxMessages: Number.isInteger(maxRaw) && maxRaw > 0 && maxRaw <= 1_000 ? maxRaw : 500,
+    lookbackHours: readIntegerEnv(process.env.DIGEST_LOOKBACK_HOURS, 24, { min: 1, max: 720 }),
+    maxMessages: readIntegerEnv(process.env.DIGEST_MAX_MESSAGES, 500, { min: 1, max: 1_000 }),
   };
 }
 

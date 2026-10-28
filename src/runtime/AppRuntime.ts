@@ -35,7 +35,7 @@ import type {
   WebhookEnqueuer,
   WebhookReadinessCheck,
 } from '../webhooks/types';
-import { withCancellableTimeout } from '../utils/withTimeout';
+import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { randomUUID, createHash } from 'node:crypto';
 
 type SenderFn = (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
@@ -382,9 +382,13 @@ export class AppRuntime {
       if (unregisterReadiness) this.unregisterWebhookHooks.push(unregisterReadiness);
       const unregisterEnqueuer = this.webhookServer.registerEnqueuer?.(this.enqueueWebhook);
       if (unregisterEnqueuer) this.unregisterWebhookHooks.push(unregisterEnqueuer);
+      if (this.stopRequested) return;
       await Promise.resolve(this.webhookServer.start());
+      if (this.stopRequested) return;
       await Promise.resolve(this.scheduler.start());
+      if (this.stopRequested) return;
       await Promise.resolve(this.digestService.start());
+      if (this.stopRequested) return;
       this.healthMon.start();
       this.startBackgroundTasks();
     } catch (err) {
