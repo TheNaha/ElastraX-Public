@@ -62,14 +62,14 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
 
   if (ctx.isGroup) {
     await FlowHandler.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
-    await ctx.reply('❌ Media account linking is only available in a direct message.');
+    await ctx.reply(t(ctx.language, 'media.only_dm'));
     return;
   }
 
   if (step === 'username') {
     const username = ctx.text.trim();
     if (!username) {
-      await ctx.reply(t(ctx.language, 'media.username_prompt') || 'Please enter your username for the streaming service.');
+      await ctx.reply(t(ctx.language, 'media.username_prompt'));
       return;
     }
     await FlowHandler.setSession(
@@ -80,20 +80,20 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
       120,
       ctx.chatId,
     );
-    await ctx.reply(t(ctx.language, 'media.password_prompt') || 'Now enter your password. (Your message will be processed securely.)');
+    await ctx.reply(t(ctx.language, 'media.password_prompt'));
     return;
   }
 
   if (step === 'password') {
     const password = ctx.text.trim();
     if (!password) {
-      await ctx.reply(t(ctx.language, 'media.password_prompt') || 'Now enter your password. (Your message will be processed securely.)');
+      await ctx.reply(t(ctx.language, 'media.password_prompt'));
       return;
     }
 
     const username = data.username as string;
 
-    await ctx.reply('⏳ Authenticating...');
+    await ctx.reply(t(ctx.language, 'media.authenticating'));
 
     try {
       const seerrClient = MediaService.createSeerrClient();
@@ -126,7 +126,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
         isAdmin = authResult.User.Policy?.IsAdministrator === true;
       } else {
         await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
-        await ctx.reply(t(ctx.language, 'media.not_configured') || '❌ Media services are not configured. Please contact the bot admin.');
+        await ctx.reply(t(ctx.language, 'media.not_configured'));
         return;
       }
 
@@ -145,18 +145,17 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
 
       await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
 
-      const adminLabel = isAdmin ? ' 👑 ' : '';
-      const adminText = adminLabel + (isAdmin ? t(ctx.language, 'media.admin_label') || '(Admin)' : '');
-      await ctx.reply(
-        `${t(ctx.language, 'media.connected') || '✅ Account linked successfully!'}${adminText}\n` +
-        `${t(ctx.language, 'media.connected_username') || 'Username:'} ${jellyfinUsername ?? username}\n\n` +
-        `${t(ctx.language, 'media.notify_hint') || 'Would you like to receive media notifications in this chat? Use the notify command to manage notification preferences.'}`,
-      );
+    const adminText = isAdmin ? t(ctx.language, 'media.admin_label') + ' 👑 ' : '';
+    await ctx.reply(
+      `${t(ctx.language, 'media.connected')}${adminText}\n` +
+      `${t(ctx.language, 'media.connected_username')} ${jellyfinUsername ?? username}\n\n` +
+      `${t(ctx.language, 'media.notify_hint')}`,
+    );
     } catch (err: unknown) {
       await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
       const msg = getErrorMessage(err);
       log.error({ err, username }, 'Media connect authentication failed');
-      await ctx.reply(`${t(ctx.language, 'media.auth_failed') || '❌ Authentication failed:'} ${msg}\n${t(ctx.language, 'media.auth_retry') || 'Please check your credentials and try again.'}`);
+      await ctx.reply(`${t(ctx.language, 'media.auth_failed')} ${msg}\n${t(ctx.language, 'media.auth_retry')}`);
     }
     return;
   }
@@ -238,24 +237,23 @@ export class MediaBindTool extends BaseTool {
       case 'status':
         return this.handleStatus(ctx);
       default:
-        return t(ctx.language, 'media.actions_list') || 'Available actions: connect, disconnect, notify, status';
+        return t(ctx.language, 'media.actions_list');
     }
   }
 
   private async handleConnect(ctx: MessageContext): Promise<ToolResult> {
-    if (ctx.isGroup) return '❌ Media account linking is only available in a direct message.';
+    if (ctx.isGroup) return t(ctx.language, 'media.only_dm');
     const seerrClient = MediaService.createSeerrClient();
     const jellyfinClient = MediaService.createJellyfinClient();
 
     if (!seerrClient.isConfigured && !jellyfinClient.isConfigured) {
-      return t(ctx.language, 'media.not_configured') || '❌ Media services are not configured.';
+      return t(ctx.language, 'media.not_configured');
     }
 
     // Check if already bound
     const existing = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
     if (existing) {
-      return t(ctx.language, 'media.already_bound', { username: existing.externalUsername })
-        || `You already have a linked account (${existing.externalUsername}). Use disconnect first if you want to relink.`;
+      return t(ctx.language, 'media.already_linked', { username: existing.externalUsername ?? '' });
     }
 
     // Start the flow
@@ -268,7 +266,7 @@ export class MediaBindTool extends BaseTool {
       ctx.chatId,
     );
 
-    return t(ctx.language, 'media.connect_start') || 'Let\'s link your media account. Please enter your username:';
+    return t(ctx.language, 'media.connect_start');
   }
 
   private async handleDisconnect(ctx: MessageContext): Promise<ToolResult> {
@@ -276,10 +274,10 @@ export class MediaBindTool extends BaseTool {
     const srRemoved = await MediaService.bindingService.unbind(ctx.senderId, ctx.platform, 'seerr');
 
     if (!jfRemoved && !srRemoved) {
-      return t(ctx.language, 'media.no_binding') || 'You don\'t have any linked media accounts.';
+      return t(ctx.language, 'media.no_binding');
     }
 
-    return t(ctx.language, 'media.unlinked') || '✅ Media account unlinked successfully.';
+    return t(ctx.language, 'media.unlinked');
   }
 
   private async handleNotify(args: MediaBindArgs, ctx: MessageContext): Promise<ToolResult> {
@@ -292,8 +290,8 @@ export class MediaBindTool extends BaseTool {
 
     if ((notifyAction === 'add' || notifyAction === 'remove') && !requestedRoom) {
       return notifyAction === 'add'
-        ? (t(ctx.language, 'media.notify_add_prompt') || 'Please specify a room ID.')
-        : (t(ctx.language, 'media.notify_not_found') || 'No notification subscription found for that room.');
+        ? t(ctx.language, 'media.notify_add_prompt')
+        : t(ctx.language, 'media.notify_not_found');
     }
 
     if (requestedRoom && isForeignRoom) {
@@ -318,8 +316,8 @@ export class MediaBindTool extends BaseTool {
           roomVerified: foreignAuthorized || !isForeignRoom,
         });
         return notifyAction === 'here'
-          ? (t(ctx.language, 'media.notify_here') || '✅ This chat will now receive media notifications.')
-          : (t(ctx.language, 'media.notify_added', { room: roomId }) || `✅ Room ${roomId} will now receive media notifications.`);
+          ? t(ctx.language, 'media.notify_here')
+          : t(ctx.language, 'media.notify_added', { room: roomId });
       case 'remove': {
         const removed = await MediaService.notificationService.unsubscribe(ctx.senderId, ctx.platform, 'all', roomId, {
           currentRoomId: currentRoom,
@@ -328,8 +326,8 @@ export class MediaBindTool extends BaseTool {
           roomVerified: foreignAuthorized || !isForeignRoom,
         });
         return removed
-          ? (t(ctx.language, 'media.notify_removed', { room: roomId }) || `✅ Room ${roomId} will no longer receive media notifications.`)
-          : (t(ctx.language, 'media.notify_not_found') || 'No notification subscription found for that room.');
+          ? t(ctx.language, 'media.notify_removed', { room: roomId })
+          : t(ctx.language, 'media.notify_not_found');
       }
       case 'list': {
         const subs = await MediaService.notificationService.getSubscriptions(ctx.senderId, ctx.platform);
@@ -343,23 +341,23 @@ export class MediaBindTool extends BaseTool {
           const verifier = (ctx as NotificationDestinationContext).verifyRoomMembership;
           if (owner && typeof verifier === 'function' && await verifier(sub.chatRoomId, ctx.platform)) visibleSubs.push({ sub, index });
         }
-        if (visibleSubs.length === 0) return t(ctx.language, 'media.notify_list_empty') || 'You have no notification subscriptions.';
+        if (visibleSubs.length === 0) return t(ctx.language, 'media.notify_list_empty');
         const lines = visibleSubs.map(({ sub, index }) => {
-          let types = t(ctx.language, 'media.notify_types_all') || 'all';
+          let types = t(ctx.language, 'media.notify_types_all');
           if (sub.notifyTypes) {
             try {
               const parsed = JSON.parse(sub.notifyTypes);
               if (Array.isArray(parsed) && parsed.length > 0) types = parsed.join(', ');
             } catch {
-              types = t(ctx.language, 'media.notify_types_all') || 'all';
+              types = t(ctx.language, 'media.notify_types_all');
             }
           }
           return ` • ${sub.chatRoomId} (${sub.serviceType}) — ${types} (ID: ${index + 1})`;
         });
-        return `${t(ctx.language, 'media.notify_list_header') || '📋 *Your notification subscriptions:*'}\n${lines.join('\n\n')}`;
+        return `${t(ctx.language, 'media.notify_list_header')}\n${lines.join('\n\n')}`;
       }
       default:
-        return t(ctx.language, 'media.notify_actions_list') || 'Available notify actions: here, add, remove, list';
+        return t(ctx.language, 'media.notify_actions_list');
     }
   }
 
