@@ -7,6 +7,12 @@
  */
 
 /**
+ * The bot's display name, used in quoted-message sender labels and log payloads.
+ * Centralised here so the name appears consistently across all platforms.
+ */
+export const BOT_NAME = 'ElastraX';
+
+/**
  * Slash commands that will cancel an active interactive flow session.
  * Checked by `FlowHandler.handle()` before forwarding to the flow processor.
  * Supports both English (`/cancel`) and Indonesian (`/batal`) locales.

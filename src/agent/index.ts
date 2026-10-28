@@ -53,7 +53,7 @@ import { ServiceBindingService } from '../utils/ServiceBindingService';
 
 const log = logger.child({ module: 'Agent' });
 import { FlowHandler } from '../core/FlowHandler';
-import { MAX_INJECTED_MEMORIES, MAX_ROOM_KNOWLEDGE_CHUNKS, UNLIMITED } from '../core/constants';
+import { MAX_INJECTED_MEMORIES, MAX_ROOM_KNOWLEDGE_CHUNKS, UNLIMITED, BOT_NAME } from '../core/constants';
 import { t } from '../utils/i18n';
 import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
@@ -639,7 +639,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // Emphasize quoted context by prepending it directly to the user's message payload
   if (ctx.quoted) {
     const isFromBot = ctx.quoted.rawMessage?.key?.fromMe;
-    const quoteSender = isFromBot ? 'ElastraX (You)' : ctx.quoted.senderId.split('@')[0];
+    const quoteSender = isFromBot ? `${BOT_NAME} (You)` : ctx.quoted.senderId.split('@')[0];
     let quoteText = ctx.quoted.text || '';
     if (quoteText.length > 150) quoteText = quoteText.substring(0, 150) + '...';
     
@@ -1278,7 +1278,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       chatRoomId: roomId,
       ...messageRoomKeyInsertValues(roomIdentity.roomKey),
       senderId: 'bot',
-      senderName: 'ElastraX',
+      senderName: BOT_NAME,
       role: 'assistant',
       content: finalAiResponseText,
       platform,
@@ -1323,7 +1323,6 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       quotedMedia: !!ctx.quoted?.hasMedia,
       duration_ms,
       roles: userRoles,
-      usedTokens: -1, // DEPRECATED - now tracked in health metrics natively
     };
     if (usedFallbackError) {
       log.warn(logPayload, 'Successfully responded');
