@@ -160,7 +160,7 @@ describe('ConfigTool', () => {
     test('should return error message when room does not exist', async () => {
       mockRoomRows = [];
       const result = await tool.execute({ action: 'get' }, createCtx());
-      expect(result).toContain('Error');
+      expect(result).toContain('not found');
     });
   });
 

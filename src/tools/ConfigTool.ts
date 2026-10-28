@@ -35,6 +35,7 @@ import { readBooleanEnv } from '../config/runtime';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 import { getErrorMessage } from '../utils/errorUtils';
+import { t, type Locale } from '../utils/i18n';
 import {
   chatRoomsRoomColumns,
   pickPreferredRoomRow,
@@ -58,38 +59,38 @@ function isConfigKey(value: string | undefined): value is ConfigKey {
   return value !== undefined && CONFIG_KEYS.includes(value as ConfigKey);
 }
 
-function parseIntegerValue(value: string, min: number, max: number): number {
+function parseIntegerValue(value: string, min: number, max: number, lang: Locale): number {
   const trimmed = value.trim();
-  if (!/^[+-]?\d+$/.test(trimmed)) throw new Error('Must be an integer.');
+  if (!/^[+-]?\d+$/.test(trimmed)) throw new Error(t(lang, 'config.parse_integer'));
   const parsed = Number(trimmed);
-  if (!Number.isSafeInteger(parsed)) throw new Error('Must be an integer.');
-  if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
+  if (!Number.isSafeInteger(parsed)) throw new Error(t(lang, 'config.parse_integer'));
+  if (parsed < min || parsed > max) throw new Error(t(lang, 'config.parse_range', { min: String(min), max: String(max) }));
   return parsed;
 }
 
-function parseFloatValue(value: string, min: number, max: number): number {
+function parseFloatValue(value: string, min: number, max: number, lang: Locale): number {
   const trimmed = value.trim();
   const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed)) throw new Error('Must be a number.');
-  if (parsed < min || parsed > max) throw new Error(`Must be between ${min} and ${max}.`);
+  if (!Number.isFinite(parsed)) throw new Error(t(lang, 'config.parse_float'));
+  if (parsed < min || parsed > max) throw new Error(t(lang, 'config.parse_range', { min: String(min), max: String(max) }));
   return parsed;
 }
 
-function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
+function parseConfigValue(key: ConfigKey, value: string, lang: Locale): ConfigValue {
   switch (key) {
     case 'systemPrompt':
-      if (value.length > 20_000) throw new Error('System prompt too long (max 20000 chars).');
+      if (value.length > 20_000) throw new Error(t(lang, 'config.system_prompt_too_long'));
       return value;
     case 'contextLimit':
-      return parseIntegerValue(value, 1, 50);
+      return parseIntegerValue(value, 1, 50, lang);
     case 'temperature':
       try {
-        return parseFloatValue(value, 0, 2.0);
+        return parseFloatValue(value, 0, 2.0, lang);
       } catch {
-        throw new Error('Must be a number between 0.0 and 2.0.');
+        throw new Error(t(lang, 'config.invalid_temperature'));
       }
     case 'maxTokens':
-      return parseIntegerValue(value, 64, 8192);
+      return parseIntegerValue(value, 64, 8192, lang);
     case 'allowTools':
     case 'autoReplyAll':
     case 'summarize':
@@ -97,7 +98,7 @@ function parseConfigValue(key: ConfigKey, value: string): ConfigValue {
       const normalized = value.trim().toLowerCase();
       if (normalized === '1') return true;
       if (normalized === '0') return false;
-      if (normalized !== 'true' && normalized !== 'false') throw new Error('Must be true or false.');
+      if (normalized !== 'true' && normalized !== 'false') throw new Error(t(lang, 'config.must_be_boolean'));
       return readBooleanEnv(normalized, false);
     }
   }
@@ -138,21 +139,25 @@ export class ConfigTool extends BaseTool {
    * Builds a human-readable listing of the room's current configuration values,
    * indicating whether each field is a custom DB override or the global default.
    */
-  private buildKeyListing(room: ChatRoom, resolved: ReturnType<typeof ConfigService.getResolvedConfig>): string {
+  private buildKeyListing(room: ChatRoom, resolved: ReturnType<typeof ConfigService.getResolvedConfig>, lang: Locale): string {
+    const customLabel = t(lang, 'config.value_custom');
+    const envDefault = t(lang, 'config.value_default_env');
+    const defaultLabel = (val: unknown) => t(lang, 'config.value_default', { value: String(val) });
     return [
-      ` • *\`systemPrompt\`*: ${room.systemPrompt ? '(Custom)' : '(Default: env)'}`,
-      ` • *\`contextLimit\`*: ${room.contextLimit ?? `(Default: ${resolved.contextLimit})`}`,
-      ` • *\`temperature\`*: ${room.temperature ?? `(Default: ${resolved.temperature})`}`,
-      ` • *\`maxTokens\`*: ${room.maxTokens ?? `(Default: ${resolved.maxTokens})`}`,
-      ` • *\`allowTools\`*: ${room.allowTools ?? `(Default: ${resolved.allowTools})`}`,
-      ` • *\`autoReplyAll\`*: ${room.autoReplyAll ?? `(Default: ${resolved.autoReplyAll})`}`,
-      ` • *\`summarize\`*: ${room.summarize ?? `(Default: ${resolved.summarize})`}`,
-      ` • *\`longTermMemory\`*: ${room.longTermMemory ?? `(Default: ${resolved.longTermMemory})`}`,
+      ` • *\`systemPrompt\`*: ${room.systemPrompt ? customLabel : envDefault}`,
+      ` • *\`contextLimit\`*: ${room.contextLimit ?? defaultLabel(resolved.contextLimit)}`,
+      ` • *\`temperature\`*: ${room.temperature ?? defaultLabel(resolved.temperature)}`,
+      ` • *\`maxTokens\`*: ${room.maxTokens ?? defaultLabel(resolved.maxTokens)}`,
+      ` • *\`allowTools\`*: ${room.allowTools ?? defaultLabel(resolved.allowTools)}`,
+      ` • *\`autoReplyAll\`*: ${room.autoReplyAll ?? defaultLabel(resolved.autoReplyAll)}`,
+      ` • *\`summarize\`*: ${room.summarize ?? defaultLabel(resolved.summarize)}`,
+      ` • *\`longTermMemory\`*: ${room.longTermMemory ?? defaultLabel(resolved.longTermMemory)}`,
     ].join('\n\n');
   }
 
   async execute(args: ConfigArgs, ctx: MessageContext): Promise<string> {
     const { action, key, value } = args;
+    const lang = (ctx.language ?? 'en') as Locale;
     log.debug({ action, key, chatId: ctx.chatId, senderId: ctx.senderId }, 'Config tool invoked');
 
     // Room config lookup prefers the canonical room key and falls back to the
@@ -162,12 +167,12 @@ export class ConfigTool extends BaseTool {
     const roomCondition = roomIdentityCondition(roomColumns, roomIdentity);
     const rows = await db.select().from(chatRooms).where(roomCondition);
     const room = pickPreferredRoomRow(rows, roomIdentity.roomKey);
-    if (!room) return 'Error: Chat room not found in database.';
+    if (!room) return t(lang, 'config.room_not_found');
 
     const resolved = ConfigService.getResolvedConfig(room, ctx.isGroup);
 
     const getSuggestionMessage = (inputKey?: string): string => {
-      if (!inputKey) return '\n';
+      if (!inputKey) return '';
       let bestMatch = '';
       let bestDist = Infinity;
       for (const validKey of CONFIG_KEYS) {
@@ -177,18 +182,18 @@ export class ConfigTool extends BaseTool {
           bestMatch = validKey;
         }
       }
-      return bestMatch ? `\n\nDid you mean \`${bestMatch}\`?\n` : '\n';
+      return bestMatch ? t(lang, 'config.suggestion_for', { suggestion: bestMatch }) : '';
     };
 
     if (action === 'get') {
       log.debug({ chatId: ctx.chatId }, 'Retrieving config for room');
-      return `*Current Configuration for ${ctx.chatId}*\n\n${this.buildKeyListing(room, resolved)}`;
+      return `${t(lang, 'config.get_header', { chatId: ctx.chatId })}${this.buildKeyListing(room, resolved, lang)}`;
     }
 
     if (action === 'reset') {
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `Please provide a valid key to reset to global default.${suggestionStr}\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
+        return `${t(lang, 'config.reset_prompt', { suggestion: suggestionStr })}\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
       }
       const updateData: RoomConfigUpdate = { [key]: null };
       // Dual write: adopt the canonical key on rows the migration has not
@@ -196,34 +201,34 @@ export class ConfigTool extends BaseTool {
       const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
       await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
       log.info({ chatId: ctx.chatId, key, resetBy: ctx.senderId }, 'Config key reset to default');
-      return `Configuration \`${key}\` has been reset to its global fallback value.`;
+      return t(lang, 'config.reset_success', { key: String(key) });
     }
 
     if (action === 'set') {
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `Please provide a valid key to set.${suggestionStr}\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
+        return `${t(lang, 'config.set_prompt', { suggestion: suggestionStr })}\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
       }
       if (value === undefined || value === '') {
-        return `Please provide a value for ${key}.`;
+        return t(lang, 'config.set_value_missing', { key: String(key) });
       }
 
       try {
-        const parsedValue = parseConfigValue(key, value);
+        const parsedValue = parseConfigValue(key, value, lang);
         const updateData = buildConfigUpdate(key, parsedValue);
         const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
 
         await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
         log.info({ chatId: ctx.chatId, key, setBy: ctx.senderId }, 'Config key updated');
-        return `Successfully updated \`${key}\` for this room.`;
+        return t(lang, 'config.set_success', { key: String(key) });
 
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'Unknown validation error.');
         log.warn({ chatId: ctx.chatId, key, err: message }, 'Invalid config value rejected');
-        return `Invalid value for ${key}: ${message}`;
+        return t(lang, 'config.set_invalid_value', { key: String(key), msg: message });
       }
     }
 
-    return `*Config Usage:* \`/config <get|set|reset> [key] [value]\`\n\n*Available Keys (current values for this room):*\n\n${this.buildKeyListing(room, resolved)}`;
+    return `${t(lang, 'config.usage_help')}${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
   }
 }

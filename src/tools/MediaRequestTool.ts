@@ -9,25 +9,31 @@ import { SeerrClient, type SeerrRequest } from '../providers/seerr/SeerrClient';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { t, type Locale } from '../utils/i18n';
 
 const log = logger.child({ module: 'MediaRequestTool' });
 
 // MediaService is used instead of local deps
 
-function requestStatusLabel(status: number): string {
+function requestStatusLabel(status: number, lang: Locale): string {
   switch (status) {
-    case 1: return '⏳ Pending';
-    case 2: return '✅ Approved';
-    case 3: return '❌ Declined';
-    default: return `Unknown (${status})`;
+    case 1: return t(lang, 'media_request.status_pending');
+    case 2: return t(lang, 'media_request.status_approved');
+    case 3: return t(lang, 'media_request.status_declined');
+    default: return t(lang, 'media_request.status_unknown', { status: String(status) });
   }
 }
 
-function formatRequest(req: SeerrRequest, _index: number): string {
+function formatRequest(req: SeerrRequest, _index: number, lang: Locale): string {
   const type = req.type === 'tv' ? '📺' : '🎬';
-  const status = requestStatusLabel(req.status);
+  const status = requestStatusLabel(req.status, lang);
   const tmdbId = req.media.tmdbId;
-  return ` • ${type} TMDB:${tmdbId} — ${status} (Request #${req.id})`;
+  return t(lang, 'media_request.request_label', {
+    type,
+    tmdbId: String(tmdbId),
+    status,
+    id: String(req.id),
+  });
 }
 
 type MediaRequestArgs = {
@@ -117,10 +123,11 @@ export class MediaRequestTool extends BaseTool {
   }
 
   async execute(args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
+    const lang = (ctx.language ?? 'en') as Locale;
     const seerr = MediaService.createSeerrClient();
 
     if (!seerr.isConfigured) {
-      return '❌ Media request service is not configured.';
+      return t(lang, 'media_request.not_configured');
     }
 
     const action = args.action || 'my-requests';
@@ -132,29 +139,29 @@ export class MediaRequestTool extends BaseTool {
         // rejection escape the `catch` entirely, so the user never saw the
         // "Request failed" message this handler exists to produce.
         case 'request':
-          return await this.handleRequest(seerr, args, ctx);
+          return await this.handleRequest(seerr, args, ctx, lang);
         case 'status':
-          return await this.handleStatus(seerr, args, ctx);
+          return await this.handleStatus(seerr, args, ctx, lang);
         case 'my-requests':
-          return await this.handleMyRequests(seerr, ctx);
+          return await this.handleMyRequests(seerr, ctx, lang);
         default:
-          return 'Available actions: request, status, my-requests';
+          return t(lang, 'media_request.available_actions');
       }
     } catch (err: unknown) {
       const msg = getErrorMessage(err);
       log.error({ err, action }, 'MediaRequest failed');
-      return `❌ Request failed: ${msg}`;
+      return t(lang, 'media_request.request_failed', { msg });
     }
   }
 
-  private async handleRequest(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
-    if (!args.media_type) return 'Please specify media_type: movie or tv.';
+  private async handleRequest(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext, lang: Locale): Promise<ToolResult> {
+    if (!args.media_type) return t(lang, 'media_request.no_media_type');
     const mediaId = args.media_id;
-    if (!Number.isInteger(mediaId) || (mediaId ?? 0) <= 0) return 'Please specify a valid media_id (TMDB ID).';
+    if (!Number.isInteger(mediaId) || (mediaId ?? 0) <= 0) return t(lang, 'media_request.invalid_media_id');
 
     const seerrUserId = await getOwnedSeerrUserId(ctx);
     if (seerrUserId === null) {
-      return '❌ You need to link your account first. Use the connect command in a direct message.';
+      return t(lang, 'media_request.not_linked_connect');
     }
     let seasons: number[] | 'all' | undefined;
     if (args.media_type === 'tv' && args.seasons) {
@@ -170,29 +177,44 @@ export class MediaRequestTool extends BaseTool {
       userId: seerrUserId,
     });
 
-    const type = args.media_type === 'tv' ? '📺 TV Show' : '🎬 Movie';
-    return `✅ *Request Submitted!*\n${type} (TMDB: ${args.media_id})\nRequest #${request.id} — ${requestStatusLabel(request.status)}`;
+    const type = args.media_type === 'tv' ? t(lang, 'media_request.tv_label') : t(lang, 'media_request.movie_label');
+    return t(lang, 'media_request.request_submitted', {
+      type,
+      tmdbId: String(args.media_id),
+      id: String(request.id),
+      status: requestStatusLabel(request.status, lang),
+    });
   }
 
-  private async handleStatus(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext): Promise<ToolResult> {
-    if (!Number.isInteger(args.request_id) || (args.request_id ?? 0) <= 0) return 'Please specify a valid request_id.';
+  private async handleStatus(seerr: SeerrClient, args: MediaRequestArgs, ctx: MessageContext, lang: Locale): Promise<ToolResult> {
+    if (!Number.isInteger(args.request_id) || (args.request_id ?? 0) <= 0) return t(lang, 'media_request.invalid_request_id');
     const ownerId = await getOwnedSeerrUserId(ctx);
-    if (ownerId === null) return '❌ You need to link your account first. Use the connect command in a direct message.';
+    if (ownerId === null) return t(lang, 'media_request.not_linked_connect');
     const request = await seerr.getRequestById(args.request_id as number);
     const requestedBy = request.requestedBy as { id?: number; displayName?: string; email?: string } | undefined;
-    if (!requestedBy || Number(requestedBy.id) !== ownerId) return '❌ You can only view your own media requests.';
+    if (!requestedBy || Number(requestedBy.id) !== ownerId) return t(lang, 'media_request.only_own');
     const type = request.type === 'tv' ? '📺' : '🎬';
-    return `${type} *Request #${request.id}*\nTMDB: ${request.media.tmdbId}\nStatus: ${requestStatusLabel(request.status)}\nRequested by: ${requestedBy.displayName ?? 'you'}\nCreated: ${new Date(request.createdAt).toLocaleDateString()}`;
+    const requestedByLine = requestedBy.displayName
+      ? t(lang, 'media_request.requested_by', { user: requestedBy.displayName })
+      : t(lang, 'media_request.requested_by_you');
+    return t(lang, 'media_request.status_detail', {
+      type,
+      id: String(request.id),
+      tmdbId: String(request.media.tmdbId),
+      status: requestStatusLabel(request.status, lang),
+      requested_by: requestedByLine,
+      created: new Date(request.createdAt).toLocaleDateString(),
+    });
   }
 
-  private async handleMyRequests(seerr: SeerrClient, ctx: MessageContext): Promise<ToolResult> {
+  private async handleMyRequests(seerr: SeerrClient, ctx: MessageContext, lang: Locale): Promise<ToolResult> {
     const seerrUserId = await getOwnedSeerrUserId(ctx);
-    if (seerrUserId === null) return '❌ You need to link your account first. Use the connect command in a direct message.';
+    if (seerrUserId === null) return t(lang, 'media_request.not_linked_connect');
     const result = await seerr.getRequests({ requestedBy: seerrUserId, take: 15, sort: 'added' });
 
-    if (result.results.length === 0) return 'You have no media requests.';
+    if (result.results.length === 0) return t(lang, 'media_request.my_requests_empty');
 
-    const lines = result.results.map((r, i) => formatRequest(r, i + 1));
-    return `📋 *Your Requests:*\n\n${lines.join('\n\n')}`;
+    const lines = result.results.map((r, i) => formatRequest(r, i + 1, lang));
+    return t(lang, 'media_request.your_requests', { items: lines.join('\n') });
   }
 }

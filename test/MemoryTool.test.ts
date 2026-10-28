@@ -308,7 +308,7 @@ describe('MemoryTool semantic dedupe integration', () => {
     expect(listed).toContain('legacy group fact');
 
     const forgotten = await tool.execute({ action: 'forget', id: 'legacy-group-mem', scope: 'group' }, ctx);
-    expect(forgotten).toContain('Forgot memory legacy-group-mem');
+    expect(forgotten).toContain('Forgotten memory legacy-group-mem');
     expect(await storedMemoryFor('chat-legacy')).toHaveLength(0);
   });
 
@@ -343,13 +343,13 @@ describe('MemoryTool semantic dedupe integration', () => {
     const [row] = await storedMemoryFor(senderId);
 
     const result = await tool.execute({ action: 'forget', id: row!.id }, createMockCtx({ senderId }));
-    expect(result).toBe(`Forgot memory ${row!.id}`);
+    expect(result).toBe(`✅ Forgotten memory ${row!.id}.`);
     expect(await storedMemoryFor(senderId)).toHaveLength(0);
   });
 
   test('forget reports missing memory', async () => {
     const result = await tool.execute({ action: 'forget', id: 'nope' }, createMockCtx({ senderId: nextSender() }));
-    expect(result).toBe('Error: Memory ID nope not found.');
+    expect(result).toBe('❌ Memory ID nope not found.');
   });
 
   test('disabled long-term memory short-circuits before any DB work', async () => {

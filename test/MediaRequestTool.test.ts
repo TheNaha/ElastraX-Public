@@ -112,7 +112,7 @@ describe('MediaRequestTool', () => {
     MediaService.createSeerrClient = () => ({ isConfigured: true, getRequestById }) as any;
 
     const result = await new MediaRequestTool().execute({ action: 'status', request_id: 55 }, createMockCtx());
-    expect(result).toContain('only view your own media requests');
+    expect(result).toContain('Only your own requests have IDs');
     expect(result).not.toContain('Someone Else');
   });
 

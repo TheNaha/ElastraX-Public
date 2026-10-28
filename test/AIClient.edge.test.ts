@@ -215,7 +215,7 @@ describe('AIClient – edge cases', () => {
     assignFetch(async () => new Response('bad gateway', { status: 502 }));
 
     const iterator = client.chatCompletionStream([{ role: 'user', content: 'hi' }]);
-    await expect(iterator.next()).rejects.toThrow('LLM API returned 502: bad gateway');
+    await expect(iterator.next()).rejects.toThrow('LLM API returned 502: request failed');
   });
 
   test('chatCompletionStream throws when response body is null', async () => {

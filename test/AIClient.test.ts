@@ -119,7 +119,7 @@ describe("AIClient", () => {
       // Fail the test if no error is thrown
       expect(true).toBe(false);
     } catch (e: any) {
-      expect(e.message).toBe("LLM API returned 500: Internal Server Error");
+      expect(e.message).toBe("LLM API returned 500: request failed");
     } finally {
       global.fetch = originalFetch;
     }
