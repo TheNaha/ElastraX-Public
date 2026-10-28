@@ -6,7 +6,8 @@ export type AIProtocolErrorCode =
   | 'sse_buffer_limit'
   | 'empty_stream'
   | 'incomplete_stream'
-  | 'empty_response';
+  | 'empty_response'
+  | 'response_too_large';
 
 export class AIProtocolError extends Error {
   readonly code: AIProtocolErrorCode;

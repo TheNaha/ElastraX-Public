@@ -70,10 +70,13 @@ export function readStringEnv(rawValue: string | undefined, fallback: string = '
   return trimmed || fallback;
 }
 
+export const MAX_AI_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MB guard against runaway LLM responses
+
 export function getAIRequestConfig(env: RuntimeEnv = process.env, streaming: boolean = false) {
   return {
     maxTokens: readIntegerEnv(env.AI_MAX_TOKENS, 2048, { min: 1 }),
     timeoutMs: readIntegerEnv(env.AI_TIMEOUT_MS, streaming ? 120000 : 60000, { min: 1 }),
+    maxResponseBytes: readIntegerEnv(env.AI_MAX_RESPONSE_BYTES, MAX_AI_RESPONSE_BYTES, { min: 1 }),
   };
 }
 
