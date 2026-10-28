@@ -33,7 +33,17 @@ type ConvertFormat = 'mp3' | 'mp4' | 'ogg' | 'aac' | 'opus' | 'm4a' | 'wav' | 'w
 type MediaConvertArgs = ToolArgs & {
   format?: string;
   attachment_id?: string;
+  /** Scale video to a target resolution (e.g. "720p", "1080p", or "640x480"). */
+  resolution?: string;
+  /** Set the output frame rate (e.g. "30", "24"). */
+  fps?: string;
+  /** Quality: CRF for video (lower=better, e.g. "23"), or bitrate for audio (e.g. "128k"). */
+  quality?: string;
+  /** Encoding preset: ultrafast, superfast, veryfast, faster, fast, medium, slow, slower, veryslow. */
+  preset?: string;
 };
+
+const VALID_PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'];
 
 const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
   mp3: ['-vn', '-acodec', 'libmp3lame', '-q:a', '2'],
@@ -54,6 +64,64 @@ const FORMAT_ARGS: Record<ConvertFormat, string[]> = {
 const FORMAT_MIME: Record<ConvertFormat, string> = Object.fromEntries(
   (Object.keys(FORMAT_ARGS) as ConvertFormat[]).map((fmt) => [fmt, EXT_MIME[fmt]]),
 ) as Record<ConvertFormat, string>;
+
+/**
+ * Build additional ffmpeg arguments from optional quality parameters.
+ * Merges filter chains with any existing `-vf` arguments.
+ */
+function buildConvertArgs(
+  fmt: ConvertFormat,
+  resolution: string | undefined,
+  fps: string | undefined,
+  quality: string | undefined,
+  preset: string | undefined,
+): string[] {
+  const extraArgs: string[] = [];
+  const filters: string[] = [];
+
+  if (resolution) {
+    const match = resolution.match(/^(\d+)x(\d+)$/);
+    if (match) {
+      filters.push(`scale=${match[1]}:${match[2]}`);
+    } else {
+      const heightMatch = resolution.match(/^(\d+)p$/);
+      if (heightMatch) {
+        // -2 keeps the aspect ratio, width auto-scaled
+        filters.push(`scale=-2:${heightMatch[1]}`);
+      }
+    }
+  }
+
+  if (fps) {
+    filters.push(`fps=${fps}`);
+  }
+
+  if (filters.length > 0) {
+    extraArgs.push('-vf', filters.join(','));
+  }
+
+  if (quality) {
+    const isVideo = ['mp4', 'mkv', 'webm', 'gif'].includes(fmt);
+    if (isVideo) {
+      // CRF mode: lower = better quality
+      const crf = Number.parseInt(quality, 10);
+      if (!Number.isNaN(crf) && crf >= 0 && crf <= 63) {
+        extraArgs.push('-crf', String(crf));
+      }
+    } else {
+      // Audio bitrate (e.g. "128k", "64k")
+      if (/^\d+[kKmM]?$/.test(quality)) {
+        extraArgs.push('-b:a', quality);
+      }
+    }
+  }
+
+  if (preset && ['mp4', 'mkv', 'webm'].includes(fmt)) {
+    extraArgs.push('-preset', preset);
+  }
+
+  return extraArgs;
+}
 
 export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly name = 'convert_media';
@@ -80,6 +148,25 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
             attachment_id: {
               type: 'string',
               description: 'Optional attachment identifier when the message contains multiple attachments.',
+            },
+            resolution: {
+              type: 'string',
+              pattern: '^(\\d+x\\d+|\\d+p)$',
+              description: 'Scale to a target resolution (e.g. "720p", "1080p", "640x480").',
+            },
+            fps: {
+              type: 'string',
+              pattern: '^\\d+$',
+              description: 'Set the output frame rate (e.g. "30", "24").',
+            },
+            quality: {
+              type: 'string',
+              description: 'Quality: CRF for video (e.g. "23"), or bitrate for audio (e.g. "128k").',
+            },
+            preset: {
+              type: 'string',
+              enum: VALID_PRESETS,
+              description: 'Encoding speed preset. Slower = better compression. Only for video codecs that support it.',
             },
           },
           required: ['format'],
@@ -113,9 +200,11 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
 
       const inputBuffer = await loadMediaBytes(media);
       const extIn = extensionFor(media.mime || 'video/mp4');
-      const ffmpegArgs = FORMAT_ARGS[targetFmt];
+      const baseArgs = FORMAT_ARGS[targetFmt];
+      const extraArgs = buildConvertArgs(targetFmt, args.resolution, args.fps, args.quality, args.preset);
+      const ffmpegArgs = [...baseArgs, ...extraArgs];
 
-      log.info({ from: extIn, to: targetFmt, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
+      log.info({ from: extIn, to: targetFmt, resolution: args.resolution, fps: args.fps, quality: args.quality, preset: args.preset, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
 
       const outputBuffer = await FFmpegConverter.convert(inputBuffer, ffmpegArgs, extIn, targetFmt, {
         signal: signal ?? ctx.signal,

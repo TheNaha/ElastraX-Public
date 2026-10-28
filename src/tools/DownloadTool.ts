@@ -19,7 +19,66 @@ const log = logger.child({ module: 'DownloadTool' });
 type AudioFormat = 'mp3' | 'aac' | 'm4a' | 'ogg' | 'opus';
 type VideoFormat = 'mp4' | 'mkv' | 'webm';
 type DownloadFormat = AudioFormat | VideoFormat;
-type DownloadArgs = ToolArgs & { url?: string; format?: DownloadFormat };
+type DownloadArgs = ToolArgs & {
+  url?: string;
+  format?: DownloadFormat;
+  max_resolution?: string; // e.g. "1080p", "720p", "480p"
+  max_fps?: string; // e.g. "30", "60"
+  audio_quality?: string; // 0-10 for audio extraction quality
+};
+
+const VALID_RESOLUTIONS = ['8k', '4k', '1080p', '720p', '480p', '360p', '240p'];
+const VALID_FPS = ['24', '30', '48', '60', '120'];
+
+/**
+ * Validate an audio quality string (0-10, where 0 is best for VBR).
+ */
+function validateAudioQuality(quality: string | undefined): string | undefined {
+  if (quality === undefined || quality === '') return undefined;
+  const parsed = Number.parseInt(quality, 10);
+  if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10) return undefined;
+  return String(parsed);
+}
+
+/**
+ * Validate a max resolution string (e.g. "1080p", "720p").
+ */
+function validateResolution(res: string | undefined): string | undefined {
+  if (res === undefined || res === '') return undefined;
+  const normalized = res.toLowerCase().trim();
+  if (!VALID_RESOLUTIONS.includes(normalized)) return undefined;
+  return normalized;
+}
+
+/**
+ * Validate a max FPS string (e.g. "30", "60").
+ */
+function validateFps(fps: string | undefined): string | undefined {
+  if (fps === undefined || fps === '') return undefined;
+  if (!VALID_FPS.includes(fps)) return undefined;
+  return fps;
+}
+
+/**
+ * Build a yt-dlp format selector string that constrains resolution and FPS.
+ * Falls back to the default best-quality selector when constraints are invalid.
+ */
+function buildVideoFormatSelector(resolution: string | undefined, fps: string | undefined): string {
+  const res = validateResolution(resolution);
+  const maxFps = validateFps(fps);
+  let heightFilter = '';
+  if (res) {
+    const heightMap: Record<string, number> = {
+      '240p': 240, '360p': 360, '480p': 480, '720p': 720, '1080p': 1080, '4k': 2160, '8k': 4320,
+    };
+    heightFilter = `[height<=${heightMap[res] ?? 1080}]`;
+  }
+  let fpsFilter = '';
+  if (maxFps) fpsFilter = `[fps<=${maxFps}]`;
+  const constraint = heightFilter + fpsFilter;
+  if (!constraint) return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
+  return `bestvideo[ext=mp4]${constraint}+bestaudio[ext=m4a]/best${constraint}[ext=mp4]/best`;
+}
 
 const AUDIO_FORMATS = new Set<DownloadFormat>(['mp3', 'aac', 'm4a', 'ogg', 'opus']);
 const VIDEO_FORMATS = new Set<DownloadFormat>(['mp4', 'mkv', 'webm']);
@@ -34,7 +93,16 @@ const FORMAT_MIME: Record<DownloadFormat, string> = {
   webm: 'video/webm',
 };
 
-export interface DownloadViaYtDlpOptions {
+export interface DownloadQualityOptions {
+  /** Maximum resolution to download (e.g. "1080p", "720p", "480p"). */
+  max_resolution?: string;
+  /** Maximum frame rate to download (e.g. "30", "60"). */
+  max_fps?: string;
+  /** Audio extraction quality (0–10, where 0 is best). */
+  audio_quality?: string;
+}
+
+export interface DownloadViaYtDlpOptions extends DownloadQualityOptions {
   signal?: AbortSignal;
   timeoutMs?: number;
   validateUrl?: (url: string) => Promise<SafeNetworkTarget>;
@@ -113,8 +181,15 @@ export async function downloadViaYtDlp(
       '--max-filesize', `${Math.max(1, Math.floor(effectiveBytes / MIB))}m`,
       '-o', outputTemplate,
     ];
-    if (AUDIO_FORMATS.has(format)) args.push('-x', '--audio-format', format, '--audio-quality', '0');
-    else args.push('-f', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best', '--recode-video', format);
+    if (AUDIO_FORMATS.has(format)) {
+      args.push('-x', '--audio-format', format);
+      const audioQuality = validateAudioQuality(options.audio_quality);
+      if (audioQuality !== undefined) args.push('--audio-quality', audioQuality);
+      else args.push('--audio-quality', '0');
+    } else {
+      const fmt = buildVideoFormatSelector(options.max_resolution, options.max_fps);
+      args.push('-f', fmt, '--recode-video', format);
+    }
     args.push('--', url);
     const run = downloadToolDeps.runProcess || (runOptions => runBoundedProcess(runOptions));
     await run({
@@ -181,6 +256,20 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
               enum: [...AUDIO_FORMATS, ...VIDEO_FORMATS],
               description: 'Output format. Use mp3 for audio-only, mp4 for video. Default: mp4',
             },
+            max_resolution: {
+              type: 'string',
+              enum: VALID_RESOLUTIONS,
+              description: 'Maximum video resolution to download (e.g. "1080p", "720p"). Only for video formats.',
+            },
+            max_fps: {
+              type: 'string',
+              enum: VALID_FPS,
+              description: 'Maximum frame rate to download (e.g. "30", "60"). Only for video formats.',
+            },
+            audio_quality: {
+              type: 'string',
+              description: 'Audio quality 0-10 for audio extraction (0 is best). Only for audio formats.',
+            },
           },
           required: ['url'],
         },
@@ -196,6 +285,17 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     if (!AUDIO_FORMATS.has(format) && !VIDEO_FORMATS.has(format)) {
       return t(language, 'download.error', { msg: 'Invalid format requested.' });
     }
+    if (args.max_resolution && VIDEO_FORMATS.has(format)) {
+      const res = validateResolution(args.max_resolution);
+      if (!res) return t(language, 'download.invalid_resolution');
+    }
+    if (args.max_fps && VIDEO_FORMATS.has(format) && !validateFps(args.max_fps)) {
+      return t(language, 'download.error', { msg: 'Invalid max_fps. Use one of: 24, 30, 48, 60, 120.' });
+    }
+    if (args.audio_quality && AUDIO_FORMATS.has(format)) {
+      const q = validateAudioQuality(args.audio_quality);
+      if (!q) return t(language, 'download.error', { msg: 'Invalid audio_quality. Use a number 0-10 (0 is best).' });
+    }
     try {
       await downloadToolDeps.validateUrl(url);
     } catch (error) {
@@ -208,10 +308,15 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
       const maxMb = privileges.maxDownloadMb === -1 ? Infinity : privileges.maxDownloadMb || getDownloadMaxMb();
       await ctx.react?.('⬇️');
       await ctx.reply(t(language, 'download.starting'));
-      log.info({ url: redactUrl(url), format, chatId: ctx.chatId, senderId: ctx.senderId }, 'Download started');
+      log.info({ url: redactUrl(url), format, max_resolution: args.max_resolution, max_fps: args.max_fps, audio_quality: args.audio_quality, chatId: ctx.chatId, senderId: ctx.senderId }, 'Download started');
       const timeoutSignal = AbortSignal.timeout(310_000);
       const operationSignals = [signal, ctx.signal, timeoutSignal].filter((value): value is AbortSignal => !!value);
-      const buffer = await downloadViaYtDlp(url, format, maxMb, { signal: AbortSignal.any(operationSignals) });
+      const buffer = await downloadViaYtDlp(url, format, maxMb, {
+        signal: AbortSignal.any(operationSignals),
+        max_resolution: args.max_resolution,
+        max_fps: args.max_fps,
+        audio_quality: args.audio_quality,
+      });
       await ctx.react?.('📤');
       await ctx.sendMedia(buffer, {
         mimetype: FORMAT_MIME[format],

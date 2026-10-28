@@ -178,6 +178,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.success': '✅ Download complete!',
     'download.error': '❌ Download failed: {msg}',
     'download.not_supported': '❌ Sending media is not supported on this platform adapter.',
+    'download.invalid_resolution': 'Invalid max_resolution. Use one of: 240p, 360p, 480p, 720p, 1080p, 4k.',
     'download.ytdlp_missing': '❌ yt-dlp is not installed. Ask the bot owner to install it.',
     'download.ytdlp_broken': '❌ yt-dlp is installed but cannot start (missing system library). Ask the bot owner to install zlib1g ({msg}).',
 
@@ -544,6 +545,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.success': '✅ Unduhan selesai!',
     'download.error': '❌ Unduhan gagal: {msg}',
     'download.not_supported': '❌ Pengiriman media tidak didukung oleh adaptor platform ini.',
+    'download.invalid_resolution': 'max_resolution tidak valid. Gunakan: 240p, 360p, 480p, 720p, 1080p, 4k.',
     'download.ytdlp_missing': '❌ yt-dlp tidak terpasang. Minta pemilik bot untuk memasangnya.',
     'download.ytdlp_broken': '❌ yt-dlp sudah terpasang tapi tidak dapat dijalankan (pustaka sistem yang hilang). Minta pemilik bot untuk memasang zlib1g ({msg}).',
 
