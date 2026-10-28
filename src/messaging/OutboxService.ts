@@ -54,9 +54,11 @@ export type PendingOutboxRow = {
 function normalizeText(text: string): string {
   const value = text.trim();
   const bytes = Buffer.from(value, 'utf8');
-  return bytes.byteLength <= MAX_TEXT_BYTES
-    ? value
-    : `${bytes.subarray(0, MAX_TEXT_BYTES).toString('utf8')}\n[Message truncated]`;
+  if (bytes.byteLength <= MAX_TEXT_BYTES) return value;
+  // Truncate at a character boundary so multi-byte UTF-8 sequences are not split,
+  // which would produce a replacement character (\uFFFD) at the cut point.
+  const truncated = bytes.subarray(0, MAX_TEXT_BYTES).toString('utf8').replace(/\uFFFD$/, '');
+  return `${truncated}\n[Message truncated]`;
 }
 
 function idempotencyKey(parts: string[]): string {
@@ -316,26 +318,28 @@ export class OutboxService {
 
   static fail(id: string, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now();
-    const row = sqlite
-      .query<{ attemptCount: number }, [string, string]>(
-        `SELECT attempt_count AS attemptCount FROM message_outbox
-         WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
-      )
-      .get(id, owner);
-    if (!row) return 'not_owned';
-    const outcome: 'retry' | 'dead_letter' = row.attemptCount >= MAX_ATTEMPTS ? 'dead_letter' : 'retry';
-    // The table only accepts 'failed'/'dead_letter'; 'retry' is the caller-facing name.
-    const persistedState = outcome === 'retry' ? 'failed' : 'dead_letter';
-    const delay = exponentialBackoff(row.attemptCount, { baseMs: 5_000 });
     const message = error instanceof Error ? error.message : String(error);
-    sqlite
-      .query<never, [string, string, number, number, string, string]>(
+    const deadline = now + exponentialBackoff(0, { baseMs: 5_000 });
+    // Single atomic UPDATE: the WHERE clause + RETURNING pattern eliminates the
+    // TOCTOU window that existed when this method did a SELECT-then-UPDATE in
+    // two separate calls. If another worker already claimed/failed the row,
+    // both the state and lease_owner predicates will not match and 0 rows are
+    // affected — the caller receives 'not_owned'.
+    const row = sqlite
+      .query<{ attemptCount: number }, [number, string, number, number, number, number, string, string]>(
         `UPDATE message_outbox
-         SET state = ?, last_error = ?, available_at = ?, lease_owner = NULL,
-             lease_expires_at = NULL, updated_at = ?
-         WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
+         SET state = CASE WHEN attempt_count >= ? THEN 'dead_letter' ELSE 'failed' END,
+             last_error = ?,
+             available_at = CASE WHEN attempt_count >= ? THEN ? ELSE ? END,
+             lease_owner = NULL,
+             lease_expires_at = NULL,
+             updated_at = ?
+         WHERE id = ? AND state = 'leased' AND lease_owner = ?
+         RETURNING attempt_count AS attemptCount`,
       )
-      .run(persistedState, message.slice(0, 2_000), now + delay, now, id, owner);
-    return outcome;
+      .get(MAX_ATTEMPTS, message.slice(0, 2_000), MAX_ATTEMPTS, deadline, deadline, now, id, owner);
+    if (!row) return 'not_owned';
+    const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
+    return deadLettered ? 'dead_letter' : 'retry';
   }
 }

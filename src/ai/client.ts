@@ -60,7 +60,37 @@ function withTimeout(ms: number): AbortSignal {
 function isValidUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    // Block SSRF: disallow private/internal addresses and loopback hosts.
+    // This protects against cloud metadata endpoints (169.254.169.254),
+    // localhost, and RFC 1918 private ranges.
+    const host = (parsed.hostname || '').toLowerCase();
+    if (host === 'localhost' || host === '::1' || host === '0.0.0.0' || host === '[::]') return false;
+    // IPv4 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+    // Loopback: 127.0.0.0/8
+    // Link-local: 169.254.0.0/16
+    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+    if (ipv4Match) {
+      const octets = ipv4Match.slice(1).map(Number);
+      const [a, b] = octets;
+      if (a === 127) return false; // loopback
+      if (a === 10) return false; // 10.0.0.0/8
+      if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12
+      if (a === 192 && b === 168) return false; // 192.168.0.0/16
+      if (a === 169 && b === 254) return false; // 169.254.0.0/16 (link-local/metadata)
+      if (a === 0) return false; // 0.0.0.0/8
+      if (a === 100 && b >= 64 && b <= 127) return false; // 100.64.0.0/10 (carrier-grade NAT)
+      if (a === 192 && b === 0 && octets[2] === 0) return false; // 192.0.0.0/24
+      if (a === 192 && b === 0 && octets[2] === 2) return false; // 192.0.2.0/24 (TEST-NET)
+      if (a === 198 && b === 51) return false; // 198.51.0.0/18 (benchmark)
+    }
+    // IPv6 loopback and link-local
+    if (ipv4Match === null && host.startsWith('[') && host.endsWith(']')) {
+      const inner = host.slice(1, -1);
+      if (inner === '::1') return false;
+      if (inner.startsWith('::ffff:')) return false; // IPv4-mapped
+    }
+    return true;
   } catch {
     return false;
   }
@@ -249,13 +279,19 @@ export class AIClient {
 
     const elapsed = Date.now() - startTime;
     if (!response.ok) {
-      const errText = await response.text();
+      const errText = await response.text().catch(() => '<unreadable>');
       log.error({ status: response.status, errText, elapsed }, 'Error response from LLM');
-      throw new Error(`LLM API returned ${response.status}: ${errText}`);
+      // Avoid leaking the raw error body (may contain API keys or internal details)
+      throw new Error(`LLM API returned ${response.status}: request failed`);
     }
 
     let raw: unknown;
     try {
+      // Guard against unbounded response bodies that could exhaust memory.
+      const contentLength = response.headers.get('content-length');
+      if (contentLength && Number(contentLength) > getAIRequestConfig().maxResponseBytes) {
+        throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
+      }
       raw = await response.json();
     } catch (error: unknown) {
       throw new AIProtocolError('invalid_response', 'Chat completion response was not valid JSON.', {
@@ -442,9 +478,9 @@ export class AIClient {
     });
 
     if (!response.ok) {
-      const errText = await response.text();
+      const errText = await response.text().catch(() => '<unreadable>');
       log.error({ status: response.status, errText }, 'Streaming LLM request failed');
-      throw new Error(`LLM API returned ${response.status}: ${errText}`);
+      throw new Error(`LLM API returned ${response.status}: request failed`);
     }
     if (!response.body) {
       throw new Error('Response body is null — streaming not supported by this endpoint.');

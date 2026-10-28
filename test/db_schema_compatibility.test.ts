@@ -158,11 +158,11 @@ describe('Schema Compatibility', () => {
         INSERT INTO messages (chat_room_id, platform, provider_message_id, sender_id, sender_name, role, content, created_at)
           VALUES ('room', 'whatsapp', 'old', 'sender', 'Sender', 'user', 'old', 1);
         INSERT INTO messages (chat_room_id, platform, provider_message_id, sender_id, sender_name, role, content, created_at)
-          VALUES ('room', 'whatsapp', 'new', 'sender', 'Sender', 'user', 'new', ${now / 1000});
+          VALUES ('room', 'whatsapp', 'new', 'sender', 'Sender', 'user', 'new', ${now});
         INSERT INTO reminders (chat_room_id, sender_id, sender_name, message, remind_at, is_sent, platform, created_at)
           VALUES ('room', 'sender', 'Sender', 'old', 1, 1, 'whatsapp', 1);
         INSERT INTO reminders (chat_room_id, sender_id, sender_name, message, remind_at, is_sent, platform, created_at)
-          VALUES ('room', 'sender', 'Sender', 'pending', ${now / 1000}, 0, 'whatsapp', ${now / 1000});
+          VALUES ('room', 'sender', 'Sender', 'pending', ${now}, 0, 'whatsapp', ${now});
       `);
 
       const preview = applyRetentionPolicy(handle.sqlite, {

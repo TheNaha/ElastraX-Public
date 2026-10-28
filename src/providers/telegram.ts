@@ -208,7 +208,7 @@ export class TelegramProvider implements BotProvider {
     this.providerError = null;
     const generation = ++this.lifecycleGeneration;
 
-    this.started = (async () => {
+    const starting = (async () => {
       const bot = (telegramProviderDeps.createBot ?? ((value: string) => new Bot(value)))(token);
       this.bot = bot;
       this.attachHandlers(bot, generation);
@@ -247,9 +247,10 @@ export class TelegramProvider implements BotProvider {
       });
       await ready;
     })().finally(() => {
-      this.started = null;
+      if (this.started === starting) this.started = null;
     });
 
+    this.started = starting;
     return this.started;
   }
 
@@ -278,7 +279,7 @@ export class TelegramProvider implements BotProvider {
 
   async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<unknown> {
     const bot = this.bot;
-    if (!bot || !this.desiredRunning) throw new ProviderLifecycleError('telegram', 'Not connected to Telegram.');
+    if (!bot || !this.isOperational) throw new ProviderLifecycleError('telegram', 'Not connected to Telegram.');
     let last: unknown = null;
     for (const chunk of chunkTelegramText(text)) {
       signal?.throwIfAborted();
@@ -373,7 +374,7 @@ export class TelegramProvider implements BotProvider {
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
     timer.unref?.();
     try {
-      const response = await download(`https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN ?? ''}/${file.file_path}`, controller.signal);
+      const response = await download(`https://api.telegram.org/file/bot${bot.token}/${file.file_path}`, controller.signal);
       if (!response.ok) throw new ProviderOperationError('telegram', 'downloadMedia', `Download failed with status ${response.status}.`, undefined, 'OPERATION_FAILED');
       const mime = media.mime ?? guessMime(media.name);
       // Stream straight to disk rather than buffering: an attachment can be up

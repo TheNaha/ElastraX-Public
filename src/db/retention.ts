@@ -120,7 +120,6 @@ export function applyRetentionPolicy(
     expiredFlowSessionsDays: dayCount(policyInput.expiredFlowSessionsDays, DEFAULT_POLICY.expiredFlowSessionsDays),
   };
   const nowMs = options.now ?? Date.now();
-  const nowSeconds = Math.floor(nowMs / 1_000);
   const dryRun = options.dryRun ?? true;
   const batchSize = Math.max(1, Math.min(10_000, Math.trunc(options.batchSize ?? 500)));
   const dayMs = 86_400_000;
@@ -128,7 +127,7 @@ export function applyRetentionPolicy(
   const result: RetentionResult = {
     rawMessages: clearRawMessageBatches(
       sqlite,
-      nowSeconds - 7 * 86_400,
+      nowMs - 7 * dayMs,
       batchSize,
       dryRun,
     ),
@@ -136,7 +135,7 @@ export function applyRetentionPolicy(
       sqlite,
       'messages',
       'created_at < ?',
-      nowSeconds - (policy.messagesDays + policy.messageDeleteGraceDays) * 86_400,
+      nowMs - (policy.messagesDays + policy.messageDeleteGraceDays) * dayMs,
       batchSize,
       dryRun,
     ),
@@ -144,7 +143,7 @@ export function applyRetentionPolicy(
       sqlite,
       'reminders',
       'is_sent = 1 AND recurrence IS NULL AND created_at < ?',
-      nowSeconds - policy.sentRemindersDays * 86_400,
+      nowMs - policy.sentRemindersDays * dayMs,
       batchSize,
       dryRun,
     ),
@@ -198,7 +197,7 @@ export function applyRetentionPolicy(
       sqlite,
       'flow_sessions',
       'updated_at < ?',
-      nowSeconds - policy.expiredFlowSessionsDays * 86_400,
+      nowMs - policy.expiredFlowSessionsDays * dayMs,
       batchSize,
       dryRun,
     ),
