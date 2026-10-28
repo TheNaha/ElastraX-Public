@@ -297,7 +297,7 @@ export class MediaBindTool extends BaseTool {
     if (requestedRoom && isForeignRoom) {
       const authorized = await authorizeNotificationDestination(ctx as NotificationDestinationContext, requestedRoom);
       foreignAuthorized = authorized;
-      if (!authorized) return '❌ Foreign notification rooms require owner permission and verified platform membership.';
+      if (!authorized) return t(ctx.language, 'media.foreign_room_not_allowed');
     }
 
     const roomId = requestedRoom || currentRoom;

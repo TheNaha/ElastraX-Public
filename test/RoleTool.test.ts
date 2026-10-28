@@ -248,7 +248,7 @@ describe('RoleTool', () => {
     const ctx = createMockCtx({ resolveRoles: mock(async () => ['owner']) });
     const result = await tool.execute({ action: 'resetpriv', role: 'premium' }, ctx);
     const text = typeof result === 'string' ? result : result.text;
-    expect(text).toContain('reset to defaults');
+    expect(text).toContain('Reset all privileges for role *premium* to defaults.');
     expect(AuthService.resetPrivilegesToDefaults).toHaveBeenCalledWith('premium');
   });
 });

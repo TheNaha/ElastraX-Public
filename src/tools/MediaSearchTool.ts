@@ -9,26 +9,27 @@ import { type SeerrSearchResult, type SeerrMediaStatus } from '../providers/seer
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { t } from '../utils/i18n';
 
 const log = logger.child({ module: 'MediaSearchTool' });
 
 // MediaService is used instead of local deps
 
-function statusLabel(status?: SeerrMediaStatus): string {
+function statusLabel(lang: string, status?: SeerrMediaStatus): string {
   switch (status) {
-    case 5: return '✅ Available';
-    case 4: return '🟡 Partially Available';
-    case 3: return '⏳ Processing';
-    case 2: return '⏳ Pending';
-    default: return '❌ Not Available';
+    case 5: return t(lang, 'media_search.available');
+    case 4: return t(lang, 'media_search.partially_available');
+    case 3: return t(lang, 'media_search.processing');
+    case 2: return t(lang, 'media_search.pending');
+    default: return t(lang, 'media_search.not_available');
   }
 }
 
-function formatResult(item: SeerrSearchResult, _index: number): string {
+function formatResult(lang: string, item: SeerrSearchResult, _index: number): string {
   const title = item.title || item.name || 'Unknown';
   const year = item.releaseDate?.slice(0, 4) || item.firstAirDate?.slice(0, 4) || '';
   const rating = item.voteAverage ? `⭐ ${item.voteAverage.toFixed(1)}` : '';
-  const status = statusLabel(item.mediaInfo?.status);
+  const status = statusLabel(lang, item.mediaInfo?.status);
   const type = item.mediaType === 'tv' ? '📺' : '🎬';
   const yearStr = year ? ` (${year})` : '';
   return ` • ${type} *${title}*${yearStr} ${rating} — ${status} [ID: ${item.id}]`;
@@ -95,11 +96,12 @@ export class MediaSearchTool extends BaseTool {
     };
   }
 
-  async execute(args: MediaSearchArgs, _ctx: MessageContext): Promise<ToolResult> {
+  async execute(args: MediaSearchArgs, ctx: MessageContext): Promise<ToolResult> {
+    const lang = ctx.language ?? 'en';
     const seerr = MediaService.createSeerrClient();
 
     if (!seerr.isConfigured) {
-      return '❌ Media search service is not configured.';
+      return t(lang, 'media_search.not_configured');
     }
 
     const action = args.action || 'search';
@@ -111,18 +113,18 @@ export class MediaSearchTool extends BaseTool {
     try {
       switch (action) {
         case 'search': {
-          if (!args.query?.trim()) return 'Please provide a search query.';
+          if (!args.query?.trim()) return t(lang, 'media_search.no_query');
           const results = await seerr.search(args.query.trim(), page);
-          if (results.results.length === 0) return `No results found for "${args.query}".`;
+          if (results.results.length === 0) return t(lang, 'media_search.no_results', { query: args.query });
 
           const filtered = mediaType === 'all'
             ? results.results.filter(r => r.mediaType !== 'person')
             : results.results.filter(r => r.mediaType === mediaType);
 
-          if (filtered.length === 0) return `No ${mediaType} results found for "${args.query}".`;
+          if (filtered.length === 0) return t(lang, 'media_search.no_type_results', { type: mediaType, query: args.query });
 
-          const lines = filtered.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `🔍 *Search results for "${args.query}":*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages} (${results.totalResults} total)`;
+          const lines = filtered.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          return `${t(lang, 'media_search.search_header', { query: args.query })}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
         case 'trending': {
@@ -131,10 +133,10 @@ export class MediaSearchTool extends BaseTool {
             ? results.results.filter(r => r.mediaType !== 'person')
             : results.results.filter(r => r.mediaType === mediaType);
 
-          if (filtered.length === 0) return 'No trending content found.';
+          if (filtered.length === 0) return t(lang, 'media_search.no_trending');
 
-          const lines = filtered.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `🔥 *Trending Now:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          const lines = filtered.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          return `${t(lang, 'media_search.trending_header')}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
         case 'discover': {
@@ -142,33 +144,33 @@ export class MediaSearchTool extends BaseTool {
             ? await seerr.discoverTv(page)
             : await seerr.discoverMovies(page);
 
-          if (results.results.length === 0) return 'No content to discover.';
+          if (results.results.length === 0) return t(lang, 'media_search.discover_no_content');
 
-          const lines = results.results.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          const label = mediaType === 'tv' ? 'TV Shows' : 'Movies';
-          return `🎲 *Discover ${label}:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          const lines = results.results.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          const label = mediaType === 'tv' ? t(lang, 'media_search.discover_tv') : t(lang, 'media_search.discover_movies');
+          return `${t(lang, 'media_search.discover_header', { label })}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
         case 'recommend': {
-          if (!args.media_id) return 'Please provide a media_id (TMDB ID) to get recommendations.';
+          if (!args.media_id) return t(lang, 'media_search.no_media_id');
           const mt = mediaType === 'tv' ? 'tv' : 'movie';
           const results = mt === 'tv'
             ? await seerr.getTvRecommendations(args.media_id, page)
             : await seerr.getMovieRecommendations(args.media_id, page);
 
-          if (results.results.length === 0) return 'No recommendations found for this title.';
+          if (results.results.length === 0) return t(lang, 'media_search.no_recommendations');
 
-          const lines = results.results.slice(0, 10).map((r, i) => formatResult(r, i + 1));
-          return `💡 *Recommendations:*\n\n${lines.join('\n\n')}\n\nPage ${results.page}/${results.totalPages}`;
+          const lines = results.results.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          return `${t(lang, 'media_search.recommendations_header')}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
         default:
-          return 'Available actions: search, trending, discover, recommend';
+          return t(lang, 'media_search.invalid_action');
       }
     } catch (err: unknown) {
       const msg = getErrorMessage(err);
       log.error({ err, action }, 'MediaSearch failed');
-      return `❌ Search failed: ${msg}`;
+      return t(lang, 'media_search.failed', { msg });
     }
   }
 }

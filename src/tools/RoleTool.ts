@@ -301,19 +301,19 @@ export class RoleTool extends BaseTool {
       if (!callerAccess.roles.includes('owner')) {
         return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
-      if (!role) return '❌ Please specify a role. Example: /role setpriv premium contextLimit 50';
+      if (!role) return t(lang, 'role.setpriv_no_role');
       if (!isPrivilegeField(field)) {
-        return `❌ Invalid field. Must be one of: ${PRIVILEGE_FIELDS.join(', ')}`;
+        return t(lang, 'role.setpriv_invalid_field', { fields: PRIVILEGE_FIELDS.join(', ') });
       }
       const numericValue = value === 'null' || value === undefined ? null : Number(value);
       const numValue = numericValue === null || Number.isInteger(numericValue) ? numericValue : NaN;
       if (numValue !== null && Number.isNaN(numValue)) {
-        return '❌ Value must be a number or "null" to reset to default.';
+        return t(lang, 'role.setpriv_invalid_value');
       }
       await AuthService.setPrivilegeOverride(role, field, numValue);
       const label = numValue === null ? 'default' : numValue === -1 ? 'unlimited' : String(numValue);
       log.info({ role, field, value: numValue, setBy: ctx.senderId }, 'Privilege override set');
-      return `✅ Set *${field}* for role *${role}* to *${label}*.`;
+      return t(lang, 'role.setpriv.success', { field, role, label });
     }
 
     // ── RESETPRIV (owner only) ─────────────────────────────────────────────
@@ -322,10 +322,10 @@ export class RoleTool extends BaseTool {
       if (!callerAccess.roles.includes('owner')) {
         return t(lang, 'role.insufficient', { callerRole: callerAccess.roles.join(','), targetRole: 'owner' });
       }
-      if (!role) return '❌ Please specify a role. Example: /role resetpriv premium';
+      if (!role) return t(lang, 'role.resetpriv_no_role');
       await AuthService.resetPrivilegesToDefaults(role);
       log.info({ role, resetBy: ctx.senderId }, 'Privilege overrides reset to defaults');
-      return `✅ All privilege overrides for *${role}* have been reset to defaults.`;
+      return t(lang, 'role.resetpriv.success', { role });
     }
 
     // ── GRANT ──────────────────────────────────────────────────────────────

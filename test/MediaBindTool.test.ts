@@ -111,10 +111,10 @@ describe('MediaBindTool', () => {
 
     const result = await new MediaBindTool().execute(
       { action: 'notify', notify_action: 'remove', room_id: 'room-2' },
-      createMockCtx(),
+      createMockCtx({ checkPermissions: mock(async () => false) }),
     );
 
-    expect(result).toContain('Foreign notification rooms require owner permission and verified platform membership.');
+    expect(result).toContain('Foreign notification rooms require owner permission.');
     expect(unsubscribe).not.toHaveBeenCalled();
   });
 
@@ -158,10 +158,10 @@ describe('MediaBindTool', () => {
 
     const result = await new MediaBindTool().execute(
       { action: 'notify', notify_action: 'add', room_id: 'room-2' },
-      createMockCtx(),
+      createMockCtx({ checkPermissions: mock(async () => false) }),
     );
 
-    expect(result).toContain('Foreign notification rooms require owner permission and verified platform membership.');
+    expect(result).toContain('Foreign notification rooms require owner permission.');
     expect(subscribe).not.toHaveBeenCalled();
   });
 
@@ -174,12 +174,18 @@ describe('MediaBindTool', () => {
       getSubscriptions: mock(async () => []),
     } as any;
 
+    const ctx = createMockCtx({ checkPermissions: mock(async () => true) });
+    const extendedCtx = {
+      ...ctx,
+      verifyRoomMembership: mock(async () => false),
+    };
+
     const result = await new MediaBindTool().execute(
       { action: 'notify', notify_action: 'add', room_id: 'room-2' },
-      createMockCtx({ checkPermissions: mock(async () => true) } as Partial<MessageContext>),
+      extendedCtx as any,
     );
 
-    expect(result).toContain('Foreign notification rooms require owner permission and verified platform membership.');
+    expect(result).toContain('Foreign notification rooms require owner permission.');
     expect(subscribe).not.toHaveBeenCalled();
   });
 
@@ -227,12 +233,11 @@ describe('MediaBindTool', () => {
     const result = await new MediaBindTool().execute(
       { action: 'notify', notify_action: 'add', room_id: 'room-2' },
       createMockCtx({
-        checkPermissions: mock(async () => true),
-        verifyRoomMembership: mock(async () => false),
-      } as Partial<MessageContext>),
+        checkPermissions: mock(async () => false),
+      }),
     );
 
-    expect(result).toContain('Foreign notification rooms require owner permission and verified platform membership.');
+    expect(result).toContain('Foreign notification rooms require owner permission.');
     expect(subscribe).not.toHaveBeenCalled();
   });
 
