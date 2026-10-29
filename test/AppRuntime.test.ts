@@ -121,8 +121,9 @@ describe('AppRuntime', () => {
     expect(scheduler.registerSender).toHaveBeenCalledTimes(2);
     expect(webhookServer.start).toHaveBeenCalledTimes(1);
     expect(scheduler.start).toHaveBeenCalledTimes(1);
-    // rate limiter, outbox pump, retention sweep, media cleanup.
-    expect(timers.setInterval).toHaveBeenCalledTimes(4);
+    // rate limiter, outbox pump, retention sweep, media cleanup, outbox prune,
+    // inbox recovery, flow session TTL.
+    expect(timers.setInterval).toHaveBeenCalledTimes(7);
     expect(timers.setTimeout).toHaveBeenCalledTimes(1);
 
     const ctx = {
@@ -213,7 +214,7 @@ describe('AppRuntime', () => {
     await runtime.stop();
     await runtime.stop();
 
-    expect(timers.clearInterval).toHaveBeenCalledTimes(4);
+    expect(timers.clearInterval).toHaveBeenCalledTimes(7);
     expect(timers.clearTimeout).toHaveBeenCalledTimes(1);
     expect(scheduler.stop).toHaveBeenCalledTimes(1);
     expect(webhookServer.stop).toHaveBeenCalledTimes(1);

@@ -21,9 +21,10 @@ import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
 import { healthMonitor, type HealthMonitor } from '../utils/HealthMonitor';
-import { getMediaCleanupIntervalMs, getQueueConfig } from '../config/runtime';
+import { getMediaCleanupIntervalMs, getMediaRetentionHours, getQueueConfig } from '../config/runtime';
 import { registryReady, mutatingToolNames } from '../tools';
 import { safeRegisterFlows } from '../flows/registry';
+import { FlowHandler } from '../core/FlowHandler';
 import { isSchemaReady, sqlite } from '../db';
 import { runRetentionMaintenance } from '../db/maintenance';
 import { InboxService } from '../messaging/InboxService';
@@ -202,6 +203,9 @@ export class AppRuntime {
   private rateLimiterTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private outboxTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private outboxPromise: Promise<void> | null = null;
+  private outboxPruneTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private inboxRecoveryTimer: ReturnType<typeof globalThis.setInterval> | null = null;
+  private flowSessionTtlTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private mediaCleanupTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private retentionTimer: ReturnType<typeof globalThis.setInterval> | null = null;
   private startupCoverageTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
@@ -765,6 +769,45 @@ export class AppRuntime {
       this.runRetention();
       this.retentionTimer = this.timers.setInterval(() => this.runRetention(), 24 * 60 * 60 * 1000);
     }
+    // Prune terminal outbox rows (failed / dead_letter) older than the media
+    // retention window so they don't accumulate indefinitely.
+    const outboxPruneMs = getMediaRetentionHours() * 60 * 60 * 1000;
+    this.outboxPruneTimer = this.timers.setInterval(() => {
+      try {
+        const pruned = OutboxService.prune(outboxPruneMs);
+        if (pruned > 0) logger.info({ pruned }, '[Outbox] Pruned terminal rows');
+      } catch (error) {
+        logger.warn({ err: error }, '[Outbox] Prune failed');
+      }
+    }, 60 * 60 * 1000);
+    this.outboxPruneTimer.unref?.();
+
+    // Recover stranded inbox rows (received but never claimed, or processing
+    // with an expired lease) so they are not lost forever.
+    this.inboxRecoveryTimer = this.timers.setInterval(() => {
+      try {
+        const recovered = InboxService.recoverStranded(24 * 60 * 60 * 1000);
+        if (recovered.received > 0 || recovered.processing > 0) {
+          logger.info(recovered, '[Inbox] Recovered stranded rows');
+        }
+      } catch (error) {
+        logger.warn({ err: error }, '[Inbox] Recovery scan failed');
+      }
+    }, 60 * 60 * 1000);
+    this.inboxRecoveryTimer.unref?.();
+
+    // Prune expired flow sessions so abandoned wizard state doesn't accumulate.
+    this.flowSessionTtlTimer = this.timers.setInterval(() => {
+      try {
+        void FlowHandler.pruneAllExpired().catch((error: unknown) =>
+          logger.warn({ err: error }, '[FlowHandler] TTL prune failed'),
+        );
+      } catch (error) {
+        logger.warn({ err: error }, '[FlowHandler] TTL prune scheduler failed');
+      }
+    }, 60 * 60 * 1000);
+    this.flowSessionTtlTimer.unref?.();
+
     this.mediaCleanupPromise = this.mediaCleanup.pruneOldFiles()
       .catch((err) => logger.warn({ err }, '[MediaCleanup] Initial prune failed'))
       .finally(() => { this.mediaCleanupPromise = null; });
@@ -866,6 +909,21 @@ export class AppRuntime {
     }
     if (this.outboxPromise) await this.outboxPromise;
     if (this.retentionPromise) await this.retentionPromise;
+
+    if (this.outboxPruneTimer) {
+      this.timers.clearInterval(this.outboxPruneTimer);
+      this.outboxPruneTimer = null;
+    }
+
+    if (this.inboxRecoveryTimer) {
+      this.timers.clearInterval(this.inboxRecoveryTimer);
+      this.inboxRecoveryTimer = null;
+    }
+
+    if (this.flowSessionTtlTimer) {
+      this.timers.clearInterval(this.flowSessionTtlTimer);
+      this.flowSessionTtlTimer = null;
+    }
 
     if (this.mediaCleanupTimer) {
       this.timers.clearInterval(this.mediaCleanupTimer);

@@ -268,6 +268,43 @@ export class FlowHandler {
     return this.initialize();
   }
 
+  /**
+   * Prune every expired flow session across the database. Used by a periodic
+   * background job so abandoned sessions don't accumulate indefinitely.
+   */
+  static async pruneAllExpired(now = Date.now()): Promise<number> {
+    await this.initialize();
+    const rows = await db.select({ id: flowSessions.id, data: flowSessions.data }).from(flowSessions).all();
+    let pruned = 0;
+    for (const row of rows) {
+      try {
+        const session = JSON.parse(row.data) as UserSession;
+        if (
+          !session ||
+          typeof session !== 'object' ||
+          !session.flows ||
+          typeof session.flows !== 'object' ||
+          Array.isArray(session.flows)
+        ) {
+          await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+          pruned++;
+          continue;
+        }
+        const changed = this.pruneExpiredFlows(session, now);
+        if (changed && !this.hasFlows(session.flows)) {
+          await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+          pruned++;
+        } else if (changed) {
+          await db.update(flowSessions).set({ data: JSON.stringify(session), updated_at: new Date() }).where(eq(flowSessions.id, row.id)).run();
+        }
+      } catch {
+        await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+        pruned++;
+      }
+    }
+    return pruned;
+  }
+
   static getSessionAsync(userId: string, platform = 'whatsapp', roomId?: string): Promise<UserSession | null> {
     return this.getSessionInternal(userId, platform, roomId);
   }

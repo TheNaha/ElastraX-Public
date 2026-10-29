@@ -3,7 +3,7 @@ import { MessageContext } from '../src/core/MessageContext';
 import { CANCEL_COMMANDS } from '../src/core/constants';
 import { logger } from '../src/utils/logger';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
-import { ne } from 'drizzle-orm';
+import { eq, ne } from 'drizzle-orm';
 import { flowSessions } from '../src/db/schema';
 
 // Bun module mocks are process-wide, so this file installs a full real database
@@ -360,5 +360,48 @@ describe('FlowHandler room binding and versioning', () => {
   test('the deprecated synchronous getSession accessor refuses to run', () => {
     expect(() => (FlowHandler as unknown as { getSession: (u: string) => unknown }).getSession('user-1'))
       .toThrow('deprecated');
+  });
+
+  test('pruneAllExpired deletes sessions whose flows all expired, updates mixed sessions', async () => {
+    const now = 1_000_000_000_000;
+    const expiredFlow = { flow: 'expired', step: 'step1', data: {}, expiresAt: now - 1000 };
+    const activeFlow = { flow: 'active', step: 'step1', data: {}, expiresAt: now + 1000 };
+
+    // All flows expired → session should be deleted.
+    await db.insert(flowSessions).values({
+      id: 'session-all-expired',
+      data: JSON.stringify({ activeFlow: 'expired', flows: { expired: expiredFlow }, version: 1 }),
+      updated_at: new Date(now),
+    }).run();
+
+    // All flows active → session should be untouched.
+    await db.insert(flowSessions).values({
+      id: 'session-all-active',
+      data: JSON.stringify({ activeFlow: 'active', flows: { active: activeFlow }, version: 1 }),
+      updated_at: new Date(now),
+    }).run();
+
+    // Mixed → expired flow removed, session kept with remaining flow.
+    await db.insert(flowSessions).values({
+      id: 'session-mixed',
+      data: JSON.stringify({ activeFlow: 'active', flows: { expired: expiredFlow, active: activeFlow }, version: 1 }),
+      updated_at: new Date(now),
+    }).run();
+
+    const pruned = await FlowHandler.pruneAllExpired(now);
+
+    expect(pruned).toBe(1);
+
+    const gone = await db.select().from(flowSessions).where(eq(flowSessions.id, 'session-all-expired'));
+    expect(gone).toHaveLength(0);
+
+    const kept = await db.select().from(flowSessions).where(eq(flowSessions.id, 'session-all-active'));
+    expect(kept).toHaveLength(1);
+
+    const mixedRows = await db.select().from(flowSessions).where(eq(flowSessions.id, 'session-mixed'));
+    expect(mixedRows).toHaveLength(1);
+    const mixedData = JSON.parse(mixedRows[0]!.data);
+    expect(mixedData.flows.expired).toBeUndefined();
+    expect(mixedData.flows.active).toBeDefined();
   });
 });
