@@ -29,6 +29,16 @@ function defaultOwner(): string {
   return `${process.pid}:${randomUUID()}`;
 }
 
+/**
+ * Ensure the `database_leases` table exists.
+ *
+ * This mirrors the schema in migration `0021_database_safety.sql` and is kept
+ * here as a defensive fallback for databases that have not yet been migrated
+ * to 0021 (or for test databases that skip migrations). The `IF NOT EXISTS`
+ * guard makes this idempotent: on a migrated database the exec is a no-op.
+ *
+ * Keep the two definitions in sync.
+ */
 export function ensureLeaseTable(sqlite: Database): void {
   sqlite.exec(`
     CREATE TABLE IF NOT EXISTS database_leases (
