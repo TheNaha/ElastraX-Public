@@ -404,7 +404,7 @@ export function describeRoomResolutionFailure(failure: RoomResolutionFailure): s
  * answer is cached per database handle, so a process that talks to more than one
  * database never reuses another one's answer.
  */
-export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox' | 'scheduled_deliveries'): boolean {
+export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox'): boolean {
   const handle = databaseHandle();
   if (!handle) return false;
   const cache = columnPresence.get(handle) ?? new Map<string, { at: number; present: boolean }>();

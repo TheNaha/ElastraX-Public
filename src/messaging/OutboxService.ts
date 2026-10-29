@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite, withImmediateTransaction } from '../db';
 import { exponentialBackoff } from '../utils/backoff';
+import { logger } from '../utils/logger';
 import { hasRoomKeyColumn, remoteRoomIdFromKey, resolveCanonicalRoomKey } from './roomKeys';
 
 const LEASE_MS = 120_000;
@@ -338,8 +339,28 @@ export class OutboxService {
          RETURNING attempt_count AS attemptCount`,
       )
       .get(MAX_ATTEMPTS, message.slice(0, 2_000), MAX_ATTEMPTS, deadline, deadline, now, id, owner);
-    if (!row) return 'not_owned';
+    if (!row) {
+      logger.warn({ id, owner }, '[Outbox] fail() called on a row not owned by this worker (already completed, dead-lettered, or leased elsewhere)');
+      return 'not_owned';
+    }
     const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
     return deadLettered ? 'dead_letter' : 'retry';
+  }
+
+  /**
+   * Prune terminal outbox rows older than `olderThanMs`. `failed` and
+   * `dead_letter` rows are never claimed by the delivery worker, so without a
+   * prune they accumulate indefinitely.
+   */
+  static prune(olderThanMs: number): number {
+    const cutoff = Date.now() - olderThanMs;
+    const result = sqlite
+      .query<never, [number]>(
+        `DELETE FROM message_outbox
+         WHERE state IN ('failed', 'dead_letter')
+           AND COALESCE(sent_at, updated_at) < ?`,
+      )
+      .run(cutoff);
+    return Number(result.changes);
   }
 }

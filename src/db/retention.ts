@@ -18,7 +18,6 @@ export interface RetentionResult {
   outbox: number;
   /** Outbox rows stuck in a non-terminal state past the retention window. */
   outboxStale: number;
-  scheduledDeliveries: number;
   flowSessions: number;
   dryRun: boolean;
 }
@@ -38,8 +37,24 @@ const DEFAULT_POLICY: RetentionPolicy = {
   expiredFlowSessionsDays: 30,
 };
 
+// Whitelist of allowed table names for SQL queries (prevents SQL injection)
+const ALLOWED_TABLES = new Set([
+  'raw_messages',
+  'messages',
+  'reminders',
+  'message_inbox',
+  'message_outbox',
+  'flow_sessions',
+]);
+
 function dayCount(value: number | undefined, fallback: number): number {
   return value === undefined ? fallback : Math.max(0, Math.floor(value));
+}
+
+function validateTableName(tableName: string): void {
+  if (!ALLOWED_TABLES.has(tableName)) {
+    throw new Error(`Invalid table name: ${tableName}`);
+  }
 }
 
 function deleteBatches(
@@ -50,6 +65,7 @@ function deleteBatches(
   batchSize: number,
   dryRun: boolean,
 ): number {
+  validateTableName(table);
   if (dryRun) {
     const row = sqlite
       .query<{ count: number }, [number]>(`SELECT count(*) AS count FROM ${table} WHERE ${where}`)
@@ -181,14 +197,6 @@ export function applyRetentionPolicy(
       sqlite,
       'message_outbox',
       "state IN ('pending', 'failed', 'leased') AND COALESCE(sent_at, updated_at) < ?",
-      nowMs - policy.terminalDeliveriesDays * dayMs,
-      batchSize,
-      dryRun,
-    ),
-    scheduledDeliveries: deleteBatches(
-      sqlite,
-      'scheduled_deliveries',
-      "state IN ('sent', 'dead_letter') AND COALESCE(sent_at, updated_at) < ?",
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,

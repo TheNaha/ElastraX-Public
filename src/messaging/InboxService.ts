@@ -207,4 +207,36 @@ export class InboxService {
     const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
     return deadLettered ? 'dead_letter' : 'retry';
   }
+
+  /**
+   * Recover stranded inbox rows that were never claimed and are stuck in a
+   * non-terminal state. Rows in `received` older than `olderThanMs` are marked
+   * `failed` (they cannot be meaningfully replayed: the inbox payload is a
+   * dedupe record, not the message itself). `processing` rows whose lease has
+   * expired are returned to `received` so the claim query can pick them up.
+   */
+  static recoverStranded(olderThanMs: number): { received: number; processing: number } {
+    const now = Date.now();
+    const cutoff = now - olderThanMs;
+
+    const received = sqlite
+      .query<never, [number, number]>(
+        `UPDATE message_inbox
+         SET state = 'failed', last_error = 'stranded: never claimed', updated_at = ?
+         WHERE state = 'received' AND received_at < ?`,
+      )
+      .run(now, cutoff);
+    const receivedCount = Number(received.changes);
+
+    const processing = sqlite
+      .query<never, [number, number]>(
+        `UPDATE message_inbox
+         SET state = 'received', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+         WHERE state = 'processing' AND lease_expires_at < ?`,
+      )
+      .run(now, now);
+    const processingCount = Number(processing.changes);
+
+    return { received: receivedCount, processing: processingCount };
+  }
 }

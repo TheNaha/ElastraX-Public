@@ -382,7 +382,6 @@ const COVERAGE_TARGETS: Array<{ table: string; column: string; optional: boolean
   { table: 'notification_subscriptions', column: 'room_key', optional: false },
   { table: 'message_inbox', column: 'room_key', optional: false },
   { table: 'message_outbox', column: 'room_key', optional: false },
-  { table: 'scheduled_deliveries', column: 'room_key', optional: false },
   { table: 'user_roles', column: 'scope_room_key', optional: true },
   { table: 'flow_sessions', column: 'room_key', optional: true },
 ];

@@ -25,7 +25,7 @@ import { ROOT_DIR } from '../src/core/constants';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const MIGRATIONS_DIR = join(ROOT_DIR, 'drizzle/migrations');
-const ROOM_KEY_MIGRATION_WHEN = 24;
+const ROOM_KEY_MIGRATION_WHEN = 25;
 
 const temporaryDirectories: string[] = [];
 
@@ -50,7 +50,8 @@ function createPreRoomKeyDatabase(): LegacyFixture {
 
   const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8'));
   const entries = (journal.entries as Array<{ tag: string }>).filter(
-    entry => entry.tag !== '0022_room_keys' && entry.tag !== '0023_add_user_identities_pk',
+    entry =>
+      entry.tag !== '0022_room_keys' && entry.tag !== '0023_add_user_identities_pk' && entry.tag !== '0024_drop_scheduled_deliveries',
   );
   writeFileSync(join(metaDirectory, '_journal.json'), JSON.stringify({ ...journal, entries }));
   for (const entry of entries) {
@@ -86,8 +87,6 @@ function seedPreRoomKeyRows(sqlite: Database): void {
       VALUES ('whatsapp', '6281234567890@s.whatsapp.net', 'provider-1', 'event-1', 1000, 1000, 1000, 1000);
     INSERT INTO message_outbox (id, platform, chat_room_id, idempotency_key, payload, available_at, created_at, updated_at)
       VALUES ('outbox-1', 'whatsapp', '6281234567890@s.whatsapp.net', 'reply-1', '{}', 1000, 1000, 1000);
-    INSERT INTO scheduled_deliveries (id, platform, job_key, chat_room_id, payload, scheduled_at, available_at, created_at, updated_at)
-      VALUES ('scheduled-1', 'whatsapp', 'digest:2026-01-01', '6281234567890@s.whatsapp.net', '{}', 5000, 5000, 1000, 1000);
     INSERT INTO user_roles (user_id, platform, scope, role, granted_by, created_at)
       VALUES ('sender', 'whatsapp', '6281234567890@s.whatsapp.net', 'admin', 'owner', 1004);
     INSERT INTO user_roles (user_id, platform, scope, role, granted_by, created_at)
@@ -112,7 +111,7 @@ describe('migration 0022 canonical room identity', () => {
       entries: Array<{ tag: string; when: number }>;
     };
     const last = journal.entries.at(-1)!;
-    expect(last.tag).toBe('0023_add_user_identities_pk');
+    expect(last.tag).toBe('0024_drop_scheduled_deliveries');
     expect(last.when).toBe(ROOM_KEY_MIGRATION_WHEN);
     expect(journal.entries.filter(entry => entry.tag === '0022_room_keys')).toHaveLength(1);
     expect(new Set(journal.entries.map(entry => entry.when)).size).toBe(journal.entries.length);
@@ -134,7 +133,7 @@ describe('migration 0022 canonical room identity', () => {
     try {
       expect(
         inspectMigrationState(legacy.sqlite, MIGRATIONS_DIR).pending.map(entry => entry.tag),
-      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk']);
+      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk', '0024_drop_scheduled_deliveries']);
       seedPreRoomKeyRows(legacy.sqlite);
       expect(columnNames(legacy.sqlite, 'chat_rooms')).not.toContain('room_key');
 
@@ -151,7 +150,6 @@ describe('migration 0022 canonical room identity', () => {
       expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM notification_subscriptions')).toBe(waKey);
       expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM message_inbox')).toBe(waKey);
       expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM message_outbox')).toBe(waKey);
-      expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM scheduled_deliveries')).toBe(waKey);
       expect(
         roomKeyOf(
           legacy.sqlite,
@@ -197,9 +195,6 @@ describe('migration 0022 canonical room identity', () => {
       );
       expect(columnNames(legacy.sqlite, 'message_inbox')).toEqual(expect.arrayContaining(['chat_room_id', 'room_key']));
       expect(columnNames(legacy.sqlite, 'message_outbox')).toEqual(expect.arrayContaining(['chat_room_id', 'room_key']));
-      expect(columnNames(legacy.sqlite, 'scheduled_deliveries')).toEqual(
-        expect.arrayContaining(['chat_room_id', 'room_key']),
-      );
       expect(columnNames(legacy.sqlite, 'user_roles')).toEqual(expect.arrayContaining(['scope', 'scope_room_key']));
 
       // No row was dropped or rebuilt.
@@ -431,8 +426,6 @@ describe('migration 0022 canonical room identity', () => {
           VALUES ('whatsapp', '6281234567890@s.whatsapp.net', 'event-1', 1000, 1000, 1000, 1000);
         INSERT INTO message_outbox (id, platform, chat_room_id, idempotency_key, payload, available_at, created_at, updated_at)
           VALUES ('outbox-1', 'whatsapp', '6281234567890@s.whatsapp.net', 'reply-1', '{}', 1000, 1000, 1000);
-        INSERT INTO scheduled_deliveries (id, platform, job_key, chat_room_id, payload, scheduled_at, available_at, created_at, updated_at)
-          VALUES ('scheduled-1', 'whatsapp', 'digest:2026-01-01', '6281234567890@s.whatsapp.net', '{}', 5000, 5000, 1000, 1000);
         -- A queue row for a room that was never registered still gets a stable key.
         INSERT INTO message_inbox (platform, chat_room_id, event_key, received_at, available_at, created_at, updated_at)
           VALUES ('discord', '999999999999999999', 'event-2', 1000, 1000, 1000, 1000);
@@ -446,7 +439,6 @@ describe('migration 0022 canonical room identity', () => {
         roomKeyOf(legacy.sqlite, "SELECT room_key FROM message_inbox WHERE event_key = 'event-1'"),
       ).toBe(waKey);
       expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM message_outbox')).toBe(waKey);
-      expect(roomKeyOf(legacy.sqlite, 'SELECT room_key FROM scheduled_deliveries')).toBe(waKey);
       expect(
         roomKeyOf(legacy.sqlite, "SELECT room_key FROM message_inbox WHERE event_key = 'event-2'"),
       ).toBe('room:discord:999999999999999999');
