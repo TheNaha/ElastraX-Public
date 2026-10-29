@@ -8,6 +8,27 @@ const log = logger.child({ module: 'HealthMonitor' });
 const PING_INTERVAL_MS = 60_000;
 const PING_TIMEOUT_MS = 5000;
 
+// Protocol validation for health-check URLs. We intentionally allow
+// localhost and RFC1918 addresses: these are user-configured service
+// endpoints (Jellyfin, Seerr, Ollama, local LLMs), not user-controllable
+// redirect targets, so the classic SSRF threat model does not apply.
+const ALLOWED_PROTOCOLS = ['http:', 'https:'];
+
+function validateUrl(url: string): void {
+  try {
+    const parsedUrl = new URL(url);
+    if (!ALLOWED_PROTOCOLS.includes(parsedUrl.protocol)) {
+      throw new Error(`Invalid protocol: ${parsedUrl.protocol}`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    if (errorMessage.includes('Invalid protocol')) {
+      throw error;
+    }
+    throw new Error(`Invalid URL for health check: ${url}`, { cause: error });
+  }
+}
+
 type HealthCheck = () => Promise<void>;
 
 function endpoint(baseUrl: string, path: string): string {
@@ -106,6 +127,7 @@ export class HealthMonitor {
   }
 
   private async fetchWithTimeout(url: string, init: RequestInit = {}): Promise<Response> {
+    validateUrl(url);
     const controller = new AbortController();
     this.controllers.add(controller);
     const timeout = setTimeout(() => controller.abort(), PING_TIMEOUT_MS);
