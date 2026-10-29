@@ -3,6 +3,8 @@
  * @description Shared runtime environment parsing helpers and resolved defaults.
  */
 
+import { logger } from '../utils/logger';
+
 export type RuntimeEnv = Record<string, string | undefined>;
 
 /**
@@ -37,11 +39,31 @@ export function readIntegerEnv(
   options: { min?: number; max?: number } = {},
 ): number {
   const raw = (rawValue ?? '').trim();
-  if (!/^[+-]?\d+$/.test(raw)) return fallback;
+  if (!/^[+-]?\d+$/.test(raw)) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Invalid integer "${rawValue ?? ''}", using fallback ${fallback}`);
+    }
+    return fallback;
+  }
   const parsed = Number(raw);
-  if (!Number.isSafeInteger(parsed)) return fallback;
-  if (options.min !== undefined && parsed < options.min) return fallback;
-  if (options.max !== undefined && parsed > options.max) return fallback;
+  if (!Number.isSafeInteger(parsed)) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Integer "${rawValue}" out of safe range, using fallback ${fallback}`);
+    }
+    return fallback;
+  }
+  if (options.min !== undefined && parsed < options.min) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Integer "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
+    }
+    return fallback;
+  }
+  if (options.max !== undefined && parsed > options.max) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Integer "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
+    }
+    return fallback;
+  }
   return parsed;
 }
 
@@ -51,9 +73,24 @@ export function readFloatEnv(
   options: { min?: number; max?: number } = {},
 ): number {
   const parsed = Number.parseFloat((rawValue ?? '').trim());
-  if (!Number.isFinite(parsed)) return fallback;
-  if (options.min !== undefined && parsed < options.min) return fallback;
-  if (options.max !== undefined && parsed > options.max) return fallback;
+  if (!Number.isFinite(parsed)) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Invalid float "${rawValue ?? ''}", using fallback ${fallback}`);
+    }
+    return fallback;
+  }
+  if (options.min !== undefined && parsed < options.min) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Float "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
+    }
+    return fallback;
+  }
+  if (options.max !== undefined && parsed > options.max) {
+    if (process.env.NODE_ENV !== 'test') {
+      logger.warn(`[Config] Float "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
+    }
+    return fallback;
+  }
   return parsed;
 }
 
