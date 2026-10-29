@@ -15,6 +15,7 @@
  * unlimited unattended LLM spend.
  */
 import { readIntegerEnv, readStringEnv } from '../config/runtime';
+import { remoteRoomIdFromKey } from '../messaging/roomKeys';
 import { logger } from './logger';
 
 const log = logger.child({ module: 'ScheduledTasks' });
@@ -103,7 +104,8 @@ export function consumeTaskBudget(
   if (policy.allowedRooms.length === 0) {
     return { allowed: false, reason: 'no rooms are allowed to run scheduled tasks' };
   }
-  if (!policy.allowedRooms.includes(roomKey)) {
+  const allowed = policy.allowedRooms.some(entry => entry === roomKey || (remoteRoomIdFromKey(roomKey) !== null && entry === remoteRoomIdFromKey(roomKey)));
+  if (!allowed) {
     return { allowed: false, reason: `room ${roomKey} is not in SCHEDULED_TASKS_ALLOWED_ROOMS` };
   }
   if (policy.maxRunsPerDay <= 0) return { allowed: false, reason: 'scheduled task budget is disabled' };
