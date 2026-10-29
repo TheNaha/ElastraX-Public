@@ -104,6 +104,8 @@ export const memories = sqliteTable('memories', {
   embeddedAt: integer('embedded_at', { mode: 'timestamp' }),
 }, (table) => ({
   ownerIdx: index('memories_owner_idx').on(table.ownerId),
+  // Additional indexes for performance optimization
+  categoryIdx: index('memories_category_idx').on(table.category),
 }));
 
 export type Memory = typeof memories.$inferSelect;
@@ -157,6 +159,8 @@ export const reminders = sqliteTable('reminders', {
   dueReminderIdx: index('reminders_due_idx').on(table.isSent, table.remindAt, table.claimedAt),
   senderIdIdx: index('reminders_sender_id_idx').on(table.senderId, table.isSent, table.remindAt),
   roomKeyIdx: index('reminders_room_key_idx').on(table.roomKey, table.isSent, table.remindAt),
+  // Additional indexes for performance optimization
+  claimedAtIdx: index('reminders_claimed_at_idx').on(table.claimedAt, table.isSent),
 }));
 
 export type Reminder = typeof reminders.$inferSelect;
@@ -177,6 +181,8 @@ export const userRoles = sqliteTable('user_roles', {
   userScopeIdx: uniqueIndex('user_roles_platform_user_scope_unique_idx').on(table.platform, table.userId, table.scope),
   scopeIdx: index('user_roles_scope_idx').on(table.scope, table.role),
   scopeRoomKeyIdx: index('user_roles_scope_room_key_idx').on(table.scopeRoomKey, table.role),
+  // Additional indexes for performance optimization
+  roleIdx: index('user_roles_role_idx').on(table.role),
 }));
 
 export type UserRole = typeof userRoles.$inferSelect;
@@ -393,41 +399,6 @@ export const messageOutbox = sqliteTable('message_outbox', {
 }));
 
 export type MessageOutbox = typeof messageOutbox.$inferSelect;
-
-export const scheduledDeliveries = sqliteTable('scheduled_deliveries', {
-  id: text('id').primaryKey(),
-  platform: text('platform').notNull(),
-  jobKey: text('job_key').notNull(),
-  chatRoomId: text('chat_room_id').notNull(),
-  /** V8.1: Canonical room identity (`room:<platform>:<chat_room_id>`). Null = not backfilled yet. */
-  roomKey: text('room_key'),
-  providerMessageId: text('provider_message_id'),
-  state: text('state', {
-    enum: ['pending', 'leased', 'sent', 'failed', 'dead_letter'],
-  }).notNull().default('pending'),
-  payload: text('payload').notNull(),
-  scheduledAt: integer('scheduled_at').notNull(),
-  attemptCount: integer('attempt_count').notNull().default(0),
-  availableAt: integer('available_at').notNull(),
-  leaseOwner: text('lease_owner'),
-  leaseExpiresAt: integer('lease_expires_at'),
-  lastError: text('last_error'),
-  sentAt: integer('sent_at'),
-  createdAt: integer('created_at').notNull(),
-  updatedAt: integer('updated_at').notNull(),
-}, (table) => ({
-  platformJobIdx: uniqueIndex('scheduled_deliveries_platform_job_unique_idx').on(table.platform, table.jobKey),
-  platformProviderIdx: uniqueIndex('scheduled_deliveries_platform_provider_unique_idx').on(
-    table.platform,
-    table.chatRoomId,
-    table.providerMessageId,
-  ).where(sql`${table.providerMessageId} is not null and lower(trim(${table.providerMessageId})) not in ('', 'unknown', 'null')`),
-  workIdx: index('scheduled_deliveries_work_idx').on(table.state, table.scheduledAt, table.availableAt, table.leaseExpiresAt),
-  roomIdx: index('scheduled_deliveries_room_idx').on(table.platform, table.chatRoomId, table.scheduledAt),
-  roomKeyIdx: index('scheduled_deliveries_room_key_idx').on(table.roomKey, table.scheduledAt),
-}));
-
-export type ScheduledDelivery = typeof scheduledDeliveries.$inferSelect;
 
 export const databaseLeases = sqliteTable('database_leases', {
   name: text('name').primaryKey(),
