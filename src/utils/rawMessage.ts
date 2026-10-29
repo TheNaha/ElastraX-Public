@@ -1,15 +1,13 @@
+import { isPlainObject } from './typeGuards';
+
 type UnknownRecord = Record<string, unknown>;
 
 /** Sensitive blob / key fields to strip before persisting raw messages to the DB. */
-const RAW_MESSAGE_BLOB_KEYS = new Set([
+export const RAW_MESSAGE_BLOB_KEYS = new Set([
   'jpegThumbnail', 'firstFrameSidecar', 'mediaKey', 'fileSha256',
   'fileEncSha256', 'scansSidecar', 'midQualityFileSha256', 'messageSecret',
   'senderKeyHash', 'recipientKeyHash', 'deviceListMetadata',
 ]);
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Strip sensitive blob/key fields from a raw provider message while preserving
@@ -18,10 +16,13 @@ function isRecord(value: unknown): value is UnknownRecord {
  * identify message types, media info, and quoted messages.
  *
  * Recursively strips BLOB_KEYS at any nesting depth.
+ *
+ * Canonical implementation — all other copies of `stripBlobs` should import
+ * from this module to avoid drift.
  */
-function stripBlobs(value: unknown): unknown {
+export function stripBlobs(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(stripBlobs);
-  if (!isRecord(value)) return value;
+  if (!isPlainObject(value)) return value;
   const out: UnknownRecord = {};
   for (const [key, val] of Object.entries(value)) {
     if (RAW_MESSAGE_BLOB_KEYS.has(key)) continue;
@@ -31,6 +32,6 @@ function stripBlobs(value: unknown): unknown {
 }
 
 export function sanitizeRawMessage(raw: unknown): string {
-  if (!isRecord(raw)) return '{}';
+  if (!isPlainObject(raw)) return '{}';
   return JSON.stringify(stripBlobs(raw));
 }

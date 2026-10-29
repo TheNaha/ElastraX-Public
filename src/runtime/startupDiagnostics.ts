@@ -6,6 +6,7 @@ import { desc, eq } from 'drizzle-orm';
 import { messages } from '../db/schema';
 import { scanParserCoverage, logCoverageSummary, type CoverageResult } from '../utils/parserCoverage';
 import { logger } from '../utils/logger';
+import { stripBlobs } from '../utils/rawMessage';
 
 type MessageRow = { rawMessage: string | null; providerMessageId: string | null };
 
@@ -18,13 +19,7 @@ type StartupDiagnosticsDeps = {
   fileExists?: typeof existsSync;
 };
 
-const BLOB_KEYS = new Set([
-  'jpegThumbnail', 'firstFrameSidecar', 'mediaKey', 'fileSha256',
-  'fileEncSha256', 'scansSidecar', 'midQualityFileSha256', 'messageSecret',
-  'senderKeyHash', 'recipientKeyHash', 'deviceListMetadata',
-]);
 
-type JsonLike = Record<string, unknown> | unknown[];
 
 function getDefaultRows(limit?: number): MessageRow[] {
   const query = db.select({
@@ -50,19 +45,7 @@ export function resolveFixtureDir(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 export function stripFixtureBlobs(raw: unknown): unknown {
-  if (typeof raw !== 'object' || raw === null) return raw;
-
-  const out: JsonLike = Array.isArray(raw) ? [] : {};
-  for (const [key, value] of Object.entries(raw)) {
-    if (BLOB_KEYS.has(key)) continue;
-    if (Array.isArray(out)) {
-      out.push(typeof value === 'object' ? stripFixtureBlobs(value) : value);
-    } else {
-      out[key] = typeof value === 'object' ? stripFixtureBlobs(value) : value;
-    }
-  }
-
-  return out;
+  return stripBlobs(raw);
 }
 
 export async function dumpFixtures(

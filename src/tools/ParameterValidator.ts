@@ -1,4 +1,5 @@
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolParameter } from './BaseTool';
+import { isPlainObject } from '../utils/typeGuards';
 
 export type CommandArgumentValue = string | number | boolean;
 export type ParsedCommandArgs = ToolArgs & Record<string, CommandArgumentValue>;
@@ -16,13 +17,9 @@ export interface ValidationResult<T = unknown> {
   issues: ValidationIssue[];
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function typeMatches(value: unknown, type: string): boolean {
   switch (type) {
-    case 'object': return isRecord(value);
+    case 'object': return isPlainObject(value);
     case 'array': return Array.isArray(value);
     case 'string': return typeof value === 'string';
     case 'number': return typeof value === 'number' && Number.isFinite(value);
@@ -94,7 +91,7 @@ function validateValue(value: unknown, schema: ToolParameter, path: string, issu
     if (schema.items) value.forEach((entry, index) => validateValue(entry, schema.items as ToolParameter, `${path}[${index}]`, issues));
   }
 
-  if (isRecord(value) && (schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object')) || schema.properties)) {
+  if (isPlainObject(value) && (schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object')) || schema.properties)) {
     const properties = schema.properties ?? {};
     const required = schema.required ?? [];
     for (const key of required) {
@@ -240,12 +237,12 @@ export function validateToolArguments<T = unknown>(toolOrDefinition: BaseTool | 
   const definition = toolOrDefinition instanceof BaseTool ? toolOrDefinition.definition : toolOrDefinition;
   const rawParameters = definition.function.parameters;
   const parameters = { ...rawParameters, additionalProperties: rawParameters.additionalProperties ?? false } as ToolParameter;
-  const sanitized = isRecord(value) && Object.prototype.hasOwnProperty.call(value, '__command')
+  const sanitized = isPlainObject(value) && Object.prototype.hasOwnProperty.call(value, '__command')
     ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== '__command'))
     : value;
   const result = validateJsonSchema<T>(parameters, sanitized);
   result.value = sanitized as T;
-  if (result.valid && toolOrDefinition instanceof BaseTool && isRecord(sanitized) && typeof sanitized.action === 'string' && toolOrDefinition.commandGrammar) {
+  if (result.valid && toolOrDefinition instanceof BaseTool && isPlainObject(sanitized) && typeof sanitized.action === 'string' && toolOrDefinition.commandGrammar) {
     const variant = toolOrDefinition.commandGrammar.variants.find((entry) => entry.value === sanitized.action);
     if (!variant) {
       result.valid = false;
@@ -268,7 +265,7 @@ export function validateToolArguments<T = unknown>(toolOrDefinition: BaseTool | 
       }
     }
   }
-  if (result.valid && toolOrDefinition instanceof BaseTool && isRecord(sanitized)) validateActionRequirements(toolOrDefinition, sanitized, result);
+  if (result.valid && toolOrDefinition instanceof BaseTool && isPlainObject(sanitized)) validateActionRequirements(toolOrDefinition, sanitized, result);
   return result;
 }
 

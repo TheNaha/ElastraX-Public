@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { logger } from '../utils/logger';
+import { isPlainObject } from '../utils/typeGuards';
 import { ToolDefinition } from '../tools/BaseTool';
 import type {
   ChatCompletionChunkChoice,
@@ -96,10 +97,6 @@ function isValidUrl(url: string): boolean {
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function normalizeFinishReason(value: unknown, context: string): FinishReason | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== 'string') {
@@ -114,7 +111,7 @@ function normalizeAssistantContent(value: unknown): string | null {
   if (Array.isArray(value)) {
     const text = value.map(part => {
       if (typeof part === 'string') return part;
-      if (isRecord(part) && typeof part.text === 'string') return part.text;
+      if (isPlainObject(part) && typeof part.text === 'string') return part.text;
       throw new AIProtocolError('invalid_response', 'Assistant content array contains an invalid part.');
     }).filter(Boolean).join('');
     return text || null;
@@ -123,7 +120,7 @@ function normalizeAssistantContent(value: unknown): string | null {
 }
 
 function normalizeMessage(value: unknown): ChatCompletionMessage {
-  if (!isRecord(value) || value.role !== 'assistant') {
+  if (!isPlainObject(value) || value.role !== 'assistant') {
     throw new AIProtocolError('invalid_response', 'Chat completion response has no valid assistant message.');
   }
   if (value.tool_calls !== undefined && !Array.isArray(value.tool_calls)) {
@@ -154,7 +151,7 @@ function usageOrThrow(value: unknown, context: string): TokenUsage | null {
 }
 
 function parseJsonResponse(value: unknown): Record<string, unknown> {
-  if (!isRecord(value)) {
+  if (!isPlainObject(value)) {
     throw new AIProtocolError('invalid_response', 'Chat completion response must be a JSON object.');
   }
   return value;
@@ -282,6 +279,20 @@ export class AIClient {
       const errText = await response.text().catch(() => '<unreadable>');
       log.error({ status: response.status, errText, elapsed }, 'Error response from LLM');
       // Avoid leaking the raw error body (may contain API keys or internal details)
+      const status = response.status;
+      const retryAfter = response.headers.get('retry-after');
+      if (status === 429 && retryAfter) {
+        // Rate limited - parse retry-after header
+        const retrySeconds = parseInt(retryAfter, 10);
+        const waitMs = isNaN(retrySeconds) ? 60_000 : Math.min(retrySeconds * 1000, 300_000);
+        log.warn({ status, retryAfter: waitMs }, 'LLM API rate limited, waiting before retry');
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        throw new Error(`LLM API rate limited. Retry after ${waitMs}ms`);
+      }
+      if (status >= 500 && status < 600) {
+        // Server error - could be transient
+        log.warn({ status }, 'LLM API server error, may retry');
+      }
       throw new Error(`LLM API returned ${response.status}: request failed`);
     }
 
@@ -305,7 +316,7 @@ export class AIClient {
       throw new AINoChoiceError('Chat completion response contained no choices.', responseId);
     }
     const first = data.choices[0];
-    if (!isRecord(first) || !isRecord(first.message)) {
+    if (!isPlainObject(first) || !isPlainObject(first.message)) {
       throw new AIProtocolError('invalid_response', 'Chat completion response choice has no message.');
     }
 
@@ -355,12 +366,12 @@ export class AIClient {
     previous: AIStreamChunk | undefined,
     requestId: string,
   ): AIStreamChunk {
-    if (!isRecord(value) || !Array.isArray(value.choices)) {
+    if (!isPlainObject(value) || !Array.isArray(value.choices)) {
       throw new AIProtocolError('invalid_chunk', 'SSE data must contain a choices array.');
     }
 
     const choices: ChatCompletionChunkChoice[] = value.choices.map((entry): ChatCompletionChunkChoice => {
-      if (!isRecord(entry) || !isRecord(entry.delta)) {
+      if (!isPlainObject(entry) || !isPlainObject(entry.delta)) {
         throw new AIProtocolError('invalid_chunk', 'SSE choice is missing its delta object.');
       }
       const choiceIndex = entry.index;
@@ -387,7 +398,7 @@ export class AIClient {
           throw new AIProtocolError('invalid_chunk', 'SSE tool_calls must be an array.');
         }
         delta.tool_calls = entry.delta.tool_calls.map((fragment): StreamingToolCallDelta => {
-          if (!isRecord(fragment)) {
+          if (!isPlainObject(fragment)) {
             throw new AIProtocolError('invalid_chunk', 'SSE tool-call fragment must be an object.');
           }
           const fragmentIndex = fragment.index;
@@ -408,7 +419,7 @@ export class AIClient {
             normalized.type = 'function';
           }
           if (fragment.function !== undefined) {
-            if (!isRecord(fragment.function)) {
+            if (!isPlainObject(fragment.function)) {
               throw new AIProtocolError('invalid_chunk', 'SSE tool-call function must be an object.');
             }
             const fn: NonNullable<StreamingToolCallDelta['function']> = {};
@@ -480,6 +491,15 @@ export class AIClient {
     if (!response.ok) {
       const errText = await response.text().catch(() => '<unreadable>');
       log.error({ status: response.status, errText }, 'Streaming LLM request failed');
+      const status = response.status;
+      const retryAfter = response.headers.get('retry-after');
+      if (status === 429 && retryAfter) {
+        const retrySeconds = parseInt(retryAfter, 10);
+        const waitMs = isNaN(retrySeconds) ? 60_000 : Math.min(retrySeconds * 1000, 300_000);
+        log.warn({ status, retryAfter: waitMs }, 'LLM API rate limited (streaming), waiting before retry');
+        await new Promise(resolve => setTimeout(resolve, waitMs));
+        throw new Error(`LLM API rate limited. Retry after ${waitMs}ms`);
+      }
       throw new Error(`LLM API returned ${response.status}: request failed`);
     }
     if (!response.body) {

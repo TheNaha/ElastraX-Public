@@ -1,3 +1,8 @@
+/**
+ * @file src/utils/MediaCleanup.ts
+ * @description Media cleanup utilities for ElastraX.
+ */
+
 import { join } from 'node:path';
 import { logger } from './logger';
 import { db } from '../db';
@@ -11,6 +16,14 @@ import {
   PruneMediaOptions,
 } from './mediaShared';
 import { setClearStaleMediaReferencesCallback } from './MediaStorage';
+import { stripBlobs } from './rawMessage';
+
+/**
+ * Strip sensitive blob/key fields from a raw message while preserving structure.
+ * @deprecated Import `stripBlobs` from `./rawMessage` directly — this re-export
+ * is retained for backward compatibility with `parserCoverage.ts`.
+ */
+export { stripBlobs };
 
 export class MediaCleanup {
   static async pruneOldFiles(options: PruneMediaOptions = {}): Promise<void> {
@@ -44,7 +57,7 @@ export class MediaCleanup {
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.warn({ err: error }, '[MediaCleanup] Failed to prune media directory');
+        logger.warn({ err: error }, '[MediaCleanup] Failed to prune directory');
       }
     }
   }

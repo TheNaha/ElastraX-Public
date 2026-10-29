@@ -35,6 +35,7 @@ import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage, StreamingToolCallAccumulator } from '../ai/client';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { isPlainObject } from '../utils/typeGuards';
 import {
   getToolByName,
   getAuthorizedTool,
@@ -188,14 +189,10 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
   }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
 function parseToolArgs(rawArgs: string, toolName: string, logMalformed: boolean): Record<string, unknown> | null {
   try {
     const parsed: unknown = JSON.parse(rawArgs || '{}');
-    if (isRecord(parsed)) return parsed;
+    if (isPlainObject(parsed)) return parsed;
     if (logMalformed) log.warn({ toolName }, 'Tool arguments must be a JSON object');
     return null;
   } catch {
@@ -286,7 +283,7 @@ async function executeRequestedToolCalls(
         toolResultText = `Error: Arguments for ${toolName} must be a valid JSON object.`;
       } else {
         const validation = validateToolArguments(tool, args);
-        if (!validation.valid || !isRecord(validation.value)) {
+        if (!validation.valid || !isPlainObject(validation.value)) {
           toolResultText = `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}`;
         } else {
           const validArgs = validation.value;
