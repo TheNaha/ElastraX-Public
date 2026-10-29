@@ -32,6 +32,8 @@ export type PluginPermission = (typeof PLUGIN_PERMISSION_LEVELS)[number];
  * beyond this can change bot-wide or destructive state, so it must be named in
  * `PLUGIN_ALLOWED_PERMISSIONS`.
  */
+import { isPlainObject } from '../utils/typeGuards';
+
 export const DEFAULT_PLUGIN_ALLOWED_PERMISSIONS: readonly PluginPermission[] = ['user', 'premium'];
 
 export type PluginManifest = {
@@ -46,10 +48,6 @@ export type PluginManifest = {
 export type PluginManifestValidation =
   | { ok: true; manifest: PluginManifest }
   | { ok: false; reason: string };
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 /**
  * Validate a raw `pluginManifest` export. Returns a reason rather than throwing,

@@ -246,7 +246,7 @@ export function fetchRoomTranscript(
   return lines;
 }
 
-async function defaultCallLLM(prompt: string): Promise<string> {
+export async function defaultCallLLM(prompt: string): Promise<string> {
   const msg = await getModelRouter().chatCompletion(
     [{ role: 'user', content: prompt }],
     undefined,

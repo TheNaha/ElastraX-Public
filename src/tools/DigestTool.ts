@@ -4,17 +4,11 @@ import { db } from '../db';
 import { chatRooms } from '../db/schema';
 import { t } from '../utils/i18n';
 import { getErrorMessage } from '../utils/errorUtils';
-import { getModelRouter } from '../utils/ModelRouter';
-import { summarizeRoom } from '../utils/DigestService';
+import { defaultCallLLM, summarizeRoom } from '../utils/DigestService';
 import { chatRoomsRoomColumns, resolveRoomIdentity, roomIdentityCondition } from '../agent/roomKey';
 
 /** Injectable LLM callback (tests override this). */
 export const digestToolDeps: { callLLM?: (prompt: string) => Promise<string> } = {};
-
-async function defaultCallLLM(prompt: string): Promise<string> {
-  const msg = await getModelRouter().chatCompletion([{ role: 'user', content: prompt }], undefined, 0.2);
-  return typeof msg.content === 'string' ? msg.content : '';
-}
 
 const MIN_HOURS = 1;
 const MAX_HOURS = 168;

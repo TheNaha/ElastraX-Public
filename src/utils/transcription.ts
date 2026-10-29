@@ -2,7 +2,7 @@ import type { MessageContext } from '../core/MessageContext';
 import { getTranscriptionConfig } from '../config/runtime';
 import { resolveTargetMedia } from './mediaResolve';
 import { detectAudioMimeType, isAudioMagic, readMediaBuffer } from './MediaStorage';
-import { NORMAL_MEDIA_MAX_BYTES } from '../providers/media';
+import { NORMAL_MEDIA_MAX_BYTES, normalizeMime } from '../providers/media';
 import { runBoundedProcess, type BoundedProcessOptions } from '../providers/process';
 
 type TranscriptionResponse = {
@@ -159,10 +159,6 @@ export async function probeAudioBuffer(buffer: Buffer, signal?: AbortSignal): Pr
 function isStrongAudioMagic(buffer: Buffer, mime: string): boolean {
   if (mime === 'audio/mp4' || mime === 'audio/aac') return true;
   return isAudioMagic(buffer, mime);
-}
-
-function normalizeMime(mimeType: string | undefined): string {
-  return (mimeType || '').split(';', 1)[0].trim().toLowerCase();
 }
 
 function validateEndpoint(endpoint: string): void {

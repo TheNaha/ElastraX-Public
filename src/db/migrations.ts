@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { getProjectRoot } from '../config/database.js';
+import { tableExists } from './runtime.js';
 
 export interface MigrationJournalEntry {
   tag: string;
@@ -193,15 +194,6 @@ function migrationHash(tag: string, migrationsFolder: string): string {
   return createHash('sha256')
     .update(readFileSync(join(migrationsFolder, `${tag}.sql`)))
     .digest('hex');
-}
-
-function tableExists(sqlite: Database, table: string): boolean {
-  const row = sqlite
-    .query<{ name: string }, [string]>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-    )
-    .get(table);
-  return row !== null;
 }
 
 function tableColumns(sqlite: Database, table: string): Set<string> {

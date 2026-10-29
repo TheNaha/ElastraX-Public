@@ -8,8 +8,8 @@ export const TYPE_DETECTION_BYTES = 4100;
 export const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
 export const DEFAULT_STORAGE_MAX_FILES = 10_000;
 export const TEMP_FILE_GRACE_MS = 5 * 60_000;
-export const HARD_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
-export const NORMAL_MEDIA_MAX_BYTES = 32 * 1024 * 1024;
+import { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES } from '../providers/media';
+export { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES };
 
 /** In-memory cache of media directory totals to avoid O(n) rescans on every save. */
 interface MediaDirCache {

@@ -1,4 +1,5 @@
 import { logger } from './logger';
+import { sanitizeErrorMessage } from './errorUtils';
 
 export interface HttpRequestOptions {
   signal?: AbortSignal;
@@ -282,18 +283,11 @@ async function readBinaryResponse(response: Response, maxBytes: number, service:
 }
 
 function sanitizeResponseText(text: string): string {
-  return stripControlCharacters(text).trim().slice(0, 200);
+  return sanitizeErrorMessage(text, 200).trim();
 }
 
 function safeErrorMessage(error: unknown): string {
-  return stripControlCharacters(error instanceof Error ? error.message : String(error)).slice(0, 200);
-}
-
-function stripControlCharacters(text: string): string {
-  return Array.from(text, character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? ' ' : character;
-  }).join('');
+  return sanitizeErrorMessage(error instanceof Error ? error.message : String(error), 200);
 }
 
 function normalizePositiveInteger(value: number, fallback: number): number {

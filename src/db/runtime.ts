@@ -12,6 +12,15 @@
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
 
+export function tableExists(sqlite: Database, table: string): boolean {
+  const row = sqlite
+    .query<{ name: string }, [string]>(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    )
+    .get(table);
+  return row !== null;
+}
+
 export interface LeaseOptions {
   name: string;
   owner?: string;

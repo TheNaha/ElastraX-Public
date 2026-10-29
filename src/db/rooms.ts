@@ -21,7 +21,7 @@
  */
 
 import type { Database } from 'bun:sqlite';
-import { withImmediateTransaction } from './runtime';
+import { tableExists, withImmediateTransaction } from './runtime';
 import { getDefaultDatabase } from './index';
 import { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WHEN } from './migrations';
 import {
@@ -104,15 +104,6 @@ function trimValue(value: unknown, field: string): string {
 
 function defaultDatabase(): Database {
   return getDefaultDatabase().sqlite;
-}
-
-function tableExists(sqlite: Database, table: string): boolean {
-  const row = sqlite
-    .query<{ name: string }, [string]>(
-      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
-    )
-    .get(table);
-  return row !== null;
 }
 
 function hasColumn(sqlite: Database, table: string, column: string): boolean {

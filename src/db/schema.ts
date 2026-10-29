@@ -276,7 +276,7 @@ export const notificationSubscriptions = sqliteTable('notification_subscriptions
   id: integer('id').primaryKey({ autoIncrement: true }),
   /** Bot user ID. */
   userId: text('user_id').notNull(),
-  /** 'whatsapp' | 'discord' */
+  /** 'whatsapp' | 'discord' | 'telegram' */
   platform: text('platform').notNull(),
   /** 'jellyfin' | 'seerr' | 'all' */
   serviceType: text('service_type').notNull(),
@@ -417,7 +417,7 @@ export type DatabaseLease = typeof databaseLeases.$inferSelect;
 export const roomKeys = sqliteTable('room_keys', {
   /** Canonical key: `room:<platform>:<remoteRoomId>`. */
   roomKey: text('room_key').primaryKey(),
-  /** 'whatsapp' | 'discord' */
+  /** 'whatsapp' | 'discord' | 'telegram' */
   platform: text('platform').notNull(),
   /** Provider-native room identifier (WhatsApp JID, Discord channel id). */
   remoteRoomId: text('remote_room_id').notNull(),

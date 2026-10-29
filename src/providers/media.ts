@@ -120,7 +120,7 @@ async function readPrefix(path: string, length: number): Promise<Buffer> {
   }
 }
 
-function normalizeMime(mimeType?: string): string {
+export function normalizeMime(mimeType?: string): string {
   return (mimeType || '').split(';', 1)[0].trim().toLowerCase();
 }
 
