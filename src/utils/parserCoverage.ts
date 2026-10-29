@@ -2,31 +2,13 @@ import type { WAMessage, proto } from '@whiskeysockets/baileys';
 import { getContentType } from '@whiskeysockets/baileys';
 import { parseWhatsAppMessage, ParsedWAMessage } from '../providers/whatsappParser';
 import { logger } from './logger';
+import { stripBlobs } from './MediaCleanup';
 
 export interface CoverageResult {
   uniqueByType: Map<string, { raw: unknown; parsed: ParsedWAMessage }>;
   errors: Array<{ index: number; raw: unknown; error: Error }>;
   unknownSamples: Array<{ index: number; raw: unknown; baileysType: string | null }>;
   total: number;
-}
-
-const BLOB_KEYS = new Set([
-  'jpegThumbnail', 'firstFrameSidecar', 'mediaKey', 'fileSha256',
-  'fileEncSha256', 'scansSidecar', 'midQualityFileSha256', 'messageSecret',
-  'senderKeyHash', 'recipientKeyHash', 'deviceListMetadata',
-]);
-
-function stripBlobs(raw: unknown): unknown {
-  if (typeof raw !== 'object' || raw === null) return raw;
-  const out: Record<string, unknown> = Array.isArray(raw) ? {} : {};
-  if (Array.isArray(raw)) {
-    return raw.map((v) => (typeof v === 'object' ? stripBlobs(v) : v));
-  }
-  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
-    if (BLOB_KEYS.has(key)) continue;
-    out[key] = typeof value === 'object' ? stripBlobs(value) : value;
-  }
-  return out;
 }
 
 export async function scanParserCoverage(

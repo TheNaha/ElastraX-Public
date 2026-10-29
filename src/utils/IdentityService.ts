@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { and, eq, inArray, or } from 'drizzle-orm';
 import { db, type ElastraXDatabase } from '../db';
+import { inferPlatformFromRoomId } from '../core/platforms';
 import { toRoomKey } from '../core/roomKeyFormat';
 import {
   canonicalIdentities,
@@ -79,20 +80,18 @@ function normalized(value: string | null | undefined): string | null {
 /**
  * The platform an id belongs to, when the caller did not say.
  *
- * A WhatsApp id carries a `@s.whatsapp.net` / `@lid` suffix. Everything else
- * was assumed to be Discord, which is why a Telegram id was always looked up
- * under `platform = 'discord'` and never matched the row that Telegram had
- * written under `platform = 'telegram'`.
+ * Delegates to the shared helper in `src/core/platforms.ts` so a bare user id
+ * and a bare room id classify the same way. The two used to disagree: a bare
+ * numeric id was treated as Telegram here but as Discord in
+ * `inferPlatformFromRoomId`, so a Telegram reminder could be resolved as a
+ * Discord/WhatsApp room and retired on first delivery. Bare numeric ids are
+ * genuinely ambiguous (Telegram user ids and Discord snowflakes overlap), so
+ * the shared rule treats them as Discord; callers that know the platform should
+ * pass it explicitly.
  */
 function inferIdentityPlatform(alias: string): string {
-  if (alias.endsWith('@lid') || alias.endsWith('@s.whatsapp.net')) return 'whatsapp';
-  // Telegram supergroups/channels start with -100, which no other platform produces.
-  if (/^-100\d+$/.test(alias)) return 'telegram';
-  // Telegram user ids are numeric and 5-32 digits; Discord snowflakes are 15-20 digits.
-  // Use the same discriminator as inferPlatformFromRoomId to avoid misclassification.
-  if (/^\d{5,32}$/.test(alias)) return 'telegram';
-  // Everything else falls back to Discord default.
-  return 'discord';
+  const inferred = inferPlatformFromRoomId(alias);
+  return inferred ?? 'discord';
 }
 
 function aliasKinds(lid: string | null, pn: string | null): Array<{ value: string; kind: string }> {

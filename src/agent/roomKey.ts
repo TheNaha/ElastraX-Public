@@ -118,7 +118,11 @@ export function normalizeRoomId(platform: string, room: string): string {
 /** Canonical room key for a context: `ctx.roomKey ?? toRoomKey(platform, chatId)`. */
 export function getCanonicalRoomKey(ctx: RoomKeyContext): string {
   const explicit = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
-  return explicit.length > 0 ? explicit : toRoomKey(ctx.platform, ctx.chatId);
+  if (explicit.length > 0) {
+    const parsed = parseRoomReference(explicit);
+    if (parsed && parsed.platform === ctx.platform) return explicit;
+  }
+  return toRoomKey(ctx.platform, ctx.chatId);
 }
 
 /** Canonical key plus the raw provider chat id it was derived from. */
