@@ -374,7 +374,11 @@ export class WhatsAppProvider implements BotProvider {
         try {
           await this.messageHandler(ctx);
         } catch (error) {
-          logger.error({ err: error, key: message.key }, '[WhatsApp] Error processing message');
+          if (error instanceof ProviderLifecycleError) {
+            logger.error({ err: error, key: message.key }, '[WhatsApp] Lifecycle error during message handling');
+          } else {
+            logger.error({ err: error, key: message.key }, '[WhatsApp] Error processing message');
+          }
         }
       }));
     });
