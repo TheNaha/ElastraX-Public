@@ -58,7 +58,7 @@ type SqliteLike = {
   };
 };
 
-const columnPresence = new WeakMap<SqliteLike, Map<string, { at: number; present: boolean }>>();
+let columnPresence = new WeakMap<SqliteLike, Map<string, { at: number; present: boolean }>>();
 
 /** The live SQLite handle, or `null` when the database is not reachable. */
 function databaseHandle(): SqliteLike | null {
@@ -425,7 +425,10 @@ export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox'): boo
 
 /** Test seam: forget cached column probes for every known handle. */
 export function resetRoomKeyColumnCache(): void {
-  columnPresence.get(databaseHandle() ?? ({} as SqliteLike))?.clear();
+  // A WeakMap cannot be enumerated, so drop the whole cache. This guarantees
+  // that caches for every database handle (including ones migrated by a
+  // non-default `ensureDatabaseSchema({ database })` call) are invalidated.
+  columnPresence = new WeakMap();
 }
 
 // Invalidate the column-presence cache after migrations so `hasRoomKeyColumn`
