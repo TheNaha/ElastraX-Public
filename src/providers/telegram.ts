@@ -170,6 +170,8 @@ export class TelegramProvider implements BotProvider {
   private lifecycleGeneration = 0;
   private botUserId: string | null = null;
   private started: Promise<void> | null = null;
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** In-flight media downloads, aborted on `stop()`. */
   private readonly mediaControllers = new Set<AbortController>();
 
@@ -232,6 +234,7 @@ export class TelegramProvider implements BotProvider {
           if (!this.isCurrent(bot, generation)) return;
           this.providerStatus = 'running';
           this.providerError = null;
+          this.reconnectAttempts = 0;
           log.info({ username: info.username }, '[Telegram] Bot connected');
           clearTimeout(settleGuard);
           resolveReady();
@@ -244,6 +247,9 @@ export class TelegramProvider implements BotProvider {
         this.providerError = error instanceof Error ? error : new Error(String(error));
         log.error({ err: error }, '[Telegram] Polling stopped');
         rejectReady(error);
+        // Schedule a reconnection so transient failures (network blip, API
+        // hiccup, temporary 5xx) don't permanently kill the provider.
+        if (this.desiredRunning) this.scheduleReconnect(generation);
       });
       await ready;
     })().finally(() => {
@@ -261,6 +267,10 @@ export class TelegramProvider implements BotProvider {
     this.bot = null;
     this.botUserId = null;
     this.providerStatus = 'stopped';
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     // Abort in-flight media downloads: WhatsApp and Discord both do this, and a
     // download that outlives the shutdown keeps writing into the media
     // directory after the database has been closed.
@@ -275,6 +285,22 @@ export class TelegramProvider implements BotProvider {
         log.debug({ err: error }, '[Telegram] stop threw');
       }
     }
+  }
+
+  private scheduleReconnect(generation: number): void {
+    if (!this.desiredRunning || generation !== this.lifecycleGeneration || this.reconnectTimer) return;
+    const delay = Math.min(1500 * 2 ** this.reconnectAttempts, 300_000);
+    this.reconnectAttempts++;
+    this.providerStatus = 'backoff';
+    log.info({ delayMs: delay, attempt: this.reconnectAttempts }, '[Telegram] Scheduling reconnect');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.desiredRunning || generation !== this.lifecycleGeneration) return;
+      this.start().catch(error => {
+        log.error({ err: error }, '[Telegram] Reconnect start failed');
+      });
+    }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<unknown> {
@@ -405,6 +431,13 @@ export class TelegramProvider implements BotProvider {
     // Text that also carries media keeps the caption as the text; the media is
     // surfaced separately so the agent can see both.
     const text = msg.text ?? msg.caption ?? '';
+    // `text_mention` entities carry the actual mentioned user's `id` — the only
+    // mention form that resolves to a real Telegram account. Plain `mention`
+    // entities are just `@username` text already present in `text`; adding them
+    // as IDs would fabricate bogus JIDs that never match a stored user.
+    const mentionedIds: string[] = (msg.entities ?? [])
+      .filter((entity) => entity.type === 'text_mention')
+      .map((entity) => String((entity as { user: { id: number } }).user.id));
     const botId = this.botUserId;
     const isBotMentioned = Boolean(
       (botId && text.includes(botId))
@@ -492,6 +525,7 @@ export class TelegramProvider implements BotProvider {
       senderId: String(ctx.from?.id ?? ''),
       senderName: senderDisplayName(ctx),
       text,
+      mentionedIds,
       messageType: messageTypeOf(ctx),
       isGroup,
       isBotMentioned,
