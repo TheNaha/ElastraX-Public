@@ -225,7 +225,7 @@ export async function runMutatingTool<T>(tool: BaseTool, context: MessageContext
   const previous = mutationQueues.get(key) ?? Promise.resolve();
   let release!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
-  const queued = previous.then(() => gate);
+  const queued = previous.then(() => gate, () => gate);
   mutationQueues.set(key, queued);
   await previous;
   try {

@@ -138,7 +138,7 @@ export class FlowHandler {
     const previous = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
-    const queued = previous.then(() => gate);
+    const queued = previous.then(() => gate, () => gate);
     this.locks.set(key, queued);
     await previous;
     try {
