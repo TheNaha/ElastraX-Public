@@ -24,6 +24,7 @@
  */
 
 import { chunkTextDiscord, chunkTextFixed } from '../src/utils/textChunking';
+import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from '../src/providers/media';
 
 export type Platform = 'whatsapp' | 'discord';
 
@@ -47,7 +48,7 @@ export const WHATSAPP_RESTART_REQUIRED = 515;
 export const WHATSAPP_LOGGED_OUT = 401;
 export const RECONNECT_BASE_DELAY_MS = 1_500;
 export const RECONNECT_MAX_DELAY_MS = 300_000;
-export const HARD_MEDIA_MAX_BYTES = 200 * 1024 * 1024;
+export { HARD_MEDIA_MAX_BYTES };
 
 export class ProviderError extends Error {
   readonly provider: string;
@@ -169,29 +170,7 @@ export function reconnectDelayMs(attempt: number, base = RECONNECT_BASE_DELAY_MS
   return Math.min(base * 2 ** (safeAttempt - 1), max);
 }
 
-export function createLazyPromise<T>(operation: () => Promise<T>): Promise<T> {
-  let started: Promise<T> | undefined;
-  const start = (): Promise<T> => {
-    if (!started) started = Promise.resolve().then(operation);
-    return started;
-  };
-  const base = new Promise<T>(() => undefined) as Promise<T>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (property === 'then') {
-        return (onfulfilled?: ((value: T) => unknown) | null, onrejected?: ((reason: unknown) => unknown) | null) => start().then(onfulfilled, onrejected);
-      }
-      if (property === 'catch') {
-        return (onrejected?: ((reason: unknown) => unknown) | null) => start().catch(onrejected);
-      }
-      if (property === 'finally') {
-        return (onfinally?: (() => void) | null) => start().finally(onfinally);
-      }
-      return Reflect.get(target, property, receiver);
-    },
-  });
-}
-
+export { createLazyPromise } from '../src/providers/media';
 function sanitize(text: string): string {
   return Array.from(text)
     .map(character => {

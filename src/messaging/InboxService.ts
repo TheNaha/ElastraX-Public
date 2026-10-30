@@ -3,7 +3,7 @@ import type { SQLQueryBindings } from 'bun:sqlite';
 import { sqlite } from '../db';
 import { exponentialBackoff } from '../utils/backoff';
 import type { MessageContext } from '../core/MessageContext';
-import { hasRoomKeyColumn, remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
+import { remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
@@ -47,45 +47,25 @@ export class InboxService {
     const now = Date.now();
     const eventKey = eventKeyFor(ctx);
     const roomKey = roomKeyForContext(ctx);
-    const withRoomKey = hasRoomKeyColumn('message_inbox');
-    const result = withRoomKey
-      ? sqlite
-        .query<never, [string, string, string, string | null, string, number, number, number, number]>(
-          `INSERT INTO message_inbox
-             (platform, chat_room_id, room_key, provider_message_id, event_key, payload,
-              received_at, available_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
-           ON CONFLICT(platform, event_key) DO NOTHING`,
-        )
-        .run(
-          ctx.platform,
-          ctx.chatId,
-          roomKey,
-          ctx.messageId?.trim() || null,
-          eventKey,
-          now,
-          now,
-          now,
-          now,
-        )
-      : sqlite
-        .query<never, [string, string, string | null, string, number, number, number, number]>(
-          `INSERT INTO message_inbox
-             (platform, chat_room_id, provider_message_id, event_key, payload,
-              received_at, available_at, created_at, updated_at)
-           VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?)
-           ON CONFLICT(platform, event_key) DO NOTHING`,
-        )
-        .run(
-          ctx.platform,
-          ctx.chatId,
-          ctx.messageId?.trim() || null,
-          eventKey,
-          now,
-          now,
-          now,
-          now,
-        );
+    const result = sqlite
+      .query<never, [string, string, string, string | null, string, number, number, number, number]>(
+        `INSERT INTO message_inbox
+           (platform, chat_room_id, room_key, provider_message_id, event_key, payload,
+            received_at, available_at, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, '{}', ?, ?, ?, ?)
+         ON CONFLICT(platform, event_key) DO NOTHING`,
+      )
+      .run(
+        ctx.platform,
+        ctx.chatId,
+        roomKey,
+        ctx.messageId?.trim() || null,
+        eventKey,
+        now,
+        now,
+        now,
+        now,
+      );
     const row = sqlite
       .query<{ id: number; state: string }, [string, string]>(
         'SELECT id, state FROM message_inbox WHERE platform = ? AND event_key = ?',
@@ -114,7 +94,7 @@ export class InboxService {
     const remote = remoteRoomIdFromKey(roomKey);
     if (remote) ids.push(remote);
     const placeholders = ids.map(() => '?').join(',');
-    const keyColumn = hasRoomKeyColumn('message_inbox') ? 'room_key' : 'chat_room_id';
+    const keyColumn = 'room_key';
     const params: SQLQueryBindings[] = [...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
     const rows = sqlite
       .query<InboxRoomRow, SQLQueryBindings[]>(

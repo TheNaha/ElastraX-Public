@@ -57,7 +57,6 @@ const { InboxService } = await import('../src/messaging/InboxService');
 const { OutboxService } = await import('../src/messaging/OutboxService');
 const {
   canonicalRoomKey,
-  hasRoomKeyColumn,
   platformsForRemoteRoomId,
   providerRoomTargetMismatch,
   remoteRoomIdFromKey,
@@ -237,8 +236,6 @@ describe('canonical room keys', () => {
   });
 
   test('inbox admission files each platform under its own key and keeps the raw id', () => {
-    expect(hasRoomKeyColumn('message_inbox')).toBe(true);
-
     const whatsapp = InboxService.admit(createContext('whatsapp', SHARED_REMOTE_ID, `wa-${run}`));
     const discord = InboxService.admit(createContext('discord', SHARED_REMOTE_ID, `dc-${run}`));
 
@@ -272,8 +269,6 @@ describe('canonical room keys', () => {
   });
 
   test('outbox rows keep the canonical key, the raw id, and stay platform scoped', () => {
-    expect(hasRoomKeyColumn('message_outbox')).toBe(true);
-
     const whatsappKey = resolveCanonicalRoomKey('whatsapp', SHARED_REMOTE_ID);
     const discordKey = resolveCanonicalRoomKey('discord', SHARED_REMOTE_ID);
     OutboxService.enqueueText('whatsapp', SHARED_REMOTE_ID, 'wa hello', [`outbox-wa-${run}`], { roomKey: whatsappKey });

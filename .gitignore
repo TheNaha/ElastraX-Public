@@ -21,6 +21,10 @@ build/
 .parcel-cache
 coverage/
 tmp/
+.gemini/
+.kilo/
+.kilocode/
+.agents/
 
 # Runtime database and storage (do not commit local state)
 data/bot.db

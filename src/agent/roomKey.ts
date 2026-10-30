@@ -11,14 +11,11 @@
  * so any stored key can be parsed back without a registry lookup.
  *
  * Migration contract (the database lane owns `src/db`):
- *  - `chat_rooms.id`, `messages.chat_room_id` and
- *    `notification_subscriptions.chat_room_id` keep holding the **raw provider
- *    chat id**, so existing rows, foreign keys and provider sends keep working.
- *  - When the schema exposes a `roomKey` column it is dual-written on insert and
- *    preferred on read; the legacy column is retained as a migration fallback.
- *  - Rows created before the migration are still reachable through the legacy
- *    fallback, always scoped by platform so a cross-platform id collision can
- *    never leak one platform's rows into another's.
+ *  - Migration 0022 adds a canonical `room_key` column to every durable room
+ *    table; `chat_rooms.id` now holds the canonical room key on insert, while
+ *    the legacy `chat_room_id` columns are retained as inert data only.
+ *  - Every durable room read/writes `room_key` only; there is no legacy
+ *    `chat_room_id` fallback.
  *  - Provider sends always receive the raw provider chat id, never a room key.
  *
  * The canonical form is produced here rather than imported from `src/db/rooms`
@@ -27,13 +24,9 @@
  * test files that inject a partial `../src/db` double would otherwise break.
  * `test/roomKey.test.ts` pins this implementation against
  * `toRoomKey()` from `src/db/rooms`, so the two can never drift silently.
- *
- * Every helper degrades to the pre-migration behaviour when no `roomKey` column
- * exists, so this module is safe to use against a database that has not been
- * migrated yet.
  */
 
-import { and, eq, isNull, or, type Column, type SQL } from 'drizzle-orm';
+import { eq, type Column, type SQL } from 'drizzle-orm';
 import { chatRooms, messages, notificationSubscriptions, reminders } from '../db/schema';
 import type { MessageContext } from '../core/MessageContext';
 import {
@@ -48,9 +41,8 @@ import {
 
 export { ROOM_KEY_SEPARATOR, ROOM_KEY_PREFIX };
 /** The drizzle symbol that holds a table's column map. */
-const DRIZZLE_COLUMNS = Symbol.for('drizzle:Columns');
 
-/** A `room_key` column (or any column usable inside `eq`/`and`/`or`). */
+/** A `room_key` column (or any column usable inside `eq`). */
 export type RoomKeyColumn = Column;
 
 /** Minimal context surface required to derive a room identity. */
@@ -160,190 +152,92 @@ export function roomRemoteId(
   return typeof row?.id === 'string' ? row.id : '';
 }
 
-// ── Schema compatibility ──────────────────────────────────────────────────────
-
-/**
- * Detect a `roomKey` column on a drizzle table.
- * Returns `null` for tables that do not expose one yet (or for test doubles),
- * which is what keeps the legacy single-column behaviour intact.
- */
-export function detectRoomKeyColumn(table: unknown): RoomKeyColumn | null {
-  const columns = (table as Record<symbol, Record<string, unknown> | undefined> | null | undefined)?.[
-    DRIZZLE_COLUMNS
-  ];
-  const column = columns?.['roomKey'];
-  return column ? (column as RoomKeyColumn) : null;
-}
-
-export interface RoomKeyColumnSet {
-  chatRooms: RoomKeyColumn | null;
-  messages: RoomKeyColumn | null;
-  reminders: RoomKeyColumn | null;
-  notificationSubscriptions: RoomKeyColumn | null;
-}
-
-const detectedRoomKeyColumns: RoomKeyColumnSet = {
-  chatRooms: detectRoomKeyColumn(chatRooms),
-  messages: detectRoomKeyColumn(messages),
-  reminders: detectRoomKeyColumn(reminders),
-  notificationSubscriptions: detectRoomKeyColumn(notificationSubscriptions),
-};
-
-let activeRoomKeyColumns: RoomKeyColumnSet = { ...detectedRoomKeyColumns };
-
-/**
- * Test seam that lets a suite exercise the post-migration query/insert shape
- * against the pre-migration schema (and vice versa) without touching `src/db`.
- * Pass `null` to restore detection from the real schema.
- */
-export function setRoomKeyColumnsForTesting(next: Partial<RoomKeyColumnSet> | null): void {
-  activeRoomKeyColumns = next ? { ...activeRoomKeyColumns, ...next } : { ...detectedRoomKeyColumns };
-}
-
-/**
- * Canonical column for a table.
- *
- * An explicitly supplied table is authoritative: it is what a caller injected,
- * and referencing a column that table does not have would build invalid SQL.
- * Without a table the active column set is used, which is what the agent and its
- * tools read (and what {@link setRoomKeyColumnsForTesting} overrides).
- */
-export function hasCanonicalRoomKeyColumns(): boolean {
-  return activeRoomKeyColumns.chatRooms !== null;
-}
-
-export function resolveRoomKeyColumn(
-  target: keyof RoomKeyColumnSet,
-  table?: unknown,
-): RoomKeyColumn | null {
-  if (table !== undefined) return detectRoomKeyColumn(table);
-  return activeRoomKeyColumns[target];
-}
+// ── Schema (post migration 0022) ──────────────────────────────────────────────
+//
+// Migration 0022 adds a canonical `room_key` column to every durable room table.
+// Every read and write here targets `room_key` only; the legacy `chat_room_id`
+// columns are retained as inert data and are no longer queried for room identity.
 
 /** Columns that identify a room in one table. */
 export interface RoomColumns {
-  /** Legacy room column holding the raw provider chat id. */
+  /** Legacy room column holding the raw provider chat id. Retained as inert data. */
   legacy: Column;
-  /** Canonical `roomKey` column, or `null` while the schema lacks it. */
-  canonical: Column | null;
-  /**
-   * Platform column used to keep the legacy fallback collision-free. Nullable
-   * rows (pre-migration `messages.platform`) are matched as well.
-   */
-  platform?: Column | null;
+  /** Canonical `room_key` column. Always present after migration 0022. */
+  canonical: Column;
+  /** Platform column used to scope platform-scoped lookups. */
+  platform: Column;
 }
 
-export function chatRoomsRoomColumns(table?: unknown): RoomColumns {
+export function chatRoomsRoomColumns(_table?: unknown): RoomColumns {
   return {
     legacy: chatRooms.id,
-    canonical: resolveRoomKeyColumn('chatRooms', table),
+    canonical: chatRooms.roomKey,
     platform: chatRooms.platform,
   };
 }
 
-export function messagesRoomColumns(table?: unknown): RoomColumns {
+export function messagesRoomColumns(_table?: unknown): RoomColumns {
   return {
     legacy: messages.chatRoomId,
-    canonical: resolveRoomKeyColumn('messages', table),
+    canonical: messages.roomKey,
     platform: messages.platform,
   };
 }
 
-/** Canonical `reminders.room_key` column, or `null` before the migration. */
-export function remindersRoomColumns(table?: unknown): RoomColumns {
+/** Canonical `reminders.room_key` column. Always present after migration 0022. */
+export function remindersRoomColumns(_table?: unknown): RoomColumns {
   return {
     legacy: reminders.chatRoomId,
-    canonical: resolveRoomKeyColumn('reminders', table),
+    canonical: reminders.roomKey,
     platform: reminders.platform,
   };
 }
 
-export function remindersRoomKeyColumn(): RoomKeyColumn | null {
-  return activeRoomKeyColumns.reminders;
-}
-
-export function subscriptionRoomColumns(table?: unknown): RoomColumns {
+export function subscriptionRoomColumns(_table?: unknown): RoomColumns {
   return {
     legacy: notificationSubscriptions.chatRoomId,
-    canonical: resolveRoomKeyColumn('notificationSubscriptions', table),
+    canonical: notificationSubscriptions.roomKey,
     platform: notificationSubscriptions.platform,
   };
 }
 
 // ── Query building ────────────────────────────────────────────────────────────
 
-function legacyRoomCondition(columns: RoomColumns, identity: RoomIdentity): SQL {
-  // A pre-migration row stores the raw chat id; a post-migration row may store
-  // either the raw chat id or the canonical key in the same column.
-  const values = identity.roomId === identity.roomKey ? [identity.roomId] : [identity.roomId, identity.roomKey];
-  const terms = values.map(value => {
-    const idTerm = eq(columns.legacy, value);
-    if (!columns.platform) return idTerm;
-    return or(and(eq(columns.platform, identity.platform), idTerm), and(isNull(columns.platform), idTerm))!;
-  });
-  return terms.length === 1 ? terms[0]! : or(...terms)!;
-}
-
 /**
  * Condition matching every row of `columns` that belongs to `identity`:
- * the canonical `roomKey` when the schema exposes it, plus the legacy
- * raw-chat-id column as a migration fallback (platform-scoped).
+ * the canonical `roomKey` only.
  */
 export function roomIdentityCondition(columns: RoomColumns, identity: RoomIdentity): SQL {
-  const legacy = legacyRoomCondition(columns, identity);
-  if (!columns.canonical) return legacy;
-  return or(eq(columns.canonical, identity.roomKey), legacy)!;
+  return eq(columns.canonical, identity.roomKey);
 }
 
-/** Pick the row that matches the canonical key, falling back to the first match. */
+/** Pick the row that matches the canonical key. */
 export function pickPreferredRoomRow<T extends { roomKey?: string | null }>(rows: T[], roomKey: string): T | undefined {
-  return rows.find(row => row.roomKey === roomKey) ?? rows[0];
+  return rows.find(row => row.roomKey === roomKey);
 }
 
-// ── Dual writes ───────────────────────────────────────────────────────────────
+// ── Writes ────────────────────────────────────────────────────────────────────
 
-/**
- * Insert payload fragment that dual-writes the canonical room key.
- * Empty while the target table has no `roomKey` column.
- */
+/** Insert payload fragment that writes the canonical room key. */
 export function chatRoomKeyInsertValues(roomKey: string): Partial<typeof chatRooms.$inferInsert> {
-  return activeRoomKeyColumns.chatRooms
-    ? ({ roomKey } as Partial<typeof chatRooms.$inferInsert>)
-    : {};
+  return { roomKey } as Partial<typeof chatRooms.$inferInsert>;
 }
 
 export function messageRoomKeyInsertValues(roomKey: string): Partial<typeof messages.$inferInsert> {
-  return activeRoomKeyColumns.messages
-    ? ({ roomKey } as Partial<typeof messages.$inferInsert>)
-    : {};
+  return { roomKey } as Partial<typeof messages.$inferInsert>;
 }
 
-export function subscriptionRoomKeyInsertValues(
-  canonical: RoomKeyColumn | null,
-  roomKey: string,
-): Partial<typeof notificationSubscriptions.$inferInsert> {
-  return canonical ? ({ roomKey } as Partial<typeof notificationSubscriptions.$inferInsert>) : {};
+export function subscriptionRoomKeyInsertValues(roomKey: string): Partial<typeof notificationSubscriptions.$inferInsert> {
+  return { roomKey } as Partial<typeof notificationSubscriptions.$inferInsert>;
 }
 
-/**
- * Update/insert fragment that writes the canonical room key.
- * Empty when the target table has no `roomKey` column.
- */
-export function roomKeyWriteValues(canonical: RoomKeyColumn | null, roomKey: string): { roomKey?: string } {
-  return canonical ? { roomKey } : {};
+/** Update/insert fragment that writes the canonical room key. */
+export function roomKeyWriteValues(roomKey: string): { roomKey?: string } {
+  return { roomKey };
 }
 
-/**
- * Backfill fragment for an update on an existing row whose `roomKey` is still
- * empty. Returns an empty fragment when the schema has no `roomKey` column or
- * the row already carries the canonical key.
- */
-export function roomKeyBackfill(
-  canonical: RoomKeyColumn | null,
-  storedRoomKey: string | null | undefined,
-  roomKey: string,
-): { roomKey?: string } {
-  if (!canonical) return {};
+/** Backfill fragment for an update on an existing row whose `room_key` is still empty. */
+export function roomKeyBackfill(storedRoomKey: string | null | undefined, roomKey: string): { roomKey?: string } {
   const stored = typeof storedRoomKey === 'string' ? storedRoomKey.trim() : '';
   if (stored.length > 0) return {};
   return { roomKey };

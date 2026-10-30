@@ -176,7 +176,7 @@ export class FlowHandler {
     const serialized = JSON.stringify(session);
     try {
     const roomKey = session.roomId && session.platform
-      ? `room:${session.platform}:${session.roomId}`
+      ? (session.roomId.startsWith(`room:${session.platform}:`) ? session.roomId : `room:${session.platform}:${session.roomId}`)
       : null;
     const roomKeyColumn = (flowSessions as unknown as { roomKey?: unknown }).roomKey;
     const values = {

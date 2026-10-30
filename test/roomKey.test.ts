@@ -24,13 +24,12 @@ import {
   normalizeRoomId,
   parseRoomKey,
   pickPreferredRoomRow,
-  remindersRoomKeyColumn,
+  remindersRoomColumns,
   resolveRoomIdentity,
   roomIdFromRoomKey,
   roomIdentityCondition,
   roomKeyBackfill,
   roomRemoteId,
-  setRoomKeyColumnsForTesting,
   subscriptionRoomColumns,
   toRoomKey,
   type RoomColumns,
@@ -134,7 +133,7 @@ describe('getCanonicalRoomKey', () => {
     const legacy = { id: 'a', roomKey: null };
     const canonical = { id: 'b', roomKey: 'room:whatsapp:a' };
     expect(pickPreferredRoomRow([legacy, canonical], 'room:whatsapp:a')).toBe(canonical);
-    expect(pickPreferredRoomRow([legacy], 'room:whatsapp:a')).toBe(legacy);
+    expect(pickPreferredRoomRow([legacy], 'room:whatsapp:a')).toBeUndefined();
     expect(pickPreferredRoomRow([], 'room:whatsapp:a')).toBeUndefined();
   });
 });
@@ -152,7 +151,6 @@ describe('roomIdentityCondition', () => {
   const sqlite = new Database(':memory:');
   const db = drizzle(sqlite);
   const roomColumns: RoomColumns = { legacy: messageProbe.chatRoomId, canonical: messageProbe.roomKey, platform: messageProbe.platform };
-  const legacyOnlyColumns: RoomColumns = { legacy: messageProbe.chatRoomId, canonical: null, platform: messageProbe.platform };
   const identity: RoomIdentity = { platform: 'whatsapp', roomKey: 'room:whatsapp:shared', roomId: 'shared' };
 
   beforeEach(() => {
@@ -163,15 +161,14 @@ describe('roomIdentityCondition', () => {
   const rows = async (columns: RoomColumns) =>
     db.select().from(messageProbe).where(roomIdentityCondition(columns, identity)).all();
 
-  test('reads the canonical room_key column when the schema exposes it', async () => {
+  test('matches only rows whose room_key equals the canonical key', async () => {
     sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('shared', 'whatsapp', 'room:whatsapp:shared')");
     expect(await rows(roomColumns)).toHaveLength(1);
   });
 
-  test('falls back to the legacy chat_room_id column for pre-migration rows', async () => {
-    sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('shared', 'whatsapp', NULL)");
-    expect(await rows(roomColumns)).toHaveLength(1);
-    expect(await rows(legacyOnlyColumns)).toHaveLength(1);
+  test('legacy-only rows (NULL room_key) are not returned', async () => {
+    sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('shared', NULL, NULL)");
+    expect(await rows(roomColumns)).toHaveLength(0);
   });
 
   test('keeps two platforms that share a raw room id apart', async () => {
@@ -182,42 +179,22 @@ describe('roomIdentityCondition', () => {
     expect(found[0]?.platform).toBe('whatsapp');
   });
 
-  test('still reads pre-migration rows whose platform column is null', async () => {
-    sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('shared', NULL, NULL)");
-    expect(await rows(roomColumns)).toHaveLength(1);
-  });
-
-  test('a foreign key never matches a local room', async () => {
-    sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('shared', 'discord', 'room:discord:shared')");
-    expect(await rows(roomColumns)).toHaveLength(0);
-  });
-
-  test('the canonical column alone is enough to find a row', async () => {
-    sqlite.exec("INSERT INTO message_probe (chat_room_id, platform, room_key) VALUES ('legacy-id', 'whatsapp', 'room:whatsapp:shared')");
-    const canonicalOnly: RoomColumns = { legacy: messageProbe.chatRoomId, canonical: messageProbe.roomKey, platform: null };
-    expect(await rows(canonicalOnly)).toHaveLength(1);
-  });
-
   test('emits the canonical column in the generated SQL', () => {
     const compiled = db.select().from(messageProbe).where(roomIdentityCondition(roomColumns, identity)).toSQL();
     expect(compiled.sql).toContain('"room_key"');
     expect(compiled.params).toContain('room:whatsapp:shared');
-    expect(compiled.params).toContain('shared');
   });
 });
 
-describe('dual write helpers', () => {
-  test('write the canonical key only when the schema exposes the column', () => {
-    setRoomKeyColumnsForTesting({ messages: messageProbe.roomKey });
-    expect(roomKeyBackfill(messageProbe.roomKey, null, 'room:whatsapp:a')).toEqual({ roomKey: 'room:whatsapp:a' });
-    setRoomKeyColumnsForTesting({ messages: null });
-    expect(roomKeyBackfill(null, null, 'room:whatsapp:a')).toEqual({});
-    setRoomKeyColumnsForTesting(null);
+describe('backfill helper', () => {
+  test('writes the canonical key when the stored value is empty', () => {
+    expect(roomKeyBackfill(null, 'room:whatsapp:a')).toEqual({ roomKey: 'room:whatsapp:a' });
+    expect(roomKeyBackfill('', 'room:whatsapp:a')).toEqual({ roomKey: 'room:whatsapp:a' });
+    expect(roomKeyBackfill('  ', 'room:whatsapp:a')).toEqual({ roomKey: 'room:whatsapp:a' });
   });
 
   test('never rewrite a row that already carries the canonical key', () => {
-    expect(roomKeyBackfill(messageProbe.roomKey, 'room:whatsapp:a', 'room:whatsapp:a')).toEqual({});
-    expect(roomKeyBackfill(messageProbe.roomKey, '  ', 'room:whatsapp:a')).toEqual({ roomKey: 'room:whatsapp:a' });
+    expect(roomKeyBackfill('room:whatsapp:a', 'room:whatsapp:a')).toEqual({});
   });
 });
 
@@ -226,38 +203,26 @@ describe('column detection against the live schema', () => {
     expect(chatRoomsRoomColumns().canonical).toBe(chatRooms.roomKey);
     expect(messagesRoomColumns().canonical).toBe(messages.roomKey);
     expect(subscriptionRoomColumns().canonical).toBe(notificationSubscriptions.roomKey);
-    expect(remindersRoomKeyColumn()).toBe(reminders.roomKey);
+    expect(remindersRoomColumns().canonical).toBe(reminders.roomKey);
   });
 
-  test('degrades to legacy-only conditions when the column is absent', () => {
-    setRoomKeyColumnsForTesting({ chatRooms: null, messages: null });
-    expect(chatRoomsRoomColumns().canonical).toBeNull();
-    expect(messagesRoomColumns().canonical).toBeNull();
-    // The legacy id stays queryable, so a pre-migration database still works.
+  test('detects a room_key column on an injected table', () => {
+    expect(subscriptionRoomColumns(messageProbe).canonical).toBe(notificationSubscriptions.roomKey);
+  });
+
+  test('never degrades to a legacy-only condition', () => {
     const compiled = drizzle(new Database(':memory:'))
       .select({ id: messages.id })
       .from(messages)
       .where(roomIdentityCondition(messagesRoomColumns(), { platform: 'whatsapp', roomKey: 'room:whatsapp:a', roomId: 'a' }))
       .toSQL();
     const whereClause = compiled.sql.slice(compiled.sql.indexOf(' where '));
-    expect(whereClause).not.toContain('room_key');
-    expect(whereClause).toContain('chat_room_id');
-    expect(compiled.params).toContain('a');
-    // The canonical key is still accepted as a room reference value.
+    expect(whereClause).toContain('room_key');
+    expect(whereClause).not.toContain('chat_room_id');
     expect(compiled.params).toContain('room:whatsapp:a');
-    setRoomKeyColumnsForTesting(null);
-  });
-
-  test('detects a room_key column on an injected table', () => {
-    expect(subscriptionRoomColumns(messageProbe).canonical).toBe(messageProbe.roomKey);
-  });
-
-  test('treats a plain test double as a legacy-only table', () => {
-    const fakeTable = { id: 'id', userId: 'user_id', platform: 'platform', serviceType: 'service_type', chatRoomId: 'chat_room_id' };
-    expect(subscriptionRoomColumns(fakeTable).canonical).toBeNull();
   });
 });
 
 afterAll(() => {
-  setRoomKeyColumnsForTesting(null);
+  // no-op: there is no test seam left to restore
 });

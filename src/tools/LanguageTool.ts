@@ -77,12 +77,11 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
     try {
       await ctx.react?.('⏳');
       // Update the database for the active chat room, addressed by the canonical
-      // room key (legacy id still accepted) and dual-writing that key.
+      // room key (legacy id still accepted) and writing that key.
       const roomIdentity = resolveRoomIdentity(ctx);
-      const roomColumns = chatRoomsRoomColumns();
       await db.update(chatRooms)
-        .set({ language: lang_code, ...roomKeyWriteValues(roomColumns.canonical, roomIdentity.roomKey) })
-        .where(roomIdentityCondition(roomColumns, roomIdentity));
+        .set({ language: lang_code, ...roomKeyWriteValues(roomIdentity.roomKey) })
+        .where(roomIdentityCondition(chatRoomsRoomColumns(), roomIdentity));
 
       log.info({ chatId: ctx.chatId, roomKey: roomIdentity.roomKey, lang_code, changedBy: ctx.senderId }, 'Room language updated');
 

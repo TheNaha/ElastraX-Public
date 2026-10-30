@@ -25,7 +25,7 @@ import {
   parseRoomReference,
   toRoomKey as toRoomKeyFormat,
 } from '../core/roomKeyFormat';
-import { sqlite, afterMigrationCallbacks } from '../db';
+import { sqlite } from '../db';
 import { logger } from '../utils/logger';
 import {
   SUPPORTED_PLATFORMS,
@@ -48,17 +48,12 @@ export const ROOM_PLATFORMS = SUPPORTED_PLATFORMS;
 export type RoomPlatform = SupportedPlatform;
 export const DEFAULT_ROOM_PLATFORM: RoomPlatform = 'whatsapp';
 
-const ROOM_KEY_COLUMN = 'room_key';
-const COLUMN_CACHE_TTL_MS = 30_000;
-
 type SqliteLike = {
   query(sql: string, ...params: unknown[]): {
     get: (...params: unknown[]) => unknown;
     all: (...params: unknown[]) => unknown[];
   };
 };
-
-let columnPresence = new WeakMap<SqliteLike, Map<string, { at: number; present: boolean }>>();
 
 /** The live SQLite handle, or `null` when the database is not reachable. */
 function databaseHandle(): SqliteLike | null {
@@ -396,41 +391,3 @@ export function describeRoomResolutionFailure(failure: RoomResolutionFailure): s
       return 'Destination matches multiple platforms; specify platform';
   }
 }
-
-/**
- * True when the migration has added `room_key` to the given table. Feature
- * detection keeps a single binary working against databases that have not been
- * migrated yet (rolling upgrade), and keeps pre-migration rows readable. The
- * answer is cached per database handle, so a process that talks to more than one
- * database never reuses another one's answer.
- */
-export function hasRoomKeyColumn(table: 'message_inbox' | 'message_outbox'): boolean {
-  const handle = databaseHandle();
-  if (!handle) return false;
-  const cache = columnPresence.get(handle) ?? new Map<string, { at: number; present: boolean }>();
-  columnPresence.set(handle, cache);
-  const cached = cache.get(table);
-  const now = Date.now();
-  if (cached && (cached.present || now - cached.at < COLUMN_CACHE_TTL_MS)) return cached.present;
-  let present: boolean;
-  try {
-    const rows = handle.query(`PRAGMA table_info(\`${table}\`)`).all() as Array<{ name?: unknown }>;
-    present = rows.some(row => row?.name === ROOM_KEY_COLUMN);
-  } catch {
-    present = false;
-  }
-  cache.set(table, { at: now, present });
-  return present;
-}
-
-/** Test seam: forget cached column probes for every known handle. */
-export function resetRoomKeyColumnCache(): void {
-  // A WeakMap cannot be enumerated, so drop the whole cache. This guarantees
-  // that caches for every database handle (including ones migrated by a
-  // non-default `ensureDatabaseSchema({ database })` call) are invalidated.
-  columnPresence = new WeakMap();
-}
-
-// Invalidate the column-presence cache after migrations so `hasRoomKeyColumn`
-// reflects newly-added columns on the same database handle (rolling upgrades).
-afterMigrationCallbacks.push(resetRoomKeyColumnCache);

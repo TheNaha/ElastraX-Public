@@ -266,6 +266,7 @@ export class EmbeddingService {
 
       const dimension = vectors[0]?.length ?? knownDimension;
       if (!dimension) throw new Error('Embeddings API returned an empty batch.');
+      if (vectors.length !== batch.length) throw new Error('Embeddings API returned an incomplete batch.');
       const spaceId = createEmbeddingSpaceId(config.model, config.baseUrl, dimension);
       batch.forEach((item, position) => {
         const vector = vectors[position]!;

@@ -80,7 +80,6 @@ import { getInlineMediaEligibility } from '../providers/media';
 import {
   chatRoomKeyInsertValues,
   chatRoomsRoomColumns,
-  hasCanonicalRoomKeyColumns,
   messageRoomKeyInsertValues,
   messagesRoomColumns,
   pickPreferredRoomRow,
@@ -456,7 +455,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   }
   if (!room) {
     const defaults = ConfigService.getDefaults(isGroup);
-    const internalRoomId = hasCanonicalRoomKeyColumns() ? roomIdentity.roomKey : chatId;
+    const internalRoomId = roomIdentity.roomKey;
     log.info({ chatId, roomKey: roomIdentity.roomKey, platform }, 'New chat room created');
     const newRoom: typeof chatRooms.$inferInsert = {
       id: internalRoomId,

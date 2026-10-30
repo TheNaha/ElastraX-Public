@@ -48,8 +48,7 @@ function createFakeDb(selectResults: unknown[]) {
   return { db, inserts, updates, deletes };
 }
 
-// A real drizzle table so the service can detect its canonical `roomKey` column;
-// a plain object double would deliberately exercise the pre-migration path.
+// A real drizzle table so the service can detect its canonical `roomKey` column.
 const subscriptionsTable = sqliteTable('notification_subscriptions', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   userId: text('user_id').notNull(),
@@ -61,18 +60,6 @@ const subscriptionsTable = sqliteTable('notification_subscriptions', {
   created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
 });
 
-/** The same shape without a `roomKey` column: a pre-migration table. */
-const legacySubscriptionsTable = sqliteTable('notification_subscriptions', {
-  id: integer('id').primaryKey({ autoIncrement: true }),
-  userId: text('user_id').notNull(),
-  platform: text('platform').notNull(),
-  serviceType: text('service_type').notNull(),
-  chatRoomId: text('chat_room_id').notNull(),
-  notifyTypes: text('notify_types'),
-  created_at: integer('created_at', { mode: 'timestamp' }).notNull(),
-});
-
-type SubscriptionTable = typeof import('../src/db/schema').notificationSubscriptions;
 type SubscriptionRow = typeof import('../src/db/schema').notificationSubscriptions.$inferSelect;
 
 describe('NotificationSubscriptionService', () => {
@@ -109,11 +96,11 @@ describe('NotificationSubscriptionService', () => {
     expect(fake.updates).toEqual([{ notifyTypes: '["updated"]', roomKey: 'room:discord:room-a' }]);
   });
 
-  test('subscribe keeps working on a table without a room_key column', async () => {
+  test('subscribe writes the canonical room key on every insert', async () => {
     const fake = createFakeDb([[]]);
     NotificationSubscriptionService.setDepsForTesting({
       db: fake.db as any,
-      notificationSubscriptions: legacySubscriptionsTable as unknown as SubscriptionTable,
+      notificationSubscriptions: subscriptionsTable,
     });
 
     await NotificationSubscriptionService.subscribe({
@@ -123,8 +110,7 @@ describe('NotificationSubscriptionService', () => {
       chatRoomId: 'room-a',
     });
 
-    expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a' });
-    expect(fake.inserts[0]).not.toHaveProperty('roomKey');
+    expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a', roomKey: 'room:discord:room-a' });
   });
 
   test('subscribe normalises a canonical key back to the raw provider room id', async () => {

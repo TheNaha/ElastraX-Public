@@ -22,6 +22,7 @@
 import { db } from '../src/db';
 import { messages } from '../src/db/schema';
 import { scanParserCoverage } from '../src/utils/parserCoverage';
+import { stripBlobs } from '../src/utils/rawMessage';
 import { writeFile, mkdir } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
@@ -30,35 +31,7 @@ import { existsSync } from 'fs';
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const FORCE = process.argv.includes('--force');
 
-/**
- * Strip large binary fields that make fixtures unreadable and bloat the repo.
- * We keep all structural fields intact so the parser can still process them.
- */
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
-
-function stripBlobs(raw: unknown): JsonValue {
-  if (typeof raw !== 'object' || raw === null) return raw as JsonValue;
-  const BLOB_KEYS = new Set([
-    'jpegThumbnail',
-    'firstFrameSidecar',
-    'mediaKey',
-    'fileSha256',
-    'fileEncSha256',
-    'scansSidecar',
-    'midQualityFileSha256',
-    'messageSecret',
-    'senderKeyHash',
-    'recipientKeyHash',
-    'deviceListMetadata',
-  ]);
-  const out: JsonValue = Array.isArray(raw) ? [] : {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (BLOB_KEYS.has(k)) continue;
-    if (Array.isArray(out) || out === null || typeof out !== 'object') continue;
-    out[k] = typeof v === 'object' && v !== null ? stripBlobs(v) : (v as JsonValue);
-  }
-  return out;
-}
+// stripBlobs imported from src/utils/rawMessage (canonical).
 
 async function main() {
   // Same guard as startupDiagnostics.dumpFixtures. Without it this script had no

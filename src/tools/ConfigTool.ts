@@ -198,7 +198,7 @@ export class ConfigTool extends BaseTool {
       const updateData: RoomConfigUpdate = { [key]: null };
       // Dual write: adopt the canonical key on rows the migration has not
       // backfilled yet, so the next lookup resolves through room_key.
-      const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
+      const backfill = roomKeyBackfill(room.roomKey, roomIdentity.roomKey);
       await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
       log.info({ chatId: ctx.chatId, key, resetBy: ctx.senderId }, 'Config key reset to default');
       return t(lang, 'config.reset_success', { key: String(key) });
@@ -216,7 +216,7 @@ export class ConfigTool extends BaseTool {
       try {
         const parsedValue = parseConfigValue(key, value, lang);
         const updateData = buildConfigUpdate(key, parsedValue);
-        const backfill = roomKeyBackfill(roomColumns.canonical, room.roomKey, roomIdentity.roomKey);
+        const backfill = roomKeyBackfill(room.roomKey, roomIdentity.roomKey);
 
         await db.update(chatRooms).set({ ...updateData, ...backfill }).where(roomCondition);
         log.info({ chatId: ctx.chatId, key, setBy: ctx.senderId }, 'Config key updated');

@@ -194,7 +194,7 @@ export class NotificationSubscriptionService {
     if (existing.length > 0) {
       // Dual write: adopt the canonical key on a row the migration has not
       // backfilled yet so the next lookup resolves through room_key.
-      const backfill = roomKeyBackfill(roomColumns.canonical, existing[0].roomKey, roomRef.roomKey);
+      const backfill = roomKeyBackfill(existing[0].roomKey, roomRef.roomKey);
       await db.update(notificationSubscriptions).set({ notifyTypes: notifyTypesJson, ...backfill }).where(eq(notificationSubscriptions.id, existing[0].id));
       log.info({ userId: opts.userId, chatRoomId: roomRef.chatRoomId, roomKey: roomRef.roomKey, serviceType }, 'Updated notification subscription');
     } else {
@@ -203,7 +203,7 @@ export class NotificationSubscriptionService {
         platform: opts.platform,
         serviceType,
         chatRoomId: roomRef.chatRoomId,
-        ...subscriptionRoomKeyInsertValues(roomColumns.canonical, roomRef.roomKey),
+        ...subscriptionRoomKeyInsertValues(roomRef.roomKey),
         notifyTypes: notifyTypesJson,
         created_at: new Date(),
       });

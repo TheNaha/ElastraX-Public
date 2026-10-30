@@ -189,7 +189,7 @@ export class AdminAuth {
 /** Whether a `Host` value names the local machine. */
 export function isLoopbackHost(host: string): boolean {
   const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
-  return name === 'localhost' || name === '127.0.0.1' || name === '::1';
+  return name === 'localhost' || name === '::1' || /^127(?:\.\d{1,3}){3}$/.test(name);
 }
 
 /**
@@ -228,6 +228,7 @@ export class LoginThrottle {
 
   /** Returns true when the attempt is allowed (and records it). */
   attempt(ip: string, now = Date.now()): boolean {
+    if (this.buckets.size > 1000) this.prune(now);
     const bucket = this.buckets.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs });

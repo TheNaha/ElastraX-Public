@@ -9,7 +9,6 @@ import {
   chatRoomKeyInsertValues,
   chatRoomsRoomColumns,
   getCanonicalRoomKey,
-  hasCanonicalRoomKeyColumns,
   messageRoomKeyInsertValues,
   pickPreferredRoomRow,
   resolveRoomIdentity,
@@ -125,7 +124,6 @@ export async function syncHistoricalDatabase(
 
   const knownRooms = new Map<string, typeof chatRooms.$inferInsert>();
   const internalRoomIds = new Map<string, string>();
-  const canonicalRoomIdsEnabled = hasCanonicalRoomKeyColumns();
 
   for (const [roomKey, ctx] of contextsByRoomKey) {
     const identity = identities.get(roomKey)!;
@@ -140,7 +138,7 @@ export async function syncHistoricalDatabase(
     }
 
     const defaults = roomDefaults(ctx.isGroup);
-    const internalRoomId = canonicalRoomIdsEnabled ? roomKey : identity.roomId;
+    const internalRoomId = roomKey;
     const room: typeof chatRooms.$inferInsert = {
       id: internalRoomId,
       ...chatRoomKeyInsertValues(roomKey),

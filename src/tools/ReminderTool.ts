@@ -27,7 +27,6 @@ import { isValidRecurrence } from '../utils/Scheduler';
 import {
   chatRoomKeyInsertValues,
   chatRoomsRoomColumns,
-  hasCanonicalRoomKeyColumns,
   pickPreferredRoomRow,
   remindersRoomColumns,
   resolveRoomIdentity,
@@ -372,7 +371,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
           : [];
       let room = pickPreferredRoomRow(roomRows, roomIdentity.roomKey);
       if (!room) {
-        const canonicalRoomId = hasCanonicalRoomKeyColumns() ? roomIdentity.roomKey : roomIdentity.roomId;
+        const canonicalRoomId = roomIdentity.roomKey;
         await db.insert(chatRooms).values({
           id: canonicalRoomId,
           ...chatRoomKeyInsertValues(roomIdentity.roomKey),
@@ -385,7 +384,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       if (!room) return t(lang, 'reminder.error', { msg: 'Chat room not found' });
       db.insert(reminders).values({
         chatRoomId: room.id,
-        ...roomKeyWriteValues(remindersRoomColumns().canonical, roomIdentity.roomKey),
+        ...roomKeyWriteValues(roomIdentity.roomKey),
         senderId: ctx.senderId,
         senderName: ctx.senderName,
         message: reminderMessage,

@@ -80,6 +80,7 @@ import { ConfigTool } from '../src/tools/ConfigTool';
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const defaultRoom = () => ({
   id: 'chat-abc',
+  roomKey: 'room:whatsapp:chat-abc',
   platform: 'whatsapp',
   language: 'en',
   systemPrompt: null as string | null,

@@ -2,7 +2,7 @@ import type { WAMessage, proto } from '@whiskeysockets/baileys';
 import { getContentType } from '@whiskeysockets/baileys';
 import { parseWhatsAppMessage, ParsedWAMessage } from '../providers/whatsappParser';
 import { logger } from './logger';
-import { stripBlobs } from './MediaCleanup';
+import { stripBlobs } from './rawMessage';
 
 export interface CoverageResult {
   uniqueByType: Map<string, { raw: unknown; parsed: ParsedWAMessage }>;
