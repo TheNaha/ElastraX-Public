@@ -9,7 +9,7 @@ bun install --frozen-lockfile
 bun run check
 ```
 
-The container also pins and verifies yt-dlp `2026.08.19` plus an FFmpeg `8.1.2` build with SHA-256 checksums. Update those versions together with the Bun version, then rebuild and run CI.
+The container also pins and verifies yt-dlp `2026.08.19` plus an FFmpeg `8.1.3` build with SHA-256 checksums. Update those versions together with the Bun version, then rebuild and run CI.
 
 ## Required configuration
 

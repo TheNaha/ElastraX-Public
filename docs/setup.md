@@ -57,6 +57,17 @@ DISCORD_BOT_TOKEN=your-discord-bot-token
 
 The token is never passed to AI providers or webhooks.
 
+### Telegram
+
+Set a bot token and a platform-specific owner id before startup:
+
+```env
+TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+BOT_OWNER_TELEGRAM_ID=123456789
+```
+
+A Telegram user id is a numeric snowflake and can never match `BOT_OWNER_JID`, so `BOT_OWNER_TELEGRAM_ID` is required for owner-only tools to be reachable. The token is never passed to AI providers or webhooks. Without a token the provider reports `not_configured` and boot continues.
+
 ## 4. Optional integrations
 
 - Ollama: set `AI_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`, model, and tier.
@@ -127,6 +138,10 @@ bun run db:restore
 
 Only run `db:generate` when intentionally changing the schema, then commit `drizzle/` and `src/db/schema.ts` together. CI regenerates and fails on any uncommitted drift. Back up before applying or restoring migrations.
 
+## Scripts and CLI commands
+
+See [scripts.md](scripts.md) for the full list of database, verification, and maintenance commands.
+
 ## Health and metrics
 
 - `/live` and `/health`: minimal process liveness.
@@ -160,3 +175,7 @@ Keep the `/app/data` named volume attached. A host bind mount must be writable b
 ### Health check fails
 
 Inspect container logs and verify `WEBHOOK_PORT`, the internal bind address, and private-network access. Never add a `0.0.0.0` host-port mapping to work around a proxy issue.
+
+## Logging and errors
+
+Logging uses Pino (`src/utils/logger.ts`); set `LOG_LEVEL` (`trace`/`debug`/`info`/`warn`/`error`/`fatal`, default `info`). `NODE_ENV=production` emits raw JSON lines; otherwise `pino-pretty` is used. Provider, AI protocol, and webhook failures surface as typed errors (`ProviderError`, `AIProtocolError`, `WebhookRequestError`) with codes and retryability flags; startup validation throws after logging every environment error.

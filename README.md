@@ -1,6 +1,6 @@
 # ElastraX
 
-ElastraX is a Bun/TypeScript AI agent for WhatsApp and Discord. It supports OpenAI-compatible and Google AI providers, a persisted tool/flow system, scheduled jobs, media handling, inbound webhooks, and SQLite.
+ElastraX is a Bun/TypeScript AI agent for WhatsApp, Discord, and Telegram. It supports OpenAI-compatible and Google AI providers, a persisted tool/flow system, scheduled jobs, media handling, inbound webhooks, and SQLite.
 
 ## Runtime
 
