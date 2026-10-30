@@ -122,6 +122,17 @@ describe('scheduled task budget', () => {
     if (!decision.allowed) expect(decision.reason).toContain('disabled');
   });
 
+  test('allows a raw chat id in the allowlist', () => {
+    const decision = consumeTaskBudget(budget, policy({ allowedRooms: ['1234567890@g.us'] }), ROOM);
+    expect(decision.allowed).toBe(true);
+  });
+
+  test('rejects a non-matching raw chat id', () => {
+    const decision = consumeTaskBudget(budget, policy({ allowedRooms: ['999@g.us'] }), ROOM);
+    expect(decision.allowed).toBe(false);
+    if (!decision.allowed) expect(decision.reason).toContain('not in SCHEDULED_TASKS_ALLOWED_ROOMS');
+  });
+
   test('refuses when no rooms are allowlisted', () => {
     // The important case: enabling the feature without naming rooms must not
     // mean "everybody".

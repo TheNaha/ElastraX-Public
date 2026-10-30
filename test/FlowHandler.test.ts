@@ -110,6 +110,28 @@ describe('FlowHandler', () => {
     });
   });
 
+  describe('session lock recovery', () => {
+    test('releases the lock after a version conflict', async () => {
+      await expect(FlowHandler.setSession(
+        'lock-user',
+        'lock-flow',
+        { flow: 'lock-flow', step: 'one', data: {} },
+        'whatsapp',
+        300,
+        undefined,
+        999,
+      )).rejects.toThrow(FlowVersionConflictError);
+
+      await FlowHandler.setSession(
+        'lock-user',
+        'lock-flow',
+        { flow: 'lock-flow', step: 'one', data: {} },
+        'whatsapp',
+        300,
+      );
+    });
+  });
+
   describe('handle', () => {
     test('should return false when user has no active session', async () => {
       mockGetActiveFlow.mockReturnValue(null);

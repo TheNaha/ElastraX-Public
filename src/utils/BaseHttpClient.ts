@@ -283,7 +283,11 @@ async function readBinaryResponse(response: Response, maxBytes: number, service:
 }
 
 function sanitizeResponseText(text: string): string {
-  return sanitizeErrorMessage(text, 200).trim();
+  // Preserve the original trim-before-truncate order: control characters are
+  // replaced first, then surrounding whitespace is removed, then the result is
+  // capped. Passing text.length keeps sanitizeErrorMessage from truncating
+  // before the trim can see the full string.
+  return sanitizeErrorMessage(text, text.length).trim().slice(0, 200);
 }
 
 function safeErrorMessage(error: unknown): string {
