@@ -175,15 +175,16 @@ export function validateEnv(env: Env = process.env): void {
     errors.push('ELASTRAX_DB_SYNCHRONOUS must be OFF, NORMAL, or FULL');
   }
 
-  validateBoolean(env.AI_VERBOSE_LOGS, 'AI_VERBOSE_LOGS', errors);
-
   validateFloat(env.AI_TEMPERATURE, 'AI_TEMPERATURE', errors, { min: 0, max: 2 });
 
   for (const key of [
     'WEBHOOK_ENABLED',
     'AUTO_REPLY_ALL',
+    'ALLOW_TOOLS',
     'CONTEXT_SUMMARIZE',
+    'LONG_TERM_MEMORY',
     'AI_STREAMING',
+    'AI_VERBOSE_LOGS',
   ]) {
     validateBoolean(env[key], key, errors);
   }

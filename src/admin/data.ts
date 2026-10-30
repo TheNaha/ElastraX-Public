@@ -26,7 +26,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import { removeRoomDocument, listRoomDocuments, DOCUMENT_CATEGORY } from '../utils/roomKnowledge';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { readIntegerEnv, readStringEnv } from '../config/runtime';
+import { readBooleanEnv, readStringEnv } from '../config/runtime';
 import { APP_RELEASE_TAG, APP_VERSION } from '../config/version';
 
 const log = logger.child({ module: 'AdminData' });
@@ -396,16 +396,17 @@ const CONFIG_ALLOWLIST = [
   'NODE_ENV', 'WEBHOOK_ENABLED', 'WEBHOOK_HOST', 'WEBHOOK_PORT', 'WEBHOOK_MAX_BODY_BYTES',
   'WEBHOOK_MAX_DESTINATIONS', 'WEBHOOK_RATE_LIMIT_MAX', 'WEBHOOK_RATE_LIMIT_WINDOW_MS',
   'WEBHOOK_RATE_LIMIT_MAX_SOURCES', 'WEBHOOK_REPLAY_TTL_MS', 'WEBHOOK_CONTAINER_MODE',
-  'AI_BASE_URL', 'AI_MODEL_NAME', 'AI_MAX_TOKENS', 'AI_TOOL_TIMEOUT_MS', 'AI_MAX_TOOL_CALLS',
+  'AI_API_BASE_URL', 'AI_MODEL_NAME', 'AI_MAX_TOKENS', 'AI_TOOL_TIMEOUT_MS', 'AI_MAX_TOOL_CALLS',
   'AI_MAX_PARALLEL_TOOLS', 'AI_OPERATIONAL_CONTEXT_LIMIT', 'CONTEXT_MESSAGE_LIMIT',
   'LONG_TERM_MEMORY', 'EMBEDDING_MODEL', 'EMBEDDING_DIMENSION', 'EMBEDDING_ENDPOINT',
   'TOOL_MUTATION_COST_LIMIT', 'MESSAGE_QUEUE_PER_ROOM_LIMIT', 'MESSAGE_QUEUE_GLOBAL_LIMIT',
   'MEDIA_STORAGE_MAX_FILES', 'MEDIA_STORAGE_MAX_MB', 'RETENTION_DRY_RUN',
-  'RETENTION_MESSAGES_DAYS', 'RETENTION_RAW_MESSAGE_DAYS', 'RETENTION_FLOW_SESSION_DAYS',
+  'RETENTION_MESSAGES_DAYS', 'RETENTION_MESSAGE_GRACE_DAYS', 'RETENTION_SENT_REMINDER_DAYS',
+  'RETENTION_TERMINAL_DELIVERY_DAYS', 'RETENTION_FLOW_SESSION_DAYS', 'RETENTION_BATCH_SIZE',
   'ENABLE_GAME_SEARCH', 'ENABLE_SOFTWARE_SEARCH', 'ENABLE_MEDIA_LIBRARY', 'ENABLE_PLUGIN_RELOAD',
   'ENABLE_PIRACY_SEARCH', 'ENABLE_PIRACY_TOOLS', 'JELLYFIN_URL', 'JELLYFIN_PUBLIC_MODE',
-  'SEERR_URL', 'TRANSCRIBE_MODE', 'SCHEDULED_TASKS_ENABLED', 'SCHEDULED_TASKS_ALLOWED_ROOMS',
-  'SCHEDULED_TASKS_MAX_RUNS_PER_DAY', 'TTS_PROVIDER', 'TTS_MODEL', 'TTS_VOICE',
+  'SEERR_API_URL', 'SEERR_URL', 'TRANSCRIBE_MODE', 'SCHEDULED_TASKS_ENABLED', 'SCHEDULED_TASKS_ALLOWED_ROOMS',
+  'SCHEDULED_TASKS_MAX_RUNS_PER_DAY', 'SCHEDULED_TASKS_MAX_RUNS_PER_ROOM_PER_DAY', 'SCHEDULED_TASKS_TIMEOUT_MS', 'TTS_PROVIDER', 'TTS_MODEL', 'TTS_VOICE',
   'TELEGRAM_BOT_TOKEN', 'BOT_OWNER_JID', 'BOT_OWNER_TELEGRAM_ID', 'BOT_OWNER_DISCORD_ID',
 ];
 
@@ -488,7 +489,7 @@ export async function actionDeleteKnowledge(roomKey: string, documentId?: string
 export function actionRetentionReport(): ActionResult {
   // Dry run only. Applying retention is irreversible and belongs on the CLI
   // (`bun run db:retention --apply`), not behind a web button.
-  const dryRun = readIntegerEnv(process.env.RETENTION_DRY_RUN, 1, { min: 0, max: 1 }) === 1;
+  const dryRun = readBooleanEnv(process.env.RETENTION_DRY_RUN, true);
   return {
     ok: true,
     message: dryRun

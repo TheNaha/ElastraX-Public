@@ -16,14 +16,6 @@ import {
   PruneMediaOptions,
 } from './mediaShared';
 import { setClearStaleMediaReferencesCallback } from './MediaStorage';
-import { stripBlobs } from './rawMessage';
-
-/**
- * Strip sensitive blob/key fields from a raw message while preserving structure.
- * @deprecated Import `stripBlobs` from `./rawMessage` directly — this re-export
- * is retained for backward compatibility with `parserCoverage.ts`.
- */
-export { stripBlobs };
 
 export class MediaCleanup {
   static async pruneOldFiles(options: PruneMediaOptions = {}): Promise<void> {

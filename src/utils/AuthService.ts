@@ -9,6 +9,7 @@ import { eq, and, inArray, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
 import { roleSatisfies } from '../core/roleAccess';
+import { toRoomKey } from '../core/roomKeyFormat';
 
 export type RoleName = 'user' | 'premium' | 'admin' | 'owner';
 
@@ -119,7 +120,7 @@ function resolveOwnerIdForPlatform(platform: string): string | undefined {
 }
 
 function roomKeyFor(platform: string, scope: string): string {
-  return `room:${platform}:${scope}`;
+  return toRoomKey(platform, scope);
 }
 
 export function legacyScopeFor(platform: string, scope: string): string {
