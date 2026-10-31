@@ -462,14 +462,6 @@ export function getTriggeredTools(text: string, mimeType?: string, context?: Too
   return matched;
 }
 
-export function getToolSearchIndex(): ToolSearchIndex {
-  return toolSearchIndex;
-}
-
-export function getToolSearchResults(query: string, limit = 20): ReturnType<ToolSearchIndex['search']> {
-  return toolSearchIndex.search(query, limit);
-}
-
 function validCommandKey(value: string): boolean {
   return /^(?:\?|[a-z0-9])[a-z0-9_?.-]{0,63}$/i.test(value);
 }

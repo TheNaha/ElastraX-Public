@@ -288,9 +288,9 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
           watchingDirectory = false;
         }
       };
-      watchTimer = setInterval(() => void checkDirectory(), 250);
+      watchTimer = setInterval(() => checkDirectory().catch(() => {}), 250);
       watchTimer.unref?.();
-      void checkDirectory();
+      checkDirectory().catch(() => {});
     }
   });
 }

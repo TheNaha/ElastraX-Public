@@ -181,7 +181,7 @@ export function getRateLimitConfig(env: RuntimeEnv = process.env) {
 }
 
 export function getMediaCleanupIntervalMs(env: RuntimeEnv = process.env): number {
-  return readIntegerEnv(env.MEDIA_CLEANUP_INTERVAL_MS, 6 * 60 * 60 * 1000, { min: 60_000 });
+  return readIntegerEnv(env.MEDIA_CLEANUP_INTERVAL_MS, 6 * 60 * 60 * 1000, { min: 60_000, max: 86_400_000 });
 }
 
 export function getMediaRetentionHours(env: RuntimeEnv = process.env): number {

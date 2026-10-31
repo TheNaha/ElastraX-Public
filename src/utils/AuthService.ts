@@ -242,20 +242,6 @@ export class AuthService {
     }
   }
 
-  static canManageScope(actorRoles: readonly string[], targetScope: string, currentScope?: string, platform = 'whatsapp'): boolean {
-    if (actorRoles.includes('owner')) return true;
-    if (!actorRoles.includes('admin') || currentScope === undefined) return false;
-    const target = legacyScopeFor(platform, targetScope);
-    const current = legacyScopeFor(platform, currentScope);
-    return target === current;
-  }
-
-  static assertRoleScopeAllowed(actorRoles: readonly string[], targetScope: string, currentScope?: string, platform = 'whatsapp'): void {
-    if (!this.canManageScope(actorRoles, targetScope, currentScope, platform)) {
-      throw new Error('You are not allowed to manage roles in that scope');
-    }
-  }
-
   static hasPermission(roles: string[], required: string): boolean {
     return roleSatisfies(roles, required);
   }

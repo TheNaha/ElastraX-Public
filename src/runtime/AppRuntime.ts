@@ -211,6 +211,7 @@ export class AppRuntime {
   private startupCoverageTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
   private mediaCleanupPromise: Promise<void> | null = null;
   private retentionPromise: Promise<void> | null = null;
+  private startupCoveragePromise: Promise<void> | null = null;
   private activeProviders: BotProvider[] = [];
   private unregisterWebhookHooks: Array<() => void> = [];
   private unregisterSenderHooks: Array<() => void> = [];
@@ -831,9 +832,11 @@ export class AppRuntime {
 
     if (this.runStartupCoverageScan) {
       this.startupCoverageTimer = this.timers.setTimeout(() => {
-        void this.runStartupCoverageScan?.().catch((err) => {
+        const scan = this.runStartupCoverageScan;
+        if (!scan) return;
+        this.startupCoveragePromise = scan().catch((err) => {
           logger.warn({ err }, '[ParserCoverage] Startup scan failed (non-fatal)');
-        });
+        }).finally(() => { this.startupCoveragePromise = null; });
       }, this.startupCoverageDelayMs);
     }
   }
@@ -937,6 +940,9 @@ export class AppRuntime {
 
     if (this.mediaCleanupPromise) {
       await this.mediaCleanupPromise;
+    }
+    if (this.startupCoveragePromise) {
+      await this.startupCoveragePromise;
     }
   }
 }

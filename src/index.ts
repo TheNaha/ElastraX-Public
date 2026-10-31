@@ -13,10 +13,10 @@ export type BootstrapHandle = {
  * Terminate tracked child processes and, if anything still holds the loop open,
  * exit anyway.
  *
- * `cancelActiveProcesses` and `activeProcessCount` were exported and never called
- * from anywhere in `src/`, so a shutdown never reaped an in-flight ffmpeg or
- * yt-dlp. A short grace period is allowed for clean teardown; after that the
- * process exits rather than hanging until the orchestrator's SIGKILL.
+ * `cancelActiveProcesses` is exported for tests; `activeProcessCount` is
+ * exported but unused outside tests. A short grace period is allowed for clean
+ * teardown; after that the process exits rather than hanging until the
+ * orchestrator's SIGKILL.
  */
 function forceExit(code: number): void {
   const remaining = cancelActiveProcesses();

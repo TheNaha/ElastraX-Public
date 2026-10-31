@@ -3,7 +3,7 @@
  * @description Abstract interface that every messaging-platform provider must implement.
  *
  * ElastraX is platform-agnostic by design: the `BotProvider` interface decouples the
- * core AI agent from the specifics of any particular messaging API (WhatsApp, Discord, …).
+ * core AI agent from the specifics of any particular messaging API (WhatsApp, Discord, Telegram, …).
  *
  * To add a new platform:
  *  1. Create a class that implements `BotProvider`.

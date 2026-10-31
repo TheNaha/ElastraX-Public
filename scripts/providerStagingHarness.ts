@@ -164,7 +164,6 @@ export const chunkBoundaryText = chunkTextDiscord;
 export function chunkText(platform: Platform, text: string, limit: number): string[] {
   return platform === 'whatsapp' ? chunkFixedText(text, limit) : chunkBoundaryText(text, limit);
 }
-
 export function reconnectDelayMs(attempt: number, base = RECONNECT_BASE_DELAY_MS, max = RECONNECT_MAX_DELAY_MS): number {
   const safeAttempt = Number.isSafeInteger(attempt) && attempt > 0 ? attempt : 1;
   return Math.min(base * 2 ** (safeAttempt - 1), max);

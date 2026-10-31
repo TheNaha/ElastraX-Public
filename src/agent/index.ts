@@ -291,7 +291,7 @@ async function executeRequestedToolCalls(
             'Tool call invoked',
           );
           healthMetrics.recordToolInvocation(toolName);
-          await options.ctx.react?.('🔧').catch(() => {});
+          await options.ctx.react?.('🔧').catch(err => log.warn({ err, toolName, chatId: options.chatId }, '[Agent] Reaction failed'));
           try {
             // Route through runMutatingTool so the LLM path shares the slash
             // command path's mutation rate limit and per-user serialization.
@@ -556,7 +556,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     // mutation-admission, and execution pipeline.
     const tool = await getAuthorizedTool(command, ctx);
     if (tool) {
-      await ctx.react?.('🔧').catch(() => {});
+      await ctx.react?.('🔧').catch(err => log.warn({ err, command, chatId }, '[Agent] Reaction failed'));
       try {
         const result = await executeAuthorizedCommand(command, queryStr, ctx);
         if (result === undefined) throw new Error('Command access denied');
@@ -566,7 +566,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         } else {
           await deliverDurableText(ctx, String(result), `command:${command}`);
         }
-        await ctx.react?.('✅').catch(() => {});
+        await ctx.react?.('✅').catch(err => log.warn({ err, command, chatId }, '[Agent] Reaction failed'));
         log.debug({ command, toolName: tool.name }, 'Slash command completed');
       } catch (err: unknown) {
         // A malformed command is a *usage* error, not a server fault. The
@@ -585,7 +585,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           log.error({ err, command, toolName: tool.name }, 'Slash command execution failed');
           await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), `command:${command}:error`);
         }
-        await ctx.react?.('❌').catch(() => {});
+        await ctx.react?.('❌').catch(err => log.warn({ err, command, chatId }, '[Agent] Reaction failed'));
       }
       return;
     }
@@ -720,12 +720,12 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
       if (shouldTriggerAI) {
         // Block execution so AI can see the media in context
-        await ctx.react?.('📥').catch(() => {});
+        await ctx.react?.('📥').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed'));
         await ctx.mediaReady;
         await syncDbMedia();
       } else {
         // Non-blocking background sync for passive ingestion
-        ctx.mediaReady.then(syncDbMedia).catch(() => {});
+        ctx.mediaReady.then(syncDbMedia).catch(err => log.warn({ err, chatId }, '[Agent] Background media sync failed'));
       }
     }
 
@@ -736,8 +736,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     }
 
     // Immediately signal that we are processing (prevents perceived delays if summarization runs)
-    await ctx.react?.('⏳').catch(() => {});
-    await ctx.sendTyping?.().catch(() => {});
+    await ctx.react?.('⏳').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed'));
+    await ctx.sendTyping?.().catch(err => log.warn({ err, chatId }, '[Agent] Typing indicator failed'));
 
     // 2. Retrieve Context (Now guaranteed to have mediaPath if we awaited it above)
     //
@@ -1069,7 +1069,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
         // Show typing indicator before each LLM call
-        await ctx.sendTyping?.().catch(() => {});
+        await ctx.sendTyping?.().catch(err => log.warn({ err, chatId, iteration }, '[Agent] Typing indicator failed'));
 
         // ── Streaming path ──────────────────────────────────────────────────
         // We only use streaming for the *final* response (no tool definitions)
@@ -1137,7 +1137,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           const streamedToolCalls = toolCallAccumulator.finish();
           if (streamedToolCalls.length > 0) {
             if (sentKey && !streamingFailed) {
-              await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(() => {});
+              await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(err => log.warn({ err, chatId, iteration }, '[Agent] Stream edit failed'));
               // Keep streamedResponseSent === true: sentKey remains the live message
               // and is edited with the final text below, so the final ctx.reply is skipped.
             } else if (streamingFailed) {
@@ -1303,7 +1303,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         log.warn({ err: error, deliveryId }, 'Immediate delivery failed; outbox will retry');
       }
     }
-    await ctx.react?.('✅').catch(() => {});
+    await ctx.react?.('✅').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed'));
     healthMetrics.recordMessageProcessed();
 
     const duration_ms = Date.now() - startMs;
@@ -1329,7 +1329,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   } catch (error) {
     log.error(error, 'Error handling message');
     healthMetrics.recordMessageError();
-    await ctx.react?.('❌').catch(() => {}); // show error
+    await ctx.react?.('❌').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed')); // show error
     await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), 'agent:fatal');
   }
 }
