@@ -227,7 +227,11 @@ export async function runMutatingTool<T>(tool: BaseTool, context: MessageContext
   const gate = new Promise<void>((resolve) => { release = resolve; });
   const queued = previous.then(() => gate, () => gate);
   mutationQueues.set(key, queued);
-  await previous;
+  try {
+    await previous;
+  } catch {
+    // A predecessor's failure must not block this caller or leak the lock.
+  }
   try {
     return await task();
   } finally {
