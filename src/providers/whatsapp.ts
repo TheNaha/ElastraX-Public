@@ -143,6 +143,7 @@ export class WhatsAppProvider implements BotProvider {
   }
 
   async start(): Promise<void> {
+    if (this.isOperational) return;
     if (this.startPromise) {
       // If a start is already in flight, return its promise rather than racing
       // a second connection that would overwrite the socket and the start
@@ -364,7 +365,10 @@ export class WhatsAppProvider implements BotProvider {
       await Promise.all(event.messages.map(async message => {
         if (!message.message || message.key.fromMe) return;
         if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
-        const ctx = await this.createContext(message, generation);
+        const ctx = await this.createContext(message, generation).catch(error => {
+          logger.warn({ err: error, key: message.key }, '[WhatsApp] Failed to create message context');
+          return null;
+        });
         if (!ctx || !this.isCurrent(socket, generation)) return;
         // Send read receipt immediately after context creation, before handler runs
         // This ensures the message is marked read even if handler throws

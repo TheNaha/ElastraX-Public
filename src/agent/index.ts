@@ -635,7 +635,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // Emphasize quoted context by prepending it directly to the user's message payload
   if (ctx.quoted) {
     const isFromBot = ctx.quoted.rawMessage?.key?.fromMe;
-    const quoteSender = isFromBot ? `${BOT_NAME} (You)` : ctx.quoted.senderId.split('@')[0];
+    const quoteSender = isFromBot ? `${BOT_NAME} (You)` : (ctx.quoted.senderId ? ctx.quoted.senderId.split('@')[0] : 'unknown');
     let quoteText = ctx.quoted.text || '';
     if (quoteText.length > 150) quoteText = quoteText.substring(0, 150) + '...';
     
@@ -1293,9 +1293,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
       );
       try {
         const result = await withCancellableTimeout(
-          signal => ctx.reply(finalAiResponseText, ctx.signal ? { signal: ctx.signal } : signal ? { signal } : undefined),
+          signal => ctx.reply(finalAiResponseText, { signal }),
           DIRECT_SEND_TIMEOUT_MS,
           'direct reply',
+          ctx.signal,
         );
         const providerMessageId = typeof result === 'string' ? result : null;
         OutboxService.markEnqueuedSent(deliveryId, providerMessageId);

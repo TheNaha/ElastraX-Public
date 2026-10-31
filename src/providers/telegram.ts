@@ -174,6 +174,8 @@ export class TelegramProvider implements BotProvider {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   /** In-flight media downloads, aborted on `stop()`. */
   private readonly mediaControllers = new Set<AbortController>();
+  private bootSettleGuard: ReturnType<typeof setTimeout> | null = null;
+  private bootReject: ((error: unknown) => void) | null = null;
 
   get status(): BotProviderStatus {
     return this.providerStatus;
@@ -223,8 +225,14 @@ export class TelegramProvider implements BotProvider {
         resolveReady = resolve;
         rejectReady = reject;
       });
-      const settleGuard = setTimeout(() => rejectReady(new ProviderLifecycleError('telegram', 'Timed out authenticating with the Telegram API.')), 30_000);
+      const settleGuard = setTimeout(() => {
+        this.bootSettleGuard = null;
+        this.bootReject = null;
+        rejectReady(new ProviderLifecycleError('telegram', 'Timed out authenticating with the Telegram API.'));
+      }, 30_000);
       settleGuard.unref?.();
+      this.bootSettleGuard = settleGuard;
+      this.bootReject = rejectReady!;
 
       void bot.start({
         onStart: async info => {
@@ -237,11 +245,15 @@ export class TelegramProvider implements BotProvider {
           this.reconnectAttempts = 0;
           log.info({ username: info.username }, '[Telegram] Bot connected');
           clearTimeout(settleGuard);
+          this.bootSettleGuard = null;
+          this.bootReject = null;
           resolveReady();
         },
         // Long polling blocks by design; the promise must never settle here.
       }).catch((error: unknown) => {
         clearTimeout(settleGuard);
+        this.bootSettleGuard = null;
+        this.bootReject = null;
         if (!this.isCurrent(bot, generation)) return;
         this.providerStatus = this.desiredRunning ? 'backoff' : 'stopped';
         this.providerError = error instanceof Error ? error : new Error(String(error));
@@ -270,6 +282,15 @@ export class TelegramProvider implements BotProvider {
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
+    }
+    if (this.bootSettleGuard) {
+      clearTimeout(this.bootSettleGuard);
+      this.bootSettleGuard = null;
+    }
+    if (this.bootReject) {
+      const reject = this.bootReject;
+      this.bootReject = null;
+      reject(new ProviderLifecycleError('telegram', 'Provider stopped during startup.'));
     }
     // Abort in-flight media downloads: WhatsApp and Discord both do this, and a
     // download that outlives the shutdown keeps writing into the media

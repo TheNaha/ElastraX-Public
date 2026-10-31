@@ -384,7 +384,7 @@ export class WebhookReplayCache {
    * an expired entry is otherwise treated as absent by `reserve()`.
    */
   private prune(now: number): void {
-    if (this.completed.size < this.maxEntries) return;
+    if (this.completed.size + this.pending.size < this.maxEntries) return;
     for (const [key, expiresAt] of this.completed) {
       if (expiresAt <= now) this.completed.delete(key);
     }

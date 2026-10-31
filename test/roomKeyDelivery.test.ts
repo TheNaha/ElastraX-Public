@@ -289,6 +289,24 @@ describe('canonical room keys', () => {
     }
     expect(OutboxService.pendingForRoom(whatsappKey, 'whatsapp', 10).every(row => row.state === 'sent')).toBe(true);
   });
+
+  test('null-keyed (pre-backfill) rows are returned by room-scoped reads', () => {
+    const runId = `nullkey-${Date.now()}`;
+    sqlite.exec(
+      `INSERT INTO message_inbox (platform, chat_room_id, room_key, event_key, state, received_at, available_at, created_at, updated_at)
+       VALUES ('whatsapp', '${SHARED_REMOTE_ID}', NULL, 'evt-null-${runId}', 'completed', 1000, 1000, 1000, 1000)`,
+    );
+    const inboxRows = InboxService.findByRoom(canonicalRoomKey('whatsapp', SHARED_REMOTE_ID), 'whatsapp');
+    expect(inboxRows.some(row => row.chatRoomId === SHARED_REMOTE_ID)).toBe(true);
+
+    const outId = `out-null-${runId}`;
+    sqlite.exec(
+      `INSERT INTO message_outbox (id, platform, chat_room_id, room_key, idempotency_key, payload, state, available_at, created_at, updated_at)
+       VALUES ('${outId}', 'whatsapp', '${SHARED_REMOTE_ID}', NULL, 'idem-null-${runId}', '{}', 'pending', 1000, 1000, 1000)`,
+    );
+    const outboxRows = OutboxService.pendingForRoom(canonicalRoomKey('whatsapp', SHARED_REMOTE_ID), 'whatsapp');
+    expect(outboxRows.map(row => row.id)).toContain(outId);
+  });
 });
 
 describe('room scoped dual reads', () => {

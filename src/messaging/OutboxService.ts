@@ -251,13 +251,14 @@ export class OutboxService {
     if (remote) ids.push(remote);
     const placeholders = ids.map(() => '?').join(',');
     const roomKeyColumn = 'room_key';
-    const params: SQLQueryBindings[] = [...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
+    const params: SQLQueryBindings[] = [...ids, ...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
     const rows = sqlite
       .query<PendingOutboxRow, SQLQueryBindings[]>(
         `SELECT id, platform, ${roomKeyColumn} AS roomKey, chat_room_id AS chatRoomId,
                 state, available_at AS availableAt
          FROM message_outbox
-         WHERE ${roomKeyColumn} IN (${placeholders}) AND (? IS NULL OR platform = ?)
+         WHERE (${roomKeyColumn} IN (${placeholders}) OR (${roomKeyColumn} IS NULL AND chat_room_id IN (${placeholders})))
+           AND (? IS NULL OR platform = ?)
          ORDER BY available_at
          LIMIT ?`,
       )

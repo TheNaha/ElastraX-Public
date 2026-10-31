@@ -349,4 +349,39 @@ describe('applyRetentionPolicy', () => {
     expect(result.rawMessages).toBe(0);
     expect(result.dryRun).toBe(false);
   });
+
+  test('counts seconds-scale (Drizzle timestamp mode) rows for timestamp columns', () => {
+    const nowSec = Math.floor(NOW / 1000);
+    const oldSec = nowSec - 220 * 24 * 60 * 60;
+    const oldInboxMs = NOW - 100 * 24 * 60 * 60 * 1000;
+    sqlite.exec(
+      `INSERT INTO messages (chat_room_id, sender_id, sender_name, role, content, raw_message, created_at)
+       VALUES ('room-1', 's', 'S', 'user', 'old', '{"x":1}', ${oldSec})`,
+    );
+    sqlite.exec(
+      `INSERT INTO reminders (chat_room_id, sender_id, sender_name, message, remind_at, is_sent, platform, created_at)
+       VALUES ('room-1', 's', 'S', 'ping', ${oldSec}, 1, 'whatsapp', ${oldSec})`,
+    );
+    sqlite.exec(
+      `INSERT INTO message_inbox (platform, chat_room_id, event_key, state, received_at, available_at, created_at, updated_at)
+       VALUES ('whatsapp', 'room-1', 'evt-sec', 'completed', ${oldInboxMs}, ${oldInboxMs}, ${oldInboxMs}, ${oldInboxMs})`,
+    );
+    sqlite.exec(
+      `INSERT INTO message_outbox (id, platform, chat_room_id, idempotency_key, payload, state, available_at, created_at, updated_at)
+       VALUES ('out-sec', 'whatsapp', 'room-1', 'idem-sec', '{}', 'sent', ${oldInboxMs}, ${oldInboxMs}, ${oldInboxMs})`,
+    );
+    sqlite.exec(
+      `INSERT INTO flow_sessions (id, data, room_key, updated_at)
+       VALUES ('fs-sec', '{}', 'room:whatsapp:room-1', ${nowSec - 40 * 24 * 60 * 60})`,
+    );
+
+    const result = applyRetentionPolicy(sqlite, {}, { now: NOW });
+
+    expect(result.dryRun).toBe(true);
+    expect(result.messages).toBeGreaterThan(0);
+    expect(result.reminders).toBeGreaterThan(0);
+    expect(result.inbox).toBeGreaterThan(0);
+    expect(result.outbox).toBeGreaterThan(0);
+    expect(result.flowSessions).toBeGreaterThan(0);
+  });
 });

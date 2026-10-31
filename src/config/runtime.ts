@@ -152,7 +152,7 @@ export function getTurnBudgetConfig(env: RuntimeEnv = process.env) {
     maxParallelTools: readIntegerEnv(env.AI_MAX_PARALLEL_TOOLS, 4, { min: 1, max: 16 }),
     maxToolResultBytes: readIntegerEnv(env.AI_MAX_TOOL_RESULT_BYTES, 1024 * 1024, { min: 1_024, max: 10 * 1024 * 1024 }),
     maxToolResultBytesTotal: readIntegerEnv(env.AI_MAX_TOOL_RESULT_BYTES_TOTAL, 4 * 1024 * 1024, { min: 1_024, max: 40 * 1024 * 1024 }),
-    maxContextMessages: readIntegerEnv(env.CONTEXT_MESSAGE_LIMIT, 20, { min: -1, max: 10_000 }),
+    maxContextMessages: readIntegerEnv(env.CONTEXT_MESSAGE_LIMIT, 10, { min: -1, max: 10_000 }),
     operationalContextLimit: readIntegerEnv(env.AI_OPERATIONAL_CONTEXT_LIMIT, 1_000, { min: 1, max: 10_000 }),
   };
 }

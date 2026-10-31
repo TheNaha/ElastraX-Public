@@ -338,6 +338,7 @@ export class DigestService {
         log.error({ err }, '[DigestService] Error in digest loop');
       });
     }, 60_000);
+    this.timer?.unref?.();
     log.info('[DigestService] Started (checking every 60s)');
   }
 

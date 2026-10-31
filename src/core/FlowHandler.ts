@@ -387,7 +387,7 @@ export class FlowHandler {
       await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
       logger.warn({ flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform }, '[FlowHandler] No processor registered for active flow; session cleared');
       await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
-      return false;
+      return true;
     }
     const normalized = ctx.text.trim().toLowerCase();
     if (normalized.startsWith('/')) {

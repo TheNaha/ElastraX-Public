@@ -277,13 +277,15 @@ export function resolveOrCreateRoomKeySync(
   const legacyRoomId = legacyRoomExists(sqlite, normalizedPlatform, normalizedRemoteRoomId)
     ? normalizedRemoteRoomId
     : null;
+  let created = false;
   const inserted = withImmediateTransaction(sqlite, () => {
-    sqlite
+    const result = sqlite
       .query<never, [string, string, string, string | null, number]>(
         `INSERT OR IGNORE INTO room_keys (room_key, platform, remote_room_id, legacy_room_id, created_at)
          VALUES (?, ?, ?, ?, ?)`,
       )
       .run(canonical, normalizedPlatform, normalizedRemoteRoomId, legacyRoomId, now);
+    created = Number(result.changes) === 1;
     return selectRegistryRow(sqlite, normalizedPlatform, normalizedRemoteRoomId);
   });
   if (!inserted) {
@@ -294,7 +296,7 @@ export function resolveOrCreateRoomKeySync(
     platform: inserted.platform,
     remoteRoomId: inserted.remote_room_id,
     legacyRoomId: inserted.legacy_room_id,
-    created: true,
+    created,
   };
 }
 

@@ -153,7 +153,7 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
       if (killTimer) clearTimeout(killTimer);
       if (watchTimer) clearInterval(watchTimer);
       controller.signal.removeEventListener('abort', abortListener);
-      options.signal?.removeEventListener('abort', externalAbortListener!);
+      if (externalAbortListener) options.signal?.removeEventListener('abort', externalAbortListener);
       activeProcesses.delete(child);
     };
 

@@ -86,16 +86,24 @@ function deleteBatches(
   return deleted;
 }
 
+// Normalize a stored timestamp to milliseconds. Columns written through Drizzle's
+// `timestamp` mode hold seconds, while columns written with `Date.now()` hold
+// milliseconds; retention must compare them on a common scale. Values above 1e11
+// are treated as milliseconds, smaller ones as seconds.
+const NORMALIZE_TS = (column: string): string =>
+  `CASE WHEN ${column} > 100000000000 THEN ${column} ELSE ${column} * 1000 END`;
+
 function clearRawMessageBatches(
   sqlite: Database,
   cutoff: number,
   batchSize: number,
   dryRun: boolean,
 ): number {
+  const where = `raw_message IS NOT NULL AND ${NORMALIZE_TS('created_at')} < ?`;
   if (dryRun) {
     const row = sqlite
       .query<{ count: number }, [number]>(
-        'SELECT count(*) AS count FROM messages WHERE raw_message IS NOT NULL AND created_at < ?',
+        `SELECT count(*) AS count FROM messages WHERE ${where}`,
       )
       .get(cutoff);
     return Number(row?.count ?? 0);
@@ -108,7 +116,7 @@ function clearRawMessageBatches(
          SET raw_message = NULL, media_path = NULL, mime_type = NULL
          WHERE rowid IN (
            SELECT rowid FROM messages
-           WHERE raw_message IS NOT NULL AND created_at < ?
+           WHERE ${where}
            LIMIT ?
          )`,
       )
@@ -150,7 +158,7 @@ export function applyRetentionPolicy(
     messages: deleteBatches(
       sqlite,
       'messages',
-      'created_at < ?',
+      `${NORMALIZE_TS('created_at')} < ?`,
       nowMs - (policy.messagesDays + policy.messageDeleteGraceDays) * dayMs,
       batchSize,
       dryRun,
@@ -158,7 +166,7 @@ export function applyRetentionPolicy(
     reminders: deleteBatches(
       sqlite,
       'reminders',
-      'is_sent = 1 AND recurrence IS NULL AND created_at < ?',
+      `is_sent = 1 AND recurrence IS NULL AND ${NORMALIZE_TS('created_at')} < ?`,
       nowMs - policy.sentRemindersDays * dayMs,
       batchSize,
       dryRun,
@@ -166,7 +174,7 @@ export function applyRetentionPolicy(
     inbox: deleteBatches(
       sqlite,
       'message_inbox',
-      "state IN ('completed', 'dead_letter') AND COALESCE(completed_at, updated_at) < ?",
+      `state IN ('completed', 'dead_letter') AND COALESCE(${NORMALIZE_TS('completed_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,
@@ -180,7 +188,7 @@ export function applyRetentionPolicy(
     inboxStale: deleteBatches(
       sqlite,
       'message_inbox',
-      "state IN ('received', 'processing', 'failed') AND COALESCE(completed_at, updated_at) < ?",
+      `state IN ('received', 'processing', 'failed') AND COALESCE(${NORMALIZE_TS('completed_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,
@@ -188,7 +196,7 @@ export function applyRetentionPolicy(
     outbox: deleteBatches(
       sqlite,
       'message_outbox',
-      "state IN ('sent', 'dead_letter') AND COALESCE(sent_at, updated_at) < ?",
+      `state IN ('sent', 'dead_letter') AND COALESCE(${NORMALIZE_TS('sent_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,
@@ -196,7 +204,7 @@ export function applyRetentionPolicy(
     outboxStale: deleteBatches(
       sqlite,
       'message_outbox',
-      "state IN ('pending', 'failed', 'leased') AND COALESCE(sent_at, updated_at) < ?",
+      `state IN ('pending', 'failed', 'leased') AND COALESCE(${NORMALIZE_TS('sent_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
       nowMs - policy.terminalDeliveriesDays * dayMs,
       batchSize,
       dryRun,
@@ -204,7 +212,7 @@ export function applyRetentionPolicy(
     flowSessions: deleteBatches(
       sqlite,
       'flow_sessions',
-      'updated_at < ?',
+      `${NORMALIZE_TS('updated_at')} < ?`,
       nowMs - policy.expiredFlowSessionsDays * dayMs,
       batchSize,
       dryRun,

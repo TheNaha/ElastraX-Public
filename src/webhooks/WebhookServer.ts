@@ -536,7 +536,10 @@ export class WebhookServer {
       }
     }
 
-    const rate = this.rateLimiter!.consume([
+    if (!this.rateLimiter) {
+      return jsonResponse({ error: 'Webhook server is not ready' }, 503);
+    }
+    const rate = this.rateLimiter.consume([
       `source:${route}:${source}`,
       `ip:${ip}`,
     ], this.now());

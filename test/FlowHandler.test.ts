@@ -249,7 +249,7 @@ describe('FlowHandler', () => {
       expect(mockClearSession).not.toHaveBeenCalled();
     });
 
-    test('should return false if no processor is registered for the active flow', async () => {
+    test('should return true if no processor is registered for the active flow', async () => {
       mockGetActiveFlow.mockReturnValue({
         flowId: 'unknownFlow',
         flow: { flow: 'unknownFlow', step: '1', data: {} },
@@ -258,7 +258,7 @@ describe('FlowHandler', () => {
       const ctx = createMockCtx({ text: 'hello' });
       const result = await FlowHandler.handle(ctx);
 
-      expect(result).toBe(false);
+      expect(result).toBe(true);
       expect(mockClearSession).toHaveBeenCalledWith('user-456', 'unknownFlow', 'whatsapp', 'chat-123');
     });
   });

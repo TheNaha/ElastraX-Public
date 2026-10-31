@@ -764,11 +764,14 @@ export class AppRuntime {
 
   private startBackgroundTasks(): void {
     this.rateLimiterTimer = this.timers.setInterval(() => this.rateLimiter.prune(), 10 * 60 * 1000);
+    this.rateLimiterTimer?.unref?.();
     if (hasDurableMessagingStore()) {
       this.processOutbox();
       this.outboxTimer = this.timers.setInterval(() => this.processOutbox(), 1_000);
+      this.outboxTimer?.unref?.();
       this.runRetention();
       this.retentionTimer = this.timers.setInterval(() => this.runRetention(), 24 * 60 * 60 * 1000);
+      this.retentionTimer?.unref?.();
     }
     // Prune terminal outbox rows (failed / dead_letter) older than the media
     // retention window so they don't accumulate indefinitely.
@@ -829,6 +832,7 @@ export class AppRuntime {
         this.mediaCleanupPromise = null;
       });
     }, mediaCleanupIntervalMs);
+    this.mediaCleanupTimer?.unref?.();
 
     if (this.runStartupCoverageScan) {
       this.startupCoverageTimer = this.timers.setTimeout(() => {
@@ -838,6 +842,7 @@ export class AppRuntime {
           logger.warn({ err }, '[ParserCoverage] Startup scan failed (non-fatal)');
         }).finally(() => { this.startupCoveragePromise = null; });
       }, this.startupCoverageDelayMs);
+      this.startupCoverageTimer?.unref?.();
     }
   }
 

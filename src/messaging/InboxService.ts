@@ -95,13 +95,14 @@ export class InboxService {
     if (remote) ids.push(remote);
     const placeholders = ids.map(() => '?').join(',');
     const keyColumn = 'room_key';
-    const params: SQLQueryBindings[] = [...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
+    const params: SQLQueryBindings[] = [...ids, ...ids, platform ?? null, platform ?? null, Math.max(1, Math.min(500, limit))];
     const rows = sqlite
       .query<InboxRoomRow, SQLQueryBindings[]>(
         `SELECT id, platform, ${keyColumn} AS roomKey, chat_room_id AS chatRoomId,
                 state, provider_message_id AS providerMessageId, received_at AS receivedAt
          FROM message_inbox
-         WHERE ${keyColumn} IN (${placeholders}) AND (? IS NULL OR platform = ?)
+         WHERE (${keyColumn} IN (${placeholders}) OR (${keyColumn} IS NULL AND chat_room_id IN (${placeholders})))
+           AND (? IS NULL OR platform = ?)
          ORDER BY received_at DESC
          LIMIT ?`,
       )
