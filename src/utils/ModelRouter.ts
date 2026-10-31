@@ -7,6 +7,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage } from './errorUtils';
+import { stripThinkTags } from './textUtils';
 import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 
@@ -219,15 +220,11 @@ export function adaptChatRequest(
   return adapted;
 }
 
-function usefulText(content: string): string {
-  return content.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-}
-
 function hasUsefulResponse(message: ChatCompletionMessage): boolean {
   if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
-  if (typeof message.refusal === 'string' && usefulText(message.refusal).length > 0) return true;
+  if (typeof message.refusal === 'string' && stripThinkTags(message.refusal).length > 0) return true;
   const content = typeof message.content === 'string' ? message.content : message.output_text ?? '';
-  return usefulText(content).length > 0;
+  return stripThinkTags(content).length > 0;
 }
 
 export class ModelRouter {
@@ -500,7 +497,7 @@ export class ModelRouter {
           yield chunk;
         }
 
-        if (!sawChunk || (!sawToolCall && usefulText(accumulatedText).length === 0)) {
+        if (!sawChunk || (!sawToolCall && stripThinkTags(accumulatedText).length === 0)) {
           throw new AIProtocolError('empty_response', `Provider "${provider.name}" returned an empty stream.`);
         }
         if (!usageRecorded) {
@@ -518,7 +515,7 @@ export class ModelRouter {
         lastError = err;
         this.markProviderFailure(provider.key);
         healthMetrics.recordLLMRequest(provider.name, this.now() - start, false);
-        if (sawToolCall || usefulText(accumulatedText).length > 0) {
+        if (sawToolCall || stripThinkTags(accumulatedText).length > 0) {
           logger.warn(
             { provider: provider.name, err: err.message },
             '[ModelRouter] Streaming provider failed after yielding output; cross-provider fallback is unsafe',

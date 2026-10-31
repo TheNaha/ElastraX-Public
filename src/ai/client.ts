@@ -281,15 +281,12 @@ export class AIClient {
       // Avoid leaking the raw error body (may contain API keys or internal details)
       const status = response.status;
       const retryAfter = response.headers.get('retry-after');
-      if (status === 429 && retryAfter) {
-        // Rate limited - parse retry-after header
-        const retrySeconds = parseInt(retryAfter, 10);
-        const waitMs = isNaN(retrySeconds) ? 60_000 : Math.min(retrySeconds * 1000, 300_000);
-        log.warn({ status, retryAfter: waitMs }, 'LLM API rate limited, waiting before retry');
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        throw new Error(`LLM API rate limited. Retry after ${waitMs}ms`);
-      }
-      if (status >= 500 && status < 600) {
+      if (status === 429) {
+        // Rate limited — the ModelRouter circuit breaker handles backoff
+        // and provider failover. Do NOT block the event loop with a sleep here;
+        // doing so stalls all concurrent message processing.
+        log.warn({ status, retryAfter }, 'LLM API rate limited; deferring to circuit breaker');
+      } else if (status >= 500 && status < 600) {
         // Server error - could be transient
         log.warn({ status }, 'LLM API server error, may retry');
       }
@@ -493,12 +490,10 @@ export class AIClient {
       log.error({ status: response.status, errText }, 'Streaming LLM request failed');
       const status = response.status;
       const retryAfter = response.headers.get('retry-after');
-      if (status === 429 && retryAfter) {
-        const retrySeconds = parseInt(retryAfter, 10);
-        const waitMs = isNaN(retrySeconds) ? 60_000 : Math.min(retrySeconds * 1000, 300_000);
-        log.warn({ status, retryAfter: waitMs }, 'LLM API rate limited (streaming), waiting before retry');
-        await new Promise(resolve => setTimeout(resolve, waitMs));
-        throw new Error(`LLM API rate limited. Retry after ${waitMs}ms`);
+      if (status === 429) {
+        // Rate limited — the ModelRouter circuit breaker handles backoff
+        // and provider failover. Do NOT block the event loop with a sleep.
+        log.warn({ status, retryAfter }, 'Streaming LLM API rate limited; deferring to circuit breaker');
       }
       throw new Error(`LLM API returned ${response.status}: request failed`);
     }

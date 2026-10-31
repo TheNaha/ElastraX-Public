@@ -75,6 +75,7 @@ import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { isUsableProviderMessageId } from './messageId';
 import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowledge';
 import { sanitizeRawMessage } from '../utils/rawMessage';
+import { stripThinkTags } from '../utils/textUtils';
 import { OutboxService, DIRECT_SEND_GRACE_MS } from '../messaging/OutboxService';
 import { getInlineMediaEligibility } from '../providers/media';
 import {
@@ -127,24 +128,12 @@ async function resolveSenderHasBinding(senderId: string, platform: string): Prom
   }
 }
 
-function resolveToolResultText(result: ToolResult): string {  return typeof result === 'object' && result !== null && 'text' in result
+function resolveToolResultText(result: ToolResult): string {
+  return typeof result === 'object' && result !== null && 'text' in result
     ? result.text
     : result;
 }
 
-/**
- * Bound on the agent's own immediate send. Deliberately shorter than
- * `DIRECT_SEND_GRACE_MS` so an abandoned direct send always gives up its row
- * before the outbox poller is allowed to claim it.
- */
-/**
- * Extra history rows fetched beyond the context limit so the summarizer has
- * material to work with, without turning every turn into a model call.
- */
-/**
- * True when `text` is a `/chat` marker rather than a command that merely starts
- * with the same letters.
- */
 function isChatCommand(text: string): boolean {
   return /^\/chat(?=\s|$)/i.test(text);
 }
@@ -337,10 +326,6 @@ async function executeRequestedToolCalls(
   return { toolResults, preferredTier };
 }
 
-function stripThinkTags(text: string): string {
-  // Remove one or more <think>…</think> blocks (greedy, dotall via [\s\S])
-  return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-}
 
 function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   // Keep content as unknown because some providers may return non-spec formats
@@ -1072,8 +1057,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         await ctx.sendTyping?.().catch(err => log.warn({ err, chatId, iteration }, '[Agent] Typing indicator failed'));
 
         // ── Streaming path ──────────────────────────────────────────────────
-        // We only use streaming for the *final* response (no tool definitions)
-        // or when the model has exhausted tool iterations and we expect text.
+        // Stream the LLM response and do rate-limited edits of the live message.
+        // Supports both text and tool-call streaming; tool calls are accumulated
+        // and then executed after the stream ends.
         const useStreaming =
           streamingConfig.enabled &&
           typeof ctx.sendMessage === 'function' &&
@@ -1178,21 +1164,23 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
           // Stream produced only text — we are done
           isDone = true;
-          finalAiResponseText = accumulated.replace(/<think>[\s\S]*?<\/think>/gi, '').trim() || internalErrorText;
+          finalAiResponseText = stripThinkTags(accumulated) || internalErrorText;
 
           // Final edit to remove cursor indicator
           if (sentKey && finalAiResponseText !== internalErrorText && !streamingFailed) {
             try {
               await ctx.editMessage!(sentKey, finalAiResponseText);
             } catch (err: unknown) {
-              log.warn({ err: getErrorMessage(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed (observable)');
-              streamingFailed = true;
+              log.warn({ err: getErrorMessage(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed');
             }
           }
-          
+
+          // If an intermediate edit/send already failed, fall through to a
+          // regular ctx.reply so the user still receives the final text.
           if (streamingFailed) {
             streamedResponseSent = false;
           }
+
           continue;
         }
 
