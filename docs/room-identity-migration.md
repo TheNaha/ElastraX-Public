@@ -23,7 +23,7 @@ Migration `0022_room_keys` adds:
 
 - `room_keys`: canonical key, platform, raw provider room ID, and optional legacy room ID.
 - `room_key_conflicts`: deterministic audit records for unresolved or ambiguous data.
-- Nullable `room_key` columns on rooms, messages, reminders, subscriptions, inbox, outbox, scheduled deliveries, flows, and roles.
+- Nullable `room_key` columns on rooms, messages, reminders, subscriptions, inbox, outbox, flows, and roles.
 - `user_roles.scope_room_key` for canonical room scopes.
 - Covering indexes and partial unique indexes for canonical room rows and room-scoped subscriptions.
 
@@ -33,7 +33,7 @@ The migration is additive. Existing `chat_rooms.id`, `messages.chat_room_id`, an
 
 - `ctx.chatId` is the raw provider room ID and is the only value sent to providers.
 - `ctx.roomKey` is the canonical database identity.
-- `message_inbox.room_key`, `message_outbox.room_key`, and `scheduled_deliveries.room_key` are the durable dispatch identities.
+- `message_inbox.room_key` and `message_outbox.room_key` are the durable dispatch identities.
 - Agent/tools/history queries prefer `room_key` and fall back to the legacy room ID during the migration window.
 - Inbox/outbox workers refuse to send a canonical key to a provider.
 - Webhook destinations are resolved to a canonical key before durable enqueue, while the provider receives the original remote ID.

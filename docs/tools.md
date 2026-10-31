@@ -11,10 +11,12 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 | **Web Search** | `/search` | Queries SearXNG (`SEARXNG_URL`) to fetch live search engine results. |
 | **Web Scrape** | `/scrape` | Reads and extracts the full markdown text of any URL via Jina AI. |
 | **Memory** | `/memory` | Manages persistent user facts (RAG). The LLM automatically curates this based on user interactions. |
+| **Knowledge** | `/kb` | Room shared document knowledge base: index, search, list, remove attached/quoted documents. |
 | **Translate** | `/translate` | Translates text or quoted messages to specified languages. |
 | **PDF Toolkit** | `/pdf` | A massive suite of PDF operations: compress, merge, split, rotate, remove pages, watermark, and convert image-to-PDF. |
 | **Reminder** | `/remind` | Schedules cron-like or countdown reminders using a background task queue. |
 | **Ping** | `/ping` | Returns exact system latency, uptime, and memory usage. |
+| **Digest** | `/digest` | On-demand conversation digest for the last N hours (1-168); nightly/weekly digests also run automatically. |
 
 ## Media Tools
 
@@ -24,6 +26,7 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 | **Make Sticker** | `/sticker` | Converts attached/quoted images, videos, and GIFs into WhatsApp WebP stickers using `node-webpmux` and `ffmpeg`. |
 | **Media Convert** | `/convert` | Converts audio and video formats using `ffmpeg` (e.g., `.ogg` to `.mp3`, or `.mkv` to `.mp4`). |
 | **Transcribe** | `/transcribe`| Transcribes Voice Notes and audio files using a configured Whisper endpoint. |
+| **Speak** | `/speak` | Sends a reply as a voice note via text-to-speech (opt-in: registered only when `TTS_API_KEY` is set). |
 
 ## Admin & Configuration
 
@@ -52,5 +55,5 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 | **Menfess** | `/menfess` | Anonymous confession relay to configured target chats. |
 | **Game Search** | — | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
 | **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
-| **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/`. |
+| **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/` (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
 | **Owner Admin** | `/broadcast`, `/leave` | Owner-only: broadcast to all chats / leave a group. |

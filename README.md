@@ -168,12 +168,13 @@ CI performs frozen installation, secret scanning, fatal migration-drift detectio
 
 - `src/runtime` starts and stops providers, the message queue, jobs, health monitoring, webhooks, and cleanup.
 - `src/agent` resolves providers and executes permissioned AI/tool loops.
-- `src/flows` contains schema-validated automation flows.
+- `src/flows` contains persisted interactive flow processors.
 - `src/db` owns Drizzle, forward migrations, repositories, and backup support.
 - `src/webhooks` contains exact route handling, auth, adapters, limits, and delivery contracts.
 - `src/providers` contains WhatsApp, Discord, media, and outbound integrations.
 - `src/utils` contains shared infrastructure and services.
 - `src/plugins` contains runtime plugin tooling; user flow files are stored in the data directory.
+- `modal/` is a separate, experimental Python/vLLM adapter documented in `modal/README.md`; it is not part of the bot startup path.
 
 See [docs/architecture.md](docs/architecture.md), [docs/flows.md](docs/flows.md), [docs/tools.md](docs/tools.md), and [docs/setup.md](docs/setup.md) for subsystem details.
 

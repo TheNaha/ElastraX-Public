@@ -6,7 +6,7 @@
 - [API & Webhooks](./api.md) — exact routes, authentication, limits, replay handling, and delivery semantics.
 - [Tools](./tools.md) — tool catalog and execution model.
 - [Scripts](./scripts.md) — scripts and CLI commands.
-- [Flows](./flows.md) — schema-validated flow definitions and validation.
+- [Flows](./flows.md) — persisted interactive flows and validation.
 - [CI Diagnostics](./ci-diagnostics.md) — distinguish repository failures from account-side Actions scheduling failures.
 - [Provider Staging Matrix](./provider-staging-matrix.md) — credential-free harness coverage and manual real-provider acceptance cells.
 - [Canary Runbook](./canary-runbook.md) — digest-pinned single-instance deployment, verification, and rollback.

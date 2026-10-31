@@ -8,8 +8,8 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `POST` | `/webhook/github` | Explicit GitHub webhook route |
 | `POST` | `/webhook/seerr` | Jellyseerr/Overseerr notifications |
 | `POST` | `/webhook/jellyfin` | Jellyfin notifications |
-| `GET` | `/health` | Compatibility alias for minimal liveness |
-| `GET` | `/live` | Minimal liveness: `{"status":"ok"}` |
+| `GET` | `/health` | Compatibility alias for minimal liveness: `{"status":"ok","version":"8.0.1","releaseTag":"v8.0.1"}` |
+| `GET` | `/live` | Minimal liveness: `{"status":"ok","version":"8.0.1","releaseTag":"v8.0.1"}` |
 | `GET` | `/ready` | Readiness compatibility hook |
 | `GET` | `/metrics` | Protected Prometheus metrics |
 | `GET` | `/admin` | Admin dashboard (redirects to `/admin/login` without a session) |
