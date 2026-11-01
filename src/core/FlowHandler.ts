@@ -55,11 +55,13 @@ export class FlowHandler {
   private static initPromise: Promise<void> | null = null;
   private static locks = new Map<string, SessionLock>();
   private static memorySessions = new Map<string, UserSession>();
+  private static sessionCreationTime = new Map<string, number>();
 
   static resetForTesting(): void {
     this.dbLoaded = false;
     this.initPromise = null;
     this.memorySessions.clear();
+    this.sessionCreationTime.clear();
     this.locks.clear();
   }
 
@@ -99,6 +101,8 @@ export class FlowHandler {
       this.dbLoaded = true;
       this.initPromise = null;
     });
+    // Run periodic cleanup of memory sessions (24h TTL)
+    this._startPeriodicSessionCleanup();
     return this.initPromise;
   }
 
@@ -124,10 +128,56 @@ export class FlowHandler {
         }
       }
       if (expiredIds.length > 0) await db.delete(flowSessions).where(inArray(flowSessions.id, expiredIds)).run();
+      // Also clean up process-local memory sessions that have no DB counterpart
+      this._cleanupLocalSessions(now);
       logger.debug({ expiredPruned: expiredIds.length }, '[FlowHandler] Initialized and pruned sessions');
     } catch (error: unknown) {
       logger.warn({ err: error }, '[FlowHandler] Failed to initialize from DB (non-fatal)');
     }
+  }
+
+  private static _cleanupLocalSessions(now: number): void {
+    // Remove memory sessions older than 24 hours with no DB counterpart
+    const TTL_MS = 24 * 60 * 60 * 1000;
+    for (const [key, creationTime] of this.sessionCreationTime) {
+      if (now - creationTime > TTL_MS) {
+        this.memorySessions.delete(key);
+        this.sessionCreationTime.delete(key);
+      }
+    }
+    // Also prune expired flows from remaining sessions
+    for (const [key, session] of this.memorySessions) {
+      const changed = this.pruneExpiredFlows(session, now);
+      if (changed) {
+        this.memorySessions.set(key, session);
+      }
+    }
+  }
+
+  private static _startPeriodicSessionCleanup(): void {
+    // Clean up memory sessions every hour (3600000 ms)
+    const CLEANUP_INTERVAL_MS = 3_600_000;
+    const TTL_MS = 24 * 60 * 60 * 1000;
+    const cleanup = () => {
+      const now = Date.now();
+      // Remove memory sessions older than 24 hours with no DB counterpart
+      for (const [key, creationTime] of this.sessionCreationTime) {
+        if (now - creationTime > TTL_MS) {
+          this.memorySessions.delete(key);
+          this.sessionCreationTime.delete(key);
+        }
+      }
+      // Also prune expired flows from remaining sessions
+      for (const [key, session] of this.memorySessions) {
+        const changed = this.pruneExpiredFlows(session, now);
+        if (changed) {
+          this.memorySessions.set(key, session);
+        }
+      }
+      // Schedule next cleanup
+      globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
+    };
+    globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
   }
 
   private static sessionKey(userId: string, platform: string, roomId?: string): string {
@@ -162,6 +212,7 @@ export class FlowHandler {
         const session = JSON.parse(list[0].data) as UserSession;
         if (!session || typeof session !== 'object' || !session.flows || typeof session.flows !== 'object' || Array.isArray(session.flows)) throw new Error('invalid flow session');
         this.memorySessions.set(key, session);
+        this.sessionCreationTime.set(key, Date.now());
         return session;
       } catch {
         await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
@@ -177,6 +228,7 @@ export class FlowHandler {
     session.version = (session.version ?? 0) + 1;
     for (const flow of Object.values(session.flows)) flow.version = session.version;
     this.memorySessions.set(key, session);
+    this.sessionCreationTime.set(key, Date.now());
     const serialized = JSON.stringify(session);
     try {
     const roomKey = session.roomId && session.platform

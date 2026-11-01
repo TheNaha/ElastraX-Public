@@ -902,52 +902,38 @@ export class AppRuntime {
   }
 
   private async stopBackgroundTasks(): Promise<void> {
-    if (this.rateLimiterTimer) {
-      this.timers.clearInterval(this.rateLimiterTimer);
-      this.rateLimiterTimer = null;
-    }
+    // Clear all interval timers
+    this._clearTimer(this.rateLimiterTimer);
+    this._clearTimer(this.outboxTimer);
+    this._clearTimer(this.outboxPruneTimer);
+    this._clearTimer(this.inboxRecoveryTimer);
+    this._clearTimer(this.flowSessionTtlTimer);
+    this._clearTimer(this.mediaCleanupTimer);
+    this._clearTimer(this.retentionTimer);
 
-    if (this.outboxTimer) {
-      this.timers.clearInterval(this.outboxTimer);
-      this.outboxTimer = null;
-    }
-    if (this.retentionTimer) {
-      this.timers.clearInterval(this.retentionTimer);
-      this.retentionTimer = null;
-    }
+    // Clear timeouts
+    this._clearTimeout(this.startupCoverageTimer);
+
+    // Await any in-flight promises
     if (this.outboxPromise) await this.outboxPromise;
     if (this.retentionPromise) await this.retentionPromise;
+    if (this.mediaCleanupPromise) await this.mediaCleanupPromise;
+    if (this.startupCoveragePromise) await this.startupCoveragePromise;
+  }
 
-    if (this.outboxPruneTimer) {
-      this.timers.clearInterval(this.outboxPruneTimer);
-      this.outboxPruneTimer = null;
+  private _clearTimer<T extends ReturnType<typeof globalThis.setInterval> | null>(
+    timer: T,
+  ): void {
+    if (timer) {
+      this.timers.clearInterval(timer);
     }
+  }
 
-    if (this.inboxRecoveryTimer) {
-      this.timers.clearInterval(this.inboxRecoveryTimer);
-      this.inboxRecoveryTimer = null;
-    }
-
-    if (this.flowSessionTtlTimer) {
-      this.timers.clearInterval(this.flowSessionTtlTimer);
-      this.flowSessionTtlTimer = null;
-    }
-
-    if (this.mediaCleanupTimer) {
-      this.timers.clearInterval(this.mediaCleanupTimer);
-      this.mediaCleanupTimer = null;
-    }
-
-    if (this.startupCoverageTimer) {
-      this.timers.clearTimeout(this.startupCoverageTimer);
-      this.startupCoverageTimer = null;
-    }
-
-    if (this.mediaCleanupPromise) {
-      await this.mediaCleanupPromise;
-    }
-    if (this.startupCoveragePromise) {
-      await this.startupCoveragePromise;
+  private _clearTimeout<T extends ReturnType<typeof globalThis.setTimeout> | null>(
+    timeout: T,
+  ): void {
+    if (timeout) {
+      this.timers.clearTimeout(timeout);
     }
   }
 }

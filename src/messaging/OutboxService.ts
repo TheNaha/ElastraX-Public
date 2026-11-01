@@ -8,6 +8,8 @@ import { remoteRoomIdFromKey, resolveCanonicalRoomKey } from './roomKeys';
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
 const MAX_TEXT_BYTES = 100_000;
+/** Buffer in milliseconds to account for clock skew between processes. */
+const CLOCK_SKEW_BUFFER_MS = 5_000;
 
 /**
  * How long a directly-sent message is invisible to the outbox poller.
@@ -87,7 +89,7 @@ export class OutboxService {
       return `test:${randomUUID()}`;
     }
     const { availableAt = Date.now(), roomKey: explicitRoomKey } = enqueueOptions(options);
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const id = randomUUID();
     const roomKey = roomKeyFor(platform, chatRoomId, explicitRoomKey);
     const payload = JSON.stringify({ text: normalizeText(text) });
@@ -143,7 +145,7 @@ export class OutboxService {
       return `test:${randomUUID()}`;
     }
     const { availableAt = Date.now(), roomKey: explicitRoomKey } = enqueueOptions(options);
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const key = idempotencyKey([platform, ...keyParts]);
     const id = randomUUID();
     const roomKey = roomKeyFor(platform, chatRoomId, explicitRoomKey);
@@ -170,7 +172,7 @@ export class OutboxService {
 
   static claim(owner: string, platforms: readonly string[], limit = 10): ClaimedOutboxMessage[] {
     if (platforms.length === 0) return [];
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const roomKeyColumn = 'room_key';
     return withImmediateTransaction(sqlite, () => {
       const placeholders = platforms.map(() => '?').join(',');
@@ -267,7 +269,7 @@ export class OutboxService {
   }
 
   static markEnqueuedSent(id: string, providerMessageId: string | null = null): boolean {
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     // The lease fields are cleared here too. `markSent` does it, and this
     // path did not, so a row that had previously been leased and then failed
     // kept a stale `lease_owner`/`lease_expires_at` while sitting in `sent` —
@@ -284,7 +286,7 @@ export class OutboxService {
   }
 
   static markSent(id: string, owner: string, providerMessageId: string | null = null): boolean {
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const result = sqlite
       .query<never, [string | null, number, number, string, string]>(
         `UPDATE message_outbox
@@ -297,7 +299,7 @@ export class OutboxService {
   }
 
   static fail(id: string, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
-    const now = Date.now();
+    const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const message = error instanceof Error ? error.message : String(error);
     const deadline = now + exponentialBackoff(0, { baseMs: 5_000 });
     // Single atomic UPDATE: the WHERE clause + RETURNING pattern eliminates the
