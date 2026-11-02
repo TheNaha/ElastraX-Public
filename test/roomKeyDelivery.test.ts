@@ -22,20 +22,6 @@
 
 import { afterAll, beforeEach, describe, expect, mock, spyOn, test, type Mock } from 'bun:test';
 import { withEnvironment } from './helpers/env';
-import { createTempDatabase } from './helpers/database';
-
-const tempDatabase = createTempDatabase();
-// A query suffix forces a second instance of the real module (a plain import
-// would be resolved against whatever mock another suite registered).
-const realDatabaseModulePath: string = '../src/db/index.ts?case=room-key-delivery';
-const realDatabaseModule = (await import(realDatabaseModulePath)) as typeof import('../src/db');
-
-mock.module('../src/db', () => ({
-  ...realDatabaseModule,
-  db: tempDatabase.db,
-  sqlite: tempDatabase.sqlite,
-  getDefaultDatabase: () => tempDatabase.sqlite,
-}));
 
 import type { MessageContext } from '../src/core/MessageContext';
 import type { BotProvider } from '../src/providers/BotProvider';
@@ -195,9 +181,6 @@ afterAll(() => {
     sqlite.query<never, [string]>(`DELETE FROM message_outbox WHERE chat_room_id = ?`).run(id);
     sqlite.query<never, [string]>(`DELETE FROM reminders WHERE chat_room_id = ?`).run(id);
   }
-  // Hand the real module back so later suites are not left with a temp handle.
-  mock.module('../src/db', () => realDatabaseModule);
-  tempDatabase.cleanup();
 });
 
 describe('canonical room keys', () => {
