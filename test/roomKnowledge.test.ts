@@ -7,25 +7,10 @@
  * retrieved under the room key and never under a participant's user id, and
  * private memory rows must stay out of the room knowledge view.
  */
-import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import { eq } from 'drizzle-orm';
-import { createTempDatabase } from './helpers/database';
-
-// Follow the isolation pattern used by the other database suites: point the db
-// module at a private temp database *before* importing the code under test, so
-// these tests neither read nor wipe the shared fixture.
-const tempDatabase = createTempDatabase();
-const realDatabaseModulePath: string = '../src/db/index.ts?case=room-knowledge';
-const realDatabaseModule = (await import(realDatabaseModulePath)) as typeof import('../src/db');
-mock.module('../src/db', () => ({
-  ...realDatabaseModule,
-  db: tempDatabase.db,
-  sqlite: tempDatabase.sqlite,
-  getDefaultDatabase: () => tempDatabase.sqlite,
-}));
-
-const { db } = await import('../src/db');
-const { memories } = await import('../src/db/schema');
+import { db } from '../src/db';
+import { memories } from '../src/db/schema';
 const {
   chunkText,
   ingestRoomDocument,
@@ -46,10 +31,6 @@ const USER = '628999999999@s.whatsapp.net';
 
 beforeEach(async () => {
   await db.delete(memories);
-});
-
-afterAll(() => {
-  tempDatabase.cleanup();
 });
 
 const LONG_TEXT = [
