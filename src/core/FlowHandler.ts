@@ -106,8 +106,8 @@ export class FlowHandler {
       this.dbLoaded = true;
       this.initPromise = null;
     });
-    // Run periodic cleanup of memory sessions (24h TTL)
-    this._startPeriodicSessionCleanup();
+    // Run periodic cleanup of memory sessions (24h TTL) only after a successful init.
+    void this.initPromise.then(() => this._startPeriodicSessionCleanup()).catch(() => {});
     return this.initPromise;
   }
 
