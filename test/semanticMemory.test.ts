@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { db } from '../src/db';
 import { memories } from '../src/db/schema';
 import { eq } from 'drizzle-orm';

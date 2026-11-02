@@ -619,6 +619,7 @@ describe('scheduled reminders', () => {
   const schedulerInternals = Scheduler as unknown as { processReminders(): Promise<void> };
 
   test('delivers to the raw provider room id stored behind a canonical key', async () => {
+    Scheduler.start();
     insertRoom(WHATSAPP_JID, 'whatsapp');
     const key = resolveCanonicalRoomKey('whatsapp', WHATSAPP_JID);
     const reminderId = insertReminder(WHATSAPP_JID, key, 'Standup');
@@ -631,11 +632,13 @@ describe('scheduled reminders', () => {
       expect(send.mock.calls[0]?.[0]).toBe(WHATSAPP_JID);
     } finally {
       Scheduler.unregisterSender('whatsapp');
+      Scheduler.stop();
       sqlite.query<never, [number]>(`DELETE FROM reminders WHERE id = ?`).run(reminderId);
     }
   });
 
   test('refuses to deliver a reminder stored under another platform key', async () => {
+    Scheduler.start();
     insertRoom(SHARED_REMOTE_ID, 'whatsapp');
     // A row keyed for Discord but stored as WhatsApp must not be delivered.
     const reminderId = insertReminder(SHARED_REMOTE_ID, canonicalRoomKey('discord', SHARED_REMOTE_ID), 'Foreign');
@@ -647,6 +650,7 @@ describe('scheduled reminders', () => {
       expect(send).not.toHaveBeenCalled();
     } finally {
       Scheduler.unregisterSender('whatsapp');
+      Scheduler.stop();
       sqlite.query<never, [number]>(`DELETE FROM reminders WHERE id = ?`).run(reminderId);
     }
   });

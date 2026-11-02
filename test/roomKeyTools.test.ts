@@ -9,7 +9,7 @@
  *  - rows for two platforms that share the same raw room id (must never mix).
  */
 
-import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { desc, eq, or } from 'drizzle-orm';
 import { MessageContext } from '../src/core/MessageContext';
 import { db } from '../src/db';

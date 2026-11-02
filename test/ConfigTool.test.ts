@@ -1,90 +1,33 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { db } from '../src/db';
+import { chatRooms } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import { MessageContext } from '../src/core/MessageContext';
+import { ConfigTool } from '../src/tools/ConfigTool';
 
 type MockRoom = ReturnType<typeof defaultRoom>;
 
-function createMockUpdateWhere() {
-  return mock(async (..._args: unknown[]) => {});
-}
+const TEST_CHAT_ROOM_ID = 'chat-abc';
+const TEST_ROOM_KEY = 'room:whatsapp:chat-abc';
 
-// ── Mutable state captured by the db mock ────────────────────────────────────
-let mockRoomRows: MockRoom[] = [];
-let mockUpdateWhere = createMockUpdateWhere();
-
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// The mock must expose the full `../src/db` surface: Bun module mocks are
-// process-wide, so a partial fake here would break every other test file that
-// imports the real module.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-function completeDb(overrides: Record<string, unknown>): unknown {
-  const base = database.db as unknown as Record<string | symbol, unknown>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (typeof property === 'string' && property in overrides) return overrides[property];
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-}
-
-mock.module('../src/db', () => ({
-  db: completeDb({
-    select: () => ({
-      from: () => ({
-        where: async () => mockRoomRows,
-      }),
-    }),
-    update: () => ({
-      set: () => ({
-        where: (...args: unknown[]) => mockUpdateWhere(...args),
-      }),
-    }),
-  }),
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-// Import AFTER mocks are set up
-import { ConfigTool } from '../src/tools/ConfigTool';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 const defaultRoom = () => ({
-  id: 'chat-abc',
-  roomKey: 'room:whatsapp:chat-abc',
+  id: TEST_CHAT_ROOM_ID,
+  roomKey: TEST_ROOM_KEY,
   platform: 'whatsapp',
   language: 'en',
   systemPrompt: null as string | null,
-  contextLimit: null,
-  temperature: null,
-  maxTokens: null,
-  allowTools: null,
-  autoReplyAll: null,
-  summarize: null,
+  contextLimit: null as number | null,
+  temperature: null as number | null,
+  maxTokens: null as number | null,
+  allowTools: null as boolean | null,
+  autoReplyAll: null as boolean | null,
+  summarize: null as boolean | null,
   created_at: new Date(),
 });
 
 const createCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
-  chatId: 'chat-abc',
+  chatId: TEST_CHAT_ROOM_ID,
   senderId: 'user-1',
   senderName: 'Alice',
   text: '',
@@ -98,14 +41,33 @@ const createCtx = (overrides: Partial<MessageContext> = {}): MessageContext => (
   ...overrides,
 } as MessageContext);
 
-// ── Tests ─────────────────────────────────────────────────────────────────────
+async function seedRoom(room: MockRoom): Promise<void> {
+  await db.insert(chatRooms).values(room).onConflictDoUpdate({
+    target: chatRooms.id,
+    set: room,
+  });
+}
+
+async function clearRoom(): Promise<void> {
+  await db.delete(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
+}
+
+async function getRoomValue(key: string): Promise<unknown> {
+  const rows = await db.select().from(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
+  return (rows[0] as Record<string, unknown>)?.[key];
+}
+
 describe('ConfigTool', () => {
   let tool: ConfigTool;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     tool = new ConfigTool();
-    mockRoomRows = [defaultRoom()];
-    mockUpdateWhere = createMockUpdateWhere();
+    await clearRoom();
+    await seedRoom(defaultRoom());
+  });
+
+  afterEach(async () => {
+    await clearRoom();
   });
 
   describe('metadata', () => {
@@ -142,13 +104,13 @@ describe('ConfigTool', () => {
     });
 
     test('should show (Custom) for systemPrompt when DB has a custom value', async () => {
-      mockRoomRows = [{ ...defaultRoom(), systemPrompt: 'My custom prompt' }];
+      await seedRoom({ ...defaultRoom(), systemPrompt: 'My custom prompt' });
       const result = await tool.execute({ action: 'get' }, createCtx());
       expect(result).toContain('(Custom)');
     });
 
     test('should return error message when room does not exist', async () => {
-      mockRoomRows = [];
+      await clearRoom();
       const result = await tool.execute({ action: 'get' }, createCtx());
       expect(result).toContain('not found');
     });
@@ -161,7 +123,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('systemPrompt');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('systemPrompt')).toBe('You are a pirate.');
     });
 
     test('should update contextLimit with a valid integer', async () => {
@@ -170,7 +132,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('contextLimit');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('contextLimit')).toBe(20);
     });
 
     test('should reject contextLimit with a non-numeric value', async () => {
@@ -179,7 +141,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Invalid value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
+      expect(await getRoomValue('contextLimit')).toBeNull();
     });
 
     test('should update temperature with a valid float', async () => {
@@ -188,7 +150,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('temperature');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('temperature')).toBe(0.9);
     });
 
     test('should reject temperature with a non-numeric value', async () => {
@@ -197,7 +159,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Invalid value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
+      expect(await getRoomValue('temperature')).toBeNull();
     });
 
     test('should update allowTools to true with "true"', async () => {
@@ -206,7 +168,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('allowTools');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('allowTools')).toBe(true);
     });
 
     test('should update allowTools to false with "false"', async () => {
@@ -215,7 +177,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('allowTools');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('allowTools')).toBe(false);
     });
 
     test('should update allowTools with "1" (truthy alias)', async () => {
@@ -224,7 +186,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('allowTools');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('allowTools')).toBe(true);
     });
 
     test('should reject allowTools with an invalid boolean string', async () => {
@@ -233,7 +195,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Invalid value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
+      expect(await getRoomValue('allowTools')).toBeNull();
     });
 
     test('should update autoReplyAll', async () => {
@@ -242,7 +204,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('autoReplyAll');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('autoReplyAll')).toBe(true);
     });
 
     test('should update maxTokens with a valid integer', async () => {
@@ -251,7 +213,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('maxTokens');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('maxTokens')).toBe(512);
     });
 
     test('should reject maxTokens outside the allowed range', async () => {
@@ -260,7 +222,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Invalid value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
+      expect(await getRoomValue('maxTokens')).toBeNull();
     });
 
     test('should update summarize with boolean aliases', async () => {
@@ -269,7 +231,7 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('summarize');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('summarize')).toBe(false);
     });
 
     test('should return error for an unknown key', async () => {
@@ -278,7 +240,6 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('valid key');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return suggestion for mistyped key in set action', async () => {
@@ -287,13 +248,11 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Did you mean `contextLimit`?');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return error when key is missing', async () => {
       const result = await tool.execute({ action: 'set', value: 'something' }, createCtx());
       expect(result).toContain('valid key');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return suggestion for mistyped key in reset action', async () => {
@@ -302,7 +261,6 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('Did you mean `systemPrompt`?');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return error when value is missing', async () => {
@@ -311,7 +269,6 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return error when value is empty string', async () => {
@@ -320,37 +277,39 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('value');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
   });
 
   describe('reset action', () => {
     test('should reset a valid key to null (global default)', async () => {
+      await seedRoom({ ...defaultRoom(), contextLimit: 42 });
       const result = await tool.execute(
         { action: 'reset', key: 'contextLimit' },
         createCtx(),
       );
       expect(result).toContain('contextLimit');
       expect(result).toContain('reset');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('contextLimit')).toBeNull();
     });
 
     test('should reset systemPrompt', async () => {
+      await seedRoom({ ...defaultRoom(), systemPrompt: 'old prompt' });
       const result = await tool.execute(
         { action: 'reset', key: 'systemPrompt' },
         createCtx(),
       );
       expect(result).toContain('systemPrompt');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('systemPrompt')).toBeNull();
     });
 
     test('should reset temperature', async () => {
+      await seedRoom({ ...defaultRoom(), temperature: 0.7 });
       const result = await tool.execute(
         { action: 'reset', key: 'temperature' },
         createCtx(),
       );
       expect(result).toContain('temperature');
-      expect(mockUpdateWhere).toHaveBeenCalledTimes(1);
+      expect(await getRoomValue('temperature')).toBeNull();
     });
 
     test('should return error for an invalid key on reset', async () => {
@@ -359,13 +318,11 @@ describe('ConfigTool', () => {
         createCtx(),
       );
       expect(result).toContain('valid key');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
 
     test('should return error when key is missing on reset', async () => {
       const result = await tool.execute({ action: 'reset' }, createCtx());
       expect(result).toContain('valid key');
-      expect(mockUpdateWhere).not.toHaveBeenCalled();
     });
   });
 

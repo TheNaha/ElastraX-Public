@@ -1,11 +1,11 @@
-import { describe, test, expect, mock, afterEach, beforeEach, spyOn } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { db } from '../src/db';
 import { reminders, chatRooms } from '../src/db/schema';
-import { eq, and, or, isNull, lte } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { Scheduler, computeNextOccurrence } from '../src/utils/Scheduler';
 
-const TEST_CHAT_ROOM_ID = 'chat-1';
-const TEST_ROOM_KEY = 'room:whatsapp:chat-1';
+const TEST_CHAT_ROOM_ID = 'scheduler-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:scheduler-chat-1';
 
 async function seedChatRoom(): Promise<void> {
   await db.insert(chatRooms).values({
@@ -19,7 +19,6 @@ async function seedChatRoom(): Promise<void> {
 
 async function insertReminder(
   overrides: {
-    id?: number;
     senderId?: string;
     senderName?: string;
     message?: string;
@@ -67,11 +66,6 @@ async function clearReminders(): Promise<void> {
   await db.delete(reminders).where(eq(reminders.roomKey, TEST_ROOM_KEY));
 }
 
-async function countReminders(): Promise<number> {
-  const rows = await db.select({ n: db.$count() }).from(reminders).where(eq(reminders.roomKey, TEST_ROOM_KEY));
-  return rows[0]!.n;
-}
-
 async function getReminder(id: number) {
   const rows = await db.select().from(reminders).where(eq(reminders.id, id));
   return rows[0];
@@ -117,18 +111,17 @@ describe('Scheduler', () => {
       senderCalled = true;
     });
 
-    await insertReminder({
-      id: 1,
+    const id = await insertReminder({
       message: 'take medicine',
       remindAt: new Date(Date.now() - 1000),
       isSent: false,
       claimedAt: null,
     });
 
-    await Scheduler.processReminders();
+    await schedulerInternals.processReminders();
 
     expect(senderCalled).toBe(true);
-    const reminder = await getReminder(1);
+    const reminder = await getReminder(id);
     expect(reminder?.isSent).toBe(true);
     expect(reminder?.claimedAt).toBeNull();
   });
@@ -140,14 +133,13 @@ describe('Scheduler', () => {
     });
 
     await insertReminder({
-      id: 2,
       message: 'future reminder',
       remindAt: new Date(Date.now() + 86_400_000), // tomorrow
       isSent: false,
       claimedAt: null,
     });
 
-    await Scheduler.processReminders();
+    await schedulerInternals.processReminders();
 
     expect(senderCalled).toBe(false);
   });
@@ -160,14 +152,13 @@ describe('Scheduler', () => {
 
     const staleCutoff = new Date(Date.now() - 5 * 60_000); // 5 minutes ago
     await insertReminder({
-      id: 3,
       message: 'claimed reminder',
       remindAt: new Date(Date.now() - 1000),
       isSent: false,
       claimedAt: staleCutoff, // claimed but stale (old enough to retry)
     });
 
-    await Scheduler.processReminders();
+    await schedulerInternals.processReminders();
 
     expect(senderCalled).toBe(true);
   });
@@ -180,14 +171,13 @@ describe('Scheduler', () => {
 
     const recentClaim = new Date(); // just claimed
     await insertReminder({
-      id: 4,
       message: 'recently claimed',
       remindAt: new Date(Date.now() - 1000),
       isSent: false,
       claimedAt: recentClaim,
     });
 
-    await Scheduler.processReminders();
+    await schedulerInternals.processReminders();
 
     expect(senderCalled).toBe(false);
   });
@@ -199,8 +189,7 @@ describe('Scheduler', () => {
     });
 
     const now = new Date();
-    await insertReminder({
-      id: 5,
+    const id = await insertReminder({
       message: 'daily reminder',
       remindAt: now,
       isSent: false,
@@ -208,10 +197,10 @@ describe('Scheduler', () => {
       recurrence: 'daily',
     });
 
-    await Scheduler.processReminders();
+    await schedulerInternals.processReminders();
 
     expect(senderCalled).toBe(true);
-    const reminder = await getReminder(5);
+    const reminder = await getReminder(id);
     expect(reminder?.isSent).toBe(false); // recurring -> not sent
     expect(reminder?.claimedAt).toBeNull();
     expect(reminder?.recurrence).toBe('daily');

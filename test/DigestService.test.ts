@@ -1,6 +1,6 @@
-import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { db } from '../src/db';
-import { appKv, chatRooms, messages, notificationSubscriptions } from '../src/db/schema';
+import { appKv, chatRooms, messages, notificationSubscriptions, reminders } from '../src/db/schema';
 import {
   DigestService,
   dateKey,
@@ -45,6 +45,7 @@ function dailyDeps(overrides: Partial<DigestDeps> = {}): DigestDeps & { sent: { 
 async function resetDatabase(): Promise<void> {
   await db.delete(appKv).run();
   await db.delete(notificationSubscriptions).run();
+  await db.delete(reminders).run();
   await db.delete(messages).run();
   await db.delete(chatRooms).run();
 }

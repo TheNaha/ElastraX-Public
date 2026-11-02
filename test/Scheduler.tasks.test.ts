@@ -9,7 +9,6 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
 import { db } from '../src/db';
 import { reminders, chatRooms } from '../src/db/schema';
-import { eq, and, or, isNull, lte } from 'drizzle-orm';
 import { Scheduler } from '../src/utils/Scheduler';
 
 // Spread the real module and override only the target resolver: a bare

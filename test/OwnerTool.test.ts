@@ -1,12 +1,7 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { db } from '../src/db';
-import { chatRooms } from '../src/db/schema';
-import { eq } from 'drizzle-orm';
-
-const TEST_CHAT_ROOM_ID_1 = 'room-1';
-const TEST_CHAT_ROOM_ID_2 = 'room-2';
-const TEST_CHAT_ROOM_ID_3 = 'room-3';
+import { chatRooms, messages, reminders, notificationSubscriptions } from '../src/db/schema';
 
 async function seedRooms(rooms: { id: string; platform: string; language?: string }[]): Promise<void> {
   for (const room of rooms) {
@@ -16,12 +11,16 @@ async function seedRooms(rooms: { id: string; platform: string; language?: strin
       language: room.language ?? 'en',
       roomKey: `room:${room.platform}:${room.id}`,
       created_at: new Date(),
-    });
+    }).onConflictDoNothing();
   }
 }
 
 async function clearRooms(): Promise<void> {
-  await db.delete(chatRooms);
+  // Delete dependent rows first to avoid FK constraint violations, then all rooms.
+  await db.delete(messages).run();
+  await db.delete(reminders).run();
+  await db.delete(notificationSubscriptions).run();
+  await db.delete(chatRooms).run();
 }
 
 import { OwnerTool } from '../src/tools/OwnerTool';

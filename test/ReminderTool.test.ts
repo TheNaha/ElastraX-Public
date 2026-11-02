@@ -1,12 +1,12 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { db } from '../src/db';
 import { reminders, chatRooms } from '../src/db/schema';
-import { eq, and } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { ReminderTool, parseRelativeTime } from '../src/tools/ReminderTool';
 import { MessageContext } from '../src/core/MessageContext';
 
-const TEST_CHAT_ROOM_ID = 'chat-1';
-const TEST_ROOM_KEY = 'room:whatsapp:chat-1';
+const TEST_CHAT_ROOM_ID = 'reminder-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:reminder-chat-1';
 
 async function seedRoom(): Promise<void> {
   await db.insert(chatRooms).values({

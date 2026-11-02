@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { db } from '../src/db';
 import { chatRooms } from '../src/db/schema';
@@ -6,8 +6,8 @@ import { eq } from 'drizzle-orm';
 
 let roomRow: { language: string } | undefined = { language: 'en' };
 
-const TEST_CHAT_ROOM_ID = 'chat-1';
-const TEST_ROOM_KEY = 'room:whatsapp:chat-1';
+const TEST_CHAT_ROOM_ID = 'digest-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:digest-chat-1';
 
 async function seedRoom(language: string): Promise<void> {
   await db.insert(chatRooms).values({
@@ -72,6 +72,10 @@ beforeEach(async () => {
   await seedRoom(roomRow!.language);
 });
 
+afterAll(async () => {
+  await clearRoom();
+});
+
 describe('DigestTool', () => {
   const tool = new DigestTool();
 
@@ -84,7 +88,7 @@ describe('DigestTool', () => {
     summarizeResult = { text: '• stuff happened', messageCount: 10 };
     const result = await tool.execute({}, createMockCtx());
     // The digest is room scoped, so DigestService receives the canonical key.
-    expect(summarizeCalls[0]).toMatchObject({ roomId: 'room:whatsapp:chat-1', hours: 24, lang: 'en' });
+    expect(summarizeCalls[0]).toMatchObject({ roomId: `room:whatsapp:${TEST_CHAT_ROOM_ID}`, hours: 24, lang: 'en' });
     expect(result).toContain('Summary of the last 24h');
     expect(result).toContain('stuff happened');
   });

@@ -1,4 +1,4 @@
-import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { db } from '../src/db';
 import { chatRooms, messages } from '../src/db/schema';
@@ -7,7 +7,7 @@ import { StatsTool } from '../src/tools/StatsTool';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
-  chatId: 'chat-1',
+  chatId: TEST_CHAT_ROOM_ID,
   senderId: 'user-1',
   senderName: 'User',
   text: '',
@@ -26,8 +26,8 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-const TEST_CHAT_ROOM_ID = 'chat-1';
-const TEST_ROOM_KEY = 'room:whatsapp:chat-1';
+const TEST_CHAT_ROOM_ID = 'stats-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:stats-chat-1';
 const BOT_SENDER_ID = 'bot-1';
 const BOT_SENDER_NAME = 'Alice';
 
@@ -83,6 +83,10 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await clearTestData();
+});
+
+afterAll(async () => {
   await clearTestData();
 });
 
