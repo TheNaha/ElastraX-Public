@@ -1,56 +1,28 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
-let mockRoomRows: any[] = [];
+import { db } from '../src/db';
+import { chatRooms } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// Bun module mocks are process-wide, so this fake must expose the full
-// `../src/db` surface or every other test file importing the real module breaks.
-const database: TempDatabase = createTempDatabase();
+const TEST_CHAT_ROOM_ID_1 = 'room-1';
+const TEST_CHAT_ROOM_ID_2 = 'room-2';
+const TEST_CHAT_ROOM_ID_3 = 'room-3';
 
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
+async function seedRooms(rooms: { id: string; platform: string; language?: string }[]): Promise<void> {
+  for (const room of rooms) {
+    await db.insert(chatRooms).values({
+      id: room.id,
+      platform: room.platform,
+      language: room.language ?? 'en',
+      roomKey: `room:${room.platform}:${room.id}`,
+      created_at: new Date(),
+    });
   }
 }
 
-function completeDb(overrides: Record<string, unknown>): unknown {
-  const base = database.db as unknown as Record<string | symbol, unknown>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (typeof property === 'string' && property in overrides) return overrides[property];
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+async function clearRooms(): Promise<void> {
+  await db.delete(chatRooms);
 }
-
-mock.module('../src/db', () => ({
-  db: completeDb({
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          all: () => mockRoomRows,
-        }),
-        all: () => mockRoomRows,
-      }),
-    }),
-  }),
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
 
 import { OwnerTool } from '../src/tools/OwnerTool';
 
@@ -75,8 +47,12 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-beforeEach(() => {
-  mockRoomRows = [];
+beforeEach(async () => {
+  await clearRooms();
+});
+
+afterEach(async () => {
+  await clearRooms();
 });
 
 describe('OwnerTool', () => {
@@ -98,17 +74,17 @@ describe('OwnerTool', () => {
   });
 
   test('action=broadcast with no rooms returns broadcast_no_rooms', async () => {
-    mockRoomRows = [];
+    await clearRooms();
     const ctx = createMockCtx();
     const result = await tool.execute({ action: 'broadcast', message: 'Hello' }, ctx);
     expect(result).toContain('No rooms found');
   });
 
   test('action=broadcast with rooms sends to each via forwardMessage', async () => {
-    mockRoomRows = [
+    await seedRooms([
       { id: 'room-2', platform: 'whatsapp' },
       { id: 'room-3', platform: 'whatsapp' },
-    ];
+    ]);
     const mockForward = mock(async () => {});
     const ctx = createMockCtx({ forwardMessage: mockForward });
     const result = await tool.execute({ action: 'broadcast', message: 'Hello everyone' }, ctx);
@@ -139,7 +115,7 @@ describe('OwnerTool', () => {
   });
 
   test('action=system_info returns system info text', async () => {
-    mockRoomRows = [{ id: 'room-1' }];
+    await seedRooms([{ id: 'room-1', platform: 'whatsapp' }]);
     const ctx = createMockCtx();
     const result = await tool.execute({ action: 'system_info' }, ctx);
     expect(result).toContain('System Info');
