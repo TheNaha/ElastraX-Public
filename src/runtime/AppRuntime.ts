@@ -489,7 +489,7 @@ export class AppRuntime {
       await this.stopBackgroundTasks();
       this.digestService.stop();
       this.scheduler.stop();
-      this.webhookServer.stop();
+      await this.webhookServer.stop();
       this.healthMon.stop();
       if (this.messageQueue.closeAndDrain) {
         await this.messageQueue.closeAndDrain();

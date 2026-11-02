@@ -630,10 +630,14 @@ export class WebhookServer {
     log.info({ host: this.config.host, port: this.config.port, enabled: this.config.enabled }, 'Webhook server started');
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.accepting = false;
     if (this.server) {
-      this.server.stop();
+      try {
+        await this.server.stop();
+      } catch (error) {
+        log.warn({ err: error }, 'Webhook server stop failed');
+      }
       this.server = null;
       this.rateLimiter?.clear();
       this.replayCache?.clear();

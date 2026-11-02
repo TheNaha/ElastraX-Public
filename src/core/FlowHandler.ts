@@ -56,6 +56,7 @@ export class FlowHandler {
   private static locks = new Map<string, SessionLock>();
   private static memorySessions = new Map<string, UserSession>();
   private static sessionCreationTime = new Map<string, number>();
+  private static sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   static resetForTesting(): void {
     this.dbLoaded = false;
@@ -63,6 +64,10 @@ export class FlowHandler {
     this.memorySessions.clear();
     this.sessionCreationTime.clear();
     this.locks.clear();
+    if (this.sessionCleanupTimer !== null) {
+      clearInterval(this.sessionCleanupTimer);
+      this.sessionCleanupTimer = null;
+    }
   }
 
   static register(flowName: string, processor: FlowProcessor): void {
@@ -174,10 +179,11 @@ export class FlowHandler {
           this.memorySessions.set(key, session);
         }
       }
-      // Schedule next cleanup
-      globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
     };
-    globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
+    if (this.sessionCleanupTimer !== null) {
+      clearInterval(this.sessionCleanupTimer);
+    }
+    this.sessionCleanupTimer = globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
   }
 
   private static sessionKey(userId: string, platform: string, roomId?: string): string {
