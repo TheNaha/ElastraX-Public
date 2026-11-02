@@ -11,36 +11,9 @@
 
 import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
 import { desc, eq, or } from 'drizzle-orm';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
-
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
+import { MessageContext } from '../src/core/MessageContext';
+import { db } from '../src/db';
 import { chatRooms, messages, notificationSubscriptions } from '../src/db/schema';
-import type { MessageContext } from '../src/core/MessageContext';
 import { StatsTool } from '../src/tools/StatsTool';
 import { LanguageTool } from '../src/tools/LanguageTool';
 import { ConfigTool } from '../src/tools/ConfigTool';
@@ -50,8 +23,6 @@ import { NotificationSubscriptionService } from '../src/utils/NotificationSubscr
 import { syncHistoricalDatabase } from '../src/utils/syncHistoricalDatabase';
 import { reminders } from '../src/db/schema';
 import { getCanonicalRoomKey, toRoomKey } from '../src/agent/roomKey';
-
-const db = database.db;
 
 const createCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
@@ -128,10 +99,6 @@ beforeEach(async () => {
   await db.delete(notificationSubscriptions).run();
   await db.delete(reminders).run();
   await db.delete(chatRooms).run();
-});
-
-afterAll(() => {
-  database.cleanup();
 });
 
 // ── StatsTool ────────────────────────────────────────────────────────────────
