@@ -251,14 +251,6 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs> {
     return this.metadata.access;
   }
 
-  get accessMetadata(): ToolAccessMetadata {
-    return this.access;
-  }
-
-  get commandMetadata(): ToolCommandMetadata {
-    return this.metadata.command;
-  }
-
   isEnabled(): boolean {
     // A tool that is not opt-in is always available, so it does not read the
     // environment at all. This matters: the agent asks every registered tool

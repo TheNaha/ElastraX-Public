@@ -30,7 +30,6 @@ import { logger } from '../utils/logger';
 import {
   SUPPORTED_PLATFORMS,
   inferPlatformFromRoomId,
-  isSupportedPlatform,
   normalizePlatform,
   type SupportedPlatform,
 } from '../core/platforms';
@@ -46,7 +45,7 @@ import {
  */
 export const ROOM_PLATFORMS = SUPPORTED_PLATFORMS;
 export type RoomPlatform = SupportedPlatform;
-export const DEFAULT_ROOM_PLATFORM: RoomPlatform = 'whatsapp';
+
 
 type SqliteLike = {
   query(sql: string, ...params: unknown[]): {
@@ -103,9 +102,6 @@ function asResolution(value: unknown): ResolvedRoomKey | null {
  * lived here had already drifted once, which is exactly how Telegram ended up
  * invisible to the room registry.
  */
-export function isRoomPlatform(value: unknown): value is RoomPlatform {
-  return isSupportedPlatform(value);
-}
 
 /** Normalise a platform name, or `null` when it is not a supported platform. */
 export function normalizeRoomPlatform(value: unknown): RoomPlatform | null {
@@ -122,10 +118,7 @@ export function inferRoomPlatform(remoteRoomId: string): RoomPlatform | null {
   return inferPlatformFromRoomId(remoteRoomId);
 }
 
-/** The platform encoded in a canonical room key, if it names a known platform. */
-export function platformPrefixOf(value: string): RoomPlatform | null {
-  return normalizeRoomPlatform(parseRoomReference(value)?.platform);
-}
+
 
 /** The platform encoded in a canonical room key, without validating the name. */
 export function keyPlatformOf(value: string): string | null {

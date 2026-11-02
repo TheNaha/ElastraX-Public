@@ -19,10 +19,4 @@ export function resolveDatabasePath(
   return isAbsolute(configured) ? configured : resolve(projectRoot, configured);
 }
 
-export function resolveDatabaseDirectory(
-  env: NodeJS.ProcessEnv = process.env,
-  projectRoot: string = getProjectRoot(),
-): string {
-  const databasePath = resolveDatabasePath(env, projectRoot);
-  return databasePath === ':memory:' ? projectRoot : dirname(databasePath);
-}
+

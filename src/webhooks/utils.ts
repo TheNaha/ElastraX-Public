@@ -17,9 +17,7 @@ export function asRecord(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-export function asWebhookBody(value: unknown): WebhookBody {
-  return asRecord(value) ?? {};
-}
+
 
 export function toObjectArray(value: unknown): Array<Record<string, unknown>> {
   if (!Array.isArray(value)) return [];

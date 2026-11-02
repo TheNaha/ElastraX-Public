@@ -62,8 +62,7 @@ export interface ToolCatalogEntry {
   command: ToolMetadata['command'];
 }
 
-export type ToolCatalog = ToolCatalogEntry[];
-export type ToolAccessContextWithRoles = ToolAccessContext & { roles: readonly string[] };
+
 
 export const toolsList: BaseTool[] = [];
 export const tools = toolsList;
@@ -93,22 +92,11 @@ function startRateWindowCleanup(): void {
   rateWindowCleanupTimer.unref?.();
 }
 
-export function stopRateWindowCleanup(): void {
-  if (rateWindowCleanupTimer) {
-    clearInterval(rateWindowCleanupTimer);
-    rateWindowCleanupTimer = null;
-  }
-}
-
 // Called on module load to start the periodic cleanup
 startRateWindowCleanup();
 
 function hasRole(roles: readonly string[] | undefined, required: string): boolean {
   return roleSatisfies(roles, required);
-}
-
-export function getToolCost(tool: BaseTool): number {
-  return Math.max(0, tool.cost);
 }
 
 export function getToolMutability(tool: BaseTool): ToolMetadata['access']['mutability'] {
@@ -340,12 +328,6 @@ export function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, co
     return { valid: false, value: args, errors: ['Tool invocation is not authorized for this context.'], issues: [{ path: '$', message: 'Tool invocation is not authorized for this context.', keyword: 'access' }] };
   }
   return validateToolArguments(tool, args);
-}
-
-export function getToolDispatchContract(command: string, context?: ToolAccessContext): ToolCatalogEntry | undefined {
-  const tool = getToolByAliasOrName(command, context);
-  if (!tool) return undefined;
-  return getToolCatalog(context).find((entry) => entry.tool === tool);
 }
 
 export function getToolsForContext(context: ToolAccessContext = {}): BaseTool[] {
@@ -678,11 +660,4 @@ export const registryReady: Promise<void> = loadPluginTools().then((plugins) => 
   log.error({ err: error }, 'Initial plugin load failed');
 });
 
-export function getRegistryState() {
-  return {
-    tools: [...toolsList],
-    definitions: [...cachedAllDefinitions],
-    alwaysLoadedDefinitions: [...cachedAlwaysLoadedDefinitions],
-    discoverable: [...discoverableTools],
-  };
-}
+

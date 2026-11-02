@@ -86,17 +86,6 @@ export interface SeerrRequest {
   updatedAt: string;
 }
 
-export interface SeerrRequestCount {
-  total: number;
-  movie: number;
-  tv: number;
-  pending: number;
-  approved: number;
-  declined: number;
-  processing: number;
-  available: number;
-}
-
 export interface SeerrUser {
   id: number;
   email: string;
@@ -106,12 +95,6 @@ export interface SeerrUser {
   requestCount: number;
   permissions: number;
 }
-
-export interface SeerrQuota {
-  movie: { used: number; remaining: number; restricted: boolean; limit: number };
-  tv: { used: number; remaining: number; restricted: boolean; limit: number };
-}
-
 export interface SeerrStatus {
   version: string;
   commitTag: string;

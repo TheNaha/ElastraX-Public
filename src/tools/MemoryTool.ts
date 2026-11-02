@@ -38,7 +38,7 @@ export function getMemoryOwnerId(ctx: MessageContext, scope: 'private' | 'group'
   return scope === 'group' && ctx.isGroup ? getCanonicalRoomKey(ctx) : ctx.senderId;
 }
 
-export const ownerIdForMemory = getMemoryOwnerId;
+
 
 /**
  * Owner filter for a scope. Group scope dual-reads the pre-migration raw chat

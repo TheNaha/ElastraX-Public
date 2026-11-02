@@ -55,8 +55,7 @@ export const ROOM_KEY_MIGRATION_WHEN = 23;
 /** Zero-based position of the canonical room identity migration in the journal. */
 export const ROOM_KEY_MIGRATION_INDEX = 22;
 
-/** `when` value of the migration that added a synthetic PK to user_identities. */
-export const IDENTITY_PK_MIGRATION_WHEN = 24;
+
 
 /** Tables/columns the canonical room identity migration adds. */
 const ROOM_KEY_COLUMN_TARGETS: Array<[string, string]> = [

@@ -31,7 +31,7 @@ export function validatePdfPageRange(total: number, startValue: unknown, endValu
   return { start, end };
 }
 
-export const parsePageRange = validatePdfPageRange;
+
 
 export function parsePdfPageList(value: unknown, total: number): number[] | null {
   if (typeof value !== 'string' || value.trim() === '' || !Number.isInteger(total) || total < 1) return null;

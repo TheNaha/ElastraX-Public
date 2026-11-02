@@ -43,7 +43,7 @@ export { ROOM_KEY_SEPARATOR, ROOM_KEY_PREFIX };
 /** The drizzle symbol that holds a table's column map. */
 
 /** A `room_key` column (or any column usable inside `eq`). */
-export type RoomKeyColumn = Column;
+
 
 /** Minimal context surface required to derive a room identity. */
 export type RoomKeyContext = Pick<MessageContext, 'platform' | 'chatId' | 'roomKey'>;

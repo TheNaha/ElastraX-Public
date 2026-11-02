@@ -97,21 +97,6 @@ export interface RoleAccessAdapter {
   removeRole(input: Pick<RoleMutation, 'userId' | 'scope' | 'role' | 'platform'>): Promise<boolean>;
 }
 
-export function createRoleAccessAdapter(service: Pick<typeof AuthService, 'listRoles' | 'setRole' | 'removeRole'> = AuthService): RoleAccessAdapter {
-  return {
-    async listRoles(scope, platform) {
-      const rows = await service.listRoles(scope, platform);
-      return rows.map((row) => ({ ...row, scope, scopeRoomKey: row.scopeRoomKey, platform: platform ?? row.platform ?? 'whatsapp' }));
-    },
-    async setRole(input) {
-      await service.setRole(input.userId, input.role, input.scope, input.platform, input.actorId);
-    },
-    async removeRole(input) {
-      return service.removeRole(input.userId, input.scope, input.role, input.platform);
-    },
-  };
-}
-
 export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): boolean {
   if (actorRoles.includes('owner')) return targetScope === 'global' || targetScope === currentScope;
   return actorRoles.includes('admin') && targetScope === currentScope && legacyScopeFor(platform, targetScope) === legacyScopeFor(platform, currentScope);
@@ -122,10 +107,6 @@ export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScop
     scope: currentScope,
     entries: entries.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, currentScope, platform) && (!platform || !entry.platform || entry.platform === platform)),
   };
-}
-
-export function assertRoleMutationAllowed(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): void {
-  if (!canManageRoleScope(actorRoles, targetScope, currentScope, platform)) throw new Error('You are not allowed to manage roles in that scope');
 }
 
 export class RoleTool extends BaseTool {

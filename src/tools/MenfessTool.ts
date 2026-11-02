@@ -83,7 +83,7 @@ export function isMenfessTargetAllowed(input: string): boolean {
   return loadTargetAliases().has(input.trim().toLowerCase());
 }
 
-export const isTargetAllowed = isMenfessTargetAllowed;
+
 
 export function resolveTarget(input: string, aliases = loadTargetAliases()): string | null {
   return aliases.get(input.trim().toLowerCase()) ?? null;

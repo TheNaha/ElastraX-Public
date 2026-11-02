@@ -513,13 +513,4 @@ export async function removeRoomDocument(roomKey: string, documentId?: string): 
   return deleted.length;
 }
 
-/** Ids matching a room's documents, used by maintenance and backfills. */
-export function roomKnowledgeChunkIdsSync(roomKey: string): string[] {
-  if (isBlank(roomKey)) return [];
-  const rows = db
-    .select({ id: memories.id })
-    .from(memories)
-    .where(and(eq(memories.ownerId, roomKey), eq(memories.category, DOCUMENT_CATEGORY)))
-    .all();
-  return rows.map(row => row.id);
-}
+

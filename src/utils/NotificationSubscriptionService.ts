@@ -65,7 +65,7 @@ export function normalizeServiceType(value: string | null | undefined): Notifica
   return normalized || 'all';
 }
 
-export const normalizeNotificationType = normalizeServiceType;
+
 
 export function normalizeNotifyTypes(value: string | string[] | null | undefined): string[] | null {
   if (value === null || value === undefined) return null;
