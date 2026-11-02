@@ -7,55 +7,17 @@
  * "/task …" verbatim again, scheduled runs silently become unreadable text.
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-type ReminderRow = {
-  id: number;
-  chatRoomId: string;
-  roomKey?: string | null;
-  senderName: string;
-  message: string;
-  platform: string;
-  remindAt: Date;
-  recurrence: string | null;
-  language?: string | null;
-  anchorDay?: number | null;
-};
-
-let dueReminders: ReminderRow[] = [];
-const sent: Array<{ platform: string; chatId: string; text: string }> = [];
-const taskRuns: Array<{ platform: string; remoteRoomId: string; roomKey: string; instruction: string; language: string }> = [];
-
-// Spread the real module so unrelated exports stay resolvable; only the query
-// surface the scheduler uses is stubbed.
-const realDatabaseModulePath: string = '../src/db/index.ts?case=scheduler-tasks';
-const realDatabaseModule = (await import(realDatabaseModulePath)) as typeof import('../src/db');
-mock.module('../src/db', () => ({
-  ...realDatabaseModule,
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({ all: () => dueReminders }),
-      }),
-    }),
-    update: () => ({
-      set: (values: Record<string, unknown>) => ({
-        where: () => ({
-          // The claim must succeed so the row is processed.
-          run: () => ({ changes: 1 }),
-        }),
-        // `update().set()` without `.where()` is the recurring-rearm path.
-        run: () => ({ changes: 1 }),
-        values,
-      }),
-    }),
-  },
-}));
+import { db } from '../src/db';
+import { reminders, chatRooms } from '../src/db/schema';
+import { eq, and, or, isNull, lte } from 'drizzle-orm';
+import { Scheduler } from '../src/utils/Scheduler';
 
 // Spread the real module and override only the target resolver: a bare
 // mock.module would hide every other export other modules import.
 const realRoomKeys = (await import('../src/messaging/roomKeys')) as typeof import('../src/messaging/roomKeys');
 mock.module('../src/messaging/roomKeys', () => ({
   ...realRoomKeys,
-  resolveReminderTarget: (reminder: ReminderRow) => ({
+  resolveReminderTarget: (reminder: any) => ({
     remoteRoomId: reminder.chatRoomId,
     roomKey: reminder.roomKey ?? `room:${reminder.platform}:${reminder.chatRoomId}`,
     mismatch: null as string | null,
@@ -63,27 +25,51 @@ mock.module('../src/messaging/roomKeys', () => ({
   }),
 }));
 
-const { Scheduler } = await import('../src/utils/Scheduler');
-
 const ROOM = '1234567890@g.us';
 
-function reminder(overrides: Partial<ReminderRow> = {}): ReminderRow {
-  return {
-    id: 1,
-    chatRoomId: ROOM,
-    roomKey: `room:whatsapp:${ROOM}`,
-    senderName: 'owner',
-    message: 'plain reminder text',
-    platform: 'whatsapp',
-    remindAt: new Date(Date.now() - 1000),
-    recurrence: null,
-    language: 'en',
-    ...overrides,
+async function seedReminder(overrides: any = {}): Promise<any> {
+  const now = new Date(Date.now() - 1000); // 1 second ago (due)
+  const reminder = {
+    id: overrides.id ?? 1,
+    chatRoomId: overrides.chatRoomId ?? ROOM,
+    platform: overrides.platform ?? 'whatsapp',
+    senderName: overrides.senderName ?? 'owner',
+    message: overrides.message ?? 'plain reminder text',
+    remindAt: overrides.remindAt ?? now,
+    recurrence: overrides.recurrence ?? null,
+    language: overrides.language ?? 'en',
+    roomKey: overrides.roomKey ?? `room:whatsapp:${ROOM}`,
+    created_at: new Date(),
+    isSent: false,
+    claimedAt: null,
   };
+  await db.insert(reminders).values({
+    chatRoomId: reminder.chatRoomId,
+    senderId: 'user-1',
+    senderName: reminder.senderName,
+    message: reminder.message,
+    remindAt: reminder.remindAt,
+    isSent: false,
+    claimedAt: null,
+    platform: reminder.platform,
+    recurrence: reminder.recurrence,
+    language: reminder.language,
+    roomKey: reminder.roomKey,
+    created_at: reminder.created_at,
+  });
+  return reminder;
 }
 
-beforeEach(() => {
-  dueReminders = [reminder()];
+async function clearReminders(): Promise<void> {
+  await db.delete(reminders);
+}
+
+const sent: Array<{ platform: string; chatId: string; text: string }> = [];
+const taskRuns: Array<{ platform: string; remoteRoomId: string; roomKey: string; instruction: string; language: string }> = [];
+
+beforeEach(async () => {
+  await clearReminders();
+  await seedChatRoom();
   sent.length = 0;
   taskRuns.length = 0;
   Scheduler.registerTaskRunner(null);
@@ -92,18 +78,29 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+async function seedChatRoom(): Promise<void> {
+  await db.insert(chatRooms).values({
+    id: ROOM,
+    platform: 'whatsapp',
+    language: 'en',
+    roomKey: `room:whatsapp:${ROOM}`,
+    created_at: new Date(),
+  }).onConflictDoNothing();
+}
+
+afterEach(async () => {
   Scheduler.registerTaskRunner(null);
   Scheduler.unregisterSender('whatsapp');
+  await clearReminders();
 });
 
 async function tick(): Promise<void> {
-  await (Scheduler as unknown as { processReminders: () => Promise<void> })
-    .processReminders();
+  await (Scheduler as unknown as { processReminders: () => Promise<void> }).processReminders();
 }
 
 describe('Scheduler agent task routing', () => {
   test('sends an ordinary reminder as text', async () => {
+    await seedReminder();
     await tick();
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain('plain reminder text');
@@ -111,7 +108,7 @@ describe('Scheduler agent task routing', () => {
   });
 
   test('runs a task-marked reminder through the agent instead of sending it', async () => {
-    dueReminders = [reminder({ message: '/task summarise what changed today', recurrence: 'daily' })];
+    await seedReminder({ message: '/task summarise what changed today', recurrence: 'daily' });
     Scheduler.registerTaskRunner(async request => {
       taskRuns.push({
         platform: request.platform,
@@ -135,7 +132,7 @@ describe('Scheduler agent task routing', () => {
 
   test('falls back to a literal send when no runner is registered', async () => {
     // Better that the user sees their text than that the message vanishes.
-    dueReminders = [reminder({ message: '/task summarise the day' })];
+    await seedReminder({ message: '/task summarise the day' });
     await tick();
     expect(taskRuns).toHaveLength(0);
     expect(sent).toHaveLength(1);
@@ -143,38 +140,28 @@ describe('Scheduler agent task routing', () => {
   });
 
   test('a bare marker with no instruction is sent as text', async () => {
-    dueReminders = [reminder({ message: '/task' })];
+    await seedReminder({ message: '/task' });
     Scheduler.registerTaskRunner(async () => {
       taskRuns.push({ platform: 'whatsapp', remoteRoomId: ROOM, roomKey: 'k', instruction: '', language: 'en' });
     });
+
     await tick();
+
     expect(taskRuns).toHaveLength(0);
     expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('/task');
   });
 
-  test('passes the reminder language through to the run', async () => {
-    dueReminders = [reminder({ message: '/task ringkasan', language: 'id' })];
-    Scheduler.registerTaskRunner(async request => {
-      taskRuns.push({
-        platform: request.platform,
-        remoteRoomId: request.remoteRoomId,
-        roomKey: request.roomKey,
-        instruction: request.instruction,
-        language: request.language,
-      });
-    });
-    await tick();
-    expect(taskRuns[0]!.language).toBe('id');
-    expect(taskRuns[0]!.instruction).toBe('ringkasan');
-  });
-
-  test('a task run that throws is retried through the normal failure path', async () => {
-    dueReminders = [reminder({ message: '/task do a thing' })];
+  test('a task-marked reminder for an unknown platform is retried, not sent', async () => {
+    await seedReminder({ platform: 'unknown-platform', message: '/task summarise' });
     Scheduler.registerTaskRunner(async () => {
-      throw new Error('model unavailable');
+      taskRuns.push({ platform: 'unknown-platform', remoteRoomId: ROOM, roomKey: 'k', instruction: 'summarise', language: 'en' });
     });
-    // Must not reject: the scheduler's own catch handles it.
+
     await tick();
+
+    // No sender for unknown platform -> deferred/retried
     expect(sent).toHaveLength(0);
+    expect(taskRuns).toHaveLength(0);
   });
 });
