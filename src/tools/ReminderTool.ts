@@ -108,6 +108,36 @@ export function splitReminderTimeAndMessage(input: string): { time: string; mess
   return { time, message };
 }
 
+/**
+ * Validate and apply an HH[:MM](am|pm)? match to `date` in place.
+ *
+ * Returns `true` when the match is valid and its hours/minutes were applied to
+ * `date`. Returns `false` when the match is present but out of range; the
+ * caller should then bail with `null`. Does not touch `date` on failure.
+ *
+ * This is shared by the "tomorrow at ..." and standalone "at ..." time parsers
+ * so the validation + meridiem-normalisation logic lives in one place.
+ */
+function applyTimeMatch(timeMatch: RegExpMatchArray | null, date: Date): boolean {
+  if (!timeMatch) return false;
+  let hours = Number(timeMatch[1]);
+  const minutes = Number(timeMatch[2] ?? 0);
+  const hasMeridiem = Boolean(timeMatch[3]);
+  if (
+    !Number.isSafeInteger(hours) ||
+    (hasMeridiem && (hours < 1 || hours > 12)) ||
+    (!hasMeridiem && (hours < 0 || hours > 23)) ||
+    minutes < 0 ||
+    minutes > 59
+  ) {
+    return false;
+  }
+  if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
+  if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
+  date.setHours(hours, minutes, 0, 0);
+  return true;
+}
+
 export function parseRelativeTime(input: string): Date | null {
   const now = Date.now();
   const lower = input.toLowerCase().trim();
@@ -134,13 +164,7 @@ export function parseRelativeTime(input: string): Date | null {
     const date = new Date(now);
     date.setDate(date.getDate() + 1);
     if (timeMatch && timeMatch[0].trim()) {
-      let hours = Number(timeMatch[1]);
-      const minutes = Number(timeMatch[2] ?? 0);
-      const hasMeridiem = Boolean(timeMatch[3]);
-      if (!Number.isSafeInteger(hours) || (hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
-      if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
-      if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
-      date.setHours(hours, minutes, 0, 0);
+      if (!applyTimeMatch(timeMatch, date)) return null;
     } else {
       date.setHours(9, 0, 0, 0);
     }
@@ -151,14 +175,8 @@ export function parseRelativeTime(input: string): Date | null {
   // "18:00", "at 18:00", "6pm", "at 6pm"
   const timeMatch = lower.match(/^(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);
   if (timeMatch) {
-    let hours = Number(timeMatch[1]);
-    const minutes = Number(timeMatch[2] ?? 0);
-    const hasMeridiem = Boolean(timeMatch[3]);
-    if (!Number.isSafeInteger(hours) || (hasMeridiem && (hours < 1 || hours > 12)) || (!hasMeridiem && (hours < 0 || hours > 23)) || minutes < 0 || minutes > 59) return null;
-    if (timeMatch[3]?.toLowerCase() === 'pm' && hours < 12) hours += 12;
-    if (timeMatch[3]?.toLowerCase() === 'am' && hours === 12) hours = 0;
     const date = new Date(now);
-    date.setHours(hours, minutes, 0, 0);
+    if (!applyTimeMatch(timeMatch, date)) return null;
     if (date.getTime() <= now) date.setDate(date.getDate() + 1);
     const delay = date.getTime() - now;
     return delay >= MIN_REMINDER_DELAY_MS && delay <= MAX_REMINDER_HORIZON_MS ? date : null;

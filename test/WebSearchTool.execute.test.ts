@@ -52,7 +52,7 @@ describe('WebSearchTool – execute (fetch path)', () => {
     ) as any;
 
     const result = await tool.execute({ query: 'bun test' }, createMockCtx());
-    expect(result).toContain('search.web.header');
+    expect(result).toContain('Web results for');
     expect(result).toContain('Result 1');
     expect(result).toContain('https://example.com/1');
     expect(result).toContain('Excerpt one');
@@ -66,8 +66,7 @@ describe('WebSearchTool – execute (fetch path)', () => {
     ) as any;
 
     const result = await tool.execute({ query: 'empty query' }, createMockCtx());
-    expect(result).toContain('search.web.no_results');
-    expect(result).not.toContain('empty query');
+    expect(result).toContain('No web results found for "empty query".');
   });
 
   test('should return "No results found" when results property is absent', async () => {
@@ -78,7 +77,7 @@ describe('WebSearchTool – execute (fetch path)', () => {
     ) as any;
 
     const result = await tool.execute({ query: 'no data' }, createMockCtx());
-    expect(result).toContain('search.web.no_results');
+    expect(result).toContain('No web results found');
   });
 
   test('should return failure message on non-OK HTTP response', async () => {
@@ -89,7 +88,7 @@ describe('WebSearchTool – execute (fetch path)', () => {
     ) as any;
 
     const result = await tool.execute({ query: 'failing query' }, createMockCtx());
-    expect(result).toContain('search.web.failed');
+    expect(result).toContain('Web search failed');
   });
 
   test('should format up to 5 results from the response', async () => {

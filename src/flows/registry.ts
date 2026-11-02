@@ -26,7 +26,8 @@ export async function registerFlows(): Promise<void> {
 export async function safeRegisterFlows(): Promise<void> {
   try {
     await registerFlows();
-  } catch {
+  } catch (err) {
+    log.warn({ err }, 'Flow registration failed; interactive flows unavailable');
     return;
   }
 }

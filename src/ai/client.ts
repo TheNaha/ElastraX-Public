@@ -248,6 +248,53 @@ export class AIClient {
     };
   }
 
+  /**
+   * POST a JSON payload to the AI endpoint and handle a non-ok response.
+   *
+   * Shared by `chatCompletionEnvelope` and `chatCompletionStream` so the fetch
+   * shape and `!response.ok` error handling live in one place. Returns the raw
+   * `Response` (caller reads the body). Logs elapsed time only when `startTime`
+   * is provided (envelope path); the streaming path omits it.
+   */
+  private async fetchWithErrorHandling(
+    endpoint: string,
+    payload: unknown,
+    requestId: string,
+    opts: {
+      timeoutMs: number;
+      errorLabel: string;
+      startTime?: number;
+      warn429?: string;
+      warn5xx?: string;
+    },
+  ): Promise<Response> {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: this.headers(requestId),
+      body: JSON.stringify(payload),
+      signal: withTimeout(opts.timeoutMs),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '<unreadable>');
+      const elapsed = opts.startTime === undefined ? undefined : Date.now() - opts.startTime;
+      log.error({ status: response.status, errText, elapsed }, opts.errorLabel);
+      // Avoid leaking the raw error body (may contain API keys or internal details)
+      const status = response.status;
+      const retryAfter = response.headers.get('retry-after');
+      if (status === 429) {
+        // Rate limited — the ModelRouter circuit breaker handles backoff
+        // and provider failover. Do NOT block the event loop with a sleep here;
+        // doing so stalls all concurrent message processing.
+        log.warn({ status, retryAfter }, opts.warn429 ?? 'LLM API rate limited; deferring to circuit breaker');
+      } else if (opts.warn5xx && status >= 500 && status < 600) {
+        log.warn({ status }, opts.warn5xx);
+      }
+      throw new Error(`LLM API returned ${response.status}: request failed`);
+    }
+    return response;
+  }
+
   async chatCompletionEnvelope(
     messages: AIChatMessage[],
     tools?: ToolDefinition[],
@@ -267,31 +314,14 @@ export class AIClient {
       { endpoint, model: this.modelName, messageCount: messages.length, hasTools: !!(tools && tools.length) },
       'Sending chat completion request',
     );
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: this.headers(requestId),
-      body: JSON.stringify(payload),
-      signal: withTimeout(getAIRequestConfig().timeoutMs),
+    const response = await this.fetchWithErrorHandling(endpoint, payload, requestId, {
+      timeoutMs: getAIRequestConfig().timeoutMs,
+      errorLabel: 'Error response from LLM',
+      startTime,
+      warn429: 'LLM API rate limited; deferring to circuit breaker',
+      warn5xx: 'LLM API server error, may retry',
     });
-
     const elapsed = Date.now() - startTime;
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '<unreadable>');
-      log.error({ status: response.status, errText, elapsed }, 'Error response from LLM');
-      // Avoid leaking the raw error body (may contain API keys or internal details)
-      const status = response.status;
-      const retryAfter = response.headers.get('retry-after');
-      if (status === 429) {
-        // Rate limited — the ModelRouter circuit breaker handles backoff
-        // and provider failover. Do NOT block the event loop with a sleep here;
-        // doing so stalls all concurrent message processing.
-        log.warn({ status, retryAfter }, 'LLM API rate limited; deferring to circuit breaker');
-      } else if (status >= 500 && status < 600) {
-        // Server error - could be transient
-        log.warn({ status }, 'LLM API server error, may retry');
-      }
-      throw new Error(`LLM API returned ${response.status}: request failed`);
-    }
 
     let raw: unknown;
     try {
@@ -478,25 +508,12 @@ export class AIClient {
       maxTokens,
       true,
     );
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: this.headers(requestId),
-      body: JSON.stringify(payload),
-      signal: withTimeout(getAIRequestConfig(process.env, true).timeoutMs),
+    const response = await this.fetchWithErrorHandling(endpoint, payload, requestId, {
+      timeoutMs: getAIRequestConfig(process.env, true).timeoutMs,
+      errorLabel: 'Streaming LLM request failed',
+      warn429: 'Streaming LLM API rate limited; deferring to circuit breaker',
     });
 
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '<unreadable>');
-      log.error({ status: response.status, errText }, 'Streaming LLM request failed');
-      const status = response.status;
-      const retryAfter = response.headers.get('retry-after');
-      if (status === 429) {
-        // Rate limited — the ModelRouter circuit breaker handles backoff
-        // and provider failover. Do NOT block the event loop with a sleep.
-        log.warn({ status, retryAfter }, 'Streaming LLM API rate limited; deferring to circuit breaker');
-      }
-      throw new Error(`LLM API returned ${response.status}: request failed`);
-    }
     if (!response.body) {
       throw new Error('Response body is null — streaming not supported by this endpoint.');
     }

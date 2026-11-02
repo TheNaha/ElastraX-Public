@@ -12,7 +12,7 @@ describe('WebSearchTool', () => {
     const tool = new WebSearchTool();
     // @ts-expect-error - mock context
     const result = await tool.execute({}, {});
-    expect(result).toContain('search.query_missing');
+    expect(result).toContain('Please provide a search query');
   });
 
   test('definition should match OpenAI schema', () => {

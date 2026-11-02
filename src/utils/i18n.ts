@@ -206,6 +206,21 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.ytdlp_missing': '❌ yt-dlp is not installed. Ask the bot owner to install it.',
     'download.ytdlp_broken': '❌ yt-dlp is installed but cannot start (missing system library). Ask the bot owner to install zlib1g ({msg}).',
 
+    // Web search (SeerXNG / game / software search)
+    'search.query_missing': '❌ Please provide a search query.',
+    'search.searxng_not_configured': '❌ SeerXNG search is not configured. Please contact the bot admin.',
+    'search.web.header': '🔍 *Web results for "{query}":*',
+    'search.web.no_results': 'No web results found for "{query}".',
+    'search.web.failed': '❌ Web search failed: {msg}',
+    'search.game.no_results': 'No game results found for "{query}".',
+    'search.game.failed': '❌ Game search failed: {msg}',
+    'search.software.header': '💻 *Software results for "{query}":*',
+    'search.software.no_results': 'No software results found for "{query}".',
+    'search.software.failed': '❌ Software search failed: {msg}',
+    'search.trusted': '✅',
+    'search.unknown': '❓',
+    'search.untrusted': '⚠️',
+
     // Media Convert
     'convert.no_media': '❌ Please attach or reply to a media file to convert.',
     'convert.unsupported': '❌ Unsupported conversion: {from} → {to}',
@@ -317,6 +332,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'owner.leave_not_supported': '❌ Leaving groups is not supported on this platform.',
     'owner.leave_error': '❌ Failed to leave group: {msg}',
     'owner.usage': '❓ *Owner Commands:*\n\n • `/broadcast <message>` — Send to all rooms\n\n • `/leave` — Leave current group\n\n • `/owner system_info` — Bot stats',
+
+    // Admin tools
+    'admin.pinout_title': '*Pinned Output — {tool}*',
+    'admin.pinout_tip': 'Tip: use `/admin pinout stop` to stop pinning output in this chat.',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
@@ -604,6 +623,21 @@ export const translations: Record<Locale, Record<string, string>> = {
     'download.ytdlp_missing': '❌ yt-dlp tidak terpasang. Minta pemilik bot untuk memasangnya.',
     'download.ytdlp_broken': '❌ yt-dlp sudah terpasang tapi tidak dapat dijalankan (pustaka sistem yang hilang). Minta pemilik bot untuk memasang zlib1g ({msg}).',
 
+    // Web search (SeerXNG / game / software search)
+    'search.query_missing': '❌ Mohon berikan kueri pencarian.',
+    'search.searxng_not_configured': '❌ Pencarian SeerXNG tidak dikonfigurasi. Hubungi admin bot.',
+    'search.web.header': '🔍 *Hasil web untuk "{query}":*',
+    'search.web.no_results': 'Tidak ada hasil web untuk "{query}".',
+    'search.web.failed': '❌ Pencarian web gagal: {msg}',
+    'search.game.no_results': 'Tidak ada hasil game untuk "{query}".',
+    'search.game.failed': '❌ Pencarian game gagal: {msg}',
+    'search.software.header': '💻 *Hasil perangkat lunak untuk "{query}":*',
+    'search.software.no_results': 'Tidak ada hasil perangkat lunak untuk "{query}".',
+    'search.software.failed': '❌ Pencarian perangkat lunak gagal: {msg}',
+    'search.trusted': '✅',
+    'search.unknown': '❓',
+    'search.untrusted': '⚠️',
+
     // Media Convert
     'convert.no_media': '❌ Lampirkan atau balas file media untuk dikonversi.',
     'convert.unsupported': '❌ Konversi tidak didukung: {from} → {to}',
@@ -715,6 +749,10 @@ export const translations: Record<Locale, Record<string, string>> = {
     'owner.leave_not_supported': '❌ Keluar dari grup tidak didukung di platform ini.',
     'owner.leave_error': '❌ Gagal meninggalkan grup: {msg}',
     'owner.usage': '❓ *Perintah Owner:*\n\n • `/broadcast <pesan>` — Kirim ke semua ruangan\n\n • `/leave` — Keluar dari grup\n\n • `/owner system_info` — Info bot',
+
+    // Admin tools
+    'admin.pinout_title': '*Keluaran yang Di-Pin — {tool}*',
+    'admin.pinout_tip': 'Tip: gunakan `/admin pinout stop` untuk menghentikan pemetaan keluaran di obrolan ini.',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',

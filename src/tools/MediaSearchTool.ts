@@ -35,6 +35,11 @@ function formatResult(lang: string, item: SeerrSearchResult, _index: number): st
   return ` • ${type} *${title}*${yearStr} ${rating} — ${status} [ID: ${item.id}]`;
 }
 
+/** Format up to the first 10 results with 1-based numbering. Shared by every search action. */
+function formatTopResults(results: SeerrSearchResult[], lang: string): string[] {
+  return results.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+}
+
 type MediaSearchArgs = {
   action: 'search' | 'trending' | 'discover' | 'recommend';
   query?: string;
@@ -123,7 +128,7 @@ export class MediaSearchTool extends BaseTool {
 
           if (filtered.length === 0) return t(lang, 'media_search.no_type_results', { type: mediaType, query: args.query });
 
-          const lines = filtered.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          const lines = formatTopResults(filtered, lang);
           return `${t(lang, 'media_search.search_header', { query: args.query })}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
@@ -135,7 +140,7 @@ export class MediaSearchTool extends BaseTool {
 
           if (filtered.length === 0) return t(lang, 'media_search.no_trending');
 
-          const lines = filtered.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          const lines = formatTopResults(filtered, lang);
           return `${t(lang, 'media_search.trending_header')}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 
@@ -146,7 +151,7 @@ export class MediaSearchTool extends BaseTool {
 
           if (results.results.length === 0) return t(lang, 'media_search.discover_no_content');
 
-          const lines = results.results.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          const lines = formatTopResults(results.results, lang);
           const label = mediaType === 'tv' ? t(lang, 'media_search.discover_tv') : t(lang, 'media_search.discover_movies');
           return `${t(lang, 'media_search.discover_header', { label })}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
@@ -160,7 +165,7 @@ export class MediaSearchTool extends BaseTool {
 
           if (results.results.length === 0) return t(lang, 'media_search.no_recommendations');
 
-          const lines = results.results.slice(0, 10).map((r, i) => formatResult(lang, r, i + 1));
+          const lines = formatTopResults(results.results, lang);
           return `${t(lang, 'media_search.recommendations_header')}\n\n${lines.join('\n\n')}\n\n${t(lang, 'media_search.search_footer', { page: results.page, totalPages: results.totalPages, totalResults: results.totalResults })}`;
         }
 

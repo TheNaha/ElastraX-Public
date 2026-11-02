@@ -826,6 +826,7 @@ export class AppRuntime {
     }
 
     this.mediaCleanupTimer = this.timers.setInterval(() => {
+      if (this.mediaCleanupPromise) return;
       this.mediaCleanupPromise = this.mediaCleanup.pruneOldFiles().catch((err) => {
         logger.warn({ err }, '[MediaCleanup] Periodic prune failed');
       }).finally(() => {

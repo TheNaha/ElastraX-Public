@@ -95,8 +95,8 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
 
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
-  process.once('uncaughtException', onFatalError);
-  process.once('unhandledRejection', onFatalError);
+  process.on('uncaughtException', onFatalError);
+  process.on('unhandledRejection', onFatalError);
 
   try {
     // `AppRuntimeDeps.runStartupCoverageScan` is optional and nothing passed it,

@@ -2,6 +2,9 @@ import { spawn as nodeSpawn, type ChildProcess, type ChildProcessWithoutNullStre
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CancellableSemaphore } from './semaphore';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'Process' });
 
 const PROCESS_SEMAPHORES = {
   ffmpeg: new CancellableSemaphore(2),
@@ -259,7 +262,7 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
       resolveOnce({ stdout, stderr, code, signal, stderrTruncated });
     });
 
-    child.stdin.on('error', () => undefined);
+    child.stdin.on('error', (err) => log.debug({ err }, 'Process stdin write failed'));
     if (child.stdin && !child.stdin.destroyed) {
       if (options.input) child.stdin.end(options.input);
       else child.stdin.end();
@@ -282,15 +285,16 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
               break;
             }
           }
-        } catch {
+        } catch (err) {
+          log.debug({ err }, 'Process output directory check failed');
           return;
         } finally {
           watchingDirectory = false;
         }
       };
-      watchTimer = setInterval(() => checkDirectory().catch(() => {}), 250);
+      watchTimer = setInterval(() => checkDirectory().catch((err) => log.debug({ err }, 'Process output directory watch check failed')), 250);
       watchTimer.unref?.();
-      checkDirectory().catch(() => {});
+      checkDirectory().catch((err) => log.debug({ err }, 'Process output directory initial check failed'));
     }
   });
 }

@@ -253,7 +253,7 @@ export class MediaBindTool extends BaseTool {
     // Check if already bound
     const existing = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'jellyfin');
     if (existing) {
-      return t(ctx.language, 'media.already_linked', { username: existing.externalUsername ?? '' });
+      return t(ctx.language, 'media.already_bound', { username: existing.externalUsername ?? '' });
     }
 
     // Start the flow

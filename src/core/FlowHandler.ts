@@ -1,6 +1,8 @@
 import { MessageContext } from './MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+
+const log = logger.child({ module: 'FlowHandler' });
 import { t } from '../utils/i18n';
 import { CANCEL_COMMANDS } from './constants';
 import { eq, inArray } from 'drizzle-orm';
@@ -107,7 +109,9 @@ export class FlowHandler {
       this.initPromise = null;
     });
     // Run periodic cleanup of memory sessions (24h TTL) only after a successful init.
-    void this.initPromise.then(() => this._startPeriodicSessionCleanup()).catch(() => {});
+    void this.initPromise.then(() => this._startPeriodicSessionCleanup()).catch((err) => {
+      log.warn({ err }, 'Periodic session cleanup failed to start');
+    });
     return this.initPromise;
   }
 

@@ -316,7 +316,7 @@ export class DigestService {
   private static senders = new Map<string, SendFn>();
   private static timer: ReturnType<typeof setInterval> | null = null;
   private static running = false;
-  private static mediaCache: { weekStart: number; items: Promise<JellyfinMediaItem[]> } | null = null;
+  private static mediaCache: { weekStart: number; items: JellyfinMediaItem[] } | null = null;
 
   /** Register a send callback for a given platform. */
   static registerSender(platform: string, fn: SendFn): void {
@@ -468,7 +468,7 @@ export class DigestService {
 
   private static loadWeeklyMedia(weekStart: Date): Promise<JellyfinMediaItem[]> {
     const key = weekStart.getTime();
-    if (this.mediaCache?.weekStart === key) return this.mediaCache.items;
+    if (this.mediaCache?.weekStart === key) return Promise.resolve(this.mediaCache.items);
     const client = MediaService.createJellyfinClient();
     if (!client.isConfigured) {
       return Promise.reject(new Error('Jellyfin is not configured'));
@@ -478,11 +478,16 @@ export class DigestService {
         const created = item.DateCreated ? new Date(String(item.DateCreated)) : null;
         return !created || created.getTime() >= weekStart.getTime();
       }))
-      .catch(error => {
-        this.mediaCache = null;
-        throw error;
+      .then(filtered => {
+        // Publish only resolved values to the cache, and never clobber an entry
+        // another caller already populated for the same week. On failure we leave
+        // the cache untouched instead of nulling it — nulling poisons concurrent
+        // callers and triggers repeated Jellyfin fetches.
+        if (!this.mediaCache || this.mediaCache.weekStart !== key) {
+          this.mediaCache = { weekStart: key, items: filtered };
+        }
+        return filtered;
       });
-    this.mediaCache = { weekStart: key, items };
     return items;
   }
 
