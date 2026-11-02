@@ -91,12 +91,6 @@ export interface RoleMutation {
   actorId: string;
 }
 
-export interface RoleAccessAdapter {
-  listRoles(scope: string, platform?: string): Promise<RoleViewEntry[]>;
-  setRole(input: RoleMutation): Promise<void>;
-  removeRole(input: Pick<RoleMutation, 'userId' | 'scope' | 'role' | 'platform'>): Promise<boolean>;
-}
-
 export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): boolean {
   if (actorRoles.includes('owner')) return targetScope === 'global' || targetScope === currentScope;
   return actorRoles.includes('admin') && targetScope === currentScope && legacyScopeFor(platform, targetScope) === legacyScopeFor(platform, currentScope);

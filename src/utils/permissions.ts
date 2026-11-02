@@ -77,18 +77,7 @@ async function resolvePlatformAdmin(
 
 export type { PlatformName } from '../core/MessageContext';
 import type { PlatformName } from '../core/MessageContext';
-export type NativeAdminResolver = (ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown; platform?: PlatformName }) => Promise<boolean>;
-
-const nativeAdminResolvers = new Map<string, NativeAdminResolver>();
 const groupMetadataCache = new Map<string, { data: WhatsAppGroupMetadata; expiresAt: number }>();
-
-export function registerNativeAdminResolver(platform: PlatformName, resolver: NativeAdminResolver): () => void {
-  const key = String(platform).trim().toLowerCase();
-  nativeAdminResolvers.set(key, resolver);
-  return () => {
-    if (nativeAdminResolvers.get(key) === resolver) nativeAdminResolvers.delete(key);
-  };
-}
 
 
 
@@ -117,10 +106,6 @@ export async function isNativeGroupAdmin(
   ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown },
 ): Promise<boolean> {
   if (!ctx.isGroup) return false;
-  const resolver = nativeAdminResolvers.get(String(platform).trim().toLowerCase());
-  if (resolver) {
-    try { return await resolver({ ...ctx, platform }); } catch (error: unknown) { logger.warn({ err: error, platform, chatId: ctx.chatId }, 'Native admin resolver failed'); return false; }
-  }
   if (platform === 'whatsapp') return isWhatsAppGroupAdmin(ctx.sock, ctx.chatId, ctx.senderId, ctx.senderPn);
   return false;
 }

@@ -364,18 +364,6 @@ export function getToolByAliasOrName(command: string, context?: ToolAccessContex
   return tool;
 }
 
-export type AuthorizedToolInvocation = { tool: BaseTool; args?: unknown };
-export async function authorizeToolInvocation(command: string, ctx: MessageContext, args?: unknown): Promise<AuthorizedToolInvocation | undefined> {
-  const tool = await getAuthorizedTool(command, ctx);
-  if (!tool) return undefined;
-  if (args !== undefined) {
-    const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
-    const context: ToolAccessContext = { roles, isGroup: ctx.isGroup, isOwner: roles.includes('owner'), platform: ctx.platform, userId: ctx.senderId };
-    if (!validateAndAuthorizeInvocation(tool, args, context).valid) return undefined;
-  }
-  return { tool, args };
-}
-
 export async function executeAuthorizedCommand(command: string, argsString: string, ctx: MessageContext): Promise<ToolResult | undefined> {
   const tool = await getAuthorizedTool(command, ctx);
   if (!tool) return undefined;
