@@ -62,8 +62,7 @@ export interface ToolCatalogEntry {
   command: ToolMetadata['command'];
 }
 
-export type ToolCatalog = ToolCatalogEntry[];
-export type ToolAccessContextWithRoles = ToolAccessContext & { roles: readonly string[] };
+
 
 export const toolsList: BaseTool[] = [];
 export const tools = toolsList;
@@ -93,22 +92,11 @@ function startRateWindowCleanup(): void {
   rateWindowCleanupTimer.unref?.();
 }
 
-export function stopRateWindowCleanup(): void {
-  if (rateWindowCleanupTimer) {
-    clearInterval(rateWindowCleanupTimer);
-    rateWindowCleanupTimer = null;
-  }
-}
-
 // Called on module load to start the periodic cleanup
 startRateWindowCleanup();
 
 function hasRole(roles: readonly string[] | undefined, required: string): boolean {
   return roleSatisfies(roles, required);
-}
-
-export function getToolCost(tool: BaseTool): number {
-  return Math.max(0, tool.cost);
 }
 
 export function getToolMutability(tool: BaseTool): ToolMetadata['access']['mutability'] {
@@ -342,12 +330,6 @@ export function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, co
   return validateToolArguments(tool, args);
 }
 
-export function getToolDispatchContract(command: string, context?: ToolAccessContext): ToolCatalogEntry | undefined {
-  const tool = getToolByAliasOrName(command, context);
-  if (!tool) return undefined;
-  return getToolCatalog(context).find((entry) => entry.tool === tool);
-}
-
 export function getToolsForContext(context: ToolAccessContext = {}): BaseTool[] {
   return toolsList.filter((tool) => isToolAccessible(tool, context));
 }
@@ -380,18 +362,6 @@ export function getToolByAliasOrName(command: string, context?: ToolAccessContex
   const tool = aliasMap.get(normalized);
   if (!tool || (context && !isCommandAccessible(tool, normalized, context))) return undefined;
   return tool;
-}
-
-export type AuthorizedToolInvocation = { tool: BaseTool; args?: unknown };
-export async function authorizeToolInvocation(command: string, ctx: MessageContext, args?: unknown): Promise<AuthorizedToolInvocation | undefined> {
-  const tool = await getAuthorizedTool(command, ctx);
-  if (!tool) return undefined;
-  if (args !== undefined) {
-    const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
-    const context: ToolAccessContext = { roles, isGroup: ctx.isGroup, isOwner: roles.includes('owner'), platform: ctx.platform, userId: ctx.senderId };
-    if (!validateAndAuthorizeInvocation(tool, args, context).valid) return undefined;
-  }
-  return { tool, args };
 }
 
 export async function executeAuthorizedCommand(command: string, argsString: string, ctx: MessageContext): Promise<ToolResult | undefined> {
@@ -678,11 +648,4 @@ export const registryReady: Promise<void> = loadPluginTools().then((plugins) => 
   log.error({ err: error }, 'Initial plugin load failed');
 });
 
-export function getRegistryState() {
-  return {
-    tools: [...toolsList],
-    definitions: [...cachedAllDefinitions],
-    alwaysLoadedDefinitions: [...cachedAlwaysLoadedDefinitions],
-    discoverable: [...discoverableTools],
-  };
-}
+

@@ -304,7 +304,7 @@ export function resolveOrCreateRoomKeySync(
  * Object form of {@link resolveOrCreateRoomKeySync}; kept for callers that want the
  * remote room id alongside the key (the webhook lane's `resolveRemoteRoom`).
  */
-export type RoomKeyResolution = ResolvedRoomKey;
+
 
 /** Resolve the canonical key, registering the room when unknown. */
 export async function resolveOrCreateRoomKey(

@@ -118,10 +118,11 @@ function getAllowedTools(
  */
 async function resolveSenderHasBinding(senderId: string, platform: string): Promise<boolean> {
   try {
-    const binding = await ServiceBindingService.getBinding(senderId, platform, 'jellyfin');
-    if (binding) return true;
-    const seerr = await ServiceBindingService.getBinding(senderId, platform, 'seerr');
-    return Boolean(seerr);
+    const [binding, seerr] = await Promise.all([
+      ServiceBindingService.getBinding(senderId, platform, 'jellyfin'),
+      ServiceBindingService.getBinding(senderId, platform, 'seerr'),
+    ]);
+    return Boolean(binding || seerr);
   } catch (error) {
     log.debug({ err: error, senderId }, 'Binding lookup failed; treating sender as unbound');
     return false;

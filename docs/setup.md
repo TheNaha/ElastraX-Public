@@ -111,6 +111,18 @@ bun run check
 bun run test:webhooks
 ```
 
+## Testing
+
+The suite is hermetic: `test/setup.ts` is preloaded via `bunfig.toml`.
+
+- Always pass `--no-env-file` so a local `.env` never leaks into tests: `bun test --no-env-file test/`.
+- `globalThis.fetch` throws in tests; HTTP clients must be injected or mocked.
+- Each worker gets a temporary database and temporary media directories. The harness fails the run if anything under repo `data/` changes. Never point tests at `data/bot.db`.
+- `libsignal` and `whatsapp-rust-bridge` are mocked globally.
+- Modules expose `*Deps` objects (for example `downloadToolDeps.spawn`) as seams. Patch and restore those in `afterEach`; avoid `mock.module`, which leaks across files.
+- To get a fresh module instance, import with a cache-busting query: `import('../src/db/index.ts?case=...')`.
+- Isolated/randomized runs: `bun run test:isolated`, `bun run test:random`, `bun run test:hermetic`. A test that passes normally but fails in CI should be rerun with `bun run test:random`.
+
 ## Docker deployment
 
 Create the external network, configure `.env`, and start Compose:

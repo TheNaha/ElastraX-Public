@@ -190,7 +190,7 @@ async function withWebhookServer(
     try {
       await callback(server, `http://127.0.0.1:${portOf(server)}`);
     } finally {
-      server.stop();
+      await server.stop();
     }
   });
 }
@@ -211,6 +211,10 @@ afterAll(() => {
 });
 
 describe('canonical room keys', () => {
+  beforeEach(() => {
+    sqlite.query<never, [string]>(`DELETE FROM message_inbox WHERE chat_room_id = ?`).run(SHARED_REMOTE_ID);
+    sqlite.query<never, [string]>(`DELETE FROM message_outbox WHERE chat_room_id = ?`).run(SHARED_REMOTE_ID);
+  });
   test('the same remote id on two platforms yields two distinct canonical keys', () => {
     const whatsappKey = canonicalRoomKey('whatsapp', SHARED_REMOTE_ID);
     const discordKey = canonicalRoomKey('discord', SHARED_REMOTE_ID);
@@ -353,6 +357,10 @@ describe('room scoped dual reads', () => {
 });
 
 describe('provider send isolation', () => {
+  beforeEach(() => {
+    sqlite.query<never, [string]>(`DELETE FROM message_inbox WHERE chat_room_id = ?`).run(PUMP_ROOM);
+    sqlite.query<never, [string]>(`DELETE FROM message_outbox WHERE chat_room_id = ?`).run(PUMP_ROOM);
+  });
   test('outbox delivery reaches only the provider that owns the room', async () => {
     const whatsapp = createProvider('whatsapp');
     const discord = createProvider('discord');

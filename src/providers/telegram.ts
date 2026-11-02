@@ -516,7 +516,18 @@ export class TelegramProvider implements BotProvider {
     let rolesPromise: Promise<string[]> | null = null;
     const resolveRoles = (): Promise<string[]> => {
       // Cached per message: the agent calls this from several places.
-      rolesPromise ??= AuthService.resolveRoles(String(ctx.from?.id ?? ''), String(chatId), false, senderHandle(ctx), 'telegram');
+      rolesPromise ??= (async () => {
+        let platformAdmin = false;
+        if (isGroup) {
+          try {
+            const member = await (bot as GrammyBot).api.getChatMember(chatId, Number(ctx.from?.id));
+            platformAdmin = member?.status === 'creator' || member?.status === 'administrator';
+          } catch {
+            platformAdmin = false;
+          }
+        }
+        return AuthService.resolveRoles(String(ctx.from?.id ?? ''), String(chatId), platformAdmin, senderHandle(ctx), 'telegram');
+      })();
       return rolesPromise;
     };
 

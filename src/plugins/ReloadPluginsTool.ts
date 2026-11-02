@@ -23,6 +23,7 @@ export class ReloadPluginsTool extends BaseTool<ToolArgs> {
   readonly category = 'admin';
   readonly permissions = 'owner';
   override readonly optIn = true;
+  override readonly optInFlag = 'ENABLE_PLUGIN_RELOAD';
   override readonly mutability = 'admin' as const;
   override readonly cost = 5;
 

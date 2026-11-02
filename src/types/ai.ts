@@ -52,23 +52,6 @@ export interface TokenUsage {
   total_tokens: number;
 }
 
-/** A single choice in a chat completion response. */
-export interface ChatCompletionChoice {
-  index: number;
-  message: ChatCompletionMessage;
-  finish_reason: string | null;
-}
-
-/** Full chat completion API response (non-streaming). */
-export interface ChatCompletionResponse {
-  id: string;
-  object: string;
-  created: number;
-  model: string;
-  choices: ChatCompletionChoice[];
-  usage?: TokenUsage;
-}
-
 // ─── Streaming Response (SSE) ──────────────────────────────────────────────────
 
 /** Partial tool call fragment received during streaming. */

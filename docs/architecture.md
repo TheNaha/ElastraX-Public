@@ -32,7 +32,7 @@ The `handleIncomingMessage` function is the single entry point for all normalize
 For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
 
 ### 5. Canonical Room Identity
-The v8.1 migration stores a canonical `room:<platform>:<remoteRoomId>` key for every durable room reference. `ctx.chatId` remains the raw provider room ID for provider I/O; `ctx.roomKey` is used for rooms, history, reminders, subscriptions, inbox, and outbox. See [Room Identity Migration](./room-identity-migration.md).
+ElastraX v8.0.1 (migration `0022_room_keys`) stores a canonical `room:<platform>:<remoteRoomId>` key for every durable room reference. `ctx.chatId` remains the raw provider room ID for provider I/O; `ctx.roomKey` is used for rooms, history, reminders, subscriptions, inbox, and outbox. See [Room Identity Migration](./room-identity-migration.md).
 
 ### 6. Multi-Provider AI Router (`ModelRouter.ts`)
 The AI layer features a highly resilient Failover Router:
@@ -63,6 +63,22 @@ The AI layer features a highly resilient Failover Router:
 ## 11. Retention
 
 `src/db/retention.ts` deletes terminal inbox/outbox rows, terminal deliveries, sent reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention overlaps with AppRuntime's hourly outbox prune; deletes are idempotent.
+
+## 11a. Background tasks
+
+`src/runtime/AppRuntime.ts` owns the process-level timers. All of them are `unref()`'d so they do not keep the process alive on their own, and are cleared on shutdown. Intervals:
+
+- Rate-limiter prune: every 10 minutes (`RateLimiter.prune`).
+- Outbox worker: every 1 second when durable storage is present (`OutboxService.claim` + delivery, concurrency 10).
+- Outbox prune: every hour, removing terminal rows older than `MEDIA_RETENTION_HOURS`.
+- Inbox recovery: every hour, re-claiming stranded `received`/expired-lease rows (`InboxService.recoverStranded`, 24 h lease).
+- Flow-session TTL prune: every hour (`FlowHandler.pruneAllExpired`, 24 h local TTL).
+- Media cleanup: on startup and every `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h), deleting files older than `MEDIA_RETENTION_HOURS`.
+- Retention maintenance: on startup and every 24 h (`src/db/retention.ts`, dry-run unless `RETENTION_DRY_RUN=false`).
+- Startup parser-coverage scan: once, 5 s after boot, when `runStartupCoverageScan` is wired (non-fatal).
+- Scheduler and digest service: driven by their own `start()` loops.
+
+`MEDIA_CLEANUP_INTERVAL_MS`, `MEDIA_RETENTION_HOURS`, and `RETENTION_*` control these. Retention overlaps with the hourly outbox prune; deletes are idempotent.
 
 ## 12. Digests
 

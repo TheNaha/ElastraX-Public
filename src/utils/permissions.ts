@@ -77,20 +77,9 @@ async function resolvePlatformAdmin(
 
 export type { PlatformName } from '../core/MessageContext';
 import type { PlatformName } from '../core/MessageContext';
-export type NativeAdminResolver = (ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown; platform?: PlatformName }) => Promise<boolean>;
-
-const nativeAdminResolvers = new Map<string, NativeAdminResolver>();
 const groupMetadataCache = new Map<string, { data: WhatsAppGroupMetadata; expiresAt: number }>();
 
-export function registerNativeAdminResolver(platform: PlatformName, resolver: NativeAdminResolver): () => void {
-  const key = String(platform).trim().toLowerCase();
-  nativeAdminResolvers.set(key, resolver);
-  return () => {
-    if (nativeAdminResolvers.get(key) === resolver) nativeAdminResolvers.delete(key);
-  };
-}
 
-export const setNativeAdminResolver = registerNativeAdminResolver;
 
 export function invalidateNativeAdminCache(chatId?: string, platform?: PlatformName): void {
   // `chatId` and `platform` are distinct parameters; a chat id is never
@@ -110,44 +99,13 @@ export function invalidateNativeAdminCache(chatId?: string, platform?: PlatformN
   groupMetadataCache.clear();
 }
 
-export const invalidatePlatformAdminCache = invalidateNativeAdminCache;
-export const invalidateWhatsAppAdminCache = (chatId?: string) => invalidateNativeAdminCache(chatId, 'whatsapp');
-export const invalidateGroupAdminCache = invalidateNativeAdminCache;
 
-export function clearNativeAdminResolvers(): void {
-  nativeAdminResolvers.clear();
-  invalidateNativeAdminCache();
-}
-
-export async function isDiscordGroupAdmin(
-  ctx: { chatId: string; senderId: string; isGroup: boolean; member?: { permissions?: { has?: (permission: bigint | string) => boolean }; administrator?: boolean; roles?: { has?: (id: string) => boolean } }; permissionResolver?: (id: string) => Promise<boolean> | boolean },
-  resolver?: NativeAdminResolver,
-): Promise<boolean> {
-  if (!ctx.isGroup) return false;
-  if (resolver) {
-    try { return await resolver({ ...ctx, platform: 'discord' }); } catch (error: unknown) { logger.warn({ err: error, chatId: ctx.chatId }, 'Discord admin resolver failed'); return false; }
-  }
-  if (ctx.member?.administrator === true) return true;
-  if (ctx.member?.permissions?.has) {
-    try {
-      return ctx.member.permissions.has('Administrator') || ctx.member.permissions.has(0x2n);
-    } catch {
-      try { return ctx.member.permissions.has(BigInt(2)); } catch { return false; }
-    }
-  }
-  if (ctx.permissionResolver) return ctx.permissionResolver(ctx.senderId);
-  return false;
-}
 
 export async function isNativeGroupAdmin(
   platform: PlatformName,
   ctx: { chatId: string; senderId: string; isGroup: boolean; senderPn?: string; sock?: unknown },
 ): Promise<boolean> {
   if (!ctx.isGroup) return false;
-  const resolver = nativeAdminResolvers.get(String(platform).trim().toLowerCase());
-  if (resolver) {
-    try { return await resolver({ ...ctx, platform }); } catch (error: unknown) { logger.warn({ err: error, platform, chatId: ctx.chatId }, 'Native admin resolver failed'); return false; }
-  }
   if (platform === 'whatsapp') return isWhatsAppGroupAdmin(ctx.sock, ctx.chatId, ctx.senderId, ctx.senderPn);
   return false;
 }

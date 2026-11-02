@@ -2,7 +2,7 @@
 
 ElastraX includes a powerful registry of autonomous tools. These tools are exposed to the LLM via OpenAI's function calling API, but can also be manually invoked by users using slash commands (e.g., `/download`).
 
-The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loading essential tools by default, allowing the AI to use `find_tools` to dynamically load others on demand.
+The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`) optimizes LLM context usage by only loading essential tools by default, allowing the AI to use `find_tools` to dynamically load others on demand.
 
 ## Utility & Core Tools
 
@@ -57,3 +57,12 @@ The tool registry (`src/tools/index.ts`) optimizes LLM context usage by only loa
 | **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
 | **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/` (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
 | **Owner Admin** | `/broadcast`, `/leave` | Owner-only: broadcast to all chats / leave a group. |
+
+## Execution model
+
+- Tools extend `BaseTool` and declare `permissions`, `mutability` (`read`, `local-write`, `external-mutation`, `admin`), `cost`, `aliases`, and optional `triggerPatterns`.
+- `TOOL_LOADING_MODE` is `search` (default) or `all`. In `search` mode only always-loaded tools plus triggered ones are sent to the model; the rest are discoverable through `find_tools`.
+- Opt-in tools (`GameSearchTool`, `SoftwareSearchTool`, `SpeakTool`) are not registered at all unless their own flag (`ENABLE_GAME_SEARCH`, `ENABLE_SOFTWARE_SEARCH`, `TTS_API_KEY`) is set; their slash command then reads as an unknown command rather than advertising an undeliverable feature.
+- Mutating tools pass an admission check: a per-user/per-tool cost budget over 60 s (`TOOL_MUTATION_COST_LIMIT`, default 100) and per-user serialization of mutating calls.
+- Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`.
+- Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.

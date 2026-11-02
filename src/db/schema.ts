@@ -118,7 +118,7 @@ export const appKv = sqliteTable('app_kv', {
   updated_at: integer('updated_at', { mode: 'timestamp' }).notNull(),
 });
 
-export type AppKvRow = typeof appKv.$inferSelect;
+
 
 // V7.3: Database-backed Authentication State for WhatsApp (Baileys)
 export const waAuthState = sqliteTable('wa_auth_state', {
@@ -185,7 +185,7 @@ export const userRoles = sqliteTable('user_roles', {
   roleIdx: index('user_roles_role_idx').on(table.role),
 }));
 
-export type UserRole = typeof userRoles.$inferSelect;
+
 
 // V7.11: Per-role privilege quotas (env defaults + DB overrides)
 export const rolePrivileges = sqliteTable('role_privileges', {
@@ -201,7 +201,7 @@ export const rolePrivileges = sqliteTable('role_privileges', {
   maxDownloadMb: integer('max_download_mb'),
 });
 
-export type RolePrivilege = typeof rolePrivileges.$inferSelect;
+
 
 // V7.10: Persistent flow session state (survives container restarts)
 export const flowSessions = sqliteTable('flow_sessions', {
@@ -217,7 +217,7 @@ export const flowSessions = sqliteTable('flow_sessions', {
   roomKeyIdx: index('flow_sessions_room_key_idx').on(table.roomKey, table.updated_at),
 }));
 
-export type FlowSessionRow = typeof flowSessions.$inferSelect;
+
 
 // V7.12: User identity mapping (LID ↔ PN ↔ display name)
 // Persists the Baileys V7 LID-to-phone-number mapping in our own DB so that
@@ -242,7 +242,7 @@ export const userIdentities = sqliteTable('user_identities', {
   canonicalIdx: index('user_identities_canonical_idx').on(table.platform, table.canonicalId),
 }));
 
-export type UserIdentity = typeof userIdentities.$inferSelect;
+
 
 // V7.15: Extensible external service account bindings (Jellyfin, Seerr, etc.)
 export const serviceBindings = sqliteTable('service_bindings', {
@@ -269,7 +269,7 @@ export const serviceBindings = sqliteTable('service_bindings', {
   usernameIdx: index('service_bindings_username_idx').on(table.serviceType, table.externalUsername),
 }));
 
-export type ServiceBinding = typeof serviceBindings.$inferSelect;
+
 
 // V7.15: Notification routing — which rooms receive which service notifications
 export const notificationSubscriptions = sqliteTable('notification_subscriptions', {
@@ -298,7 +298,7 @@ export const notificationSubscriptions = sqliteTable('notification_subscriptions
     .where(sql`${table.roomKey} is not null and ${table.roomKey} <> ''`),
 }));
 
-export type NotificationSubscription = typeof notificationSubscriptions.$inferSelect;
+
 
 export const canonicalIdentities = sqliteTable('canonical_identities', {
   id: text('id').primaryKey(),
@@ -326,8 +326,8 @@ export const identityAliases = sqliteTable('identity_aliases', {
   canonicalIdx: index('identity_aliases_canonical_idx').on(table.canonicalId, table.lastSeenAt),
 }));
 
-export type CanonicalIdentity = typeof canonicalIdentities.$inferSelect;
-export type IdentityAlias = typeof identityAliases.$inferSelect;
+
+
 
 export const messageInbox = sqliteTable('message_inbox', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -362,7 +362,7 @@ export const messageInbox = sqliteTable('message_inbox', {
   roomKeyIdx: index('message_inbox_room_key_idx').on(table.roomKey, table.receivedAt),
 }));
 
-export type MessageInbox = typeof messageInbox.$inferSelect;
+
 
 export const messageOutbox = sqliteTable('message_outbox', {
   id: text('id').primaryKey(),
@@ -398,7 +398,7 @@ export const messageOutbox = sqliteTable('message_outbox', {
   roomKeyIdx: index('message_outbox_room_key_idx').on(table.roomKey, table.createdAt),
 }));
 
-export type MessageOutbox = typeof messageOutbox.$inferSelect;
+
 
 export const databaseLeases = sqliteTable('database_leases', {
   name: text('name').primaryKey(),
@@ -407,7 +407,7 @@ export const databaseLeases = sqliteTable('database_leases', {
   updatedAt: integer('updated_at').notNull(),
 });
 
-export type DatabaseLease = typeof databaseLeases.$inferSelect;
+
 
 // V8.1: Canonical room identity registry.
 // A room key is a deterministic, transparent string — `room:<platform>:<remoteRoomId>` —
@@ -435,8 +435,7 @@ export const roomKeys = sqliteTable('room_keys', {
   platformCreatedIdx: index('room_keys_platform_created_idx').on(table.platform, table.createdAt),
 }));
 
-export type RoomKeyRow = typeof roomKeys.$inferSelect;
-export type NewRoomKeyRow = typeof roomKeys.$inferInsert;
+
 
 // V8.1: Migration audit trail for ambiguous or unresolved room identity.
 // Rows are append-only evidence written by migration 0022 and by the read-only
@@ -465,8 +464,7 @@ export const roomKeyConflicts = sqliteTable('room_key_conflicts', {
   unresolvedIdx: index('room_key_conflicts_unresolved_idx').on(table.conflictType, table.resolvedAt),
 }));
 
-export type RoomKeyConflict = typeof roomKeyConflicts.$inferSelect;
-export type NewRoomKeyConflict = typeof roomKeyConflicts.$inferInsert;
+
 
 export const dbSchemaMeta = sqliteTable('db_schema_meta', {
   id: integer('id').primaryKey(),
@@ -478,4 +476,4 @@ export const dbSchemaMeta = sqliteTable('db_schema_meta', {
   singletonCheck: check('db_schema_meta_singleton_check', sql`${table.id} = 1`),
 }));
 
-export type DbSchemaMeta = typeof dbSchemaMeta.$inferSelect;
+
