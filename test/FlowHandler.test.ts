@@ -1,43 +1,11 @@
-import { expect, test, describe, beforeEach, afterAll, afterEach, mock } from 'bun:test';
+import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { CANCEL_COMMANDS } from '../src/core/constants';
 import { logger } from '../src/utils/logger';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { db } from '../src/db';
 import { eq, ne } from 'drizzle-orm';
 import { flowSessions } from '../src/db/schema';
-
-// Bun module mocks are process-wide, so this file installs a full real database
-// behind `../src/db` to stay isolated from (and harmless to) other test files.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-const db = database.db;
-
-// Imported dynamically so the `../src/db` mock above is already registered.
-const { FlowHandler, FlowVersionConflictError } = await import('../src/core/FlowHandler');
+import { FlowHandler, FlowVersionConflictError } from '../src/core/FlowHandler';
 
 // We avoid mock.module to prevent polluting other tests in the same run
 // Instead we spy on/replace methods on the imported objects/classes
@@ -280,10 +248,6 @@ describe('FlowHandler room binding and versioning', () => {
   afterEach(async () => {
     logger.warn = originalLoggerWarn;
     await db.delete(flowSessions).where(ne(flowSessions.id, '__no_such_session__')).run();
-  });
-
-  afterAll(() => {
-    database.cleanup();
   });
 
   test('a flow started in one room is not resumed in another room', async () => {
