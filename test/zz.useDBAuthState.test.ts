@@ -1,44 +1,12 @@
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { beforeEach, describe, expect, mock, test } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { withEnvironment } from './helpers/env';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { db } from '../src/db';
+import { useDBAuthState } from '../src/utils/useDBAuthState';
 import { waAuthState } from '../src/db/schema';
-
-// Own a real, migrated temp database behind the module mock so this file both
-// works regardless of what other files mock, and cannot break them if the mock
-// leaks: the replacement is a strict superset of the real module surface.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-afterAll(() => {
-  database.cleanup();
-});
 
 const fromObjectCalls: unknown[] = [];
 let initCredsCalls = 0;
@@ -65,11 +33,6 @@ mock.module('@whiskeysockets/baileys', () => ({
     },
   },
 }));
-
-// Imported dynamically so the `../src/db` mock above is already registered.
-const { useDBAuthState } = await import('../src/utils/useDBAuthState');
-
-const db = database.db;
 
 function makeLegacyDirectory(files: Record<string, string>): string {
   const directory = mkdtempSync(join(tmpdir(), 'elastrax-wa-auth-'));
