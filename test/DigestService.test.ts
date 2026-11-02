@@ -1,48 +1,15 @@
 import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
-
+import { db } from '../src/db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../src/db/schema';
-
-// Own a real, migrated temp database behind the module mock so this file both
-// works regardless of what other files mock, and cannot break them if the mock
-// leaks: the replacement is a strict superset of the real module surface.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-// Imported dynamically so the `../src/db` mock above is already registered.
-const {
+import {
   DigestService,
   dateKey,
   weekKey,
   fetchRoomTranscript,
-} = await import('../src/utils/DigestService');
+} from '../src/utils/DigestService';
 type DigestDeps = Parameters<typeof DigestService.runDailyDigests>[0];
 import { MediaService } from '../src/utils/MediaService';
 
-const db = database.db;
 const realCreateJellyfin = MediaService.createJellyfinClient;
 
 const MEDIA_CLIENT_STATE: {
@@ -142,7 +109,6 @@ beforeEach(async () => {
 });
 
 afterAll(() => {
-  database.cleanup();
   MediaService.createJellyfinClient = realCreateJellyfin;
 });
 
