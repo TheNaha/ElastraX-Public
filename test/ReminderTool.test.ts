@@ -1,8 +1,4 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 let mockReminderRows: any[] = [];
 let lastInsertedValues: any = null;
 let lastDeletedId: any = null;

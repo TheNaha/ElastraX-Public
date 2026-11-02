@@ -80,16 +80,6 @@ mock.module('../src/db', () => ({
   },
 }));
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { syncHistoricalDatabase } from '../src/utils/syncHistoricalDatabase';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

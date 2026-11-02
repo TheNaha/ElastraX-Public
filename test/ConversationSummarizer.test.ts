@@ -1,15 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
 
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    child: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }),
-  },
-}));
-
 import {
   ConversationSummaryService,
   summarizeHistory,

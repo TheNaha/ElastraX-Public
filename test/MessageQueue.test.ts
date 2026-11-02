@@ -1,8 +1,4 @@
-import { describe, test, expect, mock, afterEach } from 'bun:test';
-
-mock.module('../src/utils/logger', () => ({
-  logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) },
-}));
+import { describe, test, expect, afterEach } from 'bun:test';
 
 import { MessageQueue } from '../src/utils/MessageQueue';
 

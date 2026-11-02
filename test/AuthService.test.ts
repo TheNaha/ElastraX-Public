@@ -5,8 +5,6 @@ import { userRoles, rolePrivileges, userIdentities } from '../src/db/schema';
 import { AuthService, BUILTIN_ROLES } from '../src/utils/AuthService';
 import { IdentityService } from '../src/utils/IdentityService';
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-
 describe('AuthService', () => {
   let sqlite: Database;
   let db: ReturnType<typeof drizzle>;

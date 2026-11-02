@@ -1,10 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 let mockRoomRows: any[] = [];
 
 // ── Module mock backed by a real migrated temp database ──────────────────────

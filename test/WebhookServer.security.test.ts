@@ -2,17 +2,6 @@ import { describe, expect, mock, test } from 'bun:test';
 import { createHmac } from 'crypto';
 import { withEnvironment } from './helpers/env';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { verifyGitHubSignature } from '../src/webhooks/utils';
 import { WebhookServer } from '../src/webhookServer';
 import { APP_RELEASE_TAG, APP_VERSION } from '../src/config/version';

@@ -40,9 +40,6 @@ afterAll(() => {
   database.cleanup();
 });
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 const fromObjectCalls: unknown[] = [];
 let initCredsCalls = 0;
 

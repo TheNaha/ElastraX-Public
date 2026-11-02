@@ -11,12 +11,6 @@ import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { createTempDatabase } from './helpers/database';
 
-const _mockLogger = {
-  debug: () => {}, info: () => {}, warn: () => {}, error: () => {},
-  child: () => _mockLogger, trace: () => {},
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 // Follow the isolation pattern used by the other database suites: point the db
 // module at a private temp database *before* importing the code under test, so
 // these tests neither read nor wipe the shared fixture.

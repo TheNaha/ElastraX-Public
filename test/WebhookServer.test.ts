@@ -1,15 +1,4 @@
-import { describe, test, expect, mock } from 'bun:test';
-
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
+import { describe, test, expect } from 'bun:test';
 
 import { readRequestBodyWithLimit, resolveRoomIds, resolveWebhookMaxBodyBytes, resolveWebhookPort } from '../src/webhooks/utils';
 import { buildWebhookMessage } from '../src/webhooks/adapters';

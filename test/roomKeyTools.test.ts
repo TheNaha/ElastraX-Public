@@ -39,16 +39,6 @@ mock.module('../src/db', () => ({
   withImmediateTransaction,
 }));
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { chatRooms, messages, notificationSubscriptions } from '../src/db/schema';
 import type { MessageContext } from '../src/core/MessageContext';
 import { StatsTool } from '../src/tools/StatsTool';

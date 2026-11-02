@@ -1,11 +1,8 @@
-import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { eq } from 'drizzle-orm';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { canonicalIdentities, identityAliases, userIdentities, userRoles } from '../src/db/schema';
 import { IdentityService } from '../src/utils/IdentityService';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 describe('IdentityService', () => {
   let database: TempDatabase;

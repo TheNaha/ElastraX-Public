@@ -6,14 +6,10 @@
  * wrong would poison the quality signal with other people's 👍s, so the
  * attribution check is exercised from several angles.
  */
-import { describe, test, expect, beforeEach, mock } from 'bun:test';
+import { describe, test, expect, beforeEach } from 'bun:test';
 import { rmSync, readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { getTestWorkerPaths } from './helpers/paths';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 const { healthMetrics } = await import('../src/utils/HealthMetrics');
 const {
   classifyReaction,

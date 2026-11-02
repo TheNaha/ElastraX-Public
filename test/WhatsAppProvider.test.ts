@@ -1,22 +1,12 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
 import { IdentityService } from '../src/utils/IdentityService';
 import { AuthService as RoleService } from '../src/utils/AuthService';
 
 const mockIdentityUpsert = mock(async () => {});
 const mockSetRole = mock(async () => {});
 
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 import { WhatsAppProvider, whatsAppProviderDeps } from '../src/providers/whatsapp';
 
 type FakeWhatsAppListener = (payload: unknown) => unknown;

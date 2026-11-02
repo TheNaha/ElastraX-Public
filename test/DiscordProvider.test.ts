@@ -1,17 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { DiscordProvider, chunkDiscordText, discordProviderDeps } from '../src/providers/discord';
 import { mediaStorageDeps } from '../src/utils/MediaStorage';
 

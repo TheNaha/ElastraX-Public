@@ -1,9 +1,5 @@
 import { describe, test, expect, mock, beforeEach, afterEach } from 'bun:test';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 type MemRow = { id: string; content: string; embedding?: Buffer | null; embeddingModel?: string | null; created_at: Date };
 
 let memRows: MemRow[] = [];

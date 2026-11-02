@@ -7,10 +7,6 @@
  * "/task …" verbatim again, scheduled runs silently become unreadable text.
  */
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 type ReminderRow = {
   id: number;
   chatRoomId: string;

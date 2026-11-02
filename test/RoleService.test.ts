@@ -1,12 +1,9 @@
-import { describe, test, expect, spyOn, beforeEach, afterEach, mock } from 'bun:test';
+import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { userIdentities, userRoles, rolePrivileges } from '../src/db/schema';
 import { IdentityService } from '../src/utils/IdentityService';
 import { AuthService as RoleService, BUILTIN_ROLES } from '../src/utils/AuthService';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 describe('RoleService', () => {
   const savedOwnerJid = process.env.BOT_OWNER_JID;

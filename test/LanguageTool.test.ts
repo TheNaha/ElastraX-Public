@@ -51,17 +51,6 @@ mock.module('../src/db', () => ({
   sqlite: database.sqlite,
   withImmediateTransaction,
 }));
-
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
   chatId: 'chat-123',

@@ -24,22 +24,12 @@ import { afterAll, beforeEach, describe, expect, mock, spyOn, test, type Mock } 
 import { withEnvironment } from './helpers/env';
 import { createTempDatabase } from './helpers/database';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
 const tempDatabase = createTempDatabase();
 // A query suffix forces a second instance of the real module (a plain import
 // would be resolved against whatever mock another suite registered).
 const realDatabaseModulePath: string = '../src/db/index.ts?case=room-key-delivery';
 const realDatabaseModule = (await import(realDatabaseModulePath)) as typeof import('../src/db');
 
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 mock.module('../src/db', () => ({
   ...realDatabaseModule,
   db: tempDatabase.db,

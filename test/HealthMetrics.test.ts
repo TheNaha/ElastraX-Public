@@ -1,7 +1,4 @@
-import { describe, test, expect, mock } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
+import { describe, test, expect } from 'bun:test';
 
 import { HealthMetricsCollector } from '../src/utils/HealthMetrics';
 import type { MetricsSnapshot } from '../src/utils/HealthMetrics';

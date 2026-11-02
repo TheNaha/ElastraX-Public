@@ -1,8 +1,4 @@
 import { describe, test, expect, mock, afterEach, beforeEach, spyOn } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 let dueReminders: Array<{
   id: number;
   chatRoomId: string;

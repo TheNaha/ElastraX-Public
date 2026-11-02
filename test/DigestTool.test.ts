@@ -1,10 +1,6 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { MessageContext } from '../src/core/MessageContext';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 // Route by REAL table identity — no schema mock (schema.ts is side-effect-free).
 import { chatRooms as chatRoomsTable } from '../src/db/schema';
 let roomRow: { language: string } | undefined = { language: 'en' };

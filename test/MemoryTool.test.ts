@@ -33,9 +33,6 @@ mock.module('../src/db', () => ({
   withImmediateTransaction,
 }));
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 let configEnabled = true;
 let dupResult: { id: string; content: string; similarity: number } | null = null;
 let embedCalls: string[] = [];

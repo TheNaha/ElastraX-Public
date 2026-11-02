@@ -2,9 +2,6 @@ import { expect, test, describe, mock } from 'bun:test';
 import { KnowledgeTool } from '../src/tools/KnowledgeTool';
 import type { MessageContext } from '../src/core/MessageContext';
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
   chatId: 'chat-1',

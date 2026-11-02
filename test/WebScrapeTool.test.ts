@@ -2,9 +2,6 @@ import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 import { WebScrapeTool } from '../src/tools/WebScrapeTool';
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 const createMockCtx = (): MessageContext => ({
   platform: 'whatsapp',
   chatId: 'chat-1',

@@ -1,9 +1,6 @@
 import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../src/db/schema';
 
 // Own a real, migrated temp database behind the module mock so this file both

@@ -2,17 +2,6 @@ import { describe, test, expect, mock, afterEach } from 'bun:test';
 import * as path from 'path';
 import { withEnvironment } from './helpers/env';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { dumpFixtures, resolveFixtureDir, runStartupCoverageScan, stripFixtureBlobs } from '../src/runtime/startupDiagnostics';
 
 type DiagnosticsDeps = NonNullable<Parameters<typeof dumpFixtures>[1]>;
