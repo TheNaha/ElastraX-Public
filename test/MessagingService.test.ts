@@ -1,55 +1,11 @@
-import { describe, expect, test, beforeEach, mock } from 'bun:test';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { describe, expect, test, beforeEach } from 'bun:test';
 import * as schema from '../src/db/schema';
 import { eq } from 'drizzle-orm';
+import { db } from '../src/db';
+import { OutboxService } from '../src/messaging/OutboxService';
+import { InboxService } from '../src/messaging/InboxService';
 
 const { messageOutbox, messageInbox } = schema;
-
-// Bun module mocks are process-wide, so this file installs a full real database
-// behind `../src/db` to stay isolated from (and harmless to) other test files.
-const database: TempDatabase = createTempDatabase();
-database.sqlite.exec('PRAGMA journal_mode = WAL');
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as OutboxService.prune rely on it.
-function withImmediateTransaction<T>(
-  sqlite: TempDatabase['sqlite'],
-  operation: () => T,
-): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-  afterMigrationCallbacks: [],
-  getDefaultDatabase: () => ({
-    sqlite: database.sqlite,
-    db: database.db,
-    path: database.path,
-    close: () => {},
-    checkpoint: () => {},
-  }),
-}));
-
-// Imported dynamically so the `../src/db` mock above is already registered.
-const { OutboxService } = await import('../src/messaging/OutboxService');
-const { InboxService } = await import('../src/messaging/InboxService');
-
-const db = database.db;
 
 const NOW = Date.now();
 const OLD_TS = NOW - 200_000;
