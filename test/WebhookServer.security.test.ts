@@ -55,7 +55,7 @@ async function withServer(
     try {
       await callback(server, `http://127.0.0.1:${portOf(server)}`);
     } finally {
-      server.stop();
+      await server.stop();
     }
   });
 }
