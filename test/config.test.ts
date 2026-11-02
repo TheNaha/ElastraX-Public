@@ -1,19 +1,10 @@
-import { describe, expect, test, mock, beforeEach } from "bun:test";
+import { describe, expect, test, mock, beforeEach, afterEach } from "bun:test";
+import { logger } from "../src/utils/logger";
 
-// Mock the logger to verify calls and suppress output
-const mockLoggerError = mock(() => {});
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: mockLoggerError,
-  child: () => _mockLogger,
-};
-mock.module("../src/utils/logger", () => ({ logger: _mockLogger }));
-
-// Import dynamically to ensure mock is applied
 const { validateEnv } = await import("../src/config/env");
+
+const mockLoggerError = mock(() => {});
+const originalError = logger.error;
 
 const baseValidEnv = {
   AI_API_KEY: "secret-key",
@@ -24,6 +15,11 @@ const baseValidEnv = {
 describe("Config Validation", () => {
   beforeEach(() => {
     mockLoggerError.mockClear();
+    logger.error = mockLoggerError;
+  });
+
+  afterEach(() => {
+    logger.error = originalError;
   });
 
   test("should pass with valid environment variables", () => {

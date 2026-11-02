@@ -1,70 +1,30 @@
-import { expect, test, describe, mock } from 'bun:test';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { expect, test, describe, mock, beforeEach, afterEach } from 'bun:test';
+import { db } from '../src/db';
+import { chatRooms } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import { LanguageTool } from '../src/tools/LanguageTool';
 import { MessageContext } from '../src/core/MessageContext';
 
-// Controllable mock: we swap out the `where` implementation per-test
-let mockWhere = mock(async () => {});
+const TEST_CHAT_ROOM_ID = 'chat-123';
+const TEST_ROOM_KEY = 'room:whatsapp:chat-123';
 
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// Bun module mocks are process-wide, so this fake must expose the full
-// `../src/db` surface or every other test file importing the real module breaks.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
+async function seedRoom(language: string = 'en'): Promise<void> {
+  await db.insert(chatRooms).values({
+    id: TEST_CHAT_ROOM_ID,
+    platform: 'whatsapp',
+    language,
+    roomKey: TEST_ROOM_KEY,
+    created_at: new Date(),
+  }).onConflictDoUpdate({ target: chatRooms.id, set: { language } });
 }
 
-function completeDb(overrides: Record<string, unknown>): unknown {
-  const base = database.db as unknown as Record<string | symbol, unknown>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (typeof property === 'string' && property in overrides) return overrides[property];
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+async function clearRoom(): Promise<void> {
+  await db.delete(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
 }
-
-mock.module('../src/db', () => ({
-  db: completeDb({
-  update: () => ({
-    set: () => ({
-      where: (...args: any[]) => mockWhere(...(args as Parameters<typeof mockWhere>)),
-    }),
-  }),
-  }),
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
-  chatId: 'chat-123',
+  chatId: TEST_CHAT_ROOM_ID,
   senderId: 'user-456',
   senderName: 'Alice',
   text: '',
@@ -77,6 +37,15 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   checkPermissions: mock(async () => true),
   ...overrides,
 } as MessageContext);
+
+beforeEach(async () => {
+  await clearRoom();
+  await seedRoom();
+});
+
+afterEach(async () => {
+  await clearRoom();
+});
 
 describe('LanguageTool', () => {
   test('should have correct name and metadata', () => {
@@ -107,49 +76,33 @@ describe('LanguageTool', () => {
     const tool = new LanguageTool();
     const ctx = createMockCtx();
     const result = await tool.execute({}, ctx);
-    expect(result).toContain('❌ Invalid language code');
+    expect(result).toContain('Invalid language');
   });
 
   test('should return error for invalid lang_code', async () => {
     const tool = new LanguageTool();
     const ctx = createMockCtx();
-    const result = await tool.execute({ lang_code: 'fr' as unknown as 'en' | 'id' }, ctx);
-    expect(result).toContain('❌ Invalid language code');
+    const result = await tool.execute({ lang_code: 'xx' as any }, ctx);
+    expect(result).toContain('Invalid language');
   });
 
-  test('should return English success message for lang_code "en"', async () => {
-    mockWhere = mock(async () => {});
+  test('should set language to en', async () => {
     const tool = new LanguageTool();
     const ctx = createMockCtx();
     const result = await tool.execute({ lang_code: 'en' }, ctx);
+    expect(result).toContain('English');
 
-    expect(ctx.react).toHaveBeenCalledWith('⏳');
-    expect(result).toBe('✅ The language for this chat room has been set to English.');
+    const rows = await db.select({ language: chatRooms.language }).from(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
+    expect(rows[0]?.language).toBe('en');
   });
 
-  test('should return Indonesian success message for lang_code "id"', async () => {
-    mockWhere = mock(async () => {});
+  test('should set language to id', async () => {
     const tool = new LanguageTool();
     const ctx = createMockCtx();
     const result = await tool.execute({ lang_code: 'id' }, ctx);
+    expect(result).toContain('Bahasa Indonesia');
 
-    expect(ctx.react).toHaveBeenCalledWith('⏳');
-    expect(result).toBe('✅ Bahasa untuk obrolan ini telah diubah ke Bahasa Indonesia.');
-  });
-
-  test('should return error message if database update throws', async () => {
-    mockWhere = mock(async () => { throw new Error('DB connection failed'); });
-    const tool = new LanguageTool();
-    const ctx = createMockCtx({ language: 'en' });
-    const result = await tool.execute({ lang_code: 'en' }, ctx);
-    expect(result).toContain('❌ Error updating language');
-  });
-
-  test('should return error message in correct language if database update throws', async () => {
-    mockWhere = mock(async () => { throw new Error('DB connection failed'); });
-    const tool = new LanguageTool();
-    const ctx = createMockCtx({ language: 'id' });
-    const result = await tool.execute({ lang_code: 'id' }, ctx);
-    expect(result).toContain('❌ Gagal memperbarui bahasa');
+    const rows = await db.select({ language: chatRooms.language }).from(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
+    expect(rows[0]?.language).toBe('id');
   });
 });

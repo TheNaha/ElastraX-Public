@@ -1,8 +1,4 @@
-import { afterEach, beforeEach, describe, test, expect, mock } from 'bun:test';
-
-mock.module('../src/utils/logger', () => ({
-  logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => ({ debug: () => {}, info: () => {}, warn: () => {}, error: () => {} }) },
-}));
+import { afterEach, beforeEach, describe, test, expect } from 'bun:test';
 
 import { RateLimiter } from '../src/utils/RateLimiter';
 

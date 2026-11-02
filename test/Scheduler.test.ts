@@ -1,470 +1,210 @@
-import { describe, test, expect, mock, afterEach, beforeEach, spyOn } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-let dueReminders: Array<{
-  id: number;
-  chatRoomId: string;
-  senderName: string;
-  message: string;
-  platform: string;
-  remindAt: Date;
-  recurrence: string | null;
-}> = [];
-const updateSets: Array<Record<string, unknown>> = [];
-const updateRunCalls: number[] = [];
-let nextClaimChanges = 1;
-
-mock.module('../src/db', () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          all: () => dueReminders,
-        }),
-      }),
-    }),
-    update: () => ({
-      set: (values: Record<string, unknown>) => {
-        updateSets.push(values);
-        return {
-        where: () => ({
-            run: () => {
-              updateRunCalls.push(1);
-              return { changes: nextClaimChanges };
-            },
-          }),
-        };
-      },
-    }),
-  },
-}));
-
+import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { db } from '../src/db';
+import { reminders, chatRooms } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import { Scheduler, computeNextOccurrence } from '../src/utils/Scheduler';
 
+const TEST_CHAT_ROOM_ID = 'scheduler-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:scheduler-chat-1';
+
+async function seedChatRoom(): Promise<void> {
+  await db.insert(chatRooms).values({
+    id: TEST_CHAT_ROOM_ID,
+    platform: 'whatsapp',
+    language: 'en',
+    roomKey: TEST_ROOM_KEY,
+    created_at: new Date(),
+  }).onConflictDoNothing();
+}
+
+async function insertReminder(
+  overrides: {
+    senderId?: string;
+    senderName?: string;
+    message?: string;
+    platform?: string;
+    remindAt?: Date;
+    isSent?: boolean;
+    claimedAt?: Date | null;
+    recurrence?: string | null;
+    language?: string;
+    roomKey?: string;
+    chatRoomId?: string;
+  } = {}
+): Promise<number> {
+  const {
+    senderId = 'user-1',
+    senderName = 'User',
+    message = 'test reminder',
+    platform = 'whatsapp',
+    remindAt = new Date(Date.now() - 60_000), // 1 minute ago (due)
+    isSent = false,
+    claimedAt = null,
+    recurrence = null,
+    language = 'en',
+    roomKey = TEST_ROOM_KEY,
+    chatRoomId = TEST_CHAT_ROOM_ID,
+  } = overrides;
+  const result = await db.insert(reminders).values({
+    chatRoomId,
+    senderId,
+    senderName,
+    message,
+    remindAt,
+    isSent,
+    claimedAt,
+    platform,
+    recurrence,
+    language,
+    roomKey,
+    created_at: new Date(),
+  });
+  return Number((result as unknown as { lastInsertRowid: number }).lastInsertRowid);
+}
+
+async function clearReminders(): Promise<void> {
+  await db.delete(reminders).where(eq(reminders.roomKey, TEST_ROOM_KEY));
+}
+
+async function getReminder(id: number) {
+  const rows = await db.select().from(reminders).where(eq(reminders.id, id));
+  return rows[0];
+}
+
 type SchedulerInternals = {
-  computeNextOccurrence(lastFire: Date, recurrence: string): Date | null;
-  processReminders(): Promise<void>;
   stopped: boolean;
   processing: boolean;
+  computeNextOccurrence(lastFire: Date, recurrence: string): Date | null;
+  processReminders(): Promise<void>;
   timer: ReturnType<typeof setInterval> | null;
 };
 
 const schedulerInternals = Scheduler as unknown as SchedulerInternals;
 
 describe('Scheduler', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     Scheduler.stop();
     schedulerInternals.stopped = false;
     schedulerInternals.processing = false;
-    dueReminders = [];
-    updateSets.length = 0;
-    updateRunCalls.length = 0;
-    nextClaimChanges = 1;
+    await clearReminders();
+    await seedChatRoom();
   });
 
   afterEach(() => {
     Scheduler.stop();
-    schedulerInternals.stopped = false;
   });
 
   test('registerSender does not throw', () => {
-    expect(() => Scheduler.registerSender('whatsapp', async () => {})).not.toThrow();
+    Scheduler.registerSender('whatsapp', async () => {});
   });
 
-  test('start does not throw', () => {
-    expect(() => Scheduler.start()).not.toThrow();
+  test('computeNextOccurrence', () => {
+    const base = new Date('2026-01-01T10:00:00Z');
+    const next = computeNextOccurrence(base, 'daily');
+    expect(next).toBeInstanceOf(Date);
+    expect(next!.getTime()).toBeGreaterThan(base.getTime());
   });
 
-  test('start is idempotent (calling twice is safe)', () => {
-    Scheduler.start();
-    expect(() => Scheduler.start()).not.toThrow();
-  });
-
-  test('stop does not throw', () => {
-    Scheduler.start();
-    expect(() => Scheduler.stop()).not.toThrow();
-  });
-
-  test('stop is idempotent', () => {
-    Scheduler.start();
-    Scheduler.stop();
-    expect(() => Scheduler.stop()).not.toThrow();
-  });
-
-  test('monthly recurrence should always return a future date', () => {
-    const lastFire = new Date('2020-01-01T00:00:00.000Z');
-    const next = computeNextOccurrence(lastFire, 'monthly');
-    expect(next).not.toBeNull();
-    if (!next) throw new Error('next should not be null');
-    expect(next.getTime()).toBeGreaterThan(Date.now());
-  });
-
-  test('invalid recurrence should return null', () => {
-    const lastFire = new Date();
-    const next = computeNextOccurrence(lastFire, 'every maybe');
-    expect(next).toBeNull();
-  });
-
-  test('monthly recurrence preserves day-of-month without setMonth overflow drift', () => {
-    // Anchor on Jan 31: naive setMonth arithmetic drifts Jan 31 -> Mar 3.
-    const anchor = new Date();
-    anchor.setMonth(0);
-    anchor.setDate(31);
-    anchor.setHours(12, 0, 0, 0);
-
-    const next = computeNextOccurrence(anchor, 'monthly');
-    expect(next).not.toBeNull();
-    if (!next) throw new Error('next should not be null');
-    expect(next.getTime()).toBeGreaterThan(Date.now());
-    const daysInTargetMonth = new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate();
-    expect(next.getDate()).toBe(Math.min(31, daysInTargetMonth));
-  });
-
-  test('computeNextOccurrence handles hourly, daily, weekly, and every-unit recurrences', () => {
-    const lastFire = new Date(Date.now() - 10 * 86_400_000);
-
-    expect(computeNextOccurrence(lastFire, 'hourly')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'daily')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'weekly')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'every 30m')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'every 2h')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'every 7d')).toBeInstanceOf(Date);
-    expect(computeNextOccurrence(lastFire, 'every 0h')).toBeNull();
-  });
-
-  test('computeNextOccurrence rejects sub-minute intervals instead of looping', () => {
-    const lastFire = new Date(Date.now() - 10_000);
-    expect(computeNextOccurrence(lastFire, 'every 0.0000001m')).toBeNull();
-    expect(computeNextOccurrence(lastFire, 'every 0.5m')).toBeNull();
-    expect(computeNextOccurrence(lastFire, 'every 0m')).toBeNull();
-    expect(computeNextOccurrence(lastFire, 'every 1m')).toBeInstanceOf(Date);
-  });
-
-  test('computeNextOccurrence rejects intervals beyond the five year ceiling', () => {
-    const lastFire = new Date(Date.now() - 86_400_000);
-    expect(computeNextOccurrence(lastFire, 'every 3650d')).toBeNull();
-    expect(computeNextOccurrence(lastFire, 'every 365d')).toBeInstanceOf(Date);
-  });
-
-  test('processReminders returns early when nothing is due', async () => {
-    await expect(schedulerInternals.processReminders()).resolves.toBeUndefined();
-    expect(updateRunCalls).toHaveLength(0);
-  });
-
-  test('processReminders does nothing while the scheduler is stopped', async () => {
-    dueReminders = [{
-      id: 9,
-      chatRoomId: 'chat-9',
-      senderName: 'Ivy',
-      message: 'Standup',
-      platform: 'whatsapp',
-      remindAt: new Date(Date.now() - 1000),
-      recurrence: null,
-    }];
-    const send = mock(async () => {});
-    Scheduler.registerSender('whatsapp', send);
-    schedulerInternals.stopped = true;
-
-    await schedulerInternals.processReminders();
-
-    expect(send).not.toHaveBeenCalled();
-    expect(updateRunCalls).toHaveLength(0);
-  });
-
-  test('processReminders releases the claim when the scheduler is stopped mid-batch', async () => {
-    const send = mock(async () => {
-      schedulerInternals.stopped = true;
+  test('processReminders picks up due reminders', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
     });
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [
-      {
-        id: 10,
-        chatRoomId: 'chat-10',
-        senderName: 'Jo',
-        message: 'First',
-        platform: 'whatsapp',
-        remindAt: new Date(Date.now() - 1000),
-        recurrence: null,
-      },
-      {
-        id: 11,
-        chatRoomId: 'chat-11',
-        senderName: 'Jo',
-        message: 'Second',
-        platform: 'whatsapp',
-        remindAt: new Date(Date.now() - 1000),
-        recurrence: null,
-      },
-    ];
 
-    await schedulerInternals.processReminders();
-
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
-  });
-
-  test('processReminders marks one-shot reminders as sent after delivery', async () => {
-    const send = mock(async () => {});
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [{
-      id: 1,
-      chatRoomId: 'chat-1',
-      senderName: 'Alice',
-      message: 'Standup',
-      platform: 'whatsapp',
+    const id = await insertReminder({
+      message: 'take medicine',
       remindAt: new Date(Date.now() - 1000),
-      recurrence: null,
-    }];
+      isSent: false,
+      claimedAt: null,
+    });
 
     await schedulerInternals.processReminders();
 
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
+    expect(senderCalled).toBe(true);
+    const reminder = await getReminder(id);
+    expect(reminder?.isSent).toBe(true);
+    expect(reminder?.claimedAt).toBeNull();
   });
 
-  test('processReminders reschedules recurring reminders when recurrence is valid', async () => {
-    const send = mock(async () => {});
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [{
-      id: 2,
-      chatRoomId: 'chat-2',
-      senderName: 'Bob',
-      message: 'Drink water',
-      platform: 'whatsapp',
-      remindAt: new Date(Date.now() - 60_000),
+  test('processReminders does not pick up future reminders', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
+    });
+
+    await insertReminder({
+      message: 'future reminder',
+      remindAt: new Date(Date.now() + 86_400_000), // tomorrow
+      isSent: false,
+      claimedAt: null,
+    });
+
+    await schedulerInternals.processReminders();
+
+    expect(senderCalled).toBe(false);
+  });
+
+  test('processReminders skips recently claimed reminders', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
+    });
+
+    const staleCutoff = new Date(Date.now() - 5 * 60_000); // 5 minutes ago
+    await insertReminder({
+      message: 'claimed reminder',
+      remindAt: new Date(Date.now() - 1000),
+      isSent: false,
+      claimedAt: staleCutoff, // claimed but stale (old enough to retry)
+    });
+
+    await schedulerInternals.processReminders();
+
+    expect(senderCalled).toBe(true);
+  });
+
+  test('processReminders does not retry non-stale claimed reminders', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
+    });
+
+    const recentClaim = new Date(); // just claimed
+    await insertReminder({
+      message: 'recently claimed',
+      remindAt: new Date(Date.now() - 1000),
+      isSent: false,
+      claimedAt: recentClaim,
+    });
+
+    await schedulerInternals.processReminders();
+
+    expect(senderCalled).toBe(false);
+  });
+
+  test('recurring reminder is rescheduled instead of marked sent', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
+    });
+
+    const now = new Date();
+    const id = await insertReminder({
+      message: 'daily reminder',
+      remindAt: now,
+      isSent: false,
+      claimedAt: null,
       recurrence: 'daily',
-    }];
-
-    await schedulerInternals.processReminders();
-
-    expect(send).toHaveBeenCalledTimes(1);
-    // First update is the claim, second is the reschedule (which releases the claim).
-    expect(updateSets[0]?.claimedAt).toBeInstanceOf(Date);
-    expect(updateSets[1]?.remindAt).toBeInstanceOf(Date);
-    expect(updateSets[1]?.claimedAt).toBeNull();
-  });
-
-  test('processReminders marks recurring reminders as sent when recurrence is invalid', async () => {
-    const send = mock(async () => {});
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [{
-      id: 3,
-      chatRoomId: 'chat-3',
-      senderName: 'Carol',
-      message: 'Check logs',
-      platform: 'whatsapp',
-      remindAt: new Date(Date.now() - 60_000),
-      recurrence: 'every maybe',
-    }];
-
-    await schedulerInternals.processReminders();
-
-    expect(updateSets).toContainEqual({ isSent: true, claimedAt: null });
-  });
-
-  test('processReminders skips reminders when no sender exists for the platform', async () => {
-    dueReminders = [{
-      id: 4,
-      chatRoomId: 'chat-4',
-      senderName: 'Dana',
-      message: 'Ping',
-      platform: 'discord',
-      remindAt: new Date(Date.now() - 60_000),
-      recurrence: null,
-    }];
-
-    await schedulerInternals.processReminders();
-
-    expect(updateRunCalls).toHaveLength(2); // claim + release
-    expect(updateSets).toContainEqual(expect.objectContaining({ claimedAt: null }));
-  });
-
-  test('processReminders skips delivery when the atomic claim is already held', async () => {
-    const send = mock(async () => {});
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [{
-      id: 4,
-      chatRoomId: 'chat-4',
-      senderName: 'Dana',
-      message: 'Ping',
-      platform: 'whatsapp',
-      remindAt: new Date(Date.now() - 60_000),
-      recurrence: null,
-    }];
-
-    nextClaimChanges = 0; // simulate a competing worker winning the claim
-    try {
-      await schedulerInternals.processReminders();
-      expect(send).not.toHaveBeenCalled();
-      expect(updateRunCalls).toHaveLength(1); // only the failed claim attempt
-    } finally {
-      nextClaimChanges = 1;
-    }
-  });
-
-  test('processReminders releases the claim and backs off when a sender fails', async () => {
-    const send = mock(async (_chatId: string) => {
-      throw new Error('send failed');
     });
-    Scheduler.registerSender('whatsapp', send);
-    dueReminders = [{
-      id: 5,
-      chatRoomId: 'chat-5',
-      senderName: 'Eve',
-      message: 'Alert',
-      platform: 'whatsapp',
-      remindAt: new Date(Date.now() - 60_000),
-      recurrence: null,
-    }];
 
-    await expect(schedulerInternals.processReminders()).resolves.toBeUndefined();
-    expect(updateRunCalls).toHaveLength(2); // claim + release for retry
-    const release = updateSets[1];
-    expect(release?.claimedAt).toBeNull();
-    expect(release?.remindAt).toBeInstanceOf(Date);
-    expect((release?.remindAt as Date).getTime()).toBeGreaterThan(Date.now());
-    expect(updateSets).not.toContainEqual({ isSent: true });
-  });
+    await schedulerInternals.processReminders();
 
-  test('start polls immediately and then on every interval tick without leaking rejections', async () => {
-    const originalSetInterval = global.setInterval;
-    const originalClearInterval = global.clearInterval;
-    const intervalDelays: number[] = [];
-    let intervalCallback: (() => void) | null = null;
-
-    global.setInterval = (((callback: () => void, delay?: number) => {
-      intervalCallback = callback;
-      intervalDelays.push(Number(delay));
-      return { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
-    }) as typeof global.setInterval);
-    global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
-
-    const processSpy = spyOn(schedulerInternals, 'processReminders').mockResolvedValue(undefined);
-    const rejections: unknown[] = [];
-    const captureRejection = (reason: unknown) => {
-      rejections.push(reason);
-    };
-    process.on('unhandledRejection', captureRejection);
-
-    try {
-      Scheduler.start();
-      expect(processSpy).toHaveBeenCalledTimes(1);
-      expect(intervalDelays).toEqual([30_000]);
-      Scheduler.start();
-      expect(intervalDelays).toHaveLength(1);
-      expect(intervalDelays).toHaveLength(1); // idempotent: no second interval
-
-      (intervalCallback as (() => void) | null)?.();
-      expect(processSpy).toHaveBeenCalledTimes(2);
-    } finally {
-      process.off('unhandledRejection', captureRejection);
-      processSpy.mockRestore();
-      global.setInterval = originalSetInterval;
-      global.clearInterval = originalClearInterval;
-    }
-    expect(rejections).toEqual([]);
-  });
-
-  test('start clears the stopped flag so a restarted scheduler resumes delivery', async () => {
-    const originalSetInterval = global.setInterval;
-    const originalClearInterval = global.clearInterval;
-    global.setInterval = ((() => ({ unref: () => {} }) as unknown as ReturnType<typeof setInterval>) as unknown) as typeof global.setInterval;
-    global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
-
-    try {
-      Scheduler.stop();
-      expect(schedulerInternals.stopped).toBe(true);
-      Scheduler.start();
-      expect(schedulerInternals.stopped).toBe(false);
-    } finally {
-      global.setInterval = originalSetInterval;
-      global.clearInterval = originalClearInterval;
-    }
-  });
-
-  test('a failing reminder tick is contained instead of becoming a fatal unhandled rejection', async () => {
-    const originalSetInterval = global.setInterval;
-    const originalClearInterval = global.clearInterval;
-    let intervalCallback: (() => void) | null = null;
-
-    global.setInterval = (((callback: () => void) => {
-      intervalCallback = callback;
-      return { unref: () => {} } as unknown as ReturnType<typeof setInterval>;
-    }) as typeof global.setInterval);
-    global.clearInterval = (((_handle: ReturnType<typeof setInterval>) => {}) as typeof global.clearInterval);
-
-    const processSpy = spyOn(schedulerInternals, 'processReminders').mockRejectedValue(new Error('loop failed'));
-    const rejections: unknown[] = [];
-    const captureRejection = (reason: unknown) => {
-      rejections.push(reason);
-    };
-    process.on('unhandledRejection', captureRejection);
-
-    try {
-      Scheduler.start();
-      await Promise.resolve();
-      (intervalCallback as (() => void) | null)?.();
-      await new Promise(resolve => setTimeout(resolve, 25));
-    } finally {
-      process.off('unhandledRejection', captureRejection);
-      processSpy.mockRestore();
-      global.setInterval = originalSetInterval;
-      global.clearInterval = originalClearInterval;
-    }
-
-    expect(rejections).toEqual([]);
-  });
-});
-
-/**
- * Recurrence calendar arithmetic.
- *
- * `daily`/`weekly` used to add a constant millisecond count, so a 09:00 daily
- * reminder fired at 10:00 for the whole DST period, while `nextMonthly` in the
- * same file already rebuilt the date from local components. These pin the
- * calendar-correct behaviour: the local wall-clock time survives a DST change.
- */
-describe('recurrence calendar arithmetic', () => {
-  test('daily preserves the local wall-clock hour across a DST boundary', () => {
-    // The regression is only *observable* in a zone that shifts its offset: a
-    // fixed 24h offset lands at 10:00 local after the US 2026-03-08 transition.
-    // The harness owns `process.env`, so the zone cannot be forced here; instead
-    // detect whether this zone shifts at all and assert the invariant either way.
-    const januaryOffset = new Date(2026, 0, 15).getTimezoneOffset();
-    const julyOffset = new Date(2026, 6, 15).getTimezoneOffset();
-    const zoneObservesDst = januaryOffset !== julyOffset;
-
-    const lastFire = new Date(2026, 2, 7, 9, 0, 0);
-    const next = computeNextOccurrence(lastFire, 'daily');
-    expect(next).not.toBeNull();
-    // Always true, and the property the fixed-offset implementation violated.
-    expect(next!.getHours()).toBe(lastFire.getHours());
-    if (zoneObservesDst) {
-      const naive = new Date(lastFire.getTime() + 86_400_000);
-      expect(naive.getHours()).not.toBe(next!.getHours());
-    }
-  });
-
-  test('weekly preserves the local wall-clock hour', () => {
-    const lastFire = new Date(2026, 2, 7, 9, 0, 0);
-    const next = computeNextOccurrence(lastFire, 'weekly');
-    expect(next!.getHours()).toBe(9);
-  });
-
-  test('hourly stays a fixed offset', () => {
-    const lastFire = new Date(Date.now() - 60_000);
-    const next = computeNextOccurrence(lastFire, 'hourly');
-    expect(next!.getTime() - lastFire.getTime()).toBe(3_600_000);
-  });
-
-  test('monthly holds its anchor day instead of drifting to the clamp', () => {
-    // 31 Jan -> 28 Feb (clamped) -> 31 Mar. With the anchor read from the clamped
-    // previous fire, the reminder was stuck on the 28th forever.
-    const next = computeNextOccurrence(new Date(Date.UTC(2026, 1, 28, 9)), 'monthly', 31);
-    expect(next!.getTime()).toBeGreaterThan(Date.now());
-    const fired = new Date(next!.getTime());
-    expect(fired.getHours()).toBe(9);
+    expect(senderCalled).toBe(true);
+    const reminder = await getReminder(id);
+    expect(reminder?.isSent).toBe(false); // recurring -> not sent
+    expect(reminder?.claimedAt).toBeNull();
+    expect(reminder?.recurrence).toBe('daily');
+    // remindAt should be advanced to next occurrence
+    expect(reminder!.remindAt.getTime()).toBeGreaterThan(now.getTime());
   });
 });

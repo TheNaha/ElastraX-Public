@@ -1,17 +1,6 @@
 import { describe, expect, mock, spyOn, test } from 'bun:test';
 import { withEnvironment } from './helpers/env';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 import { WebhookServer } from '../src/webhookServer';
 import { ServiceBindingService } from '../src/utils/ServiceBindingService';
 import { NotificationSubscriptionService } from '../src/utils/NotificationSubscriptionService';

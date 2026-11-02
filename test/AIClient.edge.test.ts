@@ -17,16 +17,6 @@ function assignFetch(
   global.fetch = mock(handler) as unknown as typeof global.fetch;
 }
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 describe('AIClient – edge cases', () => {
   const originalFetch = global.fetch;
   const originalEnv = process.env;

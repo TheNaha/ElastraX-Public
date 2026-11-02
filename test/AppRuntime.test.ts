@@ -7,17 +7,6 @@ import { AppRuntime, resolveMediaCleanupIntervalMs } from '../src/runtime/AppRun
 import { canonicalRoomKey } from '../src/messaging/roomKeys';
 import { healthMetrics } from '../src/utils/HealthMetrics';
 
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
 type FakeTimerHandle = { id: string };
 type RegisteredSender = (chatId: string, text: string) => Promise<void>;
 

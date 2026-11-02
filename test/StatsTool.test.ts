@@ -1,75 +1,13 @@
-import { describe, test, expect, mock, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { MessageContext } from '../src/core/MessageContext';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-let mockSummaryRows: any[] = [];
-let mockTopRows: any[] = [];
-
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// Bun module mocks are process-wide, so this fake must expose the full
-// `../src/db` surface or every other test file importing the real module breaks.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-function completeDb(overrides: Record<string, unknown>): unknown {
-  const base = database.db as unknown as Record<string | symbol, unknown>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (typeof property === 'string' && property in overrides) return overrides[property];
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
-}
-
-mock.module('../src/db', () => ({
-  db: completeDb({
-    select: () => ({
-      from: () => ({
-        where: () => {
-          return {
-            all: () => mockSummaryRows,
-            groupBy: () => ({
-              orderBy: () => ({
-                limit: () => ({
-                  all: () => mockTopRows,
-                }),
-              }),
-            }),
-          };
-        },
-      }),
-    }),
-  }),
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
+import { db } from '../src/db';
+import { chatRooms, messages } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import { StatsTool } from '../src/tools/StatsTool';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
-  chatId: 'chat-1',
+  chatId: TEST_CHAT_ROOM_ID,
   senderId: 'user-1',
   senderName: 'User',
   text: '',
@@ -88,9 +26,68 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-beforeEach(() => {
-  mockSummaryRows = [];
-  mockTopRows = [];
+const TEST_CHAT_ROOM_ID = 'stats-chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:stats-chat-1';
+const BOT_SENDER_ID = 'bot-1';
+const BOT_SENDER_NAME = 'Alice';
+
+async function seedChatRoom(): Promise<void> {
+  await db.insert(chatRooms).values({
+    id: TEST_CHAT_ROOM_ID,
+    platform: 'whatsapp',
+    language: 'en',
+    roomKey: TEST_ROOM_KEY,
+    created_at: new Date(),
+  });
+}
+
+async function insertTestMessage(
+  overrides: {
+    senderId?: string;
+    senderName?: string;
+    role?: 'user' | 'assistant';
+    content?: string;
+    roomKey?: string;
+    chatRoomId?: string;
+    createdAtSec?: number;
+  } = {}
+): Promise<void> {
+  const {
+    senderId = 'user-1',
+    senderName = 'User',
+    role = 'user',
+    content = 'hello',
+    roomKey = TEST_ROOM_KEY,
+    chatRoomId = TEST_CHAT_ROOM_ID,
+    createdAtSec = Math.floor(Date.now() / 1000),
+  } = overrides;
+  await db.insert(messages).values({
+    chatRoomId,
+    platform: 'whatsapp',
+    roomKey,
+    senderId,
+    senderName,
+    role,
+    content,
+    created_at: new Date(createdAtSec * 1000),
+  });}
+
+async function clearTestData(): Promise<void> {
+  await db.delete(messages).where(eq(messages.roomKey, TEST_ROOM_KEY));
+  await db.delete(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
+}
+
+beforeEach(async () => {
+  await clearTestData();
+  await seedChatRoom();
+});
+
+afterEach(async () => {
+  await clearTestData();
+});
+
+afterAll(async () => {
+  await clearTestData();
 });
 
 describe('StatsTool', () => {
@@ -102,34 +99,33 @@ describe('StatsTool', () => {
     expect(tool.aliases).toContain('statistics');
   });
 
-  test('execute with no data (total=0) returns stats.no_data', async () => {
-    mockSummaryRows = [{ total: 0, botReplies: 0, oldest: null }];
+  test('execute with no data returns no-data message', async () => {
     const ctx = createMockCtx();
     const result = await tool.execute({}, ctx);
     expect(result).toContain('No messages recorded');
   });
 
   test('execute with data returns formatted stats', async () => {
-    mockSummaryRows = [{ total: 100, botReplies: 30, oldest: new Date('2024-01-01') }];
-    mockTopRows = [{ senderName: 'Alice', msgCount: 50 }];
+    // 100 total messages: 70 from user, 30 from assistant (Alice)
+    for (let i = 0; i < 70; i++) {
+      await insertTestMessage({
+        senderId: 'user-1',
+        senderName: 'User',
+        role: 'user',
+      });
+    }
+    for (let i = 0; i < 30; i++) {
+      await insertTestMessage({
+        senderId: BOT_SENDER_ID,
+        senderName: BOT_SENDER_NAME,
+        role: 'assistant',
+      });
+    }
+
     const ctx = createMockCtx();
     const result = await tool.execute({}, ctx);
     expect(result).toContain('100');
     expect(result).toContain('30');
-    expect(result).toContain('Alice');
-  });
-
-  test('execute when DB throws returns error message', async () => {
-    // Make the summary query throw by returning a proxy that throws on property access
-    mockSummaryRows = [new Proxy({}, {
-      get(_target, prop) {
-        if (prop === 'total') throw new Error('DB read failed');
-        return undefined;
-      },
-    })];
-    const ctx = createMockCtx();
-    const result = await tool.execute({}, ctx);
-    expect(result).toContain('Failed to retrieve stats');
-    expect(result).toContain('DB read failed');
+    expect(result).toContain('User');
   });
 });

@@ -1,40 +1,8 @@
-import { describe, test, expect, mock, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { desc, eq } from 'drizzle-orm';
 import { MessageContext } from '../src/core/MessageContext';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { db } from '../src/db';
 import { appKv, chatRooms, memories } from '../src/db/schema';
-
-// Own a real, migrated temp database behind the module mock so this file both
-// works regardless of what other files mock, and cannot break them if the mock
-// leaks: the replacement is a strict superset of the real module surface.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 let configEnabled = true;
 let dupResult: { id: string; content: string; similarity: number } | null = null;
@@ -59,11 +27,8 @@ mock.module('../src/utils/ConfigService', () => ({
   },
 }));
 
-// Imported dynamically so the `../src/db` mock above is already registered.
 const { MemoryTool, INERT_DATA_MARKER, formatMemoryForPrompt, getMemoryOwnerId, isInertMemoryContent } =
   await import('../src/tools/MemoryTool');
-
-const db = database.db;
 
 let senderCounter = 0;
 const nextSender = (): string => `user-${++senderCounter}`;
@@ -107,10 +72,6 @@ beforeEach(async () => {
     longTermMemory: true,
     created_at: new Date(),
   }).onConflictDoUpdate({ target: chatRooms.id, set: { longTermMemory: true } }).run();
-});
-
-afterAll(() => {
-  database.cleanup();
 });
 
 describe('MemoryTool inert/private helpers', () => {

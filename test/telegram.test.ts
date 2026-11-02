@@ -10,10 +10,7 @@
  *    owner, otherwise a fresh Telegram or Discord deployment has no `owner` and
  *    every owner-only tool is unreachable there.
  */
-import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 
 const { AuthService } = await import('../src/utils/AuthService');
 const { chunkTelegramText, TELEGRAM_TEXT_LIMIT } = await import('../src/providers/telegramText');

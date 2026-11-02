@@ -1,4 +1,4 @@
-import { expect, test, describe, beforeEach, afterEach, mock } from 'bun:test';
+import { expect, test, describe, beforeEach, afterEach } from 'bun:test';
 import { IdentityService } from '../src/utils/IdentityService';
 import { AuthService as RoleService } from '../src/utils/AuthService';
 import { userIdentities, userRoles, rolePrivileges } from '../src/db/schema';
@@ -33,23 +33,6 @@ function mockQuery(): MockQuery {
   };
   return obj;
 }
-
-mock.module('../src/utils/logger', () => ({
-  logger: {
-    trace: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    child: () => ({
-      trace: () => {},
-      debug: () => {},
-      info: () => {},
-      warn: () => {},
-      error: () => {},
-    }),
-  },
-}));
 
 import { checkPermissions } from '../src/utils/permissions';
 

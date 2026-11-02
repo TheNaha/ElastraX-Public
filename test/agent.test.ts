@@ -1,7 +1,12 @@
-import { describe, test, expect, afterAll, afterEach, beforeEach, mock, spyOn } from 'bun:test';
+import { describe, test, expect, afterEach, beforeEach, mock, spyOn } from 'bun:test';
 import { desc, eq, or } from 'drizzle-orm';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { db } from '../src/db';
+import { chatRooms, messages } from '../src/db/schema';
+import type { MessageContext } from '../src/core/MessageContext';
+import { toRoomKey } from '../src/agent/roomKey';
+import { createTempMediaDir } from './helpers/tempMedia';
 
 // ── Environment must be configured before the agent module (and therefore the
 //    ModelRouter singleton) is evaluated, so the import is dynamic. ───────────
@@ -16,42 +21,6 @@ process.env.CONTEXT_MESSAGE_LIMIT = '10';
 
 import * as toolsModule from '../src/tools';
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '../src/tools/BaseTool';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
-import { chatRooms, messages } from '../src/db/schema';
-import { toRoomKey } from '../src/agent/roomKey';
-
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// Bun module mocks are process-wide, so this fake must expose the full
-// `../src/db` surface or every other test file importing the real module breaks.
-const database: TempDatabase = createTempDatabase();
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-mock.module('../src/db', () => ({
-  db: database.db,
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
-
-const db = database.db;
-import type { MessageContext } from '../src/core/MessageContext';
-import { createTempMediaDir } from './helpers/tempMedia';
 
 const { handleIncomingMessage } = await import('../src/agent/index');
 
@@ -279,10 +248,6 @@ describe('handleIncomingMessage', () => {
   afterEach(() => {
     process.env = { ...originalEnv };
     global.fetch = originalFetch;
-  });
-
-  afterAll(() => {
-    database.cleanup();
   });
 
   // ── Room initialisation ─────────────────────────────────────────────────────

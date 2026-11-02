@@ -1,12 +1,9 @@
-import { describe, test, expect, mock, beforeEach, afterAll } from 'bun:test';
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'crypto';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getTestWorkerPaths } from './helpers/paths';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
 
 import { backupDatabase, restoreDatabase } from '../src/db/backup';
 import { createDatabase, ensureDatabaseSchema } from '../src/db';

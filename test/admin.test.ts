@@ -10,10 +10,7 @@
  *
  * A bug in either would expose telemetry or, worse, the few write operations.
  */
-import { describe, test, expect, beforeEach, afterAll, mock } from 'bun:test';
-
-const _mockLogger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {}, child: () => _mockLogger, trace: () => {} };
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
+import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 
 const { createAdminHandler } = await import('../src/admin/routes');
 const {

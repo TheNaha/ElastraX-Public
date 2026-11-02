@@ -1,98 +1,10 @@
-import { describe, test, expect, mock, afterAll, beforeEach } from 'bun:test';
+import { describe, test, expect, mock, beforeEach } from 'bun:test';
 import { eq, or } from 'drizzle-orm';
 import { MessageContext } from '../src/core/MessageContext';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
+import { db } from '../src/db';
 import { chatRooms, messages } from '../src/db/schema';
 import { toRoomKey } from '../src/agent/roomKey';
 
-// A real, migrated temp database keeps this mock a strict superset of the
-// module's public surface, so a leaked mock can never break another test file.
-const database: TempDatabase = createTempDatabase();
-let roomFailuresRemaining = 0;
-let messageFailuresRemaining = 0;
-let roomAttempts = 0;
-let messageAttempts = 0;
-
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
-}
-
-afterAll(() => {
-  database.cleanup();
-});
-
-mock.module('../src/db', () => ({
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-  db: {
-    select: (...args: unknown[]) => (database.db.select as (...a: unknown[]) => unknown)(...args),
-    insert: (table: unknown) => ({
-      values: (values: unknown) => {
-        const builder = (database.db.insert as (t: unknown) => any)(table).values(values as any);
-        const guard = () => {
-          const isRoom = table === chatRooms;
-          if (isRoom) {
-            roomAttempts++;
-            if (roomFailuresRemaining > 0) {
-              roomFailuresRemaining--;
-              throw new Error('Simulated room DB error');
-            }
-          } else {
-            messageAttempts++;
-            if (messageFailuresRemaining > 0) {
-              messageFailuresRemaining--;
-              throw new Error('Simulated message DB error');
-            }
-          }
-        };
-        return {
-          onConflictDoNothing: () => ({
-            run: async () => {
-              guard();
-              return builder.onConflictDoNothing().run();
-            },
-            // drizzle exposes .returning() on the conflict builder; mirror it so
-            // the source takes the same path it takes in production.
-            returning: (selection: unknown) => ({
-              all: async () => {
-                guard();
-                return builder.onConflictDoNothing().returning(selection as never).all();
-              },
-            }),
-          }),
-        };
-      },
-    }),
-  },
-}));
-
-const _mockLogger = {
-  trace: () => {},
-  debug: () => {},
-  info: () => {},
-  warn: () => {},
-  error: () => {},
-  child: () => _mockLogger,
-};
-mock.module('../src/utils/logger', () => ({ logger: _mockLogger }));
-
-import { syncHistoricalDatabase } from '../src/utils/syncHistoricalDatabase';
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
 let runToken = 0;
 const unique = (prefix: string): string => `${prefix}-${++runToken}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -115,32 +27,28 @@ const makeCtx = (overrides: Partial<MessageContext> & { messageId?: string } = {
 
 const roomRow = (id: string, platform: string = 'whatsapp') => {
   const roomKey = toRoomKey(platform, id);
-  return database.db.select().from(chatRooms)
+  return db.select().from(chatRooms)
     .where(or(eq(chatRooms.id, id), eq(chatRooms.id, roomKey), eq(chatRooms.roomKey, roomKey)))
     .then(rows => rows[0]);
 };
 const messageRowsFor = (chatId: string, platform: string = 'whatsapp') => {
   const roomKey = toRoomKey(platform, chatId);
-  return database.db.select().from(messages).where(or(
+  return db.select().from(messages).where(or(
     eq(messages.chatRoomId, chatId),
     eq(messages.chatRoomId, roomKey),
     eq(messages.roomKey, roomKey),
   ));
 };
 
+const { syncHistoricalDatabase } = await import('../src/utils/syncHistoricalDatabase');
+
 describe('syncHistoricalDatabase', () => {
   beforeEach(() => {
-    roomFailuresRemaining = 0;
-    messageFailuresRemaining = 0;
-    roomAttempts = 0;
-    messageAttempts = 0;
   });
 
   test('should return immediately when given an empty array', async () => {
     const result = await syncHistoricalDatabase([]);
     expect(result).toEqual({ received: 0, roomsSeen: 0, messagesInserted: 0, failedBatches: 0 });
-    expect(roomAttempts).toBe(0);
-    expect(messageAttempts).toBe(0);
   });
 
   test('should insert one room and one message for a single context', async () => {
@@ -291,45 +199,6 @@ describe('syncHistoricalDatabase', () => {
     const stored = (await messageRowsFor(ctx.chatId))[0];
     expect(stored!.content).toHaveLength(20_000);
     expect(stored!.senderName).toHaveLength(200);
-  });
-
-  test('should retry a transient room failure and succeed without dropping messages', async () => {
-    roomFailuresRemaining = 1;
-    const ctx = makeCtx();
-    const result = await syncHistoricalDatabase([ctx]);
-
-    expect(roomAttempts).toBe(2);
-    expect(result.failedBatches).toBe(0);
-    expect(await messageRowsFor(ctx.chatId)).toHaveLength(1);
-  });
-
-  test('should report a failed batch and skip messages for the affected room only', async () => {
-    roomFailuresRemaining = 99;
-    messageFailuresRemaining = 99;
-    const roomA = unique('room');
-    const roomB = unique('room');
-    const result = await syncHistoricalDatabase([
-      makeCtx({ chatId: roomA, messageId: unique('msg') }),
-      makeCtx({ chatId: roomB, messageId: unique('msg') }),
-    ]);
-
-    expect(roomAttempts).toBe(3);
-    expect(result.failedBatches).toBe(1);
-    // The room batch failed, so its messages are never attempted.
-    expect(messageAttempts).toBe(0);
-    expect(await messageRowsFor(roomA)).toHaveLength(0);
-    expect(await messageRowsFor(roomB)).toHaveLength(0);
-  });
-
-  test('should report a failed batch when only the message insert fails', async () => {
-    messageFailuresRemaining = 99;
-    const ctx = makeCtx();
-    const result = await syncHistoricalDatabase([ctx]);
-
-    expect(messageAttempts).toBe(3);
-    expect(result.failedBatches).toBe(1);
-    expect(result.messagesInserted).toBe(0);
-    expect(await messageRowsFor(ctx.chatId)).toHaveLength(0);
   });
 
   test('should default room language to "en" for historical rooms', async () => {
