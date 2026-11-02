@@ -70,7 +70,8 @@ export function parseEmbeddingSpaceId(value: string): EmbeddingSpace | null {
       endpoint: `sha256:${hash}`,
       dimension: dimension as number,
     };
-  } catch {
+  } catch (error) {
+    log.debug({ err: error }, 'Failed to decode embedding space id');
     return null;
   }
 }

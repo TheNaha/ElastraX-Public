@@ -375,7 +375,9 @@ export class MediaBindTool extends BaseTool {
           if (m.isAdmin) {
             meta = ' 👑 ' + (t(ctx.language, 'media.admin_label') || 'Admin');
           }
-        } catch { /* ignore */ }
+        } catch (error) {
+          log.debug({ err: error }, 'Failed to parse binding metadata');
+        }
       }
       return ` • ${b.serviceType}: ${b.externalUsername}${meta}`;
     });

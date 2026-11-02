@@ -143,14 +143,14 @@ function createHandle(path: string, options: DatabaseOptions): DatabaseHandle {
         try {
           releaseDatabaseLease(sqlite, lease);
         } catch (error) {
-          void error;
+          logger.warn({ err: error }, '[db] Failed to release database lease during close');
         }
         runtimeLeases.delete(sqlite);
       }
       try {
         if (!inMemory) sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
       } catch (error) {
-        void error;
+        logger.warn({ err: error }, '[db] WAL checkpoint failed during close');
       }
       sqlite.close();
       readyHandles.delete(sqlite);
