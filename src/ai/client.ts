@@ -276,7 +276,8 @@ export class AIClient {
     });
 
     if (!response.ok) {
-      const errText = await response.text().catch(() => '<unreadable>');
+      const rawErrText = await response.text().catch(() => '<unreadable>');
+      const errText = rawErrText.length > 500 ? `${rawErrText.slice(0, 500)}…(truncated)` : rawErrText;
       const elapsed = opts.startTime === undefined ? undefined : Date.now() - opts.startTime;
       log.error({ status: response.status, errText, elapsed }, opts.errorLabel);
       // Avoid leaking the raw error body (may contain API keys or internal details)

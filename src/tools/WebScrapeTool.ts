@@ -2,6 +2,8 @@ import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { validateSsrfUrl } from '../providers/ssrf';
+import { redactUrl } from './DownloadTool';
 
 const log = logger.child({ module: 'WebScrapeTool' });
 const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
@@ -52,7 +54,14 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
          return 'Error: Only HTTP/HTTPS URLs are supported.';
       }
-      log.info({ url: args.url }, 'Scraping URL via jina.ai reader');
+      // SSRF guard: match DownloadTool policy so internal/loopback/metadata
+      // URLs are rejected before being forwarded to the reader service.
+      try {
+        await validateSsrfUrl(url);
+      } catch {
+        return 'Error: URL is not allowed.';
+      }
+      log.info({ url: redactUrl(args.url) }, 'Scraping URL via jina.ai reader');
       const headers: Record<string, string> = {
         'X-Return-Format': 'markdown'
       };

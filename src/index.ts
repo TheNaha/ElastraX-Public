@@ -112,7 +112,7 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
     if (shuttingDown) await shutdown('startup-interrupted');
   } catch (error) {
     removeSignalHandlers();
-    await runtime?.stop().catch(() => {});
+    await runtime?.stop().catch((err) => { log.warn({ err }, 'Runtime stop failed during bootstrap error handling'); });
     await database.closeDatabase?.();
     throw error;
   }

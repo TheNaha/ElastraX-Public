@@ -636,7 +636,7 @@ async function reloadRegistryInternal(): Promise<void> {
 export function reloadRegistry(): Promise<void> {
   registryGeneration++;
   const run = reloadChain.then(() => reloadRegistryInternal());
-  reloadChain = run.catch(() => undefined);
+  reloadChain = run.catch((err) => { log.warn({ err }, 'Tool registry reload failed'); });
   return run;
 }
 

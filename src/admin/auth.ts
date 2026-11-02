@@ -150,7 +150,13 @@ export class AdminAuth {
   logout(cookieValue: string | null): void {
     if (!cookieValue) return;
     const separator = cookieValue.lastIndexOf('.');
-    if (separator > 0) this.sessions.delete(cookieValue.slice(0, separator));
+    if (separator <= 0) return;
+    const id = cookieValue.slice(0, separator);
+    const signature = cookieValue.slice(separator + 1);
+    // Only delete a session whose cookie signature is valid, so a malformed
+    // or attacker-supplied cookie id cannot invalidate a real session.
+    if (!safeEqual(signature, sign(this.config.secret, id))) return;
+    this.sessions.delete(id);
   }
 
   /**
