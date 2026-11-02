@@ -1,57 +1,27 @@
 import { describe, test, expect, mock, beforeEach } from 'bun:test';
-import { createTempDatabase, type TempDatabase } from './helpers/database';
 import { MessageContext } from '../src/core/MessageContext';
-// Route by REAL table identity — no schema mock (schema.ts is side-effect-free).
-import { chatRooms as chatRoomsTable } from '../src/db/schema';
+import { db } from '../src/db';
+import { chatRooms } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
+
 let roomRow: { language: string } | undefined = { language: 'en' };
 
-// ── Module mock backed by a real migrated temp database ──────────────────────
-// Bun module mocks are process-wide, so this fake must expose the full
-// `../src/db` surface or every other test file importing the real module breaks.
-const database: TempDatabase = createTempDatabase();
+const TEST_CHAT_ROOM_ID = 'chat-1';
+const TEST_ROOM_KEY = 'room:whatsapp:chat-1';
 
-// Mirrors src/db/runtime.ts exactly: the return value must be propagated,
-// because callers such as claimInboxEvents rely on it.
-function withImmediateTransaction<T>(sqlite: TempDatabase['sqlite'], operation: () => T): T {
-  sqlite.exec('BEGIN IMMEDIATE');
-  try {
-    const result = operation();
-    sqlite.exec('COMMIT');
-    return result;
-  } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch {
-      // The transaction may already be rolled back; surface the original error.
-    }
-    throw error;
-  }
+async function seedRoom(language: string): Promise<void> {
+  await db.insert(chatRooms).values({
+    id: TEST_CHAT_ROOM_ID,
+    platform: 'whatsapp',
+    language,
+    roomKey: TEST_ROOM_KEY,
+    created_at: new Date(),
+  }).onConflictDoUpdate({ target: chatRooms.id, set: { language } });
 }
 
-function completeDb(overrides: Record<string, unknown>): unknown {
-  const base = database.db as unknown as Record<string | symbol, unknown>;
-  return new Proxy(base, {
-    get(target, property, receiver) {
-      if (typeof property === 'string' && property in overrides) return overrides[property];
-      const value = Reflect.get(target, property, receiver);
-      return typeof value === 'function' ? value.bind(target) : value;
-    },
-  });
+async function clearRoom(): Promise<void> {
+  await db.delete(chatRooms).where(eq(chatRooms.id, TEST_CHAT_ROOM_ID));
 }
-
-mock.module('../src/db', () => ({
-  db: completeDb({
-  select: () => ({
-    from: (table: unknown) => ({
-      where: () => ({
-        all: () => (table === chatRoomsTable && roomRow ? [roomRow] : []),
-      }),
-    }),
-  }),
-  }),
-  sqlite: database.sqlite,
-  withImmediateTransaction,
-}));
 
 const summarizeCalls: { roomId: string; hours: number; maxMessages: number; lang?: string | null }[] = [];
 let summarizeResult: { text: string; messageCount: number } | null = null;
@@ -73,7 +43,7 @@ import { DigestTool, digestToolDeps } from '../src/tools/DigestTool';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
   platform: 'whatsapp',
-  chatId: 'chat-1',
+  chatId: TEST_CHAT_ROOM_ID,
   senderId: 'user-1',
   senderName: 'User',
   text: '',
@@ -92,12 +62,14 @@ const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext 
   ...overrides,
 } as MessageContext);
 
-beforeEach(() => {
+beforeEach(async () => {
   summarizeCalls.length = 0;
   summarizeResult = null;
   summarizeError = null;
   roomRow = { language: 'en' };
   delete digestToolDeps.callLLM;
+  await clearRoom();
+  await seedRoom(roomRow!.language);
 });
 
 describe('DigestTool', () => {
