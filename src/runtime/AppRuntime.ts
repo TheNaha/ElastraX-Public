@@ -485,7 +485,7 @@ export class AppRuntime {
     // its message handler and budget) installed.
     this.scheduler.registerTaskRunner?.(null);
 
-    for (const provider of this.activeProviders) {
+    for (const provider of this.providers) {
       this.scheduler.unregisterSender?.(provider.name);
       this.digestService.unregisterSender?.(provider.name);
       provider.onMessage?.(async () => {});
