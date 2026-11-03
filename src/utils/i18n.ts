@@ -211,12 +211,12 @@ export const translations: Record<Locale, Record<string, string>> = {
     'search.searxng_not_configured': '❌ SeerXNG search is not configured. Please contact the bot admin.',
     'search.web.header': '🔍 *Web results for "{query}":*',
     'search.web.no_results': 'No web results found for "{query}".',
-    'search.web.failed': '❌ Web search failed: {msg}',
+    'search.web.failed': '❌ Web search failed for: {query}',
     'search.game.no_results': 'No game results found for "{query}".',
-    'search.game.failed': '❌ Game search failed: {msg}',
+    'search.game.failed': '❌ Game search failed for: {query}',
     'search.software.header': '💻 *Software results for "{query}":*',
     'search.software.no_results': 'No software results found for "{query}".',
-    'search.software.failed': '❌ Software search failed: {msg}',
+    'search.software.failed': '❌ Software search failed for: {query}',
     'search.trusted': '✅',
     'search.unknown': '❓',
     'search.untrusted': '⚠️',
@@ -334,8 +334,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     'owner.usage': '❓ *Owner Commands:*\n\n • `/broadcast <message>` — Send to all rooms\n\n • `/leave` — Leave current group\n\n • `/owner system_info` — Bot stats',
 
     // Admin tools
-    'admin.pinout_title': '*Pinned Output — {tool}*',
-    'admin.pinout_tip': 'Tip: use `/admin pinout stop` to stop pinning output in this chat.',
+    'admin.pinout_title': '*Log inventory*',
+    'admin.pinout_tip': 'Tip: run `/owner pinout` to refresh this inventory.',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Recurring reminder set ({recurrence})! Next fire: *{time}*\n_{message}_',
@@ -628,12 +628,12 @@ export const translations: Record<Locale, Record<string, string>> = {
     'search.searxng_not_configured': '❌ Pencarian SeerXNG tidak dikonfigurasi. Hubungi admin bot.',
     'search.web.header': '🔍 *Hasil web untuk "{query}":*',
     'search.web.no_results': 'Tidak ada hasil web untuk "{query}".',
-    'search.web.failed': '❌ Pencarian web gagal: {msg}',
+    'search.web.failed': '❌ Pencarian web gagal untuk: {query}',
     'search.game.no_results': 'Tidak ada hasil game untuk "{query}".',
-    'search.game.failed': '❌ Pencarian game gagal: {msg}',
+    'search.game.failed': '❌ Pencarian game gagal untuk: {query}',
     'search.software.header': '💻 *Hasil perangkat lunak untuk "{query}":*',
     'search.software.no_results': 'Tidak ada hasil perangkat lunak untuk "{query}".',
-    'search.software.failed': '❌ Pencarian perangkat lunak gagal: {msg}',
+    'search.software.failed': '❌ Pencarian perangkat lunak gagal untuk: {query}',
     'search.trusted': '✅',
     'search.unknown': '❓',
     'search.untrusted': '⚠️',
@@ -751,8 +751,8 @@ export const translations: Record<Locale, Record<string, string>> = {
     'owner.usage': '❓ *Perintah Owner:*\n\n • `/broadcast <pesan>` — Kirim ke semua ruangan\n\n • `/leave` — Keluar dari grup\n\n • `/owner system_info` — Info bot',
 
     // Admin tools
-    'admin.pinout_title': '*Keluaran yang Di-Pin — {tool}*',
-    'admin.pinout_tip': 'Tip: gunakan `/admin pinout stop` untuk menghentikan pemetaan keluaran di obrolan ini.',
+    'admin.pinout_title': '*Inventaris log*',
+    'admin.pinout_tip': 'Tip: jalankan `/owner pinout` untuk menyegarkan inventaris ini.',
 
     // Recurring Reminders
     'reminder.recurrence_set': '🔁 Pengingat berulang diatur ({recurrence})! Berikutnya: *{time}*\n_{message}_',

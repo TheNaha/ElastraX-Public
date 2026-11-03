@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
+import net from 'node:net';
+import { ssrfDeps } from '../src/providers/ssrf';
 import { WebScrapeTool } from '../src/tools/WebScrapeTool';
 
 const createMockCtx = (): MessageContext => ({
@@ -18,8 +20,15 @@ const createMockCtx = (): MessageContext => ({
 
 describe('WebScrapeTool', () => {
   const originalFetch = global.fetch;
+  const originalLookup = ssrfDeps.lookup;
 
   beforeEach(() => {
+    ssrfDeps.lookup = async (hostname) => {
+      if (net.isIP(hostname) !== 0) {
+        return [{ address: hostname, family: net.isIP(hostname) === 6 ? 6 : 4 }];
+      }
+      return [{ address: '93.184.216.34', family: 4 }];
+    };
     global.fetch = mock(async () =>
       new Response('Scraped page content', { status: 200 }),
     ) as unknown as typeof fetch;
@@ -27,6 +36,7 @@ describe('WebScrapeTool', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    ssrfDeps.lookup = originalLookup;
   });
 
   test('should have basic properties', () => {
@@ -79,6 +89,40 @@ describe('WebScrapeTool', () => {
         }),
       }),
     );
+  });
+
+  test('execute rejects credential-bearing URLs before fetching', async () => {
+    const fetchMock = mock(async () => new Response('should not be called', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const tool = new WebScrapeTool();
+    const result = await tool.execute({ url: 'https://user:pass@example.com/article' }, createMockCtx());
+
+    expect(result).toBe('Error: URL is not allowed.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('execute rejects internal destinations before fetching', async () => {
+    const fetchMock = mock(async () => new Response('should not be called', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const tool = new WebScrapeTool();
+    const result = await tool.execute({ url: 'http://169.254.169.254/latest/meta-data' }, createMockCtx());
+
+    expect(result).toBe('Error: URL is not allowed.');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  test('execute rejects hosts resolving to private addresses before fetching', async () => {
+    ssrfDeps.lookup = async () => [{ address: '10.0.0.1', family: 4 }];
+    const fetchMock = mock(async () => new Response('should not be called', { status: 200 }));
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const tool = new WebScrapeTool();
+    const result = await tool.execute({ url: 'https://private.example.com/' }, createMockCtx());
+
+    expect(result).toBe('Error: URL is not allowed.');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   test('execute with query includes query in error on fetch failure', async () => {

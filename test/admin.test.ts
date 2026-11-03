@@ -165,6 +165,20 @@ describe('admin authentication', () => {
     expect(response.status).toBe(401);
   });
 
+  test('logout with a forged cookie does not invalidate the real session', () => {
+    const auth = new AdminAuth({ secret: SECRET, cookieSecure: false });
+    const issued = auth.login(SECRET);
+    expect(issued).not.toBeNull();
+    const cookieValue = issued!.cookieValue;
+    const id = cookieValue.slice(0, cookieValue.lastIndexOf('.'));
+
+    auth.logout(`${id}.forged`);
+    expect(auth.verify(cookieValue)).not.toBeNull();
+
+    auth.logout(cookieValue);
+    expect(auth.verify(cookieValue)).toBeNull();
+  });
+
   test('refuses another deployment\'s valid-looking cookie', async () => {
     const issued = await signIn(handlerWith(SECRET));
     // Same id, signature from a different secret.
