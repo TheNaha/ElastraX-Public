@@ -166,6 +166,54 @@ describe('TelegramProvider lifecycle', () => {
     const provider = new TelegramProvider();
     await expect(provider.sendMessage('123', 'hi')).rejects.toThrow(/telegram/i);
   });
+
+  test('context reply chunks oversized text across multiple messages', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+    const sentMessages: Array<{ chatId: string; text: string; options: unknown }> = [];
+    let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+    telegramProviderDeps.createBot = () => ({
+      on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+        if (event === 'message') messageCallback = handler;
+      },
+      api: {
+        sendMessage: async (chatId: string, text: string, options: unknown) => {
+          sentMessages.push({ chatId, text, options });
+          return { message_id: 100 + sentMessages.length };
+        },
+      } as never,
+      stop: () => undefined,
+      start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+        await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+      },
+    }) as never;
+
+    const provider = new TelegramProvider();
+    let receivedContext: MessageContext | null = null;
+    provider.onMessage(async ctx => {
+      receivedContext = ctx;
+    });
+
+    await provider.start();
+    expect(messageCallback).toBeDefined();
+
+    await messageCallback!({
+      chat: { id: 12345, type: 'private' },
+      from: { id: 67890, first_name: 'TestUser', is_bot: false },
+      message: { message_id: 42, text: 'hello', date: 1000, from: { id: 67890, first_name: 'TestUser' }, entities: [] },
+      date: 1000,
+    });
+
+    expect(receivedContext).not.toBeNull();
+    const longText = 'x'.repeat(TELEGRAM_TEXT_LIMIT * 2 + 50);
+    await receivedContext!.reply(longText);
+
+    expect(sentMessages.length).toBeGreaterThanOrEqual(3);
+    const firstOpts = sentMessages[0]?.options as { reply_parameters?: { message_id?: number } } | undefined;
+    const secondOpts = sentMessages[1]?.options as { reply_parameters?: { message_id?: number } } | undefined;
+    expect(firstOpts?.reply_parameters).toEqual({ message_id: 42 });
+    expect(secondOpts?.reply_parameters).toBeUndefined();
+    await provider.stop();
+  });
 });
 
 afterAll(() => {

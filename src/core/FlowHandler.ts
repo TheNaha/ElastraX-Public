@@ -436,40 +436,43 @@ export class FlowHandler {
   }
 
   static async handle(ctx: MessageContext): Promise<boolean> {
-    const activeFlow = await this.getActiveFlow(ctx.senderId, ctx.platform, ctx.chatId);
-    if (!activeFlow) return false;
-    const { flowId, flow } = activeFlow;
-    if (!this.flowBelongsToContext(flow, ctx)) {
-      await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
-      await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
-      return true;
-    }
-    const flowProcessor = this.flows[flow.flow];
-    if (!flowProcessor) {
-      await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
-      logger.warn({ flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform }, '[FlowHandler] No processor registered for active flow; session cleared');
-      await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
-      return true;
-    }
-    const normalized = ctx.text.trim().toLowerCase();
-    if (normalized.startsWith('/')) {
-      if (CANCEL_COMMANDS.some((command) => command.toLowerCase() === normalized)) {
+    const key = this.sessionKey(ctx.senderId, ctx.platform, ctx.chatId);
+    return this.withLock(key, async () => {
+      const activeFlow = await this.getActiveFlow(ctx.senderId, ctx.platform, ctx.chatId);
+      if (!activeFlow) return false;
+      const { flowId, flow } = activeFlow;
+      if (!this.flowBelongsToContext(flow, ctx)) {
         await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
-        await ctx.react?.('✅');
-        await ctx.reply(t(ctx.language, 'flow.cancelled'));
+        await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
         return true;
       }
-      await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');
-      return true;
-    }
-    try {
-      await flowProcessor(ctx, flow, flowId);
-      return true;
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, 'unknown error');
-      logger.error({ err: error, flow: flow.flow }, `[FlowHandler] Error in flow: ${flow.flow}`);
-      await ctx.reply(t(ctx.language, 'flow.error', { msg: message }) || `An error occurred processing your flow step:\n${message}`);
-      return true;
-    }
+      const flowProcessor = this.flows[flow.flow];
+      if (!flowProcessor) {
+        await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+        logger.warn({ flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform }, '[FlowHandler] No processor registered for active flow; session cleared');
+        await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
+        return true;
+      }
+      const normalized = ctx.text.trim().toLowerCase();
+      if (normalized.startsWith('/')) {
+        if (CANCEL_COMMANDS.some((command) => command.toLowerCase() === normalized)) {
+          await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+          await ctx.react?.('✅');
+          await ctx.reply(t(ctx.language, 'flow.cancelled'));
+          return true;
+        }
+        await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');
+        return true;
+      }
+      try {
+        await flowProcessor(ctx, flow, flowId);
+        return true;
+      } catch (error: unknown) {
+        const message = getErrorMessage(error, 'unknown error');
+        logger.error({ err: error, flow: flow.flow }, `[FlowHandler] Error in flow: ${flow.flow}`);
+        await ctx.reply(t(ctx.language, 'flow.error', { msg: message }) || `An error occurred processing your flow step:\n${message}`);
+        return true;
+      }
+    });
   }
 }

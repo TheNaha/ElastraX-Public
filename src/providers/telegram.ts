@@ -534,12 +534,19 @@ export class TelegramProvider implements BotProvider {
     const sendText = async (targetChatId: string, replyText: string, options?: ReplyOptions): Promise<unknown> => {
       const activeBot = this.requireBot('reply');
       options?.signal?.throwIfAborted();
-      const replied = await activeBot.api.sendMessage(targetChatId, replyText, {
-        reply_parameters: { message_id: msg.message_id },
-      });
-      const id = (replied as { message_id?: number } | null)?.message_id;
-      if (typeof id === 'number') noteBotMessageSent('telegram', String(id));
-      return replied;
+      const chunks = chunkTelegramText(replyText);
+      let last: unknown = null;
+      for (let i = 0; i < chunks.length; i++) {
+        options?.signal?.throwIfAborted();
+        const chunk = chunks[i];
+        const replied = await activeBot.api.sendMessage(targetChatId, chunk, {
+          ...(i === 0 ? { reply_parameters: { message_id: msg.message_id } } : {}),
+        });
+        const id = (replied as { message_id?: number } | null)?.message_id;
+        if (typeof id === 'number') noteBotMessageSent('telegram', String(id));
+        last = replied;
+      }
+      return last;
     };
 
     const ensureCurrent = (): GrammyBot => {

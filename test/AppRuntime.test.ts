@@ -211,6 +211,53 @@ describe('AppRuntime', () => {
     expect(provider.stop).toHaveBeenCalledTimes(1);
   });
 
+  test('drops incoming messages when stopRequested is set', async () => {
+    const provider = createProvider('whatsapp');
+    let enqueued = false;
+    const messageQueue = {
+      enqueue: mock(() => { enqueued = true; return true; }),
+      stop: mock(() => {}),
+    };
+    const runtime = new AppRuntime({
+      providers: [provider],
+      messageQueue,
+      webhookServer: {
+        registerSender: mock(() => {}),
+        start: mock(() => {}),
+        stop: mock(() => {}),
+      },
+      scheduler: {
+        registerSender: mock(() => {}),
+        start: mock(() => {}),
+        stop: mock(() => {}),
+      },
+      runStartupCoverageScan: async () => {},
+    });
+
+    await runtime.start();
+    const handler = provider.capturedHandler;
+    expect(handler).not.toBeNull();
+
+    await runtime.stop();
+
+    await handler!({
+      platform: 'whatsapp',
+      chatId: 'wa-chat',
+      senderId: 'wa-user',
+      text: 'hello during shutdown',
+      messageId: 'msg-shutdown',
+      receivedAt: Date.now(),
+      messageType: 'conversation',
+      isGroup: false,
+      isBotMentioned: false,
+      hasMedia: false,
+      rawMessage: {},
+      language: 'en',
+    } as unknown as MessageContext);
+
+    expect(enqueued).toBe(false);
+  });
+
   test('resolveMediaCleanupIntervalMs keeps safe defaults', () => {
     expect(resolveMediaCleanupIntervalMs(undefined)).toBe(6 * 60 * 60 * 1000);
     expect(resolveMediaCleanupIntervalMs('invalid')).toBe(6 * 60 * 60 * 1000);

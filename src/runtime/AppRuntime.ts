@@ -273,6 +273,10 @@ export class AppRuntime {
     }
 
     const queuedHandler = async (ctx: MessageContext): Promise<void> => {
+      if (this.stopRequested) {
+        logger.info({ chatId: ctx.chatId, platform: ctx.platform }, 'Incoming message dropped: runtime stopping');
+        return;
+      }
       // Canonical room key first: every durable row filed for this message is
       // keyed on it, while providers keep using the raw ctx.chatId.
       const roomKey = this.attachRoomKey(ctx);
@@ -484,6 +488,7 @@ export class AppRuntime {
     for (const provider of this.activeProviders) {
       this.scheduler.unregisterSender?.(provider.name);
       this.digestService.unregisterSender?.(provider.name);
+      provider.onMessage?.(async () => {});
     }
     try {
       await this.stopBackgroundTasks();
@@ -496,8 +501,7 @@ export class AppRuntime {
       } else {
         this.messageQueue.stop();
       }
-      this.processOutbox();
-      if (this.outboxPromise) await this.outboxPromise;
+      await this.drainOutbox();
 
       await Promise.allSettled(this.providers.map(async provider => {
         await Promise.race([
@@ -873,6 +877,19 @@ export class AppRuntime {
     }).finally(() => {
       this.outboxPromise = null;
     });
+  }
+
+  private async drainOutbox(timeoutMs = 15_000): Promise<void> {
+    if (!hasDurableMessagingStore()) return;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.outboxPromise) await this.outboxPromise;
+      const providers = new Map<string, BotProvider>(this.operationalProviders().map(provider => [provider.name, provider]));
+      if (providers.size === 0) break;
+      const claimed = OutboxService.claim(this.outboxOwner, [...providers.keys()], 10);
+      if (claimed.length === 0) break;
+      await Promise.all(claimed.map(message => this.deliverOutboxMessage(message, providers)));
+    }
   }
 
   /** Deliver one claimed outbox row. Never throws — failures are recorded. */
