@@ -100,6 +100,22 @@ describe('InboxService.recoverStranded', () => {
     expect(activeProcessing[0]!.state).toBe('processing');
   });
 
+  test('transitions to dead_letter when expired processing lease reaches max attempts', async () => {
+    await db.insert(messageInbox).values({
+      platform: 'whatsapp', chatRoomId: 'room-1', eventKey: 'event-max-attempts-processing', payload: '{}',
+      state: 'processing', attemptCount: 4, availableAt: RECENT_TS, receivedAt: OLD_TS, createdAt: OLD_TS, updatedAt: OLD_TS,
+      leaseOwner: 'worker-1', leaseExpiresAt: OLD_TS, lastError: 'timeout',
+    }).run();
+
+    const recovered = InboxService.recoverStranded(100_000);
+    expect(recovered.processing).toBe(1);
+
+    const deadLetterRow = db.select().from(messageInbox).where(eq(messageInbox.eventKey, 'event-max-attempts-processing')).all();
+    expect(deadLetterRow[0]!.state).toBe('dead_letter');
+    expect(deadLetterRow[0]!.attemptCount).toBe(5);
+    expect(deadLetterRow[0]!.lastError).toContain('max attempts exceeded');
+  });
+
   test('does nothing when there are no stranded rows', async () => {
     const recovered = InboxService.recoverStranded(100_000);
     expect(recovered.received).toBe(0);

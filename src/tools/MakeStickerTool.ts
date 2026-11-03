@@ -58,7 +58,7 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
     };
   }
 
-  async execute(args: StickerArgs, ctx: MessageContext): Promise<string> {
+  async execute(args: StickerArgs, ctx: MessageContext, signal?: AbortSignal): Promise<string> {
     if (!ctx.hasMedia && !ctx.quoted?.hasMedia) {
       return t(ctx.language, 'sticker.no_media');
     }
@@ -84,12 +84,12 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
 
       let webpBuffer: Buffer;
       if (mime.includes('image')) {
-        webpBuffer = await StickerUtils.imageToWebp(buffer);
+        webpBuffer = await StickerUtils.imageToWebp(buffer, { signal });
       } else if (mime.includes('video')) {
-        webpBuffer = await StickerUtils.videoToWebp(buffer);
+        webpBuffer = await StickerUtils.videoToWebp(buffer, { signal });
       } else {
         try {
-          webpBuffer = await StickerUtils.imageToWebp(buffer);
+          webpBuffer = await StickerUtils.imageToWebp(buffer, { signal });
         } catch {
           return t(ctx.language, 'sticker.unsupported_type', { mime });
         }

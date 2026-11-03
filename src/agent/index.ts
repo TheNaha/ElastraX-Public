@@ -34,7 +34,7 @@ import { eq, desc, and } from 'drizzle-orm';
 import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage, StreamingToolCallAccumulator } from '../ai/client';
 import { logger } from '../utils/logger';
-import { getErrorMessage } from '../utils/errorUtils';
+import { getErrorMessage, safeErrorMessage } from '../utils/errorUtils';
 import { isPlainObject } from '../utils/typeGuards';
 import {
   getToolByName,
@@ -298,7 +298,7 @@ async function executeRequestedToolCalls(
             // Deliberately NOT routed through turnBudget.constrainTextResult: it
             // throws once the result-byte budget is exhausted, so calling it here
             // would throw out of this catch and discard the entire turn.
-            toolResultText = `Error executing tool ${toolName}: ${getErrorMessage(err)}`;
+            toolResultText = `Error executing tool ${toolName}: ${safeErrorMessage(err, 2000)}`;
           }
 
           if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {

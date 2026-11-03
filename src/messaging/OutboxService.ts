@@ -177,26 +177,27 @@ export class OutboxService {
     return withImmediateTransaction(sqlite, () => {
       const placeholders = platforms.map(() => '?').join(',');
       const candidates = sqlite
-        .query<{ id: string }, [...string[], number, number, number]>(
+        .query<{ id: string }, [...string[], number, number, number, number]>(
           `SELECT id FROM message_outbox
            WHERE platform IN (${placeholders})
              AND available_at <= ?
+             AND attempt_count < ?
              AND (state IN ('pending', 'failed') OR (state = 'leased' AND lease_expires_at <= ?))
            ORDER BY available_at, created_at
            LIMIT ?`,
         )
-        .all(...platforms, now, now, Math.max(1, Math.min(50, limit)));
+        .all(...platforms, now, MAX_ATTEMPTS, now, Math.max(1, Math.min(50, limit)));
       const claimed: ClaimedOutboxMessage[] = [];
       for (const candidate of candidates) {
         const result = sqlite
-          .query<never, [string, number, number, string, number, number]>(
+          .query<never, [string, number, number, string, number, number, number]>(
             `UPDATE message_outbox
              SET state = 'leased', lease_owner = ?, lease_expires_at = ?,
                  attempt_count = attempt_count + 1, updated_at = ?
-             WHERE id = ? AND available_at <= ?
+             WHERE id = ? AND available_at <= ? AND attempt_count < ?
                AND (state IN ('pending', 'failed') OR (state = 'leased' AND lease_expires_at <= ?))`,
           )
-          .run(owner, now + LEASE_MS, now, candidate.id, now, now);
+          .run(owner, now + LEASE_MS, now, candidate.id, now, MAX_ATTEMPTS, now);
         if (Number(result.changes) !== 1) continue;
         const row = sqlite
           .query<{ id: string; platform: string; roomKey: string; chatRoomId: string; payload: string; attemptCount: number }, [string]>(
@@ -301,12 +302,16 @@ export class OutboxService {
   static fail(id: string, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const message = error instanceof Error ? error.message : String(error);
-    const deadline = now + exponentialBackoff(0, { baseMs: 5_000 });
-    // Single atomic UPDATE: the WHERE clause + RETURNING pattern eliminates the
-    // TOCTOU window that existed when this method did a SELECT-then-UPDATE in
-    // two separate calls. If another worker already claimed/failed the row,
-    // both the state and lease_owner predicates will not match and 0 rows are
-    // affected — the caller receives 'not_owned'.
+    const current = sqlite
+      .query<{ attemptCount: number }, [string, string]>(
+        `SELECT attempt_count AS attemptCount FROM message_outbox WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
+      )
+      .get(id, owner);
+    if (!current) {
+      logger.warn({ id, owner }, '[Outbox] fail() called on a row not owned by this worker (already completed, dead-lettered, or leased elsewhere)');
+      return 'not_owned';
+    }
+    const deadline = now + exponentialBackoff(current.attemptCount, { baseMs: 5_000 });
     const row = sqlite
       .query<{ attemptCount: number }, [number, string, number, number, number, number, string, string]>(
         `UPDATE message_outbox

@@ -15,7 +15,7 @@
  * Prerequisites: `ffmpeg` binary must be available on the system PATH.
  */
 
-import { FFmpegConverter, STICKER_WEBP_FILTER } from './FFmpegConverter';
+import { FFmpegConverter, STICKER_WEBP_FILTER, type FFmpegConvertOptions } from './FFmpegConverter';
 import { APP_VERSION } from '../config/version';
 import nodeWebpmux from 'node-webpmux';
 
@@ -28,21 +28,21 @@ export class StickerUtils {
   /**
    * Translates a static image to WEBP formatted properly for WhatsApp Stickers.
    */
-  static async imageToWebp(media: Buffer): Promise<Buffer> {
+  static async imageToWebp(media: Buffer, options: FFmpegConvertOptions = {}): Promise<Buffer> {
     return FFmpegConverter.convert(media, [
       '-vcodec', 'libwebp',
-      '-vf', 
+      '-vf',
       this.WEBP_FILTER
-    ], 'img', 'webp');
+    ], 'img', 'webp', options);
   }
 
   /**
    * Translates an MP4 video or GIF to an animated WEBP properly formatted for WhatsApp Stickers.
    */
-  static async videoToWebp(media: Buffer): Promise<Buffer> {
+  static async videoToWebp(media: Buffer, options: FFmpegConvertOptions = {}): Promise<Buffer> {
     return FFmpegConverter.convert(media, [
       '-vcodec', 'libwebp',
-      '-vf', 
+      '-vf',
       this.WEBP_FILTER,
       '-loop', '0',
       '-ss', '00:00:00',
@@ -50,7 +50,7 @@ export class StickerUtils {
       '-preset', 'default',
       '-an',
       '-fps_mode', 'passthrough'
-    ], 'mp4', 'webp');
+    ], 'mp4', 'webp', options);
   }
 
   /**

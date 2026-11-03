@@ -167,10 +167,13 @@ export class InboxService {
   static fail(id: number, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now();
     const message = error instanceof Error ? error.message : String(error);
-    const deadline = now + exponentialBackoff(0, { baseMs: 5_000 });
-    // Single atomic UPDATE: eliminates the TOCTOU window from the previous
-    // SELECT-then-UPDATE pattern. If another worker already processed the row,
-    // the predicates won't match and 0 rows are returned — caller gets 'not_owned'.
+    const current = sqlite
+      .query<{ attemptCount: number }, [number, string]>(
+        `SELECT attempt_count AS attemptCount FROM message_inbox WHERE id = ? AND state = 'processing' AND lease_owner = ?`,
+      )
+      .get(id, owner);
+    if (!current) return 'not_owned';
+    const deadline = now + exponentialBackoff(current.attemptCount, { baseMs: 5_000 });
     const row = sqlite
       .query<{ attemptCount: number }, [number, string, number, number, number, number, number, string]>(
         `UPDATE message_inbox
@@ -210,12 +213,15 @@ export class InboxService {
     const receivedCount = Number(received.changes);
 
     const processing = sqlite
-      .query<never, [number, number]>(
+      .query<never, [number, number, number, number]>(
         `UPDATE message_inbox
-         SET state = 'received', lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+         SET state = CASE WHEN attempt_count + 1 >= ? THEN 'dead_letter' ELSE 'received' END,
+             last_error = CASE WHEN attempt_count + 1 >= ? THEN 'stranded: max attempts exceeded' ELSE last_error END,
+             attempt_count = attempt_count + 1,
+             lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE state = 'processing' AND lease_expires_at < ?`,
       )
-      .run(now, now);
+      .run(MAX_ATTEMPTS, MAX_ATTEMPTS, now, now);
     const processingCount = Number(processing.changes);
 
     return { received: receivedCount, processing: processingCount };
