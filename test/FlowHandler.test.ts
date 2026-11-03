@@ -390,4 +390,36 @@ describe('FlowHandler room binding and versioning', () => {
     expect(mixedData.flows.expired).toBeUndefined();
     expect(mixedData.flows.active).toBeDefined();
   });
+
+  test('handle re-entrantly executes flow processors that call setSession or clearSession without deadlock', async () => {
+    let stepExecuted = false;
+    FlowHandler.register('reentrant_test_flow', async (ctx, activeFlowData, flowId) => {
+      stepExecuted = true;
+      await FlowHandler.setSession(ctx.senderId, flowId, {
+        flow: 'reentrant_test_flow',
+        step: 'step2',
+        data: { step1Done: true },
+      }, ctx.platform, 300, ctx.chatId);
+    });
+
+    await FlowHandler.setSession('user-reentrant', 'test-flow', {
+      flow: 'reentrant_test_flow',
+      step: 'step1',
+      data: {},
+    }, 'whatsapp', 300, 'chat-reentrant');
+
+    const ctx = createMockCtx({
+      senderId: 'user-reentrant',
+      chatId: 'chat-reentrant',
+      platform: 'whatsapp',
+      text: 'proceed to next step',
+    });
+
+    const handled = await FlowHandler.handle(ctx);
+    expect(handled).toBe(true);
+    expect(stepExecuted).toBe(true);
+
+    const active = await FlowHandler.getActiveFlow('user-reentrant', 'whatsapp', 'chat-reentrant');
+    expect(active?.flow.step).toBe('step2');
+  });
 });

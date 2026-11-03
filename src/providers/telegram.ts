@@ -532,7 +532,7 @@ export class TelegramProvider implements BotProvider {
     };
 
     const sendText = async (targetChatId: string, replyText: string, options?: ReplyOptions): Promise<unknown> => {
-      const activeBot = this.requireBot('reply');
+      const activeBot = ensureCurrent();
       options?.signal?.throwIfAborted();
       const chunks = chunkTelegramText(replyText);
       let last: unknown = null;
@@ -540,7 +540,7 @@ export class TelegramProvider implements BotProvider {
         options?.signal?.throwIfAborted();
         const chunk = chunks[i];
         const replied = await activeBot.api.sendMessage(targetChatId, chunk, {
-          ...(i === 0 ? { reply_parameters: { message_id: msg.message_id } } : {}),
+          ...(i === 0 && targetChatId === String(chatId) ? { reply_parameters: { message_id: msg.message_id } } : {}),
         });
         const id = (replied as { message_id?: number } | null)?.message_id;
         if (typeof id === 'number') noteBotMessageSent('telegram', String(id));

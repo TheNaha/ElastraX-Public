@@ -215,9 +215,8 @@ export class InboxService {
     const processing = sqlite
       .query<never, [number, number, number, number]>(
         `UPDATE message_inbox
-         SET state = CASE WHEN attempt_count + 1 >= ? THEN 'dead_letter' ELSE 'received' END,
-             last_error = CASE WHEN attempt_count + 1 >= ? THEN 'stranded: max attempts exceeded' ELSE last_error END,
-             attempt_count = attempt_count + 1,
+         SET state = CASE WHEN attempt_count >= ? THEN 'dead_letter' ELSE 'received' END,
+             last_error = CASE WHEN attempt_count >= ? THEN 'stranded: max attempts exceeded' ELSE last_error END,
              lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
          WHERE state = 'processing' AND lease_expires_at < ?`,
       )

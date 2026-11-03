@@ -103,7 +103,7 @@ describe('InboxService.recoverStranded', () => {
   test('transitions to dead_letter when expired processing lease reaches max attempts', async () => {
     await db.insert(messageInbox).values({
       platform: 'whatsapp', chatRoomId: 'room-1', eventKey: 'event-max-attempts-processing', payload: '{}',
-      state: 'processing', attemptCount: 4, availableAt: RECENT_TS, receivedAt: OLD_TS, createdAt: OLD_TS, updatedAt: OLD_TS,
+      state: 'processing', attemptCount: 5, availableAt: RECENT_TS, receivedAt: OLD_TS, createdAt: OLD_TS, updatedAt: OLD_TS,
       leaseOwner: 'worker-1', leaseExpiresAt: OLD_TS, lastError: 'timeout',
     }).run();
 

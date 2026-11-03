@@ -175,6 +175,14 @@ export class OutboxService {
     const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const roomKeyColumn = 'room_key';
     return withImmediateTransaction(sqlite, () => {
+      sqlite
+        .query<never, [number, number, number]>(
+          `UPDATE message_outbox
+           SET state = 'dead_letter', last_error = 'expired lease: max attempts reached',
+               lease_owner = NULL, lease_expires_at = NULL, updated_at = ?
+           WHERE state = 'leased' AND lease_expires_at <= ? AND attempt_count >= ?`,
+        )
+        .run(now, now, MAX_ATTEMPTS);
       const placeholders = platforms.map(() => '?').join(',');
       const candidates = sqlite
         .query<{ id: string }, [...string[], number, number, number, number]>(

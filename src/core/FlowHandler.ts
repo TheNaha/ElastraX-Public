@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { MessageContext } from './MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
@@ -59,6 +60,7 @@ export class FlowHandler {
   private static memorySessions = new Map<string, UserSession>();
   private static sessionCreationTime = new Map<string, number>();
   private static sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private static lockContext = new AsyncLocalStorage<Set<string>>();
 
   static resetForTesting(): void {
     this.dbLoaded = false;
@@ -195,6 +197,10 @@ export class FlowHandler {
   }
 
   private static async withLock<T>(key: string, task: () => Promise<T>): Promise<T> {
+    const held = this.lockContext.getStore();
+    if (held?.has(key)) {
+      return task();
+    }
     const previous = this.locks.get(key) ?? Promise.resolve();
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -206,7 +212,9 @@ export class FlowHandler {
       // A predecessor's failure must not block this caller or leak the lock.
     }
     try {
-      return await task();
+      const nextHeld = new Set(held ?? []);
+      nextHeld.add(key);
+      return await this.lockContext.run(nextHeld, task);
     } finally {
       release();
       if (this.locks.get(key) === queued) this.locks.delete(key);
