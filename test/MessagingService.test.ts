@@ -56,6 +56,38 @@ describe('OutboxService.prune', () => {
   });
 });
 
+describe('OutboxService.claim expired lease handling', () => {
+  beforeEach(() => {
+    db.delete(messageOutbox).run();
+  });
+
+  test('transitions expired leased rows with max attempts to dead_letter', async () => {
+    const now = Date.now();
+    await db.insert(messageOutbox).values({
+      id: 'outbox-expired-max',
+      platform: 'whatsapp',
+      chatRoomId: 'room-1',
+      roomKey: 'room:whatsapp:room-1',
+      idempotencyKey: 'key-expired-max',
+      payload: JSON.stringify({ text: 'test' }),
+      state: 'leased',
+      attemptCount: 5,
+      availableAt: now - 100_000,
+      leaseOwner: 'worker-old',
+      leaseExpiresAt: now - 50_000,
+      createdAt: now - 100_000,
+      updatedAt: now - 50_000,
+    }).run();
+
+    const claimed = OutboxService.claim('worker-new', ['whatsapp'], 10);
+    expect(claimed.find(c => c.id === 'outbox-expired-max')).toBeUndefined();
+
+    const row = db.select().from(messageOutbox).where(eq(messageOutbox.id, 'outbox-expired-max')).all();
+    expect(row[0]!.state).toBe('dead_letter');
+    expect(row[0]!.lastError).toContain('max attempts reached');
+  });
+});
+
 describe('InboxService.recoverStranded', () => {
   beforeEach(() => {
     db.delete(messageInbox).run();

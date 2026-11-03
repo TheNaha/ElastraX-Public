@@ -213,6 +213,15 @@ describe('TelegramProvider lifecycle', () => {
     const secondOpts = sentMessages[1]?.options as { reply_parameters?: { message_id?: number } } | undefined;
     expect(firstOpts?.reply_parameters).toEqual({ message_id: 42 });
     expect(secondOpts?.reply_parameters).toBeUndefined();
+
+    // Cross-chat send via sendToChat should omit reply_parameters
+    sentMessages.length = 0;
+    await receivedContext!.sendToChat('other-chat-999', 'cross-chat message');
+    expect(sentMessages).toHaveLength(1);
+    expect(sentMessages[0]?.chatId).toBe('other-chat-999');
+    const crossOpts = sentMessages[0]?.options as { reply_parameters?: { message_id?: number } } | undefined;
+    expect(crossOpts?.reply_parameters).toBeUndefined();
+
     await provider.stop();
   });
 });
