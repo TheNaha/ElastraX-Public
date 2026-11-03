@@ -216,8 +216,9 @@ describe('TelegramProvider lifecycle', () => {
 
     // Cross-chat send via sendToChat should omit reply_parameters
     sentMessages.length = 0;
-    expect(receivedContext!.sendToChat).toBeDefined();
-    await receivedContext!.sendToChat!('other-chat-999', 'cross-chat message');
+    const sendToChat = receivedContext!.sendToChat;
+    expect(sendToChat).toBeDefined();
+    await sendToChat!('other-chat-999', 'cross-chat message');
     expect(sentMessages[0]?.chatId).toBe('other-chat-999');
     const crossOpts = sentMessages[0]?.options as { reply_parameters?: { message_id?: number } } | undefined;
     expect(crossOpts?.reply_parameters).toBeUndefined();
