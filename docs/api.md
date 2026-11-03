@@ -13,6 +13,8 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `GET` | `/ready` | Readiness compatibility hook |
 | `GET` | `/metrics` | Protected Prometheus metrics |
 | `GET` | `/admin` | Admin dashboard (redirects to `/admin/login` without a session) |
+| `GET` | `/admin/app.js` | Dashboard JavaScript bundle (static asset) |
+| `GET` | `/admin/style.css` | Dashboard stylesheet (static asset) |
 | `GET` | `/admin/login` | Dashboard login page |
 | `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
 | `POST` | `/admin/api/logout` | End the session |

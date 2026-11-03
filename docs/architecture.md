@@ -95,3 +95,7 @@ The AI layer features a highly resilient Failover Router:
 - AI protocol failures surface as `AIProtocolError` (`invalid_response`, `no_choices`, `invalid_chunk`, `invalid_sse`, `sse_buffer_limit`, `empty_stream`, `incomplete_stream`, `empty_response`, `response_too_large`).
 - Webhook request failures surface as `WebhookRequestError` with an HTTP status; the server maps them to the response status.
 - Validation failures at startup throw after logging every error; the process does not start with an invalid environment.
+
+## 15. Reaction Feedback
+
+A thumbs up or thumbs down on a bot reply is recorded as a quality signal (`src/utils/feedback.ts`). Reactions were previously sent but incoming ones ignored. Counters are exported on `/metrics` (`elastrax_feedback_total`, `elastrax_feedback_retracted_total`) and appended to a JSONL eval log (`FEEDBACK_LOG_PATH`, default `data/feedback.jsonl`) when `FEEDBACK_LOG_ENABLED=true`. Daily volume is bounded by `FEEDBACK_MAX_PER_DAY` (default 2000).

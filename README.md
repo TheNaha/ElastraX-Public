@@ -35,7 +35,7 @@ Start the agent:
 bun run start
 ```
 
-For WhatsApp, scan the QR code with the owner account. For Discord, set `DISCORD_BOT_TOKEN` before startup. Both providers can run in the same process.
+For WhatsApp, scan the QR code with the owner account. For Discord, set `DISCORD_BOT_TOKEN` before startup. For Telegram, set `TELEGRAM_BOT_TOKEN` and `BOT_OWNER_TELEGRAM_ID` (a Telegram user id can never match `BOT_OWNER_JID`). All three providers can run in the same process.
 
 ## Release identity
 

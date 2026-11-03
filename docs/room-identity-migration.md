@@ -51,11 +51,11 @@ The migration is additive. Existing `chat_rooms.id`, `messages.chat_room_id`, an
 
 ## Rollback
 
-A rollback to a pre-0022 application is safe for existing legacy rows, but new canonical-ID rows written by v8.1 cannot be interpreted by the old application as provider room IDs. Therefore:
+A rollback to a pre-0022 application is safe for existing legacy rows, but new canonical-ID rows written by v8.0.1 cannot be interpreted by the old application as provider room IDs. Therefore:
 
-- Always take a verified backup before the v8.1 migration.
+- Always take a verified backup before the v8.0.1 migration.
 - Roll back the application and restore the matching pre-migration database when canonical-ID rooms have been created.
-- Do not run the old binary against a v8.1 database containing new canonical-ID rows without restoring or down-migrating those rows.
+- Do not run the old binary against a v8.0.1 database containing new canonical-ID rows without restoring or down-migrating those rows.
 - Never delete the legacy database or WhatsApp auth backup during rollback validation.
 
 ## Verification
