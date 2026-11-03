@@ -77,6 +77,7 @@ import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowled
 import { sanitizeRawMessage } from '../utils/rawMessage';
 import { stripThinkTags } from '../utils/textUtils';
 import { OutboxService, DIRECT_SEND_GRACE_MS } from '../messaging/OutboxService';
+import { ToolProgressTracker, formatToolAction } from './toolProgress';
 import { getInlineMediaEligibility } from '../providers/media';
 import {
   chatRoomKeyInsertValues,
@@ -228,6 +229,7 @@ async function executeRequestedToolCalls(
     logMalformedArgs: boolean;
     turnBudget: TurnBudget;
     mode?: 'stream';
+    progressTracker?: ToolProgressTracker;
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
   // The turn budget is a self-imposed guard, not a system failure. Claiming the
@@ -251,68 +253,104 @@ async function executeRequestedToolCalls(
     };
   }
 
-  const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
-  let preferredTier = options.preferredTier;
+  type PreparedToolCall =
+    | { kind: 'error'; toolCall: ToolCall; toolName: string; errorText: string }
+    | { kind: 'ready'; toolCall: ToolCall; toolName: string; tool: BaseTool; validArgs: Record<string, unknown> };
 
+  const prepared: PreparedToolCall[] = [];
   for (const toolCall of toolCalls) {
     const toolName = toolCall.function.name;
     const tool = getToolByName(toolName);
-    let toolResultText: string;
-    let resultTier: ModelTier | undefined;
-
     if (!tool) {
-      toolResultText = `Error: Tool ${toolName} not found.`;
       log.error({ toolName, chatId: options.chatId }, 'LLM requested unknown tool');
+      prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Tool ${toolName} not found.` });
     } else if (!(options.allowedToolNames.has(tool.name) || options.dynamicToolNames.has(tool.name))) {
-      toolResultText = `Error: You do not have permission to use tool ${toolName}.`;
       log.warn({ toolName, chatId: options.chatId, senderId: options.ctx.senderId }, 'LLM requested unauthorized tool');
+      prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: You do not have permission to use tool ${toolName}.` });
     } else {
       const args = parseToolArgs(toolCall.function.arguments, toolName, options.logMalformedArgs);
       if (!args) {
-        toolResultText = `Error: Arguments for ${toolName} must be a valid JSON object.`;
+        prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Arguments for ${toolName} must be a valid JSON object.` });
       } else {
         const validation = validateToolArguments(tool, args);
         if (!validation.valid || !isPlainObject(validation.value)) {
-          toolResultText = `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}`;
+          prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}` });
         } else {
-          const validArgs = validation.value;
-          log.info(
-            { toolName, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) },
-            'Tool call invoked',
-          );
-          healthMetrics.recordToolInvocation(toolName);
-          await options.ctx.react?.('🔧').catch(err => log.warn({ err, toolName, chatId: options.chatId }, '[Agent] Reaction failed'));
-          try {
-            // Route through runMutatingTool so the LLM path shares the slash
-            // command path's mutation rate limit and per-user serialization.
-            // Without this, a mutating tool invoked by the model bypassed both.
-            const rawResult = await runMutatingTool(
-              tool,
-              options.ctx,
-              () => executeToolWithTimeout(tool, validArgs, options.ctx),
-            );
-            toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
-            resultTier = tool.modelTier;
-          } catch (err: unknown) {
-            log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
-            // Deliberately NOT routed through turnBudget.constrainTextResult: it
-            // throws once the result-byte budget is exhausted, so calling it here
-            // would throw out of this catch and discard the entire turn.
-            toolResultText = `Error executing tool ${toolName}: ${safeErrorMessage(err, 2000)}`;
-          }
-
-          if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
-            const query = typeof validArgs.query === 'string' ? validArgs.query : '';
-            const discovered = discoverMatchingTools(
-              query,
-              options.allowedToolNames,
-              options.dynamicToolNames,
-              options.availableTools,
-            );
-            log.info({ chatId: options.chatId, discovered }, '[Agent] Tools discovered via find_tools');
-          }
+          prepared.push({ kind: 'ready', toolCall, toolName, tool, validArgs: validation.value });
         }
       }
+    }
+  }
+
+  const readyCount = prepared.filter(p => p.kind === 'ready').length;
+  options.progressTracker?.addPlannedSteps(readyCount);
+
+  const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
+  let preferredTier = options.preferredTier;
+
+  for (const item of prepared) {
+    if (item.kind === 'error') {
+      toolResults.push({
+        role: 'tool',
+        tool_call_id: item.toolCall.id,
+        name: item.toolName,
+        content: item.errorText,
+      });
+      continue;
+    }
+
+    const { toolCall, toolName, tool, validArgs } = item;
+    log.info(
+      { toolName, chatId: options.chatId, iteration: options.iteration, ...(options.mode ? { mode: options.mode } : {}) },
+      'Tool call invoked',
+    );
+    healthMetrics.recordToolInvocation(toolName);
+
+    const description = typeof tool.describeAction === 'function'
+      ? tool.describeAction(validArgs)
+      : formatToolAction(tool.name, tool.category ?? 'utility', validArgs);
+
+    const stepIndex = await options.progressTracker?.startStep(description);
+    await options.ctx.react?.('🔧').catch(err => log.warn({ err, toolName, chatId: options.chatId }, '[Agent] Reaction failed'));
+
+    let toolResultText: string;
+    let resultTier: ModelTier | undefined;
+    let toolFailed = false;
+
+    try {
+      // Route through runMutatingTool so the LLM path shares the slash
+      // command path's mutation rate limit and per-user serialization.
+      // Without this, a mutating tool invoked by the model bypassed both.
+      const rawResult = await runMutatingTool(
+        tool,
+        options.ctx,
+        () => executeToolWithTimeout(tool, validArgs, options.ctx),
+      );
+      toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
+      resultTier = tool.modelTier;
+    } catch (err: unknown) {
+      toolFailed = true;
+      log.error({ err, toolName, chatId: options.chatId }, 'Tool execution failed or timed out');
+      // Deliberately NOT routed through turnBudget.constrainTextResult: it
+      // throws once the result-byte budget is exhausted, so calling it here
+      // would throw out of this catch and discard the entire turn.
+      toolResultText = `Error executing tool ${toolName}: ${safeErrorMessage(err, 2000)}`;
+    }
+
+    const stepFailed = toolFailed || /^(\s*(?:Error:|❌))/i.test(toolResultText);
+    if (stepIndex !== undefined) {
+      options.progressTracker?.completeStep(stepIndex, stepFailed);
+    }
+
+    if (toolName === 'find_tools' && options.toolLoadingMode === 'search') {
+      const query = typeof validArgs.query === 'string' ? validArgs.query : '';
+      const discovered = discoverMatchingTools(
+        query,
+        options.allowedToolNames,
+        options.dynamicToolNames,
+        options.availableTools,
+      );
+      log.info({ chatId: options.chatId, discovered }, '[Agent] Tools discovered via find_tools');
     }
 
     if (resultTier && !preferredTier) preferredTier = resultTier;
@@ -324,15 +362,14 @@ async function executeRequestedToolCalls(
     });
   }
 
+  await options.progressTracker?.flush();
   return { toolResults, preferredTier };
 }
-
 
 function extractAssistantText(aiMsgObj: ChatCompletionMessage): string {
   // Keep content as unknown because some providers may return non-spec formats
   // (e.g., array-of-parts) even though the typed interface expects string|null.
   const content: unknown = aiMsgObj?.content;
-
   if (typeof content === 'string') {
     return stripThinkTags(content);
   }
@@ -1051,6 +1088,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     });
     const editInterval = platform === 'whatsapp' ? streamingConfig.waEditIntervalMs : streamingConfig.dcEditIntervalMs;
     let preferredTier: ModelTier | undefined;
+    const progressTracker = new ToolProgressTracker(ctx, (err, phase) => {
+      log.warn({ err: getErrorMessage(err), chatId, phase }, '[Agent] Tool progress update failed');
+    });
 
     for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
       try {
@@ -1124,12 +1164,9 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
           const streamedToolCalls = toolCallAccumulator.finish();
           if (streamedToolCalls.length > 0) {
             if (sentKey && !streamingFailed) {
-              await ctx.editMessage!(sentKey, accumulated.trim() || '🔧 Running tools...').catch(err => log.warn({ err, chatId, iteration }, '[Agent] Stream edit failed'));
-              // Keep streamedResponseSent === true: sentKey remains the live message
-              // and is edited with the final text below, so the final ctx.reply is skipped.
-            } else if (streamingFailed) {
-              streamedResponseSent = false;
+              progressTracker.adoptMessageKey(sentKey);
             }
+            streamedResponseSent = false;
 
             // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
             const toolCalls: ToolCall[] = streamedToolCalls.map(call => ({
@@ -1157,6 +1194,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
               logMalformedArgs: false,
               turnBudget: toolTurnBudget,
               mode: 'stream',
+              progressTracker,
             });
             preferredTier = execution.preferredTier;
             messagesForAI.push(...execution.toolResults);
@@ -1221,6 +1259,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             preferredTier,
             logMalformedArgs: true,
             turnBudget: toolTurnBudget,
+            progressTracker,
           });
           preferredTier = execution.preferredTier;
           messagesForAI.push(...execution.toolResults);

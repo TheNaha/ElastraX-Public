@@ -567,6 +567,14 @@ describe('handleIncomingMessage', () => {
       stubRegistry('getTriggeredTools', () => []);
       stubRegistry('getToolDefinitions', () => []);
     }
+    function registerTools(...tools: BaseTool[]): void {
+      const map = new Map(tools.map(t => [t.name, t]));
+      stubRegistry('getToolByName', (name: string) => map.get(name));
+      stubRegistry('getToolsForContext', () => tools);
+      stubRegistry('getAlwaysLoadedDefinitions', () => tools.map(t => t.definition));
+      stubRegistry('getTriggeredTools', () => []);
+      stubRegistry('getToolDefinitions', () => tools.map(t => t.definition));
+    }
 
     test('executes a tool the AI requests and then replies with the final text', async () => {
       const execute = mock(async () => 'Search results here');
@@ -662,6 +670,207 @@ describe('handleIncomingMessage', () => {
 
       expect(execute).toHaveBeenCalled();
       expectReply(ctx.reply, expect.stringContaining('An internal error occurred'));
+    });
+
+    test('appends live tool progress across multiple tools in one turn and delivers final answer in a separate message', async () => {
+      process.env.AI_STREAMING = 'false';
+      const execSearch = mock(async () => 'Search results for Arsenal');
+      const execScrape = mock(async () => 'Match report content');
+      registerTools(
+        new FakeTool('web_search', execSearch),
+        new FakeTool('web_scrape', execScrape),
+      );
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeToolCallResponse([
+            { id: 'call-1', name: 'web_search', args: JSON.stringify({ query: 'Arsenal match score yesterday' }) },
+            { id: 'call-2', name: 'web_scrape', args: JSON.stringify({ query: 'match summary' }) },
+          ]);
+        }
+        return makeFetchResponse('Arsenal won 2-0.');
+      }) as unknown as typeof global.fetch;
+
+      const sentMessages: string[] = [];
+      const editedMessages: Array<{ key: unknown; text: string }> = [];
+      const statusKey = { id: 'status-msg-1' };
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'What was the score in the Arsenal match yesterday?',
+        sendMessage: mock(async (text: string) => {
+          sentMessages.push(text);
+          return statusKey;
+        }),
+        editMessage: mock(async (key: unknown, text: string) => {
+          editedMessages.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(execSearch).toHaveBeenCalled();
+      expect(execScrape).toHaveBeenCalled();
+      expect(sentMessages).toHaveLength(1);
+      expect(sentMessages[0]).toBe('⏳ [1/2] 🔍 Searching web for "Arsenal match score yesterday"...');
+
+      expect(editedMessages.length).toBeGreaterThanOrEqual(2);
+      expect(editedMessages[0]?.key).toEqual(statusKey);
+      expect(editedMessages[0]?.text).toBe(
+        '✅ [1/2] 🔍 Searching web for "Arsenal match score yesterday"...\n⏳ [2/2] 📄 Reading match summary...',
+      );
+      expect(editedMessages.at(-1)?.key).toEqual(statusKey);
+      expect(editedMessages.at(-1)?.text).toBe(
+        '✅ [1/2] 🔍 Searching web for "Arsenal match score yesterday"...\n✅ [2/2] 📄 Reading match summary...',
+      );
+
+      // Final answer delivered via ctx.reply in another message block
+      expectReply(ctx.reply, 'Arsenal won 2-0.');
+    });
+
+    test('dynamically updates step counter denominator across multi-turn sequential tool calls', async () => {
+      process.env.AI_STREAMING = 'false';
+      const execSearch = mock(async () => 'Search results');
+      const execScrape = mock(async () => 'Scrape results');
+      registerTools(
+        new FakeTool('web_search', execSearch),
+        new FakeTool('web_scrape', execScrape),
+      );
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeToolCallResponse([{ id: 'call-1', name: 'web_search', args: JSON.stringify({ query: 'step1' }) }]);
+        }
+        if (callCount === 2) {
+          return makeToolCallResponse([{ id: 'call-2', name: 'web_scrape', args: JSON.stringify({ query: 'step2' }) }]);
+        }
+        return makeFetchResponse('Final combined answer.');
+      }) as unknown as typeof global.fetch;
+
+      const sentMessages: string[] = [];
+      const editedMessages: Array<{ key: unknown; text: string }> = [];
+      const statusKey = { id: 'status-seq-1' };
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Do step 1 then step 2',
+        sendMessage: mock(async (text: string) => {
+          sentMessages.push(text);
+          return statusKey;
+        }),
+        editMessage: mock(async (key: unknown, text: string) => {
+          editedMessages.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(execSearch).toHaveBeenCalled();
+      expect(execScrape).toHaveBeenCalled();
+
+      // Turn 1 initially rendered [1/1]
+      expect(sentMessages[0]).toBe('⏳ [1/1] 🔍 Searching web for "step1"...');
+
+      // Later turn 2 expanded denominator to [1/2] and [2/2]
+      const finalEdit = editedMessages.at(-1)?.text;
+      expect(finalEdit).toBe(
+        '✅ [1/2] 🔍 Searching web for "step1"...\n✅ [2/2] 📄 Reading step2...',
+      );
+
+      // Final answer delivered via ctx.reply in another message block
+      expectReply(ctx.reply, 'Final combined answer.');
+    });
+
+    test('updates tool progress icon to ❌ when a tool execution fails', async () => {
+      process.env.AI_STREAMING = 'false';
+      const execFailing = mock(async () => {
+        throw new Error('Connection refused');
+      });
+      registerTool(new FakeTool('web_search', execFailing));
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeToolCallResponse([{ id: 'call-fail', name: 'web_search', args: JSON.stringify({ query: 'fail' }) }]);
+        }
+        return makeFetchResponse('Recovered answer after tool failure.');
+      }) as unknown as typeof global.fetch;
+
+      const editedMessages: Array<{ key: unknown; text: string }> = [];
+      const statusKey = { id: 'status-fail-1' };
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Trigger failing tool',
+        sendMessage: mock(async () => statusKey),
+        editMessage: mock(async (key: unknown, text: string) => {
+          editedMessages.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(execFailing).toHaveBeenCalled();
+      const finalEdit = editedMessages.at(-1)?.text;
+      expect(finalEdit).toBe('❌ [1/1] 🔍 Searching web for "fail"...');
+      expectReply(ctx.reply, 'Recovered answer after tool failure.');
+    });
+
+    test('renders live tool progress during streaming mode and delivers final answer in a separate message', async () => {
+      process.env.AI_STREAMING = 'true';
+      const execSearch = mock(async () => 'Search results for bun');
+      registerTool(new FakeTool('web_search', execSearch));
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return new Response([
+            'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call-stream-1","type":"function","function":{"name":"web_search","arguments":"{\\"query\\":\\"bun\\"}"}}]},"finish_reason":null}]}',
+            '',
+            'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}',
+            '',
+            'data: [DONE]',
+            '',
+          ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+        }
+        return new Response([
+          'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"Bun is fast."},"finish_reason":null}]}',
+          '',
+          'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }) as unknown as typeof global.fetch;
+
+      const sentMessages: string[] = [];
+      const editedMessages: Array<{ key: unknown; text: string }> = [];
+      let sentKeyCounter = 0;
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Stream bun search',
+        sendMessage: mock(async (text: string) => {
+          sentMessages.push(text);
+          return { id: `key-${++sentKeyCounter}` };
+        }),
+        editMessage: mock(async (key: unknown, text: string) => {
+          editedMessages.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(execSearch).toHaveBeenCalled();
+      expect(sentMessages.length).toBeGreaterThanOrEqual(1);
+      expect(sentMessages[0]).toBe('⏳ [1/1] 🔍 Searching web for "bun"...');
+      expect(editedMessages.some(e => e.text.includes('✅ [1/1] 🔍 Searching web for "bun"...'))).toBe(true);
     });
   });
 

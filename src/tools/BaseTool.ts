@@ -1,6 +1,7 @@
 import { MessageContext } from '../core/MessageContext';
 import { SUPPORTED_PLATFORMS } from '../core/platforms';
 import type { ModelTier } from '../types/ai';
+import { formatToolAction } from '../agent/toolProgress';
 
 export interface ToolResponse {
   text: string;
@@ -175,6 +176,10 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs> {
 
   abstract get definition(): ToolDefinition;
   abstract execute(args: TArgs, ctx: MessageContext, signal?: AbortSignal): Promise<ToolResult>;
+
+  describeAction(args: TArgs): string {
+    return formatToolAction(this.name, this.category, args);
+  }
 
   /**
    * Cached metadata.
