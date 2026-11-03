@@ -11,6 +11,7 @@
  *    every owner-only tool is unreachable there.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import type { MessageContext } from '../src/core/MessageContext';
 
 const { AuthService } = await import('../src/utils/AuthService');
 const { chunkTelegramText, TELEGRAM_TEXT_LIMIT } = await import('../src/providers/telegramText');
