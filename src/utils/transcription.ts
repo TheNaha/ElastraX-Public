@@ -27,7 +27,7 @@ export const transcriptionDeps = {
 };
 
 export function isAudioMimeType(mimeType: string | undefined): boolean {
-  return typeof mimeType === 'string' && (mimeType.split(';', 1)[0].trim().toLowerCase().startsWith('audio/'));
+  return typeof mimeType === 'string' && normalizeMime(mimeType).startsWith('audio/');
 }
 
 export function isTranscriptionConfigured(env: Record<string, string | undefined> = process.env): boolean {
