@@ -27,20 +27,23 @@ import { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WH
 import {
   parseCanonicalRoomKey,
   toRoomKey as toRoomKeyFormat,
+  ROOM_KEY_FULL_PREFIX,
 } from '../core/roomKeyFormat';
 import type { RoomKeyParts } from '../core/roomKeyFormat';
 
 /**
- * Canonical prefix of every room key.
+ * Canonical prefix of every room key (`room:`).
  *
- * The format is owned by `src/core/roomKeyFormat.ts`; this module adds the
- * database lane's validation on top of it.
+ * The format is owned by `src/core/roomKeyFormat.ts`; this module re-exports
+ * its full prefix here so the database lane never drifts out of sync with the
+ * canonical format.
  */
-export const ROOM_KEY_PREFIX = 'room:';
+export const ROOM_KEY_PREFIX = ROOM_KEY_FULL_PREFIX;
 
 export { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WHEN };
 
 export type { RoomKeyParts };
+
 
 export interface RoomKeyStats {
   /** Total registry rows. */

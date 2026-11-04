@@ -511,15 +511,18 @@ export class AppRuntime {
         this.messageQueue.stop();
       }
       await this.drainOutbox();
-
       await Promise.allSettled(this.providers.map(async provider => {
-        await Promise.race([
-          provider.stop(),
-          new Promise<void>((_, reject) => {
-            const timer = setTimeout(() => reject(new Error(`Provider ${provider.name} stop timed out`)), 10_000);
-            timer.unref?.();
-          }),
-        ]);
+        try {
+          await Promise.race([
+            provider.stop(),
+            new Promise<void>((_, reject) => {
+              const timer = setTimeout(() => reject(new Error(`Provider ${provider.name} stop timed out`)), 10_000);
+              timer.unref?.();
+            }),
+          ]);
+        } catch (error) {
+          logger.error({ err: error, provider: provider.name }, 'Provider stop failed during teardown');
+        }
       }));
     } catch (error) {
       logger.error({ err: error }, 'Runtime teardown failed');
