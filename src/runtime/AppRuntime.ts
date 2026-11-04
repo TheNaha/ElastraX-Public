@@ -218,12 +218,19 @@ export class AppRuntime {
   private started = false;
   private stopping = false;
   /**
+   * Persistent "has been shut down at least once" flag. `stop()` is idempotent:
+   * once a shutdown has completed, a second `stop()` is a no-op. During boot
+   * (`started` still false, `stopped` still false) a shutdown is NOT dropped —
+   * `stop()` proceeds to `teardown()` so providers started mid-boot are always
+   * released. `start()` resets both flags.
+   */
+  private stopped = false;
+
+  /**
    * Set the moment a shutdown is requested, including while `start()` is still
-   * awaiting provider connections. `stop()` used to return immediately when
-   * `started` was still false, so a SIGTERM during boot was dropped on the floor:
-   * `start()` then ran to completion with the database already closed, binding
-   * the HTTP listener and connecting both providers. `start()` checks this flag
-   * at every await boundary and unwinds instead.
+   * awaiting provider connections. `start()` checks this flag at every await
+   * boundary and unwinds instead of binding the HTTP listener against a
+   * database the shutdown path has already closed.
    */
   private stopRequested = false;
 
@@ -260,6 +267,7 @@ export class AppRuntime {
   async start(): Promise<void> {
     if (this.started) return;
     this.stopRequested = false;
+    this.stopped = false;
 
     // Wait for the tool registry (core tools + plugins) before accepting messages,
     // so slash commands and LLM tool lookups never hit an empty registry.
@@ -454,7 +462,7 @@ export class AppRuntime {
     // against an already-closed database.
     this.stopRequested = true;
     if (this.stopping) return;
-    if (!this.started) return;
+    if (!this.started && this.stopped) return;
     this.stopping = true;
     try {
       await this.teardown();
@@ -462,6 +470,7 @@ export class AppRuntime {
       this.activeProviders = [];
       this.started = false;
       this.stopping = false;
+      this.stopped = true;
       logger.info('Graceful shutdown complete');
     }
   }
