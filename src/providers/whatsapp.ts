@@ -176,7 +176,11 @@ export class WhatsAppProvider implements BotProvider {
     const sock = this.sock;
     this.sock = null;
     this.botLid = null;
-    sock?.end(new Error('Stop called'));
+    // `end()` may return a rejected promise; swallow it so teardown never fails
+    // on a socket close during shutdown.
+    Promise.resolve(sock?.end(new Error('Stop called'))).catch(error =>
+      logger.debug({ err: error }, '[WhatsApp] Stop socket end failed'),
+    );
   }
 
   onMessage(handler: (ctx: MessageContext) => Promise<void>): void {
@@ -295,7 +299,10 @@ export class WhatsAppProvider implements BotProvider {
   ): void {
     socket.ev.on('creds.update', () => {
       if (!this.isCurrent(socket, generation)) return;
-      Promise.resolve(saveCreds()).catch(error => {
+      // `Promise.resolve().then(saveCreds)` defers saveCreds so a synchronous
+      // throw from it is still caught by the .catch below instead of escaping
+      // the event handler as an unhandled rejection.
+      Promise.resolve().then(saveCreds).catch(error => {
         this.providerError = error instanceof Error ? error : new Error(String(error));
         logger.error({ err: error }, '[WhatsApp] Failed to persist credentials');
       });
@@ -303,37 +310,42 @@ export class WhatsAppProvider implements BotProvider {
 
     socket.ev.on('connection.update', async update => {
       if (!this.isCurrent(socket, generation)) return;
-      const { connection, lastDisconnect, qr } = update;
-      if (qr) {
-        logger.info('[WhatsApp] Scan this QR code to login:');
-        whatsAppProviderDeps.renderQr(qr);
-      }
-      if (connection === 'close') {
-        const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
-        const shouldReconnect = statusCode !== DisconnectReason.loggedOut && this.desiredRunning && generation === this.generation;
-        logger.warn({ err: lastDisconnect?.error, shouldReconnect }, '[WhatsApp] Connection closed');
-        this.sock = null;
-        this.botLid = null;
-        this.providerError = lastDisconnect?.error instanceof Error ? lastDisconnect.error : null;
-        this.providerStatus = shouldReconnect ? 'backoff' : statusCode === DisconnectReason.loggedOut ? 'error' : 'stopped';
-        if (shouldReconnect) this.scheduleReconnect(generation);
-      } else if (connection === 'open') {
-        this.providerStatus = 'running';
-        this.providerError = null;
-        this.reconnectAttempts = 0;
-        logger.info('[WhatsApp] Connected successfully.');
-        if (socket.user?.id) {
-          try {
-            const botLid = await resolveLidForPn(socket, WhatsAppProvider.botPnJid(socket.user.id));
-            if (!this.isCurrent(socket, generation)) return;
-            this.botLid = botLid;
-            if (botLid) logger.info({ botLid }, '[WhatsApp] Resolved bot LID');
-          } catch (error) {
-            logger.debug({ err: error }, '[WhatsApp] Could not resolve bot LID');
-          }
+      try {
+        const { connection, lastDisconnect, qr } = update;
+        if (qr) {
+          logger.info('[WhatsApp] Scan this QR code to login:');
+          whatsAppProviderDeps.renderQr(qr);
         }
-        if (!this.isCurrent(socket, generation)) return;
-        await this.seedOwner(socket, generation);
+        if (connection === 'close') {
+          const statusCode = (lastDisconnect?.error as Boom | undefined)?.output?.statusCode;
+          const shouldReconnect = statusCode !== DisconnectReason.loggedOut && this.desiredRunning && generation === this.generation;
+          logger.warn({ err: lastDisconnect?.error, shouldReconnect }, '[WhatsApp] Connection closed');
+          this.sock = null;
+          this.botLid = null;
+          this.providerError = lastDisconnect?.error instanceof Error ? lastDisconnect.error : null;
+          this.providerStatus = shouldReconnect ? 'backoff' : statusCode === DisconnectReason.loggedOut ? 'error' : 'stopped';
+          if (shouldReconnect) this.scheduleReconnect(generation);
+        } else if (connection === 'open') {
+          this.providerStatus = 'running';
+          this.providerError = null;
+          this.reconnectAttempts = 0;
+          logger.info('[WhatsApp] Connected successfully.');
+          if (socket.user?.id) {
+            try {
+              const botLid = await resolveLidForPn(socket, WhatsAppProvider.botPnJid(socket.user.id));
+              if (!this.isCurrent(socket, generation)) return;
+              this.botLid = botLid;
+              if (botLid) logger.info({ botLid }, '[WhatsApp] Resolved bot LID');
+            } catch (error) {
+              logger.debug({ err: error }, '[WhatsApp] Could not resolve bot LID');
+            }
+          }
+          if (!this.isCurrent(socket, generation)) return;
+          await this.seedOwner(socket, generation);
+        }
+      } catch (error) {
+        this.providerError = error instanceof Error ? error : new Error(String(error));
+        logger.error({ err: error, generation }, '[WhatsApp] Connection update handler failed');
       }
     });
 
