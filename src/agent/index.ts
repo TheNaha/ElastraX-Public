@@ -747,7 +747,8 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
         await ctx.mediaReady;
         await syncDbMedia();
       } else {
-        // Non-blocking background sync for passive ingestion
+        // Background sync for passive ingestion; awaited so the DB row is
+        // consistent (mediaPath/mimeType set) when handleIncomingMessage returns.
         await ctx.mediaReady.then(syncDbMedia).catch(err => log.warn({ err, chatId }, '[Agent] Background media sync failed'));
       }
     }

@@ -176,9 +176,9 @@ export class WhatsAppProvider implements BotProvider {
     const sock = this.sock;
     this.sock = null;
     this.botLid = null;
-    // `end()` may return a rejected promise; swallow it so teardown never fails
-    // on a socket close during shutdown.
-    Promise.resolve(sock?.end(new Error('Stop called'))).catch(error =>
+    // Defer end() so a synchronous throw from baileys is caught by .catch below
+    // instead of escaping stop(); swallowed rejections never fail teardown.
+    Promise.resolve().then(() => sock?.end(new Error('Stop called'))).catch(error =>
       logger.debug({ err: error }, '[WhatsApp] Stop socket end failed'),
     );
   }
