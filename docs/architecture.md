@@ -26,7 +26,7 @@ The `handleIncomingMessage` function is the single entry point for all normalize
 2. **Explicit Commands**: Routes slash commands directly to their tool implementations (bypassing the LLM).
 3. **Intent / Rule Checking**: Decides if the bot should reply (e.g., ignoring group messages where the bot isn't mentioned).
 4. **LLM Inference**: Fetches chat history, builds the context, and invokes the `AIClient`.
-5. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated.
+5. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with ✅/❌ icons (see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the final answer is delivered as a separate message.
 
 ### 4. Interactive State Management (`FlowHandler.ts`)
 For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
@@ -53,7 +53,7 @@ The AI layer features a highly resilient Failover Router:
 `src/messaging/InboxService.ts` and `src/messaging/OutboxService.ts` provide at-least-once delivery:
 
 - Inbound events are deduplicated by `senderId:messageId` and recorded in the inbox; replayed events log `Provider event already completed`.
-- Outbound replies are enqueued to the outbox and retried on failure; `WebhookServer.registerEnqueuer()` switches `/webhook` to the durable path and returns `202` only after durable acceptance.
+- Outbound replies are enqueued to the outbox and retried on failure; `WebhookServer.registerEnqueuer()` switches `/webhook` to the durable path and returns `202` only after durable acceptance. Both inbox and outbox dead-letter a row after 5 failed attempts and use attempt-aware exponential backoff; stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan.
 - `src/runtime/AppRuntime.ts` registers provider senders at boot and runs an hourly outbox prune plus stranded-inbox recovery.
 
 ## 10. Scheduler, Reminders, and Scheduled Tasks
