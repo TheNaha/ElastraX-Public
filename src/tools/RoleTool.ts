@@ -28,6 +28,7 @@
 
 import { BaseTool, ToolDefinition, ToolResult, type ToolCommandGrammar } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
+import { toRoomKey } from '../core/roomKeyFormat';
 import { AuthService, BUILTIN_ROLES, PRIVILEGE_FIELDS, isPrivilegeField, legacyScopeFor } from '../utils/AuthService';
 import type { RolePrivileges } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
@@ -40,13 +41,9 @@ import { jidBareId as bareNumber } from '../utils/jid';
 const log = logger.child({ module: 'RoleTool' });
 
 function scopeMatches(entryScope: string, entryRoomKey: string | null | undefined, currentScope: string, platform: string): boolean {
-  const currentKey = `room:${platform}:${currentScope}`;
-  const legacyCurrent = currentScope.startsWith(`room:${platform}:`)
-    ? currentScope.slice(`room:${platform}:`.length)
-    : currentScope;
-  const legacyEntry = entryScope.startsWith(`room:${platform}:`)
-    ? entryScope.slice(`room:${platform}:`.length)
-    : entryScope;
+  const currentKey = toRoomKey(platform, currentScope);
+  const legacyCurrent = legacyScopeFor(platform, currentScope);
+  const legacyEntry = legacyScopeFor(platform, entryScope);
   return entryScope === 'global'
     || entryScope === currentScope
     || entryScope === currentKey
