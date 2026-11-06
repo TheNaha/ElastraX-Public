@@ -19,6 +19,7 @@ This guarantees that the core AI agent (`src/agent/index.ts`) does not need to k
 Platform implementations live in `src/providers/` and implement the `BotProvider` interface:
 - **WhatsApp**: Built using Baileys (`src/providers/whatsapp.ts`). Handles socket reconnections, media downloading via buffers, and pairing logic.
 - **Discord**: Built using discord.js (`src/providers/discord.ts`). Normalizes Discord guilds/channels and attachments.
+- **Telegram**: Built using grammY (`src/providers/telegram.ts`). Optional; without `TELEGRAM_BOT_TOKEN` it reports `not_configured` and never blocks boot.
 
 ### 3. The Agent Loop (`src/agent/index.ts`)
 The `handleIncomingMessage` function is the single entry point for all normalized messages. It performs the following pipeline:
