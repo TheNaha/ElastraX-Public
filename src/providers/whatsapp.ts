@@ -10,6 +10,7 @@ import qrcode from 'qrcode-terminal';
 import { and, eq, or } from 'drizzle-orm';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import { safeErrorMessage } from '../utils/errorUtils';
+import { jidBareId } from '../utils/jid';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
@@ -139,7 +140,7 @@ export class WhatsAppProvider implements BotProvider {
   }
 
   private static botPnJid(userId: string): string {
-    return `${userId.split(':')[0].split('@')[0]}@s.whatsapp.net`;
+    return `${jidBareId(userId)}@s.whatsapp.net`;
   }
 
   async start(): Promise<void> {
@@ -672,7 +673,7 @@ export class WhatsAppProvider implements BotProvider {
     const botPn = socket.user?.id ? WhatsAppProvider.botPnJid(socket.user.id) : '';
     const isBotMentioned = parsed.mentionedIds.some(mentioned => {
       if (this.botLid && mentioned === this.botLid) return true;
-      return !!botPn && mentioned.split('@')[0] === botPn.split('@')[0];
+      return !!botPn && jidBareId(mentioned) === jidBareId(botPn);
     });
 
     return {

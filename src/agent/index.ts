@@ -35,6 +35,7 @@ import { MessageContext } from '../core/MessageContext';
 import { AIChatMessage, StreamingToolCallAccumulator } from '../ai/client';
 import { logger } from '../utils/logger';
 import { getErrorMessage, safeErrorMessage } from '../utils/errorUtils';
+import { jidBareId } from '../utils/jid';
 import { isPlainObject } from '../utils/typeGuards';
 import {
   getToolByName,
@@ -658,7 +659,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
   // Emphasize quoted context by prepending it directly to the user's message payload
   if (ctx.quoted) {
     const isFromBot = ctx.quoted.rawMessage?.key?.fromMe;
-    const quoteSender = isFromBot ? `${BOT_NAME} (You)` : (ctx.quoted.senderId ? ctx.quoted.senderId.split('@')[0] : 'unknown');
+    const quoteSender = isFromBot ? `${BOT_NAME} (You)` : (ctx.quoted.senderId ? jidBareId(ctx.quoted.senderId) : 'unknown');
     let quoteText = ctx.quoted.text || '';
     if (quoteText.length > 150) quoteText = quoteText.substring(0, 150) + '...';
     

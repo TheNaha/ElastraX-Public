@@ -1,7 +1,8 @@
 /**
  * @file src/utils/jid.ts
  * @description Shared JID parsing helpers (single source of truth — was
- * previously duplicated across permissions.ts, resolveTargetUser.ts, RoleTool).
+ * previously duplicated across permissions.ts, resolveTargetUser.ts, RoleTool,
+ * whatsappParser.ts, whatsapp.ts, and agent/index.ts).
  */
 
 /**

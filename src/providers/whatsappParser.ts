@@ -1,4 +1,5 @@
 import { WAMessage, proto, getContentType } from '@whiskeysockets/baileys';
+import { jidBareId } from '../utils/jid';
 
 export interface ParsedWAMessage {
   messageType: string;
@@ -128,8 +129,12 @@ export function getFileLength(msgObj: proto.IMessage | null | undefined): number
   return Number(fileLength);
 }
 
-export const normalizeJid = (jid?: string | null): string =>
-  jid ? jid.split('@')[0].split(':')[0] : '';
+/**
+ * Lenient bare-id extraction: strips `@server` and `:device` suffixes.
+ * Returns `''` for nullish input so callers can compare without null checks.
+ * Delegates to {@link jidBareId} (`src/utils/jid.ts`).
+ */
+export const normalizeJid = (jid?: string | null): string => jid ? jidBareId(jid) : '';
 
 function hasMediaContent(msgObj: proto.IMessage | null | undefined): boolean {
   if (!msgObj) return false;
