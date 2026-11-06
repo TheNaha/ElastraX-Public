@@ -1,5 +1,5 @@
 import { logger } from './logger';
-import { sanitizeErrorMessage } from './errorUtils';
+import { safeErrorMessage, sanitizeErrorMessage } from './errorUtils';
 
 export interface HttpRequestOptions {
   signal?: AbortSignal;
@@ -295,10 +295,6 @@ function sanitizeResponseText(text: string): string {
   // capped. Passing text.length keeps sanitizeErrorMessage from truncating
   // before the trim can see the full string.
   return sanitizeErrorMessage(text, text.length).trim().slice(0, 200);
-}
-
-function safeErrorMessage(error: unknown): string {
-  return sanitizeErrorMessage(error instanceof Error ? error.message : String(error), 200);
 }
 
 function normalizePositiveInteger(value: number, fallback: number): number {
