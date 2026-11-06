@@ -28,6 +28,7 @@ import {
   parseCanonicalRoomKey,
   toRoomKey as toRoomKeyFormat,
   ROOM_KEY_FULL_PREFIX,
+  ROOM_KEY_SEPARATOR,
 } from '../core/roomKeyFormat';
 import type { RoomKeyParts } from '../core/roomKeyFormat';
 
@@ -392,7 +393,7 @@ function count(sqlite: Database, sql: string): number {
 
 /** Build the SQL expression deriving a canonical room key from platform/id columns. */
 function roomKeySql(platformExpr: string, idExpr: string): string {
-  return `'room:' || ${platformExpr} || ':' || ${idExpr}`;
+  return `'${ROOM_KEY_FULL_PREFIX}' || ${platformExpr} || '${ROOM_KEY_SEPARATOR}' || ${idExpr}`;
 }
 
 export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeyStats {

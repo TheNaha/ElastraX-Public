@@ -1,15 +1,25 @@
 /**
+ * Replace control characters (and DEL) in `text` with `replacement`.
+ * Prevents terminal control-sequence injection and log-injection via strings
+ * that may contain raw newlines, escape codes, or other non-printable bytes
+ * from provider APIs. Both `sanitizeErrorMessage` and filename sanitizers
+ * share this idiom so the control-character policy lives in one place.
+ */
+export function stripControlChars(text: string, replacement = ' '): string {
+  return Array.from(text, character => {
+    const code = character.charCodeAt(0);
+    return code < 32 || code === 127 ? replacement : character;
+  }).join('');
+}
+
+/**
  * Sanitize an error message by replacing control characters with spaces.
  * Prevents terminal control-sequence injection and log-injection via
  * error strings that may contain raw newlines, escape codes, or other
  * non-printable bytes from provider APIs.
  */
 export function sanitizeErrorMessage(text: string, maxLength = 500): string {
-  const sanitized = Array.from(text, character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 ? ' ' : character;
-  }).join('');
-  return sanitized.slice(0, maxLength);
+  return stripControlChars(text, ' ').slice(0, maxLength);
 }
 
 /**

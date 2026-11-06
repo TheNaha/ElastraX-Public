@@ -15,8 +15,9 @@ import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } fr
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
 import { readMediaBuffer, saveMediaResponse } from '../utils/MediaStorage';
 import { MessageContext, ReplyOptions, type MediaAttachmentDescriptor, type RawProviderMessage } from '../core/MessageContext';
+import { roleSatisfies } from '../core/roleAccess';
 import { logger } from '../utils/logger';
-import { safeErrorMessage } from '../utils/errorUtils.js';
+import { safeErrorMessage, stripControlChars } from '../utils/errorUtils.js';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { chunkTextDiscord } from '../utils/textChunking';
@@ -564,7 +565,7 @@ export class DiscordProvider implements BotProvider {
         }
       },
 
-      checkPermissions: async (required: string) => required === 'user' || AuthService.hasPermission(await resolveRoles(), required),
+      checkPermissions: async required => roleSatisfies(await resolveRoles(), required),
       resolveRoles,
     };
   }
@@ -635,11 +636,9 @@ function defaultMediaFilename(mimeType?: string): string {
 
 function safeFilename(filename?: string): string | undefined {
   if (!filename) return undefined;
-  const sanitized = Array.from(filename, character => {
-    const code = character.charCodeAt(0);
-    return code < 32 || code === 127 || character === '/' || character === '\\' ? '_' : character;
-  }).join('').slice(0, 200);
-  return sanitized || undefined;
+  return stripControlChars(filename, '_')
+    .replace(/[/\\]/g, '_')
+    .slice(0, 200) || undefined;
 }
 
 function hasSendTyping(channel: DiscordMessage['channel']): channel is DiscordMessage['channel'] & DiscordTypingChannel {
