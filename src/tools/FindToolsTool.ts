@@ -12,6 +12,7 @@
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
+import { hasPermission } from '../utils/toolAccess';
 
 interface FindToolsArgs extends ToolArgs {
   query: string;
@@ -74,7 +75,7 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
       if (tool.groupOnly && !ctx.isGroup) continue;
       if (tool.dmOnly && ctx.isGroup) continue;
       if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) continue;
-      if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) continue;
+      if (!(await hasPermission(ctx, tool.permissions))) continue;
       results.push(candidate);
       if (results.length >= 7) break;
     }

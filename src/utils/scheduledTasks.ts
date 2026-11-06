@@ -16,6 +16,7 @@
  */
 import { readIntegerEnv, readStringEnv } from '../config/runtime';
 import { remoteRoomIdFromKey } from '../messaging/roomKeys';
+import { dateKey } from './date';
 import { logger } from './logger';
 
 const log = logger.child({ module: 'ScheduledTasks' });
@@ -74,10 +75,6 @@ export function createTaskBudget(): TaskBudget {
   return { runsByDay: new Map() };
 }
 
-function todayKey(now: Date): string {
-  return now.toISOString().slice(0, 10);
-}
-
 export type BudgetDecision =
   | { allowed: true }
   | { allowed: false; reason: string };
@@ -92,7 +89,7 @@ export function consumeTaskBudget(
   roomKey: string,
   now: Date = new Date(),
 ): BudgetDecision {
-  const day = todayKey(now);
+  const day = dateKey(now);
   // Prune first, unconditionally. A size guard here looked like an optimisation
   // but skipped the common case: with a single stale bucket, `size > 1` was false
   // and yesterday's entry survived forever. The map holds at most a day's worth.

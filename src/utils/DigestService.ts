@@ -29,6 +29,7 @@ import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
 import { and, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { logger } from './logger';
+import { dateKey } from './date';
 import { getErrorMessage } from './errorUtils';
 import { getModelRouter } from './ModelRouter';
 import { MediaService } from './MediaService';
@@ -97,10 +98,8 @@ function releaseMarker(id: string): void {
   db.delete(appKv).where(eq(appKv.id, id)).run();
 }
 
-/** UTC date key (YYYY-MM-DD) for daily markers. */
-export function dateKey(now: Date): string {
-  return now.toISOString().slice(0, 10);
-}
+/** UTC date key (YYYY-MM-DD) for daily markers. Delegated to {@link dateKey} in `./date`. */
+export { dateKey };
 
 /** UTC date key of the Monday starting `now`'s week — stable weekly markers. */
 export function weekKey(now: Date): string {

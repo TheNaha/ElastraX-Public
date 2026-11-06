@@ -9,7 +9,7 @@ import { eq, and, inArray, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { IdentityService } from './IdentityService';
 import { roleSatisfies } from '../core/roleAccess';
-import { toRoomKey } from '../core/roomKeyFormat';
+import { toRoomKey, ROOM_KEY_FULL_PREFIX } from '../core/roomKeyFormat';
 
 export type RoleName = 'user' | 'premium' | 'admin' | 'owner';
 
@@ -124,7 +124,7 @@ function roomKeyFor(platform: string, scope: string): string {
 }
 
 export function legacyScopeFor(platform: string, scope: string): string {
-  const prefix = `room:${platform}:`;
+  const prefix = `${ROOM_KEY_FULL_PREFIX}${platform}:`;
   return scope.startsWith(prefix) ? scope.slice(prefix.length) : scope;
 }
 

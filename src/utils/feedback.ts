@@ -15,9 +15,10 @@
  */
 import { appendFileSync, mkdirSync } from 'fs';
 import { dirname, resolve } from 'path';
+import { dateKey } from './date';
+import { getErrorMessage } from './errorUtils';
 import { healthMetrics } from './HealthMetrics';
 import { logger } from './logger';
-import { getErrorMessage } from './errorUtils';
 
 const log = logger.child({ module: 'Feedback' });
 
@@ -126,10 +127,6 @@ export type FeedbackEvent = {
 
 const dayCounts = new Map<string, number>();
 
-function dayKey(now: Date): string {
-  return now.toISOString().slice(0, 10);
-}
-
 function writeEvalLog(event: FeedbackEvent, config: FeedbackConfig): void {
   if (!config.enabled) return;
   try {
@@ -171,7 +168,7 @@ export function recordReactionFeedback(input: {
   }
 
   const now = input.now ?? new Date();
-  const day = dayKey(now);
+  const day = dateKey(now);
   for (const key of [...dayCounts.keys()]) {
     if (key !== day) dayCounts.delete(key);
   }

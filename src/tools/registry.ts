@@ -35,6 +35,7 @@ import { GameSearchTool } from './GameSearchTool';
 import { SoftwareSearchTool } from './SoftwareSearchTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
+import { hasPermission } from '../utils/toolAccess';
 import { getToolTimeoutMs, readIntegerEnv } from '../config/runtime';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import type { MessageContext } from '../core/MessageContext';
@@ -398,7 +399,7 @@ export function getAuthorizedTool(command: string, ctx: MessageContext): Promise
       if (tool.metadata.command.groupOnlyAliases.includes(normalized) && !ctx.isGroup) return undefined;
     }
     if (COMMAND_GROUP_ONLY[tool.name]?.includes(normalized) && !ctx.isGroup) return undefined;
-    if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) return undefined;
+    if (!(await hasPermission(ctx, tool.permissions))) return undefined;
     return tool;
   })();
 }

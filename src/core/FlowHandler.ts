@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { MessageContext } from './MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { toRoomKey as toRoomKeyFormat } from '../core/roomKeyFormat';
+import { toRoomKey, isRoomKeyFor } from '../core/roomKeyFormat';
 
 const log = logger.child({ module: 'FlowHandler' });
 import { t } from '../utils/i18n';
@@ -251,7 +251,7 @@ export class FlowHandler {
     const serialized = JSON.stringify(session);
     try {
     const roomKey = session.roomId && session.platform
-      ? (session.roomId.startsWith(`room:${session.platform}:`) ? session.roomId : toRoomKeyFormat(session.platform, session.roomId))
+      ? (isRoomKeyFor(session.roomId, session.platform) ? session.roomId : toRoomKey(session.platform, session.roomId))
       : null;
     const roomKeyColumn = (flowSessions as unknown as { roomKey?: unknown }).roomKey;
     const values = {

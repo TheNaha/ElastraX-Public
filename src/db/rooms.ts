@@ -389,6 +389,12 @@ function count(sqlite: Database, sql: string): number {
 /**
  * Registry and row-coverage counters. Read-only: this never writes.
  */
+
+/** Build the SQL expression deriving a canonical room key from platform/id columns. */
+function roomKeySql(platformExpr: string, idExpr: string): string {
+  return `'room:' || ${platformExpr} || ':' || ${idExpr}`;
+}
+
 export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeyStats {
   const hasRegistry = tableExists(sqlite, 'room_keys');
   const coverage = COVERAGE_TARGETS
@@ -427,7 +433,7 @@ export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeySt
     ? count(
         sqlite,
         `SELECT count(*) AS count FROM room_keys
-         WHERE room_key <> 'room:' || platform || ':' || remote_room_id`,
+         WHERE room_key <> ${roomKeySql('platform', 'remote_room_id')}`,
       )
     : 0;
   const derivedKeyCollisions = hasRegistry
@@ -436,7 +442,7 @@ export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeySt
         `SELECT count(*) AS count FROM room_keys k
          WHERE EXISTS (
            SELECT 1 FROM room_keys o
-           WHERE o.room_key = 'room:' || k.platform || ':' || k.remote_room_id
+           WHERE o.room_key = ${roomKeySql('k.platform', 'k.remote_room_id')}
              AND o.room_key <> k.room_key
          )`,
       )
@@ -482,7 +488,7 @@ export function findRoomKeyCollisions(sqlite: Database = defaultDatabase()): Roo
          FROM chat_rooms r
          WHERE r.room_key IS NOT NULL AND r.room_key <> ''
            AND r.room_key <> r.id
-           AND r.room_key <> 'room:' || COALESCE(r.platform, '') || ':' || r.id
+           AND r.room_key <> ${roomKeySql("COALESCE(r.platform, '')", 'r.id')}
          ORDER BY r.platform, r.id`,
       )
       .all();
@@ -531,7 +537,7 @@ export function findRoomKeyCollisions(sqlite: Database = defaultDatabase()): Roo
       .query<{ room_key: string; platform: string; remote_room_id: string; legacy_room_id: string | null }, []>(
         `SELECT room_key, platform, remote_room_id, legacy_room_id
          FROM room_keys
-         WHERE room_key <> 'room:' || platform || ':' || remote_room_id
+         WHERE room_key <> ${roomKeySql('platform', 'remote_room_id')}
          ORDER BY room_key`,
       )
       .all();
@@ -554,7 +560,7 @@ export function findRoomKeyCollisions(sqlite: Database = defaultDatabase()): Roo
          FROM room_keys k
          WHERE EXISTS (
            SELECT 1 FROM room_keys o
-           WHERE o.room_key = 'room:' || k.platform || ':' || k.remote_room_id
+           WHERE o.room_key = ${roomKeySql('k.platform', 'k.remote_room_id')}
              AND o.room_key <> k.room_key
          )
          ORDER BY k.room_key`,

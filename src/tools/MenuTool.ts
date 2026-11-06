@@ -18,6 +18,7 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
+import { hasPermission } from '../utils/toolAccess';
 
 const log = logger.child({ module: 'MenuTool' });
 
@@ -70,7 +71,7 @@ export class MenuTool extends BaseTool<MenuArgs> {
     const tools = (await Promise.all(this.getTools().map(async (tool) => {
       if (!tool.isEnabled() || (tool.groupOnly && !ctx.isGroup) || (tool.dmOnly && ctx.isGroup)) return null;
       if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) return null;
-      if (typeof ctx.checkPermissions === 'function' && !(await ctx.checkPermissions(tool.permissions))) return null;
+      if (!(await hasPermission(ctx, tool.permissions))) return null;
       return tool;
     }))).filter((tool): tool is BaseTool => tool !== null);
 

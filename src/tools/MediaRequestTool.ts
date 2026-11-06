@@ -10,6 +10,7 @@ import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
 import { t, type Locale } from '../utils/i18n';
+import { bindingPlatformMismatch } from '../utils/toolAccess';
 
 const log = logger.child({ module: 'MediaRequestTool' });
 
@@ -49,7 +50,7 @@ export async function getOwnedSeerrUserId(ctx: MessageContext): Promise<number |
   try {
     const binding = await MediaService.bindingService.getBinding(ctx.senderId, ctx.platform, 'seerr');
     if (!binding) return null;
-    if ((binding as { platform?: string }).platform && (binding as { platform: string }).platform !== ctx.platform) return null;
+    if (bindingPlatformMismatch(binding, ctx.platform)) return null;
     if (binding.metadata) {
       try {
         const metadata = JSON.parse(binding.metadata) as { verified?: unknown };
