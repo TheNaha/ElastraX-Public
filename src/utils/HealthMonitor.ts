@@ -21,11 +21,11 @@ function validateUrl(url: string): void {
       throw new Error(`Invalid protocol: ${parsedUrl.protocol}`);
     }
   } catch (error) {
-    const errorMessage = safeErrorMessage(error);
-    if (errorMessage.includes('Invalid protocol')) {
+    const raw = error instanceof Error ? error.message : String(error);
+    if (raw.includes('Invalid protocol')) {
       throw error;
     }
-    throw new Error(`Invalid URL for health check: ${url}`, { cause: error });
+    throw new Error(`Invalid URL for health check: ${url}: ${safeErrorMessage(error)}`, { cause: error });
   }
 }
 
