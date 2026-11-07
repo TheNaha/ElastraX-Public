@@ -9,7 +9,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | Tool | Alias | Description |
 |------|-------|-------------|
 | **Web Search** | `/search` | Queries SearXNG (`SEARXNG_URL`) to fetch live search engine results. |
-| **Web Scrape** | `/scrape` | Reads and extracts the full markdown text of any URL via Jina AI. |
+| **Web Scrape** | `/scrape` | Reads and extracts the full markdown text of any URL via Jina AI. URLs are SSRF-validated (internal, loopback, and metadata targets are rejected) and the logged URL is redacted. |
 | **Memory** | `/memory` | Manages persistent user facts (RAG). The LLM automatically curates this based on user interactions. |
 | **Knowledge** | `/kb` | Room shared document knowledge base: index, search, list, remove attached/quoted documents. Images and scanned PDFs are OCR'd with a vision-capable model when `KB_OCR_ENABLED` is set (default on). |
 | **Translate** | `/translate` | Translates text or quoted messages to specified languages. |

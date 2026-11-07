@@ -18,10 +18,12 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `GET` | `/admin/login` | Dashboard login page |
 | `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
 | `POST` | `/admin/api/logout` | End the session |
-| `GET` | `/admin/api/*` | Dashboard views (overview, rooms, deliveries, config, feedback, …) |
-| `POST` | `/admin/api/action/*` | Dashboard actions (registry reload, retention report, outbox retry) |
+| `GET` | `/admin/api/*` | Dashboard views (overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, …) |
+| `POST` | `/admin/api/action/*` | Dashboard actions (registry reload, outbox retry, delete knowledge, retention report) |
 
 All other paths return `404`. On the webhook routes a known path with the wrong method returns `405` and an `Allow` header. Every POST route requires `Content-Type: application/json`; other media types return `415`.
+
+Inbound payloads are normalised by adapters: GitHub (HMAC + `X-GitHub-Delivery` replay key), Seerr and Jellyfin (media routes with their own secrets), Grafana (`X-Grafana-Origin`), Apprise, and a generic fallback. All adapters run over the already-sanitised body.
 
 ## Admin dashboard
 

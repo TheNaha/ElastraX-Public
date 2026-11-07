@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit: `cb01aae7b4fa52ccfeaa5e7ed7029cb51603b7e3`
-**Date:** 2026-11-06
+**Recorded Commit: `f791823` (docs/maintenance pass 2026-11-07)
+**Date:** 2026-11-07
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
