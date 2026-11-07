@@ -4,6 +4,7 @@ import { sqlite, withImmediateTransaction } from '../db';
 import { exponentialBackoff } from '../utils/backoff';
 import { logger } from '../utils/logger';
 import { remoteRoomIdFromKey, resolveCanonicalRoomKey } from './roomKeys';
+import { safeErrorMessage } from '../utils/errorUtils';
 
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
@@ -224,7 +225,7 @@ export class OutboxService {
           // Claiming it and handing the worker an empty string produced a blank
           // message that was then marked `sent` — silent, permanent loss with no
           // error anywhere. Retire it with the reason instead.
-          const message = error instanceof Error ? error.message : String(error);
+          const message = safeErrorMessage(error, 2_000);
           sqlite
             .query<never, [string, number, number, string]>(
               `UPDATE message_outbox
@@ -309,7 +310,7 @@ export class OutboxService {
 
   static fail(id: string, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
-    const message = error instanceof Error ? error.message : String(error);
+    const message = safeErrorMessage(error, 2_000);
     const current = sqlite
       .query<{ attemptCount: number }, [string, string]>(
         `SELECT attempt_count AS attemptCount FROM message_outbox WHERE id = ? AND state = 'leased' AND lease_owner = ?`,

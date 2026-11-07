@@ -1,6 +1,6 @@
 import { logger } from './logger';
 import { healthMetrics } from './HealthMetrics';
-import { getErrorMessage } from './errorUtils';
+import { getErrorMessage, safeErrorMessage } from './errorUtils';
 import { resolveLLMTargets } from '../config/llm';
 import { spawn } from 'node:child_process';
 
@@ -21,7 +21,7 @@ function validateUrl(url: string): void {
       throw new Error(`Invalid protocol: ${parsedUrl.protocol}`);
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = safeErrorMessage(error);
     if (errorMessage.includes('Invalid protocol')) {
       throw error;
     }

@@ -4,6 +4,7 @@ import { sqlite } from '../db';
 import { exponentialBackoff } from '../utils/backoff';
 import type { MessageContext } from '../core/MessageContext';
 import { remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
+import { safeErrorMessage } from '../utils/errorUtils';
 
 const LEASE_MS = 120_000;
 const MAX_ATTEMPTS = 5;
@@ -139,7 +140,7 @@ export class InboxService {
 
   static deferUnclaimed(id: number, error: unknown, delayMs = 5_000): void {
     const now = Date.now();
-    const message = error instanceof Error ? error.message : String(error);
+    const message = safeErrorMessage(error, 2_000);
     sqlite
       .query<never, [number, string, number, number, number]>(
         `UPDATE message_inbox
@@ -166,7 +167,7 @@ export class InboxService {
    */
   static fail(id: number, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
     const now = Date.now();
-    const message = error instanceof Error ? error.message : String(error);
+    const message = safeErrorMessage(error, 2_000);
     const current = sqlite
       .query<{ attemptCount: number }, [number, string]>(
         `SELECT attempt_count AS attemptCount FROM message_inbox WHERE id = ? AND state = 'processing' AND lease_owner = ?`,

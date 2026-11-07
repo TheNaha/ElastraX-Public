@@ -13,6 +13,7 @@ import { getAIRequestConfig } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 import { AIProtocolError, AINoChoiceError } from './errors';
 import { SSEDecoder, type SSEDecoderOptions } from './sse';
+import { safeErrorMessage } from '../utils/errorUtils';
 import {
   isToolCall,
   normalizeTokenUsage,
@@ -145,7 +146,7 @@ function usageOrThrow(value: unknown, context: string): TokenUsage | null {
     return normalizeTokenUsage(value);
   } catch (error: unknown) {
     throw new AIProtocolError('invalid_response', `${context} has invalid token usage.`, {
-      cause: error instanceof Error ? error.message : String(error),
+      cause: safeErrorMessage(error),
     });
   }
 }
@@ -334,7 +335,7 @@ export class AIClient {
       raw = await response.json();
     } catch (error: unknown) {
       throw new AIProtocolError('invalid_response', 'Chat completion response was not valid JSON.', {
-        cause: error instanceof Error ? error.message : String(error),
+        cause: safeErrorMessage(error),
       });
     }
 
@@ -542,7 +543,7 @@ export class AIClient {
           parsed = JSON.parse(event.data);
         } catch (error: unknown) {
           throw new AIProtocolError('invalid_sse', 'SSE event data was not valid JSON.', {
-            cause: error instanceof Error ? error.message : String(error),
+            cause: safeErrorMessage(error),
           });
         }
         const chunk = this.normalizeStreamChunk(parsed, previous, requestId);

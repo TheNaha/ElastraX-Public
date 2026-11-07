@@ -42,6 +42,7 @@ import type { MessageContext } from '../core/MessageContext';
 import { parseExplicitCommand, validateToolArguments, type ValidationResult } from './ParameterValidator';
 import type { ToolResult } from './BaseTool';
 import { roleSatisfies } from '../core/roleAccess';
+import { safeErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'ToolRegistry' });
 
@@ -372,7 +373,7 @@ export async function executeAuthorizedCommand(command: string, argsString: stri
   try {
     args = parseExplicitCommand(tool, argsString, command) as Record<string, unknown>;
   } catch (error: unknown) {
-    throw new Error(`Invalid ${command} arguments: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    throw new Error(`Invalid ${command} arguments: ${safeErrorMessage(error)}`, { cause: error });
   }
   const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
   const context: ToolAccessContext = { roles, isGroup: ctx.isGroup, isOwner: roles.includes('owner'), platform: ctx.platform, userId: ctx.senderId };

@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import { logger } from './logger';
 import { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES } from '../providers/media';
 import { runBoundedProcess, type BoundedProcessOptions } from '../providers/process';
+import { safeErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'FFmpegConverter' });
 const ALLOWED_FLAGS = new Set([
@@ -102,7 +103,7 @@ export class FFmpegConverter {
       log.debug({ extIn, extOut, inputSize: inputBuffer.length, outputSize: data.length }, 'FFmpeg conversion completed');
       return data;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = safeErrorMessage(error, 1000);
       log.error({ err: error, extIn, extOut }, 'FFmpeg conversion failed');
       throw new Error(`FFmpeg error: ${message.slice(0, 1000)}`, { cause: error });
     } finally {
