@@ -228,7 +228,7 @@ export class OutboxService {
           const payload = JSON.parse(row.payload) as { text?: unknown; mentions?: unknown };
           text = typeof payload.text === 'string' ? payload.text : '';
           if (Array.isArray(payload.mentions)) {
-            mentions = payload.mentions.filter((value): value is string => typeof value === 'string');
+            mentions = payload.mentions.filter((value): value is string => typeof value === 'string' && value.length > 0);
           }
         } catch (error) {
           // A row whose payload cannot be decoded is permanently undeliverable.

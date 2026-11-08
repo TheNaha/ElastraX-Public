@@ -397,7 +397,7 @@ export class DiscordProvider implements BotProvider {
       if (this.client !== client || generation !== this.generation) throw new ProviderLifecycleError('discord', 'message action');
     };
 
-    const sendToProvider = (targetChatId: string, text: string) => this.sendMessage(targetChatId, text);
+    const sendToProvider = (targetChatId: string, text: string, options?: { mentions?: string[] }) => this.sendMessage(targetChatId, text, undefined, options);
     return {
       platform: 'discord',
       receivedAt: Date.now(),
@@ -521,7 +521,7 @@ export class DiscordProvider implements BotProvider {
       sendToChat: async (targetChatId: string, text: string, options?: ReplyOptions) => {
         ensureCurrentGeneration();
         options?.signal?.throwIfAborted();
-        return sendToProvider(targetChatId, text);
+        return sendToProvider(targetChatId, text, { mentions: options?.mentions });
       },
 
       editMessage: async (key: unknown, text: string) => {

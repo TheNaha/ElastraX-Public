@@ -754,9 +754,9 @@ export class WhatsAppProvider implements BotProvider {
         assertSocket();
         const chunks = chunkWhatsAppText(text);
         let sent: WAMessage | undefined;
-        for (const chunk of chunks) {
+        for (let index = 0; index < chunks.length; index++) {
           options?.signal?.throwIfAborted();
-          sent = await socket.sendMessage(targetChatId, { text: chunk });
+          sent = await socket.sendMessage(targetChatId, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined });
           noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
         }
         return sent?.key;
