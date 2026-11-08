@@ -242,6 +242,10 @@ export function isValidRecurrence(recurrence: string): boolean {
   }
 }
 
+function logReminderProcessingError(error: unknown): void {
+  logger.error({ err: error }, 'Reminder processing failed');
+}
+
 export class Scheduler {
   private static senders = new Map<string, SendFn>();
   private static taskRunner: ScheduledTaskFn | null = null;
@@ -289,9 +293,9 @@ export class Scheduler {
   static start(): void {
     if (this.timer) return;
     this.stopped = false;
-    void this.processReminders().catch(error => logger.error({ err: error }, 'Reminder processing failed'));
+    void this.processReminders().catch(logReminderProcessingError);
     this.timer = setInterval(() => {
-      void this.processReminders().catch(error => logger.error({ err: error }, 'Reminder processing failed'));
+      void this.processReminders().catch(logReminderProcessingError);
     }, 30_000);
     this.timer.unref?.();
   }

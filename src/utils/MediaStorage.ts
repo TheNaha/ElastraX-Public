@@ -69,7 +69,7 @@ export async function saveMediaBuffer(
       const quota = await reconcileMediaQuota(buffer.length, tempPath);
       await clearDeletedMediaReferences(quota.deleted);
       await mediaStorageDeps.rename(tempPath, finalPath);
-      await mediaStorageDeps.chmod(finalPath, 0o600).catch(error => logger.warn({ err: error }, '[MediaStorage] Failed to restrict media permissions'));
+      await restrictMediaPermissions(finalPath);
       return { path: finalPath, mime, sizeBytes: buffer.length, detectedMime: typeInfo?.mime };
     });
   } catch (error) {
@@ -144,7 +144,7 @@ export async function saveMediaStream(
       await clearDeletedMediaReferences(quota.deleted);
       await mediaStorageDeps.rename(tempPath!, finalPath);
     });
-    await mediaStorageDeps.chmod(finalPath, 0o600).catch((error) => logger.warn({ err: error }, '[MediaStorage] Failed to restrict media permissions'));
+    await restrictMediaPermissions(finalPath);
     return {
       path: finalPath,
       mime,
@@ -249,6 +249,13 @@ async function withMediaIoSlot<T>(operation: () => Promise<T>): Promise<T> {
   } finally {
     release();
   }
+}
+
+/** Best-effort restriction of a saved media file to owner-only permissions. */
+async function restrictMediaPermissions(finalPath: string): Promise<void> {
+  await mediaStorageDeps.chmod(finalPath, 0o600).catch(error =>
+    logger.warn({ err: error }, '[MediaStorage] Failed to restrict media permissions'),
+  );
 }
 
 async function writeAll(handle: { write(buffer: Uint8Array): Promise<{ bytesWritten: number }> }, data: Buffer): Promise<void> {

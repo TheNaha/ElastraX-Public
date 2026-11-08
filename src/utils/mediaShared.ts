@@ -10,6 +10,7 @@ export const DEFAULT_STORAGE_MAX_FILES = 10_000;
 export const TEMP_FILE_GRACE_MS = 5 * 60_000;
 import { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES } from '../providers/media';
 export { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES };
+import { toError } from './errorUtils';
 
 /** In-memory cache of media directory totals to avoid O(n) rescans on every save. */
 interface MediaDirCache {
@@ -114,7 +115,7 @@ export function extensionForMime(mimeType: string): string {
 }
 
 export function throwIfAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('Media download aborted.');
+  if (signal?.aborted) throw toError(signal.reason ?? new Error('Media download aborted.'));
 }
 
 export class MediaLimitError extends Error {
