@@ -190,7 +190,7 @@ export function roomInventory(limit = MAX_TABLE_ROWS): { rooms: RoomRow[]; total
       platform: room.platform ?? null,
       roomKey: scopedKey,
       label: clip(room.roomKey || room.id, 80),
-      createdAt: room.created_at ? new Date(room.created_at.getTime() * 1000).toISOString() : null,
+      createdAt: room.created_at ? room.created_at.toISOString() : null,
       knowledgeDocuments: scopedKey ? documentCounts.get(scopedKey) ?? 0 : 0,
       reminders: reminderCounts.get(room.id) ?? 0,
     };
