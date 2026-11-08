@@ -35,7 +35,7 @@ import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { readMediaBuffer, saveMediaResponse, type SavedMedia } from '../utils/MediaStorage';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
-import { getErrorMessage } from '../utils/errorUtils';
+import { getErrorMessage, toError } from '../utils/errorUtils';
 import { roleSatisfies } from '../core/roleAccess';
 
 const log = logger.child({ module: 'Telegram' });
@@ -256,7 +256,7 @@ export class TelegramProvider implements BotProvider {
         this.bootReject = null;
         if (!this.isCurrent(bot, generation)) return;
         this.providerStatus = this.desiredRunning ? 'backoff' : 'stopped';
-        this.providerError = error instanceof Error ? error : new Error(String(error));
+        this.providerError = toError(error);
         log.error({ err: error }, '[Telegram] Polling stopped');
         rejectReady(error);
         // Schedule a reconnection so transient failures (network blip, API

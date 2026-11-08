@@ -21,7 +21,7 @@ function validateUrl(url: string): void {
       throw new Error(`Invalid protocol: ${parsedUrl.protocol}`);
     }
   } catch (error) {
-    const raw = error instanceof Error ? error.message : String(error);
+    const raw = safeErrorMessage(error, Number.POSITIVE_INFINITY);
     if (raw.includes('Invalid protocol')) {
       throw error;
     }

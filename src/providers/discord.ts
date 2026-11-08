@@ -17,7 +17,7 @@ import { readMediaBuffer, saveMediaResponse } from '../utils/MediaStorage';
 import { MessageContext, ReplyOptions, type MediaAttachmentDescriptor, type RawProviderMessage } from '../core/MessageContext';
 import { roleSatisfies } from '../core/roleAccess';
 import { logger } from '../utils/logger';
-import { safeErrorMessage, stripControlChars } from '../utils/errorUtils.js';
+import { safeErrorMessage, stripControlChars, toError } from '../utils/errorUtils.js';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { chunkTextDiscord } from '../utils/textChunking';
@@ -181,7 +181,7 @@ export class DiscordProvider implements BotProvider {
     });
     client.on(Events.ShardError, (error: unknown) => {
       if (this.client !== client) return;
-      this.providerError = error instanceof Error ? error : new Error(String(error));
+      this.providerError = toError(error);
       logger.error({ err: error }, '[Discord] Gateway shard error');
     });
     client.on(Events.ShardDisconnect, (event: { code?: number; reason?: string }) => {
@@ -250,7 +250,7 @@ export class DiscordProvider implements BotProvider {
       client.destroy();
       if (generation !== this.generation || this.providerStatus === 'stopped') return;
       this.providerStatus = 'error';
-      this.providerError = error instanceof Error ? error : new Error(String(error));
+      this.providerError = toError(error);
       throw new ProviderStartError('discord', `Discord login failed: ${safeErrorMessage(error)}`, error);
     }
   }

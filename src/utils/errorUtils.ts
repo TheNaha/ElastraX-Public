@@ -31,6 +31,11 @@ export function safeErrorMessage(error: unknown, maxLength = 500): string {
   return sanitizeErrorMessage(raw, maxLength);
 }
 
+/** Coerce an unknown value to an Error, preserving real Errors as-is. */
+export function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
 export function getErrorMessage(error: unknown, fallback: string = 'Unknown error'): string {
   if (error instanceof Error && error.message.trim()) {
     return error.message;

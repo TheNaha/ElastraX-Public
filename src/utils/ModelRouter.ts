@@ -6,7 +6,7 @@ import type { AIStreamChunk, ChatCompletionEnvelope } from '../ai/types';
 import type { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
-import { getErrorMessage } from './errorUtils';
+import { toError } from './errorUtils';
 import { stripThinkTags } from './textUtils';
 import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
@@ -413,7 +413,7 @@ export class ModelRouter {
         return envelope;
       } catch (error: unknown) {
         const latency = this.now() - start;
-        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
+        const err = toError(error);
         lastError = err;
         this.markProviderFailure(provider.key);
         healthMetrics.recordLLMRequest(provider.name, latency, false);
@@ -511,7 +511,7 @@ export class ModelRouter {
         return;
       } catch (error: unknown) {
         recordUsage();
-        const err = error instanceof Error ? error : new Error(getErrorMessage(error));
+        const err = toError(error);
         lastError = err;
         this.markProviderFailure(provider.key);
         healthMetrics.recordLLMRequest(provider.name, this.now() - start, false);

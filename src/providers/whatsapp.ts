@@ -9,7 +9,7 @@ import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 import { and, eq, or } from 'drizzle-orm';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
-import { safeErrorMessage } from '../utils/errorUtils';
+import { safeErrorMessage, toError } from '../utils/errorUtils';
 import { jidBareId } from '../utils/jid';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
@@ -287,7 +287,7 @@ export class WhatsAppProvider implements BotProvider {
       this.sock = null;
       this.botLid = null;
       this.providerStatus = 'backoff';
-      this.providerError = error instanceof Error ? error : new Error(String(error));
+      this.providerError = toError(error);
       this.scheduleReconnect(generation);
       throw new ProviderStartError('whatsapp', `WhatsApp startup failed: ${safeErrorMessage(error)}`, error);
     }
@@ -304,7 +304,7 @@ export class WhatsAppProvider implements BotProvider {
       // throw from it is still caught by the .catch below instead of escaping
       // the event handler as an unhandled rejection.
       Promise.resolve().then(saveCreds).catch(error => {
-        this.providerError = error instanceof Error ? error : new Error(String(error));
+        this.providerError = toError(error);
         logger.error({ err: error }, '[WhatsApp] Failed to persist credentials');
       });
     });
@@ -345,7 +345,7 @@ export class WhatsAppProvider implements BotProvider {
           await this.seedOwner(socket, generation);
         }
       } catch (error) {
-        this.providerError = error instanceof Error ? error : new Error(String(error));
+        this.providerError = toError(error);
         logger.error({ err: error, generation }, '[WhatsApp] Connection update handler failed');
       }
     });

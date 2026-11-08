@@ -2,6 +2,7 @@ import type { WAMessage, proto } from '@whiskeysockets/baileys';
 import { getContentType } from '@whiskeysockets/baileys';
 import { parseWhatsAppMessage, ParsedWAMessage } from '../providers/whatsappParser';
 import { logger } from './logger';
+import { toError } from './errorUtils';
 import { stripBlobs } from './rawMessage';
 
 export interface CoverageResult {
@@ -49,7 +50,7 @@ export async function scanParserCoverage(
       errors.push({
         index: i,
         raw,
-        error: error instanceof Error ? error : new Error(String(error)),
+        error: toError(error),
       });
     }
   }
