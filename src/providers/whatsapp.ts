@@ -211,15 +211,16 @@ export class WhatsAppProvider implements BotProvider {
     }
   }
 
-  async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<void> {
+  async sendMessage(chatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }): Promise<void> {
     const sock = this.requireRunningSocket('sendMessage');
-    for (const chunk of chunkWhatsAppText(text)) {
+    const chunks = chunkWhatsAppText(text);
+    for (let index = 0; index < chunks.length; index++) {
       // Honour the signal between chunks. `AppRuntime.processOutbox` relies on
       // it to cancel a slow send; without this the underlying Baileys call kept
       // running and could still deliver after the outbox had already failed and
       // rescheduled the row, so the recipient got the message twice.
       signal?.throwIfAborted();
-      const sent = await sock.sendMessage(chatId, { text: chunk });
+      const sent = await sock.sendMessage(chatId, { text: chunks[index], mentions: index === 0 ? options?.mentions : undefined });
       // Remember the id so a later reaction can be attributed to the bot.
       noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
     }

@@ -66,7 +66,7 @@ type RoleSummary = {
   effectiveRoles: string[];
 };
 
-export interface RoleViewEntry {
+interface RoleViewEntry {
   userId: string;
   role: string;
   scope: string;
@@ -75,25 +75,12 @@ export interface RoleViewEntry {
   grantedBy?: string;
 }
 
-export interface ScopedRoleView {
+interface ScopedRoleView {
   scope: string;
   entries: RoleViewEntry[];
 }
 
-export interface RoleMutation {
-  userId: string;
-  role: string;
-  scope: string;
-  platform: string;
-  actorId: string;
-}
-
-export function canManageRoleScope(actorRoles: readonly string[], targetScope: string, currentScope: string, platform: string): boolean {
-  if (actorRoles.includes('owner')) return targetScope === 'global' || targetScope === currentScope;
-  return actorRoles.includes('admin') && targetScope === currentScope && legacyScopeFor(platform, targetScope) === legacyScopeFor(platform, currentScope);
-}
-
-export function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform: string): ScopedRoleView {
+function getScopedRoleView(entries: readonly RoleViewEntry[], currentScope: string, platform: string): ScopedRoleView {
   return {
     scope: currentScope,
     entries: entries.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, currentScope, platform) && (!platform || !entry.platform || entry.platform === platform)),

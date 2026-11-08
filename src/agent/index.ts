@@ -163,6 +163,7 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
     ctx.chatId,
     text,
     [ctx.messageId, source],
+    { mentions },
   );
   try {
     const replyOptions = {

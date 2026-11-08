@@ -47,7 +47,7 @@ function escapeLike(value: string): string {
 }
 
 export const MAX_DOCUMENT_CHARS = 2_000_000;
-export const CHUNK_TARGET_CHARS = 1_200;
+const CHUNK_TARGET_CHARS = 1_200;
 export const CHUNK_OVERLAP_CHARS = 200;
 export const DEFAULT_RETRIEVAL_LIMIT = 5;
 /** Chunks considered for one query: bounded so retrieval cost stays flat. */

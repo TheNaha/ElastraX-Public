@@ -906,7 +906,7 @@ export class AppRuntime {
 
   /** Deliver one claimed outbox row. Never throws — failures are recorded. */
   private async deliverOutboxMessage(
-    message: { id: string; platform: string; chatRoomId: string; roomKey: string | null; text: string },
+    message: { id: string; platform: string; chatRoomId: string; roomKey: string | null; text: string; mentions?: string[] },
     providers: Map<string, BotProvider>,
   ): Promise<void> {
     const provider = providers.get(message.platform);
@@ -917,7 +917,9 @@ export class AppRuntime {
       const mismatch = providerRoomTargetMismatch(message.platform, message.roomKey, message.chatRoomId);
       if (mismatch) throw new Error(`Refusing unsafe outbox target: ${mismatch}`);
       const result = await withCancellableTimeout(
-        signal => provider.sendMessage(message.chatRoomId, message.text, signal),
+        signal => provider.sendMessage(message.chatRoomId, message.text, signal, {
+          ...(message.mentions?.length ? { mentions: message.mentions } : {}),
+        }),
         15_000,
         'outbox delivery',
       );

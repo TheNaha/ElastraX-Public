@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { fileTypeFromBuffer } from 'file-type';
 export const MEDIA_DIR = resolve(process.env.ELASTRAX_MEDIA_DIR || join(process.cwd(), 'data/media'));
 export const TYPE_DETECTION_BYTES = 4100;
-export const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
+const DEFAULT_STORAGE_QUOTA_BYTES = 2048 * 1024 * 1024;
 export const DEFAULT_STORAGE_MAX_FILES = 10_000;
 export const TEMP_FILE_GRACE_MS = 5 * 60_000;
 import { HARD_MEDIA_MAX_BYTES, NORMAL_MEDIA_MAX_BYTES } from '../providers/media';

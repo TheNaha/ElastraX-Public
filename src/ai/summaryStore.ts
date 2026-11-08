@@ -27,7 +27,7 @@ function isWatermark(value: unknown, scope: string): value is SummaryWatermark {
     && typeof row.updatedAt === 'string';
 }
 
-export class AppKvSummaryStore implements SummaryStore {
+class AppKvSummaryStore implements SummaryStore {
   async load(scope: string): Promise<SummaryWatermark | null> {
     const rows = await db.select({ value: appKv.value })
       .from(appKv)
@@ -72,7 +72,7 @@ export class AppKvSummaryStore implements SummaryStore {
   }
 }
 
-export function createPersistentSummaryStore(): SummaryStore {
+function createPersistentSummaryStore(): SummaryStore {
   return new AppKvSummaryStore();
 }
 

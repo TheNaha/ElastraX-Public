@@ -219,7 +219,15 @@ export async function resolveCanonicalRoomKeyAsync(
   }
 }
 
-/** Canonical key for a context that may already carry one (production always does). */
+/** Canonical key for a context that may already carry one (production always does).
+ *
+ * Division of labor with `src/agent/roomKey.ts:getCanonicalRoomKey`: this is
+ * the registry-backed variant — `resolveCanonicalRoomKey` reads (and when
+ * needed writes) the `room_keys` registry and tolerates an unavailable DB
+ * by falling back to the derived key. The agent's helper is pure by design
+ * (no DB in its module graph) and only validates/derives. Do not merge the
+ * two: each call site picks the semantics it can afford.
+ */
 export function roomKeyForContext(ctx: { platform: string; chatId: string; roomKey?: string | null }): string {
   const explicit = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
   if (explicit) {

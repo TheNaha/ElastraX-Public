@@ -3,7 +3,7 @@ import { isPlainObject } from './typeGuards';
 type UnknownRecord = Record<string, unknown>;
 
 /** Sensitive blob / key fields to strip before persisting raw messages to the DB. */
-export const RAW_MESSAGE_BLOB_KEYS = new Set([
+const RAW_MESSAGE_BLOB_KEYS = new Set([
   'jpegThumbnail', 'firstFrameSidecar', 'mediaKey', 'fileSha256',
   'fileEncSha256', 'scansSidecar', 'midQualityFileSha256', 'messageSecret',
   'senderKeyHash', 'recipientKeyHash', 'deviceListMetadata',

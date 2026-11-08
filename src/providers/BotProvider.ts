@@ -53,6 +53,11 @@ export interface BotProvider {
   /**
    * Send a plain text message to a specific chat/channel ID.
    * Used by scheduler jobs and webhook inbound delivery.
+   *
+   * `options.mentions` carries provider mention handles. Providers apply them
+   * to the first outbound chunk only (WhatsApp/Discord bind mentions on chunk
+   * 0); Telegram ignores them today (IG-04 — known gap, tracked in the
+   * 2026-11-08 maintenance audit).
    */
-  sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<unknown>;
+  sendMessage(chatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }): Promise<unknown>;
 }

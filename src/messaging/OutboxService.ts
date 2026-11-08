@@ -33,6 +33,9 @@ export type OutboxEnqueueOptions = {
   availableAt?: number;
   /** Canonical room key; derived from platform + chatRoomId when omitted. */
   roomKey?: string;
+  /** Provider mention handles. First-chunk semantics are the provider's
+   * responsibility (WhatsApp/Discord bind mentions on chunk 0 only). */
+  mentions?: string[];
 };
 
 export type ClaimedOutboxMessage = {
@@ -43,6 +46,9 @@ export type ClaimedOutboxMessage = {
   /** Raw provider room id — this is what providers must receive. */
   chatRoomId: string;
   text: string;
+  /** Provider mention handles carried in the payload; forwarded to the
+   * provider's `sendMessage` options. Empty when not set. */
+  mentions: string[];
   attemptCount: number;
 };
 
@@ -89,11 +95,11 @@ export class OutboxService {
     if (process.env.NODE_ENV === 'test' && typeof (sqlite as unknown as { query?: unknown }).query !== 'function') {
       return `test:${randomUUID()}`;
     }
-    const { availableAt = Date.now(), roomKey: explicitRoomKey } = enqueueOptions(options);
+    const { availableAt = Date.now(), roomKey: explicitRoomKey, mentions } = enqueueOptions(options);
     const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
     const id = randomUUID();
     const roomKey = roomKeyFor(platform, chatRoomId, explicitRoomKey);
-    const payload = JSON.stringify({ text: normalizeText(text) });
+    const payload = JSON.stringify({ text: normalizeText(text), ...(mentions?.length ? { mentions } : {}) });
     const key = idempotencyKey([platform, ...keyParts]);
     const row = sqlite
       .query<{ id: string }, [string, string, string, string, string, string, number, number, number]>(
@@ -217,9 +223,13 @@ export class OutboxService {
           .get(candidate.id);
         if (!row) continue;
         let text: string;
+        let mentions: string[] = [];
         try {
-          const payload = JSON.parse(row.payload) as { text?: unknown };
+          const payload = JSON.parse(row.payload) as { text?: unknown; mentions?: unknown };
           text = typeof payload.text === 'string' ? payload.text : '';
+          if (Array.isArray(payload.mentions)) {
+            mentions = payload.mentions.filter((value): value is string => typeof value === 'string');
+          }
         } catch (error) {
           // A row whose payload cannot be decoded is permanently undeliverable.
           // Claiming it and handing the worker an empty string produced a blank
@@ -247,7 +257,7 @@ export class OutboxService {
             .run('Outbox payload contained no text', now, now, candidate.id);
           continue;
         }
-        claimed.push({ ...row, roomKey: row.roomKey ?? '', text });
+        claimed.push({ ...row, roomKey: row.roomKey ?? '', text, mentions });
       }
       return claimed;
     });

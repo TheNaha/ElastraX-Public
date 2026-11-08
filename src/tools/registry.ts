@@ -176,14 +176,14 @@ function hasRequiredRole(roles: readonly string[] | undefined, required: string)
   return roleSatisfies(roles, required);
 }
 
-export interface ToolAdmission {
+interface ToolAdmission {
   allowed: boolean;
   cost: number;
   remaining: number;
   reason?: string;
 }
 
-export function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & { userId?: string } = {}, now = Date.now()): ToolAdmission {
+function checkToolAdmission(tool: BaseTool, context: ToolAccessContext & { userId?: string } = {}, now = Date.now()): ToolAdmission {
   if (getToolMutability(tool) === 'read') return { allowed: true, cost: 0, remaining: Number.POSITIVE_INFINITY };
   const limit = readIntegerEnv(process.env.TOOL_MUTATION_COST_LIMIT, 100, { min: 1 });
   const windowMs = 60_000;
@@ -261,7 +261,7 @@ export function isCommandAccessible(tool: BaseTool, command: string, context: To
   return true;
 }
 
-export function getToolMetadata(tool: BaseTool): ToolMetadata {
+function getToolMetadata(tool: BaseTool): ToolMetadata {
   const metadata = tool.metadata;
   const access = getToolAccess(tool);
   const policies = { ...metadata.command.policies };
@@ -310,7 +310,7 @@ export function getToolCatalog(context?: ToolAccessContext): ToolCatalogEntry[] 
     });
 }
 
-export function isToolInvocationAccessible(tool: BaseTool, args: { action?: unknown; __command?: unknown } | null | undefined, context: ToolAccessContext = {}): boolean {
+function isToolInvocationAccessible(tool: BaseTool, args: { action?: unknown; __command?: unknown } | null | undefined, context: ToolAccessContext = {}): boolean {
   const command = typeof args?.__command === 'string' ? args.__command : typeof args?.action === 'string' ? args.action : '';
   if (command && !isCommandAccessible(tool, command, context)) return false;
   // The per-action policy is keyed by the action, which is only known once the
@@ -325,7 +325,7 @@ export function isToolInvocationAccessible(tool: BaseTool, args: { action?: unkn
   return isToolAccessible(tool, context);
 }
 
-export function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, context: ToolAccessContext = {}): ValidationResult {
+function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, context: ToolAccessContext = {}): ValidationResult {
   if (!isToolInvocationAccessible(tool, args as { action?: unknown; __command?: unknown } | null, context)) {
     return { valid: false, value: args, errors: ['Tool invocation is not authorized for this context.'], issues: [{ path: '$', message: 'Tool invocation is not authorized for this context.', keyword: 'access' }] };
   }
@@ -346,7 +346,7 @@ export function hasBindingGatedTools(): boolean {
   return toolsList.some(tool => tool.requiresBinding);
 }
 
-export function getDiscoverableTools(context?: ToolAccessContext): BaseTool[] {
+function getDiscoverableTools(context?: ToolAccessContext): BaseTool[] {
   const allowed = context ? getToolsForContext(context) : discoverableTools;
   return allowed.filter((tool) => !tool.alwaysLoad);
 }

@@ -16,7 +16,7 @@ const log = logger.child({ module: 'MemoryTool' });
 export const INERT_DATA_MARKER = '[INERT_DATA]';
 export const MEMORY_ENTRY_QUOTA = 500;
 export const MEMORY_BYTES_QUOTA = 1_048_576;
-export const MEMORY_CONTENT_QUOTA = 16_384;
+const MEMORY_CONTENT_QUOTA = 16_384;
 const consentFallback = new Set<string>();
 
 type MemoryArgs = {

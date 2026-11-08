@@ -324,9 +324,12 @@ export class TelegramProvider implements BotProvider {
     this.reconnectTimer.unref?.();
   }
 
-  async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<unknown> {
+  async sendMessage(chatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }): Promise<unknown> {
     const bot = this.bot;
     if (!bot || !this.isOperational) throw new ProviderLifecycleError('telegram', 'Not connected to Telegram.');
+    // Telegram mentions need a parse-mode entity; `options.mentions` are
+    // intentionally ignored here (see `BotProvider.sendMessage` IG-04 gap).
+    void options;
     let last: unknown = null;
     for (const chunk of chunkTelegramText(text)) {
       signal?.throwIfAborted();

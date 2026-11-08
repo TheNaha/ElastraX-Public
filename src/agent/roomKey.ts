@@ -107,7 +107,17 @@ export function normalizeRoomId(platform: string, room: string): string {
   return normalizeRoomIdFormat(platform, room);
 }
 
-/** Canonical room key for a context: `ctx.roomKey ?? toRoomKey(platform, chatId)`. */
+/** Canonical room key for a context: `ctx.roomKey ?? toRoomKey(platform, chatId)`.
+ *
+ * Division of labor with `src/messaging/roomKeys.ts:roomKeyForContext`:
+ * this helper is deliberately pure (no DB access — the agent and its tools
+ * must not pull the database handle into their module graph). It validates
+ * that an explicit `ctx.roomKey` is a canonical key for the context's platform
+ * and otherwise derives the key deterministically. The messaging facade
+ * instead returns the registry-backed key via `resolveCanonicalRoomKey`
+ * (registering unknown rooms, tolerating unmigrated DBs) and only falls back
+ * to the derived key when the registry is unreachable.
+ */
 export function getCanonicalRoomKey(ctx: RoomKeyContext): string {
   const explicit = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
   if (explicit.length > 0) {

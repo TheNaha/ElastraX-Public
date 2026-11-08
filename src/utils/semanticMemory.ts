@@ -19,7 +19,7 @@ function positiveEnvNumber(
   return Math.min(integer ? Math.floor(parsed) : parsed, max);
 }
 
-export const CANDIDATE_POOL = positiveEnvNumber(process.env.EMBEDDING_CANDIDATES, 400, 10_000);
+const CANDIDATE_POOL = positiveEnvNumber(process.env.EMBEDDING_CANDIDATES, 400, 10_000);
 export const DEDUPE_SIMILARITY_THRESHOLD = positiveEnvNumber(
   process.env.EMBEDDING_DEDUPE_THRESHOLD,
   0.93,

@@ -37,13 +37,6 @@ export class ProviderStartError extends ProviderError {
   }
 }
 
-export class ProviderNotConfiguredError extends ProviderError {
-  constructor(provider: string, operation: string) {
-    super(provider, operation, 'NOT_CONFIGURED', `${provider} provider is not configured.`);
-    this.name = 'ProviderNotConfiguredError';
-  }
-}
-
 export class ProviderLifecycleError extends ProviderError {
   constructor(provider: string, operation: string) {
     super(provider, operation, 'STALE_LIFECYCLE', `${provider} connection changed before ${operation} completed.`, { retryable: true });

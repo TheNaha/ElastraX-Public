@@ -21,7 +21,7 @@ type PDFAction = (typeof ACTIONS)[number];
 const DONE_WORDS = ['done', 'selesai', 'finish', 'ok', 'beres', 'jadi'];
 const MAX_COLLECT_FILES = 20;
 const COLLECT_TTL = 300;
-export const MAX_PDF_BYTES = 100 * 1024 * 1024;
+const MAX_PDF_BYTES = 100 * 1024 * 1024;
 
 export function validatePdfPageRange(total: number, startValue: unknown, endValue: unknown): { start: number; end: number } | null {
   if (!Number.isInteger(total) || total < 1) return null;

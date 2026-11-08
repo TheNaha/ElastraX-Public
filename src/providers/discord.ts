@@ -123,7 +123,7 @@ export class DiscordProvider implements BotProvider {
     this.messageHandler = handler;
   }
 
-  async sendMessage(chatId: string, text: string, signal?: AbortSignal): Promise<void> {
+  async sendMessage(chatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }): Promise<void> {
     signal?.throwIfAborted();
     const client = this.client;
     if (!client || this.providerStatus !== 'running') throw new ProviderLifecycleError('discord', 'sendMessage');
@@ -132,9 +132,15 @@ export class DiscordProvider implements BotProvider {
       if (!channel?.isTextBased() || !('send' in channel) || typeof channel.send !== 'function') {
         throw new Error(`Discord channel ${chatId} is not text-based or cannot send messages.`);
       }
-      for (const chunk of chunkDiscordText(text)) {
+      const chunks = chunkDiscordText(text);
+      for (let index = 0; index < chunks.length; index++) {
         signal?.throwIfAborted();
-        const sent = await channel.send({ content: chunk, allowedMentions: { parse: [] } });
+        const sent = await channel.send({
+          content: chunks[index],
+          allowedMentions: options?.mentions?.length
+            ? discordAllowedMentions(index === 0 ? options.mentions : undefined)
+            : { parse: [] },
+        });
         noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
       }
     } catch (error) {
