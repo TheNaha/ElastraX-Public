@@ -17,8 +17,8 @@ This re-pass verifies that pass's findings against the current code, then implem
 - [x] Baseline checks recorded (green)
 - [x] Critical bugs found & fixed (none found)
 - [x] Duplication found & resolved (error-coercion idiom — committed `2d8dc28`)
-- [ ] Dead/detached systems found & handled (2 truly dead symbols + hygiene — FLAGGED, public surface)
-- [ ] Integration gaps found & fixed (7 re-verified — all FLAGGED, behavior/contract touching)
+- [x] Dead/detached systems found & handled (3 dead symbols deleted, ~17 internal exports un-exported — committed `ca51941`)
+- [x] Integration gaps found & fixed (IG-01/IG-02 implemented via payload mentions — committed `ca51941`; IG-03/IG-06/IG-07 deferred per design notes)
 - [x] Performance issues found & fixed (none confirmed real)
 - [ ] Optional improvements: listed for user decision
 - [x] Post-remediation checks match baseline
@@ -95,11 +95,11 @@ Error-handling holes scan: no empty catches, no floating promises in `providers/
 
 **Phase 1 — Safe duplication fix (implemented):** Add `toError` to `errorUtils` and route all 9 coercion sites + HealthMonitor raw check through it. Re-run `bun run check`, `bun audit --audit-level=high`, drift gate, and `test:hermetic`. Committed `2d8dc28`.
 
-**Phase 2 — Flagged items (report, no code change):** Dead-symbol removal, un-export hygiene, integration-gap unification, optional improvements. Await user decision before touching public contracts or delivery semantics.
+**Phase 2 — Flagged items (user approved, implemented):** Dead-symbol removal, un-export hygiene, IG-01/IG-02 payload-mentions pipeline. Committed `ca51941`. IG-03/IG-06/IG-07 and OI-01/OI-03/OI-04 remain deferred per the assessment (rewriting reminders, mass-changing provider constructors, or invasive timestamp unification need a design note first; Telegram mention handling requires a parse-mode decision).
 
-## Verification (after Phase 1)
+## Verification (after Phase 2)
 
-Results match the pre-pass baseline exactly:
+Phase 2 changes are additional to Phase 1's verbatim-preservation verified above. Results match baseline exactly:
 
 - Lint: eslint clean (`--max-warnings=0`)
 - Typecheck: `tsc --noEmit` clean
@@ -109,4 +109,6 @@ Results match the pre-pass baseline exactly:
 - Drift gate: `drizzle-kit generate` → "No schema changes"
 - `bun run test:hermetic`: **1564 pass / 0 fail** (matches baseline; known -1 isolation delta)
 
-No behavioral change: `toError` is a verbatim relocation of the replaced expression; the ModelRouter normalization and HealthMonitor cap-preserving change are documented above. No public contract, data format, or test changed.
+Phase 2 notes:
+- One test (`DiscordProvider > sendMessage sends text to a fetched text channel`) initially failed because the new Discord `sendMessage` sent `{ parse: [], users: [] }` instead of `{ parse: [] }` for the no-mentions case. Fixed by preserving the legacy `{ parse: [] }` payload when no mentions are given — the test now passes unchanged.
+- Behavioral note: `toError` is a verbatim relocation (see Phase 1). The `OutboxService` payload now optionally carries `mentions` (additive JSON field, no schema change); claim-path parsing is defensive (non-string entries dropped). The `BotProvider.sendMessage` options parameter is optional — existing callers without mentions are unaffected. WhatsApp/Discord bind mentions on chunk 0 only (existing first-chunk semantics); Telegram intentionally ignores mentions (documented IG-04 gap).
