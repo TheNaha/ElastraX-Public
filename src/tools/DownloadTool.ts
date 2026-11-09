@@ -8,7 +8,7 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { getDownloadMaxMb } from '../config/runtime';
+import { getDownloadMaxMb, getYtDlpPath } from '../config/runtime';
 import { AuthService } from '../utils/AuthService';
 import { HARD_MEDIA_MAX_BYTES, MIB } from '../providers/media';
 import { runBoundedProcess, type BoundedProcessOptions } from '../providers/process';
@@ -159,7 +159,7 @@ export async function downloadViaYtDlp(
   const outputTemplate = downloadToolDeps.path.join(workDir, `${outputId}.%(ext)s`);
   const proxy = createProxy();
   let proxyStarted = false;
-  const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
+  const ytDlpPath = getYtDlpPath();
 
   try {
     await downloadToolDeps.fs.mkdir(parentDir, { recursive: true, mode: 0o700 });

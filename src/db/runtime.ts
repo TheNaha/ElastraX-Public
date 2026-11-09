@@ -11,6 +11,7 @@
  */
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'node:crypto';
+import { logger } from '../utils/logger';
 
 export function tableExists(sqlite: Database, table: string): boolean {
   const row = sqlite
@@ -138,7 +139,7 @@ export function withImmediateTransaction<T>(sqlite: Database, operation: () => T
     try {
       sqlite.exec('ROLLBACK');
     } catch (rollbackError) {
-      void rollbackError;
+      logger.warn({ err: rollbackError }, 'Rollback failed during transaction error handling');
     }
     throw error;
   }

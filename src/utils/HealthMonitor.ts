@@ -2,6 +2,7 @@ import { logger } from './logger';
 import { healthMetrics } from './HealthMetrics';
 import { getErrorMessage, safeErrorMessage } from './errorUtils';
 import { resolveLLMTargets } from '../config/llm';
+import { getYtDlpPath } from '../config/runtime';
 import { spawn } from 'node:child_process';
 
 const log = logger.child({ module: 'HealthMonitor' });
@@ -188,7 +189,7 @@ export class HealthMonitor {
   }
 
   private async pingYtDlp(): Promise<void> {
-    const ytDlpPath = process.env.YTDLP_PATH || 'yt-dlp';
+    const ytDlpPath = getYtDlpPath();
     try {
       await new Promise<void>((resolve, reject) => {
         const child = spawn(ytDlpPath, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });

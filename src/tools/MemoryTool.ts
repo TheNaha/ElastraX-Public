@@ -195,7 +195,7 @@ export class MemoryTool extends BaseTool {
       if (duplicate) return t(lang, 'memory.duplicate', { id: duplicate.id, content: duplicate.content });
       const id = crypto.randomBytes(8).toString('hex');
       await db.insert(memories).values({ id, ownerId, content: marked, category: 'inert', created_at: new Date() });
-      try { await updateMemoryEmbedding(id, marked); } catch (error: unknown) { log.debug({ err: error, id }, 'Memory embedding update failed'); }
+      try { await updateMemoryEmbedding(id, marked); } catch (error: unknown) { log.warn({ err: error, id }, 'Memory embedding update failed'); }
       log.info({ ownerId, id }, 'Stored private memory');
       return t(lang, 'memory.store_success', { id });
     }

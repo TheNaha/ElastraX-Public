@@ -65,7 +65,7 @@ The AI layer features a highly resilient Failover Router:
 
 `src/db/retention.ts` deletes terminal inbox/outbox rows, terminal deliveries, sent reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention overlaps with AppRuntime's hourly outbox prune; deletes are idempotent.
 
-## 11a. Background tasks
+## 12. Background tasks
 
 `src/runtime/AppRuntime.ts` owns the process-level timers. All of them are `unref()`'d so they do not keep the process alive on their own, and are cleared on shutdown. Intervals:
 
@@ -81,15 +81,15 @@ The AI layer features a highly resilient Failover Router:
 
 `MEDIA_CLEANUP_INTERVAL_MS`, `MEDIA_RETENTION_HOURS`, and `RETENTION_*` control these. Retention overlaps with the hourly outbox prune; deletes are idempotent.
 
-## 12. Digests
+## 13. Digests
 
 `src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.
 
-## 13. Admin Dashboard
+## 14. Admin Dashboard
 
 `/admin` on the same listener as webhook intake is a read-mostly operator dashboard. It requires `METRICS_AUTH_TOKEN` of at least 24 bytes; without it every `/admin` path returns `404`. Authentication exchanges the token for an `HttpOnly; SameSite=Strict` session cookie plus a CSRF token sent in `x-admin-csrf`. Routes are documented in `docs/api.md`.
 
-## 14. Logging and Error Handling
+## 15. Logging and Error Handling
 
 - Logging uses Pino (`src/utils/logger.ts`). `LOG_LEVEL` controls verbosity (`trace`/`debug`/`info`/`warn`/`error`/`fatal`, default `info`). `NODE_ENV=production` emits raw JSON lines; otherwise `pino-pretty` is used. Child loggers are created per module via `logger.child({ module })`.
 - Provider failures surface as `ProviderError` subclasses with a `code` (`NOT_CONFIGURED`, `START_FAILED`, `NOT_CONNECTED`, `INVALID_TARGET`, `UNSUPPORTED`, `OPERATION_FAILED`, `STALE_LIFECYCLE`, `PERMISSION_DENIED`) and a `retryable` flag.
@@ -97,6 +97,6 @@ The AI layer features a highly resilient Failover Router:
 - Webhook request failures surface as `WebhookRequestError` with an HTTP status; the server maps them to the response status.
 - Validation failures at startup throw after logging every error; the process does not start with an invalid environment.
 
-## 15. Reaction Feedback
+## 16. Reaction Feedback
 
 A thumbs up or thumbs down on a bot reply is recorded as a quality signal (`src/utils/feedback.ts`). Reactions were previously sent but incoming ones ignored. Counters are exported on `/metrics` (`elastrax_feedback_total`, `elastrax_feedback_retracted_total`) and appended to a JSONL eval log (`FEEDBACK_LOG_PATH`, default `data/feedback.jsonl`) when `FEEDBACK_LOG_ENABLED=true`. Daily volume is bounded by `FEEDBACK_MAX_PER_DAY` (default 2000).

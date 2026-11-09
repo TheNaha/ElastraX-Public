@@ -70,7 +70,7 @@ import { createTurnBudget, TurnBudgetExceededError, type TurnBudget } from '../a
 import type { ChatCompletionMessage, ToolCall, ModelTier } from '../types/ai';
 import type { BaseTool, ToolArgs, ToolResult, ToolDefinition } from '../tools/BaseTool';
 import { healthMetrics } from '../utils/HealthMetrics';
-import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs, getTurnBudgetConfig } from '../config/runtime';
+import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs, getTurnBudgetConfig, readBooleanEnv } from '../config/runtime';
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { isUsableProviderMessageId } from './messageId';
@@ -459,7 +459,7 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
   const startMs = Date.now();
   const { chatId, platform, senderName, text, isGroup } = ctx;
-  const verboseAiLogs = process.env.AI_VERBOSE_LOGS === 'true';
+  const verboseAiLogs = readBooleanEnv(process.env.AI_VERBOSE_LOGS, false);
 
   // Fetch or create the chat room early so that ctx.language is available to all
   // tools and flow handlers before any routing takes place.
