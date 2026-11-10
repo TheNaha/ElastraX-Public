@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit: `f791823` (docs/maintenance pass 2026-11-07)
-**Date:** 2026-11-07
+**Recorded Commit: `b4ad7af` (maintenance pass 2026-11-10)
+**Date:** 2026-11-10
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -36,7 +36,7 @@ ElastraX/
 │   ├── agent/
 │   │   ├── index.ts             # handleIncomingMessage: room lookup, flow checks, slash command routing, LLM loop
 │   │   ├── ToolSearchIndex.ts   # Dynamic tool discovery index
-│   │   └── PromptBuilder.ts     # System prompt composition (memories, context limits, tool definitions)
+│   │   └── prompts.ts          # Default system prompt loader (src/core/prompts.ts)
 │   ├── tools/
 │   │   ├── BaseTool.ts          # Abstract base tool with JSON schema definition & metadata
 │   │   └── registry.ts          # Builtin tool registry, plugin loader, permission validation

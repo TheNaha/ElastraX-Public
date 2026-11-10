@@ -10,3 +10,8 @@
 export function dateKey(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
+
+/** ISO-8601 timestamp for `now`, e.g. `2026-11-10T08:33:55.706Z`. */
+export function nowISO(): string {
+  return new Date().toISOString();
+}

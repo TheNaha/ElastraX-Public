@@ -8,7 +8,7 @@ import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { toError } from './errorUtils';
 import { stripThinkTags } from './textUtils';
-import { getAIRequestConfig, getProviderCooldownMs } from '../config/runtime';
+import { getAIRequestConfig, getProviderCooldownMs, readBooleanEnv } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 
 export interface ProviderConfig {
@@ -359,7 +359,7 @@ export class ModelRouter {
   ): Promise<ChatCompletionEnvelope> {
     let lastError: Error | null = null;
     let attempted = false;
-    const verbose = process.env.AI_VERBOSE_LOGS === 'true';
+    const verbose = readBooleanEnv(process.env.AI_VERBOSE_LOGS, false);
     const orderedProviders = this.getCandidateProviders(tier);
 
     for (const provider of orderedProviders) {

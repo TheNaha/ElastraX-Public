@@ -331,7 +331,7 @@ export class FlowHandler {
     if (changed) {
       if (!this.hasFlows(session.flows)) {
         this.memorySessions.delete(key);
-        try { await db.delete(flowSessions).where(eq(flowSessions.id, key)).run(); } catch (error: unknown) { logger.warn({ err: error, key }, '[FlowHandler] Expired session deletion failed'); }
+        FlowHandler.safeDeleteSession(key, 'Expired session deletion failed');
         return null;
       }
       await this.writeSession(key, session);
@@ -417,10 +417,23 @@ export class FlowHandler {
       if (session.activeFlow === flowId) this.selectFallbackActiveFlow(session);
       if (!this.hasFlows(session.flows)) {
         this.memorySessions.delete(storageKey);
-        try { await db.delete(flowSessions).where(eq(flowSessions.id, storageKey)).run(); } catch (error: unknown) { logger.warn({ err: error, key: storageKey }, '[FlowHandler] Session deletion failed; cleared process-local session'); }
+        FlowHandler.safeDeleteSession(storageKey, 'Session deletion failed; cleared process-local session');
       } else await this.writeSession(storageKey, session);
       logger.debug({ userId, flowId }, '[FlowHandler] Flow session cleared');
     });
+  }
+
+  /**
+   * Best-effort deletion of a flow session row. Failures are logged but never
+   * propagated: the process-local session has already been cleared, so a DB
+   * delete failure should not mask the caller's success.
+   */
+  private static safeDeleteSession(key: string, reason: string): void {
+    try {
+      void db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
+    } catch (error: unknown) {
+      logger.warn({ err: error, key }, `[FlowHandler] ${reason}`);
+    }
   }
 
   static clearSession(

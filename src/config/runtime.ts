@@ -187,3 +187,7 @@ export function getMediaCleanupIntervalMs(env: RuntimeEnv = process.env): number
 export function getMediaRetentionHours(env: RuntimeEnv = process.env): number {
   return readIntegerEnv(env.MEDIA_RETENTION_HOURS, 72, { min: 1 });
 }
+
+export function getYtDlpPath(env: RuntimeEnv = process.env): string {
+  return readStringEnv(env.YTDLP_PATH, 'yt-dlp');
+}

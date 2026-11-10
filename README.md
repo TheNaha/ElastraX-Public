@@ -174,7 +174,7 @@ CI performs frozen installation, secret scanning, fatal migration-drift detectio
 - `src/providers` contains WhatsApp, Discord, media, and outbound integrations.
 - `src/utils` contains shared infrastructure and services.
 - `src/plugins` contains runtime plugin tooling; user flow files are stored in the data directory.
-- `modal/` is a separate, experimental Python/vLLM adapter documented in `modal/README.md`; it is not part of the bot startup path.
+- `modal/` is a separate, experimental Python/vLLM adapter (not tracked in this repo, not part of the bot startup path or CI).
 
 See [docs/architecture.md](docs/architecture.md), [docs/flows.md](docs/flows.md), [docs/tools.md](docs/tools.md), and [docs/setup.md](docs/setup.md) for subsystem details.
 

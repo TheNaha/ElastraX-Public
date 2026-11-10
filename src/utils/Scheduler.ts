@@ -117,6 +117,22 @@ function languageForRoomKey(roomKey: string, platform: string): string | null {
   return null;
 }
 
+/** Rebuild a Date from `source`'s wall-clock time, with optional date-component overrides. */
+function dateFromComponents(
+  source: Date,
+  overrides: { year?: number; month?: number; date?: number },
+): Date {
+  return new Date(
+    overrides.year ?? source.getFullYear(),
+    overrides.month ?? source.getMonth(),
+    overrides.date ?? source.getDate(),
+    source.getHours(),
+    source.getMinutes(),
+    source.getSeconds(),
+    source.getMilliseconds(),
+  );
+}
+
 function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | null {
   let year = lastFire.getFullYear();
   let month = lastFire.getMonth();
@@ -127,15 +143,7 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
       year++;
     }
     const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const next = new Date(
-      year,
-      month,
-      Math.min(anchorDay, daysInMonth),
-      lastFire.getHours(),
-      lastFire.getMinutes(),
-      lastFire.getSeconds(),
-      lastFire.getMilliseconds(),
-    );
+    const next = dateFromComponents(lastFire, { year, month, date: Math.min(anchorDay, daysInMonth) });
     if (next.getTime() > now) return next;
   }
   return null;
@@ -156,30 +164,14 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
  * is re-applied, so the wall-clock time is preserved across a DST shift.
  */
 function nextCalendarOccurrence(lastFire: Date, days: number, now: number): Date {
-  const next = new Date(
-    lastFire.getFullYear(),
-    lastFire.getMonth(),
-    lastFire.getDate() + days,
-    lastFire.getHours(),
-    lastFire.getMinutes(),
-    lastFire.getSeconds(),
-    lastFire.getMilliseconds(),
-  );
+  const next = dateFromComponents(lastFire, { date: lastFire.getDate() + days });
   // Re-apply the wall clock: `Date(y, m, d, h)` already resolves to the local
   // time on that date, which is what keeps 09:00 at 09:00 across a DST change.
-  return next.getTime() > now ? next : addCalendarDays(next, days);
+  return next.getTime() > now ? next : dateFromComponents(next, { date: next.getDate() + days });
 }
 
 function addCalendarDays(from: Date, days: number): Date {
-  return new Date(
-    from.getFullYear(),
-    from.getMonth(),
-    from.getDate() + days,
-    from.getHours(),
-    from.getMinutes(),
-    from.getSeconds(),
-    from.getMilliseconds(),
-  );
+  return dateFromComponents(from, { date: from.getDate() + days });
 }
 
 export function computeNextOccurrence(
