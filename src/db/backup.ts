@@ -15,6 +15,7 @@ import { basename, dirname, join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { safeErrorMessage } from '../utils/errorUtils.js';
+import { nowISO } from '../utils/date.js';
 import {
   fingerprintSchema,
   readMigrationJournal,
@@ -239,7 +240,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
   try {
     if (!existsSync(options.dbPath)) throw new Error(`Database does not exist: ${options.dbPath}`);
     ensureDirectory(options.backupDir);
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const stamp = nowISO().replace(/[:.]/g, '-');
     const name = `${prefix}${stamp}-${randomUUID()}.db`;
     const target = join(options.backupDir, name);
     const manifestTarget = `${target}.manifest.json`;
@@ -257,7 +258,7 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     const database = validateDatabaseFile(temporaryDatabase);
     const manifest: BackupManifest = {
       formatVersion: 1,
-      createdAt: new Date().toISOString(),
+      createdAt: nowISO(),
       sourceName: basename(options.dbPath),
       snapshot: {
         file: name,

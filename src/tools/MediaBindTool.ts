@@ -12,6 +12,7 @@ import { FlowHandler, type FlowProcessor } from '../core/FlowHandler';
 import { MediaService } from '../utils/MediaService';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { nowISO } from '../utils/date';
 import { t } from '../utils/i18n';
 import { getCanonicalRoomKey, isSameRoom, toRoomKey } from '../agent/roomKey';
 
@@ -131,7 +132,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
       }
 
       if (!jellyfinUserId && seerrUserId === undefined) throw new Error('No verified service identity was returned.');
-      const metadata = JSON.stringify({ isAdmin, seerrUserId, verified: true, verifiedAt: new Date().toISOString(), authMethod: seerrUserId !== undefined ? 'jellyfin-via-seerr' : 'jellyfin' });
+      const metadata = JSON.stringify({ isAdmin, seerrUserId, verified: true, verifiedAt: nowISO(), authMethod: seerrUserId !== undefined ? 'jellyfin-via-seerr' : 'jellyfin' });
       let bound = 0;
       if (jellyfinUserId) {
         await MediaService.bindingService.bind({ userId: ctx.senderId, platform: ctx.platform, serviceType: 'jellyfin', externalUserId: jellyfinUserId, externalUsername: jellyfinUsername || username, externalEmail: seerrEmail, metadata });

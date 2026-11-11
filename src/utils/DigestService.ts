@@ -29,7 +29,7 @@ import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
 import { and, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
 import { logger } from './logger';
-import { dateKey } from './date';
+import { dateKey, nowISO } from './date';
 import { getErrorMessage } from './errorUtils';
 import { getModelRouter } from './ModelRouter';
 import { MediaService } from './MediaService';
@@ -88,7 +88,7 @@ function readDigestConfig(): DigestConfig {
 
 function claimMarker(id: string): boolean {
   const res = db.insert(appKv)
-    .values({ id, value: new Date().toISOString(), updated_at: new Date() })
+    .values({ id, value: nowISO(), updated_at: new Date() })
     .onConflictDoNothing()
     .run() as unknown as { changes: number };
   return res.changes > 0;

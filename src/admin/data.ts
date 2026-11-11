@@ -19,6 +19,7 @@ import {
   flowSessions,
 } from '../db/schema';
 import { healthMetrics } from '../utils/HealthMetrics';
+import { nowISO } from '../utils/date';
 import { getRoomKeyStats } from '../db/rooms';
 import { getToolCatalog, getPluginLoadReports, getAlwaysLoadedDefinitions, getTriggeredTools } from '../tools/registry';
 import { reloadRegistry } from '../tools/registry';
@@ -55,7 +56,7 @@ export function buildOverview(): Record<string, unknown> {
     feedback: metrics.feedback,
     queue: metrics.queue,
     services: metrics.services,
-    at: new Date().toISOString(),
+    at: nowISO(),
   };
 }
 

@@ -136,7 +136,7 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
     /** Transcribe an image (or a text-less PDF) with the vision model. */
     const viaOcr = async (): Promise<string> => {
       if (!ocrConfig.enabled) return '';
-      await ctx.react?.('👀').catch(() => {});
+      await ctx.react?.('👀').catch((err) => log.warn({ err, chatId: ctx.chatId }, 'Reaction failed'));
       const { text } = await transcribeImage(buffer, mime || 'image/jpeg', { config: ocrConfig, signal: ctx.signal });
       return text;
     };

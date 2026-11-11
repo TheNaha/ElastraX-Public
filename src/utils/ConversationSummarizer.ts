@@ -1,5 +1,6 @@
 import type { AIChatMessage, AIContentPart } from '../ai/client';
 import { logger } from './logger';
+import { nowISO } from './date';
 
 export interface SummaryResult {
   summary: string;
@@ -172,7 +173,7 @@ export class ConversationSummaryService {
         throughMessageId: summarizedEntries[summarizedEntries.length - 1]!.id,
         summarizedMessages: (previous?.summarizedMessages ?? 0) + summarizedEntries.length,
         summary: generated,
-        updatedAt: new Date().toISOString(),
+        updatedAt: nowISO(),
       };
       await this.store.save(request.scope, watermark);
       return {

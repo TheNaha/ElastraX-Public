@@ -37,6 +37,7 @@ import type {
   WebhookReadinessCheck,
 } from '../webhooks/types';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
+import { nowISO } from '../utils/date.js';
 import { randomUUID, createHash } from 'node:crypto';
 
 type SenderFn = (chatId: string, text: string, signal?: AbortSignal) => Promise<void>;
@@ -597,9 +598,9 @@ export class AppRuntime {
     const deliverable = new Set<string>(this.operationalProviders().map(provider => provider.name));
     if (deliverable.size === 0) {
       logger.error({ route: job.route, destinations: job.destinations.length }, 'Rejecting webhook: no operational provider');
-      return { accepted: false, deliveryId: '', acceptedAt: new Date().toISOString() };
+      return { accepted: false, deliveryId: '', acceptedAt: nowISO() };
     }
-    const acceptedAt = new Date().toISOString();
+    const acceptedAt = nowISO();
     const eventKey = job.eventId ?? `${job.route}:${job.source}:${job.receivedAt}:${job.text}`;
     // Resolve and validate every destination first so a non-deliverable or
     // unclassifiable one cannot leave earlier rows enqueued behind a 503.

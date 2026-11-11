@@ -88,7 +88,7 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
         config,
       });
 
-      await ctx.react?.('🔊').catch(() => {});
+      await ctx.react?.('🔊').catch((err) => log.warn({ err, chatId: ctx.chatId }, 'Reaction failed'));
       await ctx.sendMedia(audio.buffer, {
         mimetype: audio.mimeType,
         filename: `voice-${Date.now()}.${audio.extension}`,
