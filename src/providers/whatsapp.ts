@@ -177,11 +177,16 @@ export class WhatsAppProvider implements BotProvider {
     const sock = this.sock;
     this.sock = null;
     this.botLid = null;
-    // Defer end() so a synchronous throw from baileys is caught by .catch below
-    // instead of escaping stop(); swallowed rejections never fail teardown.
-    Promise.resolve().then(() => sock?.end(new Error('Stop called'))).catch(error =>
-      logger.debug({ err: error }, '[WhatsApp] Stop socket end failed'),
-    );
+    // Await the close so the runtime's provider-stop race actually waits for the
+    // websocket, its retry timers and its listeners to go away. The floating
+    // promise this used to launch resolved teardown instantly, so those kept
+    // running after the database had been closed. `AppRuntime.teardown` bounds
+    // this call to 10 s, so a hung socket cannot block shutdown.
+    try {
+      await sock?.end(new Error('Stop called'));
+    } catch (error) {
+      logger.debug({ err: error }, '[WhatsApp] Stop socket end failed');
+    }
   }
 
   onMessage(handler: (ctx: MessageContext) => Promise<void>): void {

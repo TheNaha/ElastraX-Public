@@ -176,6 +176,11 @@ export class TelegramProvider implements BotProvider {
   private readonly mediaControllers = new Set<AbortController>();
   private bootSettleGuard: ReturnType<typeof setTimeout> | null = null;
   private bootReject: ((error: unknown) => void) | null = null;
+  /**
+   * Pending close of a bot abandoned by the boot-settle guard. `stop()` awaits it
+   * so shutdown does not race a poller that is still winding down.
+   */
+  private botStopPromise: Promise<void> | null = null;
 
   get status(): BotProviderStatus {
     return this.providerStatus;
@@ -228,7 +233,25 @@ export class TelegramProvider implements BotProvider {
       const settleGuard = setTimeout(() => {
         this.bootSettleGuard = null;
         this.bootReject = null;
-        rejectReady(new ProviderLifecycleError('telegram', 'Timed out authenticating with the Telegram API.'));
+        // Stop the half-started poller. Rejecting readiness alone left the
+        // `getUpdates` long-poll running: `this.bot` still referenced it and
+        // `isCurrent` (same bot, same generation, desiredRunning) kept passing,
+        // so a delayed `onStart` could even flip a bot AppRuntime had already
+        // dropped to 'running'. Clearing `this.bot` makes `isCurrent` fail, and
+        // `stop()` cancels the long-poll. Storing the promise lets a later
+        // `stop()` await the same close.
+        const error = new ProviderLifecycleError('telegram', 'Timed out authenticating with the Telegram API.');
+        this.providerStatus = this.desiredRunning ? 'backoff' : 'stopped';
+        this.providerError = error;
+        this.bot = null;
+        this.botUserId = null;
+        this.botStopPromise = bot.stop().catch((stopError: unknown) => {
+          log.debug({ err: stopError }, '[Telegram] stop after boot timeout threw');
+        });
+        rejectReady(error);
+        // Match the polling-failure path below: a slow or briefly unreachable API
+        // at boot must not leave Telegram terminally dead for the process life.
+        if (this.desiredRunning) this.scheduleReconnect(generation);
       }, 30_000);
       settleGuard.unref?.();
       this.bootSettleGuard = settleGuard;
@@ -301,11 +324,21 @@ export class TelegramProvider implements BotProvider {
     this.mediaControllers.clear();
     if (bot) {
       try {
-        bot.stop();
+        // grammy's stop() resolves after a final confirming getUpdates. Awaiting
+        // it matters: the runtime removed its unhandledRejection handler at the
+        // start of shutdown, so a floating rejection here would turn a graceful
+        // SIGTERM into a nonzero exit, and it also means polling has actually
+        // stopped when stop() resolves.
+        await bot.stop();
       } catch (error) {
         log.debug({ err: error }, '[Telegram] stop threw');
       }
     }
+    // A bot abandoned by the boot-settle guard is already closing; wait for that
+    // close too so no poller outlives shutdown.
+    const pendingStop = this.botStopPromise;
+    this.botStopPromise = null;
+    if (pendingStop) await pendingStop;
   }
 
   private scheduleReconnect(generation: number): void {
