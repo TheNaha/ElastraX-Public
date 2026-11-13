@@ -321,7 +321,12 @@ export class AppRuntime {
         if (!InboxService.claim(admission.id, this.inboxOwner)) return;
         try {
           await this.messageHandler(ctx);
-          InboxService.complete(admission.id, this.inboxOwner);
+          if (!InboxService.complete(admission.id, this.inboxOwner)) {
+            // The row is no longer leased by this worker (lease expired and a
+            // recovery scan returned it to `received`). The turn still ran, so
+            // surface it: silently ignoring the result hid a lost completion.
+            logger.warn({ chatId: ctx.chatId, platform: ctx.platform, inboxId: admission.id }, 'Inbox completion was not owned by this worker');
+          }
         } catch (error) {
           InboxService.fail(admission.id, this.inboxOwner, error);
           throw error;
