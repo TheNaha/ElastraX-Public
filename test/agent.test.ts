@@ -872,6 +872,40 @@ describe('handleIncomingMessage', () => {
       expect(sentMessages[0]).toBe('⏳ [1/1] 🔍 Searching web for "bun"...');
       expect(editedMessages.some(e => e.text.includes('✅ [1/1] 🔍 Searching web for "bun"...'))).toBe(true);
     });
+
+    test('delivers the full answer when the final streaming edit fails', async () => {
+      process.env.AI_STREAMING = 'true';
+      global.fetch = mock(async () => new Response([
+        'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"Bun is fast."},"finish_reason":null}]}',
+        '',
+        'data: {"id":"s","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })) as unknown as typeof global.fetch;
+
+      const sentMessages: string[] = [];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Stream a short answer',
+        // The initial live send succeeds, so the turn looks delivered; every
+        // edit (including the final one that removes the cursor) fails.
+        sendMessage: mock(async (text: string) => {
+          sentMessages.push(text);
+          return { id: 'stream-key-1' };
+        }),
+        editMessage: mock(async () => {
+          throw new Error('editing not supported');
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      // A partial streamed message was sent, then the complete answer follows as
+      // a normal reply — the user must never be left on the truncated text.
+      expect(sentMessages.length).toBeGreaterThanOrEqual(1);
+      expectReply(ctx.reply, 'Bun is fast.');
+    });
   });
 
   // ── Empty / no-op messages ──────────────────────────────────────────────────

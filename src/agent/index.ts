@@ -1213,7 +1213,14 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
             try {
               await ctx.editMessage!(sentKey, finalAiResponseText);
             } catch (err: unknown) {
+              // The edit that removes the cursor is what turns the streamed
+              // message into the final answer. If it fails, treating the reply as
+              // delivered left the user on a truncated stream still ending in ▌
+              // (and recorded the full text as sent). Route it through the same
+              // `streamingFailed` fallback as a failed intermediate edit, so a
+              // regular reply follows with the complete text.
               log.warn({ err: getErrorMessage(err), chatId, mode: 'stream_final' }, '[Agent] Final streaming edit failed');
+              streamingFailed = true;
             }
           }
 
