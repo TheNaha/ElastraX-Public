@@ -185,6 +185,26 @@ export class DiscordProvider implements BotProvider {
       if (this.providerStatus === 'running') this.providerStatus = 'backoff';
       logger.warn('[Discord] Gateway reconnecting');
     });
+    // A resume finishes with `shardResume`/`shardReady`, never with `ready`:
+    // discord.js emits READY once per login, not per reconnect, and a reconnect
+    // that cannot resume the session emits only `shardReady`. Without these
+    // handlers the `backoff` set above was permanent — `isOperational` stayed
+    // false and AppRuntime dropped the platform from every outbound lane (webhook
+    // enqueue, outbox claim, scheduled runs) until the process restarted.
+    //
+    // `shardReady` can arrive slightly before `clientReady` on the first login;
+    // that is safe here because the provider only needs the gateway for message
+    // events and REST sends, both available at shard-ready. The log is emitted
+    // only on a real backoff -> running transition to avoid a false "resumed".
+    const markResumed = (): void => {
+      if (this.client !== client || generation !== this.generation) return;
+      const wasBackoff = this.providerStatus === 'backoff';
+      this.providerStatus = 'running';
+      this.providerError = null;
+      if (wasBackoff) logger.info('[Discord] Gateway resumed');
+    };
+    client.on(Events.ShardResume, markResumed);
+    client.on(Events.ShardReady, markResumed);
     client.on(Events.ShardError, (error: unknown) => {
       if (this.client !== client) return;
       this.providerError = toError(error);

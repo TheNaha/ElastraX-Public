@@ -133,8 +133,28 @@ describe('DiscordProvider', () => {
     await expect(provider.sendMessage('channel-123', 'hello')).rejects.toThrow('connection changed');
   });
 
-  test('surfaces login failure as a provider start error', async () => {
+  test('a gateway reconnect returns the provider to operational on resume', async () => {
+    const send = mock(async () => ({}));
     const client = createFakeClient();
+    client.channels.fetch = mock(async () => ({ isTextBased: () => true, send }));
+    discordProviderDeps.createClient = () => asDiscordClient(client);
+
+    const provider = new DiscordProvider();
+    await provider.start();
+    expect(provider.isOperational).toBe(true);
+
+    await client.emit('shardReconnecting');
+    expect(provider.isOperational).toBe(false);
+
+    // A resume never re-emits `ready`; only `shardResume`/`shardReady` fires.
+    await client.emit('shardResume', 0, 0);
+    expect(provider.isOperational).toBe(true);
+
+    await provider.sendMessage('channel-1', 'after resume');
+    expect(send).toHaveBeenCalledWith({ content: 'after resume', allowedMentions: { parse: [] } });
+  });
+
+  test('surfaces login failure as a provider start error', async () => {    const client = createFakeClient();
     client.login = mock(async () => { throw new Error('invalid token'); });
     discordProviderDeps.createClient = () => asDiscordClient(client);
     const provider = new DiscordProvider();
