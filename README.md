@@ -77,7 +77,7 @@ bun run db:room-keys
 
 ## Webhooks
 
-Inbound webhooks are disabled unless explicitly enabled:
+Inbound webhooks are enabled by default (`WEBHOOK_ENABLED=true` is the code default and is set in `.env.example`). Disable them with `WEBHOOK_ENABLED=false`. Secrets and external exposure remain opt-in:
 
 ```env
 WEBHOOK_ENABLED=true
@@ -109,8 +109,8 @@ Exact routes, limits, replay behavior, and the optional durable-outbox `202` con
 
 ## Operations
 
-- `GET /health` and `GET /live` return minimal liveness only.
-- `GET /ready` is a compatibility readiness hook.
+- `GET /health` and `GET /live` return minimal process liveness (`{"status":"ok","version":"8.0.1","releaseTag":"v8.0.1"}`). Both return the same payload; neither runs readiness checks.
+- `GET /ready` runs registered readiness checks (database, message queue, providers) and returns `200 {"status":"ready"}` when all pass, or `503 {"status":"not_ready"}` otherwise.
 - `GET /metrics` is hidden unless `METRICS_AUTH_TOKEN` is configured and protected with a Bearer token.
 - `/admin` is a read-mostly operator dashboard on the same port. It needs `METRICS_AUTH_TOKEN` (24+ bytes) and answers `404` on every path without it. A reverse proxy must forward `/admin` as well as `/webhook` — see [docs/deployment.md](docs/deployment.md).
 - Native startup binds loopback by default. Never publish the webhook port directly to the Internet.

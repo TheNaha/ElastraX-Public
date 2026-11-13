@@ -67,3 +67,46 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 - Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`.
 - Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.
 - While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
+
+## Tool metadata reference
+
+Each tool declares `permissions`, `mutability`, `cost`, `aliases`, `triggerPatterns`, `alwaysLoad`, `requiresBinding`, `platforms`, `groupOnly`, `dmOnly`, and `enabled`. The registry derives mutating tool names from its own table (`mutatingToolNames()`) so the deny-list never rots.
+
+Mutating (non-`read`) tools and their overrides (`src/tools/registry.ts`, `MUTABILITY_OVERRIDES`):
+
+| Tool | Mutability | Notes |
+|---|---|---|
+| `owner_admin` | `admin` | `/broadcast`, `/leave` — owner only, group-only aliases. |
+| `config` | `admin` | `/config set`/`reset` — admin only. |
+| `language` | `local-write` | `/language set`/`reset` — admin only. |
+| `reminder` | `local-write` | `/remind` — local state write. |
+| `delete_message` | `external-mutation` | `/del` — deletes provider messages. |
+| `download_media` | `external-mutation` | `/dl` — writes files to disk. |
+| `convert_media` | `local-write` | `/convert` — writes converted files. |
+| `groupadmin` | `external-mutation` | `/kick`, `/promote`, etc. — mutates provider group state. |
+| `knowledge` | `local-write` | `/kb` — persists room documents. |
+| `media_account` | `external-mutation` | `/connect` — links media-service accounts. |
+| `media_request` | `external-mutation` | `/request` — submits Seerr/Jellyfin requests. |
+| `menfess` | `external-mutation` | `/menfess` — relays messages to targets. |
+| `pdf_tool` | `local-write` | `/pdf` — writes merged/converted PDFs. |
+| `speak` | `external-mutation` | `/speak` — TTS, writes audio. |
+
+All other built-in tools default to `read` mutability unless their own `metadata.access.mutability` overrides it.
+
+### Opt-in tools
+
+| Tool | Flag | Registered when |
+|---|---|---|
+| `GameSearchTool` | `ENABLE_GAME_SEARCH=true` | `true` |
+| `SoftwareSearchTool` | `ENABLE_SOFTWARE_SEARCH=true` | `true` |
+| `SpeakTool` | `TTS_API_KEY` set | key present (and `TTS_PROVIDER`/`TTS_BASE_URL`/`TTS_MODEL`/`TTS_VOICE`/`TTS_MAX_CHARS`/`TTS_TIMEOUT_MS` configured) |
+
+Unset → tool absent from `/menu`, absent from the model's tool list, and its slash command reads as "unknown command".
+
+### Binding-gated tools
+
+Media tools (`media_search`, `media_request`, `media_library`) declare `requiresBinding`. The agent resolves sender binding (`ServiceBindingService`) only when a binding-gated tool is registered; an unbound user is never offered tools it cannot use.
+
+### Per-tool parameters
+
+Each tool's JSON Schema parameter definition lives in its own file under `src/tools/` (the `definition` getter on `BaseTool`). Parameters are validated server-side by `validateToolArguments` regardless of what the model is told; `additionalProperties` is closed to prevent injection. Inspect live definitions via `/findtools` or the admin dashboard Tools view.

@@ -81,6 +81,8 @@ The AI layer features a highly resilient Failover Router:
 
 `MEDIA_CLEANUP_INTERVAL_MS`, `MEDIA_RETENTION_HOURS`, and `RETENTION_*` control these. Retention overlaps with the hourly outbox prune; deletes are idempotent.
 
+`ConfigService`, `AuthService`, `EmbeddingService`, `MediaService`, and `NotificationSubscriptionService` run on demand rather than on a timer. See [docs/services.md](./services.md) for per-service configuration and lifecycle detail.
+
 ### 13. Digests
 
 `src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.

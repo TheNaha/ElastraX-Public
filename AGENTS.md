@@ -40,7 +40,7 @@ Bun 1.3.14 TypeScript bot (WhatsApp/Baileys, Discord, Telegram) with an LLM tool
 - User-facing strings go through `t()` in `src/utils/i18n.ts`. Add every key to both the `en` and `id` blocks.
 - ESLint 10 flat config: every config object needs a `name`.
 - `modal/` is a separate, experimental Python vLLM adapter. It is not part of the bot or CI.
-- The `AUDIT*.md` files in the repo root are point-in-time audit reports, not specs.
+- Point-in-time audit reports live under `docs/maintenance/` (`audit-YYYY-MM-DD.md`); there are no `AUDIT*.md` files at the repo root.
 
 ## Project map
 A map of this project lives at `docs/.agent/project-map.md`. Read it at the start of any task that involves understanding how the project works. It records the commit it was written at; if HEAD has moved significantly, verify against the code before relying on it. Update it if you find it wrong.

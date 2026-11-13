@@ -1,10 +1,18 @@
 # ElastraX Documentation
 
 - [Architecture](./architecture.md) — runtime components, provider routing, context, and persistence.
+- [Configuration](./configuration.md) — every environment variable with type, default, and purpose, derived from the code.
 - [Setup](./setup.md) — Bun 1.3.14, environment configuration, providers, and health checks.
 - [Deployment](./deployment.md) — private Docker Compose binding, reverse proxy, migrations, backup, and release gates.
 - [API & Webhooks](./api.md) — exact routes, authentication, limits, replay handling, and delivery semantics.
+- [Admin Dashboard](./admin-dashboard.md) — operator dashboard auth, session cookie, CSRF, and `/admin/api/*` routes.
 - [Tools](./tools.md) — tool catalog and execution model.
+- [Services](./services.md) — background services (Scheduler, DigestService, HealthMonitor, InboxService, OutboxService, MediaService, NotificationSubscriptionService, ConfigService, AuthService, EmbeddingService).
+- [Database](./database.md) — SQLite schema, migrations, lease behavior, and retention.
+- [Error Handling](./error-handling.md) — error types, codes, retryability, and startup validation.
+- [Logging](./logging.md) — Pino usage, log levels, transport, child loggers.
+- [Plugins](./plugins.md) — plugin manifest, admission rules, permissions, and reload.
+- [MessageContext](./message-context.md) — the cross-platform message context interface and provider contract.
 - [Scripts](./scripts.md) — scripts and CLI commands.
 - [Flows](./flows.md) — persisted interactive flows and validation.
 - [CI Diagnostics](./ci-diagnostics.md) — distinguish repository failures from account-side Actions scheduling failures.
