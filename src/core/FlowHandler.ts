@@ -169,24 +169,9 @@ export class FlowHandler {
   private static _startPeriodicSessionCleanup(): void {
     // Clean up memory sessions every hour (3600000 ms)
     const CLEANUP_INTERVAL_MS = 3_600_000;
-    const TTL_MS = 24 * 60 * 60 * 1000;
-    const cleanup = () => {
-      const now = Date.now();
-      // Remove memory sessions older than 24 hours with no DB counterpart
-      for (const [key, creationTime] of this.sessionCreationTime) {
-        if (now - creationTime > TTL_MS) {
-          this.memorySessions.delete(key);
-          this.sessionCreationTime.delete(key);
-        }
-      }
-      // Also prune expired flows from remaining sessions
-      for (const [key, session] of this.memorySessions) {
-        const changed = this.pruneExpiredFlows(session, now);
-        if (changed) {
-          this.memorySessions.set(key, session);
-        }
-      }
-    };
+    // Shares the one-shot sweep's body so the TTL and pruning rules cannot
+    // drift apart between boot and the periodic run.
+    const cleanup = () => this._cleanupLocalSessions(Date.now());
     if (this.sessionCleanupTimer !== null) {
       clearInterval(this.sessionCleanupTimer);
     }
