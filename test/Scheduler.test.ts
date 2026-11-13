@@ -207,4 +207,84 @@ describe('Scheduler', () => {
     // remindAt should be advanced to next occurrence
     expect(reminder!.remindAt.getTime()).toBeGreaterThan(now.getTime());
   });
+
+  test('a deferral preserves a recurring reminder\'s schedule anchor', async () => {
+    // No sender for this platform: delivery cannot even be attempted.
+    Scheduler.unregisterSender('whatsapp');
+    const anchor = new Date(Date.now() - 60 * 60_000);
+    const id = await insertReminder({
+      message: 'daily reminder',
+      remindAt: anchor,
+      isSent: false,
+      claimedAt: null,
+      recurrence: 'daily',
+    });
+
+    await schedulerInternals.processReminders();
+
+    const reminder = await getReminder(id);
+    // Still pending, not retired on the first failure.
+    expect(reminder?.isSent).toBe(false);
+    // The recurrence anchor must not move to the retry time. Stored timestamps
+    // are second-precision, so compare on that scale.
+    expect(Math.floor(reminder!.remindAt.getTime() / 1000)).toBe(Math.floor(anchor.getTime() / 1000));
+    // The claim is held until the backoff expires, which paces the retry.
+    expect(reminder?.claimedAt).not.toBeNull();
+    expect(reminder!.claimedAt!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  test('a deferral moves a one-shot reminder forward instead of re-firing every tick', async () => {
+    Scheduler.unregisterSender('whatsapp');
+    const id = await insertReminder({
+      message: 'one shot',
+      remindAt: new Date(Date.now() - 60_000),
+      isSent: false,
+      claimedAt: null,
+    });
+
+    await schedulerInternals.processReminders();
+
+    const reminder = await getReminder(id);
+    expect(reminder?.isSent).toBe(false);
+    // No recurrence anchor to protect: remindAt is pushed into the future so the
+    // row is not immediately due again on the next tick.
+    expect(reminder!.remindAt.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  test('repeated deferrals never retire a recurring reminder', async () => {
+    const internals = Scheduler as unknown as {
+      deferOrRetire(reminder: { id: number; recurrence: string | null }, reason: string): void;
+    };
+    const id = await insertReminder({
+      message: 'daily reminder',
+      remindAt: new Date(Date.now() - 60_000),
+      isSent: false,
+      claimedAt: null,
+      recurrence: 'daily',
+    });
+
+    for (let i = 0; i < 30; i++) internals.deferOrRetire({ id, recurrence: 'daily' }, 'no sender');
+
+    const reminder = await getReminder(id);
+    // The next occurrence is the retry, so a long outage must not delete it.
+    expect(reminder?.isSent).toBe(false);
+  });
+
+  test('a one-shot reminder is retired once the deferral cap is reached', async () => {
+    const internals = Scheduler as unknown as {
+      deferOrRetire(reminder: { id: number; recurrence: string | null }, reason: string): void;
+    };
+    const id = await insertReminder({
+      message: 'one shot',
+      remindAt: new Date(Date.now() - 60_000),
+      isSent: false,
+      claimedAt: null,
+    });
+
+    // MAX_DEFER_ATTEMPTS is 24; drive past it.
+    for (let i = 0; i < 25; i++) internals.deferOrRetire({ id, recurrence: null }, 'no sender');
+
+    const reminder = await getReminder(id);
+    expect(reminder?.isSent).toBe(true);
+  });
 });

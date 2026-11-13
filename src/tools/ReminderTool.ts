@@ -23,7 +23,7 @@ import { chatRooms, reminders } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
-import { isValidRecurrence } from '../utils/Scheduler';
+import { isValidRecurrence, Scheduler } from '../utils/Scheduler';
 import {
   chatRoomKeyInsertValues,
   chatRoomsRoomColumns,
@@ -338,6 +338,9 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       if (!target) return t(lang, 'reminder.cancel_invalid');
 
       db.delete(reminders).where(eq(reminders.id, target.id)).run();
+      // Drop the scheduler's in-memory retry counter for this row; otherwise a
+      // reminder that failed at least once keeps an entry after cancellation.
+      Scheduler.forgetReminder(target.id);
       log.info({ senderId: ctx.senderId, reminderId: target.id }, 'Reminder cancelled');
       return t(lang, 'reminder.cancel', { n: String(n) });
     }

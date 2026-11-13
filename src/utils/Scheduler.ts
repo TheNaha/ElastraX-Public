@@ -42,7 +42,29 @@ const MAX_INTERVAL_MS = 5 * 365 * 86_400_000;
 const MAX_BATCH_SIZE = 50;
 /** A reminder that cannot be routed is retired after this many failed attempts. */
 const MAX_DELIVERY_ATTEMPTS = 5;
+/**
+ * Attempts allowed when delivery could not even be attempted (no sender for the
+ * platform). Much larger than {@link MAX_DELIVERY_ATTEMPTS}: a provider in
+ * degraded mode is a temporary state, not a poison payload.
+ */
+const MAX_DEFER_ATTEMPTS = 24;
+/**
+ * Send-failure attempts, keyed by reminder id.
+ *
+ * Kept separate from {@link deferAttempts} on purpose: the two paths have very
+ * different ceilings. Sharing one counter meant that after a provider outage had
+ * pushed the count past `MAX_DELIVERY_ATTEMPTS` through deferrals, the very first
+ * real send failure after recovery retired the reminder immediately.
+ */
 const retryAttempts = new Map<number, number>();
+/** Deferral attempts (could not even attempt delivery), keyed by reminder id. */
+const deferAttempts = new Map<number, number>();
+
+/** Clear every in-memory counter for a reminder. */
+function clearAttempts(id: number): void {
+  retryAttempts.delete(id);
+  deferAttempts.delete(id);
+}
 
 type QueryRows = {
   orderBy?: (value: unknown) => QueryRows;
@@ -270,6 +292,16 @@ export class Scheduler {
   }
 
   /**
+   * Drop the in-memory delivery-retry counter for a reminder that no longer
+   * exists. `processReminders` only clears entries on success or retirement, so
+   * a reminder that failed at least once and was then cancelled by the user left
+   * its counter behind for the lifetime of the process.
+   */
+  static forgetReminder(id: number): void {
+    clearAttempts(id);
+  }
+
+  /**
    * Bound for a single scheduled agent run.
    *
    * `SCHEDULED_TASKS_TIMEOUT_MS` is a documented, validated operator setting,
@@ -280,6 +312,20 @@ export class Scheduler {
    */
   static taskTimeoutMs(): number {
     return readIntegerEnv(process.env.SCHEDULED_TASKS_TIMEOUT_MS, TASK_TIMEOUT_MS, { min: 5_000, max: 900_000 });
+  }
+
+  /**
+   * How long a claim must sit idle before another tick may take it over.
+   *
+   * The floor is {@link STALE_CLAIM_MS}, but it must never be shorter than the
+   * longest a single delivery can run: a scheduled agent task may legitimately
+   * run for up to `SCHEDULED_TASKS_TIMEOUT_MS`. Reclaiming a claim while its
+   * original worker is still running delivered the same reminder twice (a second
+   * send, and a second full agent run with tool side effects), contradicting the
+   * at-most-once semantics documented on `reminders.claimed_at`.
+   */
+  private static staleClaimMs(): number {
+    return Math.max(STALE_CLAIM_MS, this.taskTimeoutMs());
   }
 
   static start(): void {
@@ -305,7 +351,7 @@ export class Scheduler {
     this.processing = true;
     try {
       const now = new Date();
-      const staleClaimCutoff = new Date(now.getTime() - STALE_CLAIM_MS);
+      const staleClaimCutoff = new Date(now.getTime() - this.staleClaimMs());
       const due = collectRows(
         db.select()
           .from(reminders)
@@ -339,7 +385,7 @@ export class Scheduler {
             // retried every tick for the life of the process. Route it through the
             // normal backoff so it retries with growing delays and is retired
             // after MAX_DELIVERY_ATTEMPTS.
-            this.deferOrRetire(reminder.id, `No sender registered for platform "${reminder.platform}"`);
+            this.deferOrRetire(reminder, `No sender registered for platform "${reminder.platform}"`);
             continue;
           }
 
@@ -401,20 +447,20 @@ export class Scheduler {
                 .where(eq(reminders.id, reminder.id))
                 .run();
               logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
-              retryAttempts.delete(reminder.id);
+              clearAttempts(reminder.id);
               continue;
             }
             db.update(reminders)
               .set({ remindAt: nextFire, claimedAt: null })
               .where(eq(reminders.id, reminder.id))
               .run();
-            retryAttempts.delete(reminder.id);
+            clearAttempts(reminder.id);
           } else {
             db.update(reminders)
               .set({ isSent: true, claimedAt: null })
               .where(eq(reminders.id, reminder.id))
               .run();
-            retryAttempts.delete(reminder.id);
+            clearAttempts(reminder.id);
           }
         } catch (err) {
           const attempt = (retryAttempts.get(reminder.id) ?? 0) + 1;
@@ -475,7 +521,7 @@ export class Scheduler {
    * selected and stops occupying the in-memory retry map.
    */
   private static retireClaim(id: number): void {
-    retryAttempts.delete(id);
+    clearAttempts(id);
     db.update(reminders)
       .set({ isSent: true, claimedAt: null })
       .where(and(eq(reminders.id, id), eq(reminders.isSent, false)))
@@ -483,20 +529,35 @@ export class Scheduler {
   }
 
   /**
-   * Back off a delivery that could not be attempted, retiring it once
-   * MAX_DELIVERY_ATTEMPTS is reached. This is what keeps an undeliverable
-   * reminder from being reselected on every single scheduler tick.
+   * Back off a delivery that could not be attempted at all (no sender registered
+   * for the platform). This is what keeps an undeliverable reminder from being
+   * reselected on every single scheduler tick.
+   *
+   * Differences from the send-failure path, all deliberate:
+   *  - a recurring reminder keeps its `remindAt` anchor (`preserveSchedule`), so
+   *    a temporary outage does not permanently re-base a daily/weekly cadence;
+   *  - attempts are tracked in their own counter ({@link deferAttempts}), so a
+   *    long outage cannot consume the send-failure budget and make the first
+   *    real error after recovery retire the reminder;
+   *  - the cap is much larger, because "no sender registered" is a configuration
+   *    state that can persist for hours (a provider in degraded mode), not a
+   *    poison payload. Retiring a user's reminder after ~8 minutes of a platform
+   *    being down silently destroyed it;
+   *  - a *recurring* reminder is never retired here. The next occurrence is the
+   *    natural retry, so a long outage merely skips periods instead of deleting
+   *    the reminder for good.
    */
-  private static deferOrRetire(id: number, reason: string): void {
-    const attempt = (retryAttempts.get(id) ?? 0) + 1;
-    if (attempt >= MAX_DELIVERY_ATTEMPTS) {
+  private static deferOrRetire(reminder: { id: number; recurrence: string | null }, reason: string): void {
+    const id = reminder.id;
+    const attempt = (deferAttempts.get(id) ?? 0) + 1;
+    if (attempt >= MAX_DEFER_ATTEMPTS && !reminder.recurrence) {
       this.retireClaim(id);
       logger.error({ id, reason, attempt }, 'Reminder undeliverable after repeated attempts; retired');
       return;
     }
-    retryAttempts.set(id, attempt);
+    deferAttempts.set(id, attempt);
     const backoffMs = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempt - 1, 7));
-    this.releaseClaim(id, new Date(Date.now() + backoffMs));
+    this.releaseClaim(id, new Date(Date.now() + backoffMs), { preserveSchedule: Boolean(reminder.recurrence) });
     logger.warn({ id, reason, attempt, retryInMs: backoffMs }, 'Reminder delivery deferred');
   }
 }
