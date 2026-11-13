@@ -527,14 +527,12 @@ export class AIClient {
     let sawChunk = false;
     let sawFinish = false;
     let sawDone = false;
-    let cancelReader = false;
 
     const decodeEvents = (events: ReturnType<SSEDecoder['push']>): AIStreamChunk[] => {
       const chunks: AIStreamChunk[] = [];
       for (const event of events) {
         if (event.data.trim() === '[DONE]') {
           sawDone = true;
-          cancelReader = true;
           break;
         }
         if (!event.data.trim()) continue;
@@ -579,12 +577,14 @@ export class AIClient {
         throw new AIProtocolError('incomplete_stream', 'LLM stream ended without a finish reason or [DONE].');
       }
     } finally {
-      if (cancelReader) {
-        try {
-          await reader.cancel();
-        } catch (error: unknown) {
-          log.trace({ err: error }, 'Terminal SSE stream cancellation failed');
-        }
+      // Always cancel, not only after [DONE]. When the consumer stops early (the
+      // turn throws, or an abort propagates) the response body was left unread
+      // and only the lock was released, which can hold a keep-alive connection
+      // open until GC. Cancelling an already-closed stream is a no-op.
+      try {
+        await reader.cancel();
+      } catch (error: unknown) {
+        log.trace({ err: error }, 'SSE stream cancellation failed');
       }
       reader.releaseLock();
     }
