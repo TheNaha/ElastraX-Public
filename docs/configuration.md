@@ -34,15 +34,18 @@ Used when `AI_PROVIDERS` is set to a comma-separated list (e.g. `modal,gemini`).
 | `AI_PROVIDERS` | string | *(none)* | yes | Comma-separated provider names (`a-z0-9_-`), no duplicates. |
 | `AI_<NAME>_BASE_URL` | URL | *(none)* | yes | Per-provider base URL. Cloudflare shorthand via `AI_<NAME>_CF_ACCOUNT_ID`. |
 | `AI_<NAME>_API_KEY` | string | *(none)* | yes (non-loopback) | Per-provider key. Falls back to `AI_<NAME>_CF_API_TOKEN`. |
-| `AI_<NAME>_MODEL` | string | provider default | yes | Per-provider model. Provider defaults: gemini `gemini-2.0-flash`, openrouter `google/gemini-2.0-flash-001`, groq/cloudflare/pollinations/airforce `gpt-4o-mini`, default `meta-llama/Meta-Llama-3-8B-Instruct`. |
+| `AI_<NAME>_MODEL` | string | provider default | yes | Per-provider model. Provider defaults: gemini `gemini-2.0-flash`, openrouter `google/gemini-2.0-flash-001`, groq/cloudflare/pollinations/airforce `gpt-4o-mini`; any other name also resolves to `gpt-4o-mini`. (`meta-llama/Meta-Llama-3-8B-Instruct` is the single-provider fallback, not a multi-provider default.) |
 | `AI_<NAME>_TIER` | string | `standard` | no | `standard`, `fast`, or `powerful`. Anything else aborts startup. |
 | `AI_<NAME>_SUPPORTS_IMAGE` | boolean | `true` | no | Send `image_url` content blocks. |
 | `AI_<NAME>_SUPPORTS_VIDEO` | boolean | `true` for `modal*` prefix, else `false` | no | Send `video_url` content blocks. |
 | `AI_<NAME>_SUPPORTS_AUDIO` | boolean | `true` for `modal*` prefix, else `false` | no | Send `audio_url` content blocks. |
-| `AI_<NAME>_SUPPORTS_TOOLS` | boolean | validated but not consumed by resolver | no | Advertise tool/function calling. |
-| `AI_<NAME>_STREAM_USAGE` | boolean | validated but not consumed by resolver | no | Request usage in streaming responses. |
+| `AI_<NAME>_SUPPORTS_TOOLS` | boolean | `true` | no | Advertise tool/function calling. |
+| `AI_<NAME>_STREAM_USAGE` | boolean | `true` | no | Request usage in streaming responses. |
+| `AI_<NAME>_SUPPORTS_PARALLEL_TOOLS` | boolean | unset | no | Advertise parallel tool calls. Unset leaves the client default. |
+| `AI_<NAME>_MAX_TOKENS_PARAM` | string | `max_tokens` | no | Request field used for the token cap. Anything other than `max_completion_tokens` resolves to `max_tokens`. |
+| `AI_<NAME>_MAX_OUTPUT_TOKENS` | integer | `AI_MAX_TOKENS` | no | Per-provider output cap. Overrides the global request `maxTokens`. |
 
-Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE`, `AI_SUPPORTS_VIDEO`, `AI_SUPPORTS_AUDIO`, `AI_SUPPORTS_TOOLS`, `AI_STREAM_USAGE`, `AI_MAX_TOKENS_PARAM`.
+Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE`, `AI_SUPPORTS_VIDEO`, `AI_SUPPORTS_AUDIO`, `AI_SUPPORTS_TOOLS`, `AI_STREAM_USAGE`, `AI_SUPPORTS_PARALLEL_TOOLS`, `AI_MAX_TOKENS_PARAM`, `AI_MAX_OUTPUT_TOKENS`.
 
 ## 4. AI Behaviour Defaults
 
@@ -54,7 +57,13 @@ Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE
 | `AI_PROVIDER_COOLDOWN_MS` | integer | `30000` | no | Cooldown before retrying a failed AI provider in failover mode. Range 1,000–3,600,000. |
 | `AI_TIER` | string | *(unset)* | no | Global tier tag: `standard`, `fast`, or `powerful`. Invalid values abort startup. |
 | `AI_VERBOSE_LOGS` | boolean | `false` | no | Print raw AI prompts/responses to terminal. |
-| `AI_MAX_TOOL_ITERATIONS` | integer | `8` | no | Max tool-call loop iterations per AI turn. Range 1–20. |
+| `AI_MAX_TOOL_ITERATIONS` | integer | `8` | no | Max LLM loop iterations per AI turn (each iteration may emit tool calls). Range 1–20. |
+| `AI_MAX_TOOL_CALLS` | integer | `8` | no | Hard cap on tool calls inside one turn. `TurnBudget` clamps any value above **8**; the env var can only lower it. |
+| `AI_MAX_PARALLEL_TOOLS` | integer | `4` | no | Hard cap on concurrent tool calls in one batch. `TurnBudget` clamps any value above **4**; the env var can only lower it. |
+| `AI_MAX_TOOL_RESULT_BYTES` | integer | `1048576` (1 MB) | no | Largest single tool result, in bytes. Range 1,024–10,485,760. |
+| `AI_MAX_TOOL_RESULT_BYTES_TOTAL` | integer | `4194304` (4 MB) | no | Largest sum of tool results in one turn. Range 1,024–41,943,040. |
+| `AI_OPERATIONAL_CONTEXT_LIMIT` | integer | `1000` | no | Cap used for operational/tool context trimming. Range 1–10,000. |
+| `AI_MAX_RESPONSE_BYTES` | integer | `2097152` (2 MB) | no | Reject an LLM response body larger than this. The built-in guard is 2 MB. |
 | `AI_STREAMING` | boolean | `false` | no | Enable real-time streaming updates using message editing. |
 | `STREAMING_EDIT_INTERVAL_WA` | integer | `1500` | no | Milliseconds between WhatsApp edits (prevents rate limits). Range 100–30,000. |
 | `STREAMING_EDIT_INTERVAL_DC` | integer | `500` | no | Milliseconds between Discord edits. Range 100–30,000. |
@@ -69,8 +78,9 @@ Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE
 | `CONTEXT_MESSAGE_LIMIT` | integer | `10` | no | Recent messages included in LLM context window. Range -1 (unlimited)–10,000. |
 | `CONTEXT_SUMMARIZE` | boolean | `true` | no | Compress old messages into a rolling summary instead of dropping them. Per-chat override via `/config`. |
 | `AUTO_REPLY_ALL` | boolean | `false` | no | Reply to every message in group chats by default (not just mentions/replies). |
+| `ALLOW_TOOLS` | boolean | `true` | no | Default for whether the model may call tools in a chat. Overridable per chat via `/config`. |
 | `DEFAULT_SYSTEM_PROMPT` | string | built-in default | no | Default system prompt. Use `{{LANGUAGE}}` placeholder. Two media-service variants documented in `.env.example`. |
-| `LONG_TERM_MEMORY` | boolean | true in DMs, false in groups | no | No global env var; defaults true in private DMs, false in group chats. Overridable per-chat via `/config`. |
+| `LONG_TERM_MEMORY` | boolean | `true` in DMs, `false` in groups | no | Global default for long-term memory; per-chat override via `/config`. The DM/group difference is the built-in default when unset. |
 
 ## 6. Platform Providers
 
@@ -110,7 +120,7 @@ Override role defaults via `ROLE_PRIV_{ROLE}_{FIELD}` env vars. -1 = unlimited. 
 | `ROLE_PRIV_OWNER_CONTEXT_LIMIT` | integer | `100` |
 | `ROLE_PRIV_OWNER_MAX_DOWNLOAD_MB` | integer | `-1` |
 
-Levels are ordered: user < premium < admin < owner.
+Levels are ordered: user < premium < admin < owner. `ROLE_PRIV_{ROLE}_RATE_WINDOW_SEC` exists for every role (default `60`) and is not listed per role above for brevity. Out-of-range values fall back to the built-in defaults (the table above).
 
 ## 9. Media / Downloads
 
@@ -139,7 +149,7 @@ Levels are ordered: user < premium < admin < owner.
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `SEARXNG_URL` | URL | `https://your-searxng-instance.example.com` | no | SearXNG instance URL used by the `web_search` tool. http allowed on loopback. |
+| `SEARXNG_URL` | URL | *(unset)* | no | SearXNG instance URL used by the `web_search` tool. Unset disables web search. http allowed on loopback. (`.env.example` ships a placeholder URL.) |
 | `JINA_API_KEY` | string | *(unset)* | no | Optional Jina.ai API key used by the `web_scrape` tool. |
 
 ## 12. Webhook Inbound Server
@@ -186,10 +196,7 @@ Each media route fails closed with HTTP 503 until its own 24+ byte secret is set
 | `JELLYFIN_EXTERNAL_URL` | URL | *(unset)* | no | User-facing URL for watch links (must use https unless loopback). |
 | `JELLYFIN_URL` | string | *(unset)* | no | HealthMonitor fallback URL for Jellyfin. |
 | `JELLYFIN_WEBHOOK_SECRET` | string | *(unset)* | no | Jellyfin webhook secret (24+ bytes). |
-| `JELLYFIN_PUBLIC_LIBRARY` | boolean | `false` | no | Public media library visibility flag. |
-| `MEDIA_PUBLIC_LIBRARY` | boolean | `false` | no | Public media library visibility flag. |
-| `ENABLE_MEDIA_LIBRARY` | boolean | `false` | no | Enable media library browsing. |
-| `JELLYFIN_PUBLIC_MODE` | boolean | `false` | no | Jellyfin public mode flag. |
+| `JELLYFIN_PUBLIC_LIBRARY` / `MEDIA_PUBLIC_LIBRARY` / `ENABLE_MEDIA_LIBRARY` / `JELLYFIN_PUBLIC_MODE` | boolean | `false` (each) | no | Aliases for the same switch: if **any** is true, `/library` allows browsing without a bound Jellyfin user. |
 
 ## 14. Scheduled Digests
 
@@ -227,8 +234,8 @@ On-demand digests are always available in-chat via `/digest [hours]` (1–168).
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `FEEDBACK_LOG_ENABLED` | boolean | `false` | no | Append reactions to a JSONL eval log. |
-| `FEEDBACK_LOG_PATH` | string | `data/feedback.jsonl` | no | Path for reading feedback logs in admin UI. |
+| `FEEDBACK_LOG_ENABLED` | boolean | `true` | no | Append reactions to a JSONL eval log. Opt-out: only `0`, `false`, `no`, or `off` disables it. Metrics are always collected. |
+| `FEEDBACK_LOG_PATH` | string | `data/feedback.jsonl` | no | Path for the JSONL eval log and for reading feedback in the admin UI. |
 | `FEEDBACK_MAX_PER_DAY` | integer | `2000` | no | Daily volume cap for feedback. |
 
 ## 18. Database Backups
@@ -279,12 +286,70 @@ Each flag governs exactly one tool; unset means the tool is not registered at al
 | Variable | Type | Default | Purpose |
 |---|---|---|---|
 | `ELASTRAX_TEST_DOWNLOAD_DIR` | string | *(unset)* | Override download directory for tests (used by `DownloadTool`). |
+| `ELASTRAX_TEST_FFMPEG_DIR` | string | *(unset)* | Override FFmpeg/ffprobe directory for tests (used by media conversion). |
 | `ADMIN_COOKIE_INSECURE` | boolean | `false` | Allow insecure cookies for local/admin dev (sets cookie `Secure=false`). Only for loopback over plain HTTP. |
 | `FIXTURE_DUMP_DIR` | string | `./test/fixtures/wa_messages` | Fixture output directory. |
 | `ALLOW_FIXTURE_DUMP` | boolean | `false` | Set `true` only for `bun run fixtures:dump`. Disabled in production. |
 | `DB_BACKUP_PATH` / `DB_RESTORE_PATH` | string | *(unset)* | Runtime-internal overrides for `scripts/dbBackup.ts` (not in `.env.example`). |
 
-### How defaults are enforced
+## 25. Message Queue
+
+Inbound handling is bounded per room and globally by `src/utils/MessageQueue.ts`. Work is serialized per room (concurrency 1) and at most **8** tasks run concurrently across all rooms; that running cap is built into `AppRuntime` and is not an environment variable.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `MESSAGE_QUEUE_PER_ROOM_LIMIT` | integer | `50` | Max **pending** messages per room. Range 1–1,000. |
+| `MESSAGE_QUEUE_GLOBAL_LIMIT` | integer | `500` | Max **pending** messages across all rooms (backlog cap, not the running cap). Range 1–10,000. |
+| `MESSAGE_QUEUE_MAX_AGE_MS` | integer | `300000` (5 min) | Drop queued work older than this during overload. Range 10,000–3,600,000. |
+| `MESSAGE_QUEUE_SHUTDOWN_GRACE_MS` | integer | `15000` | Time allowed for the queue to drain during shutdown. Range 1,000–120,000. |
+
+## 26. Semantic Memory / Embeddings
+
+When `EMBEDDING_API_URL` and `EMBEDDING_MODEL` are both set, memories are embedded and ranked by cosine similarity to the current message, and near-duplicates are suppressed on write. Unset disables semantic ranking and dedupe; recency ranking still applies.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `EMBEDDING_API_URL` | URL | *(unset)* | OpenAI-compatible embeddings base. Accepts `…/v1/embeddings`, `…/v1`, or a bare host. |
+| `EMBEDDING_API_KEY` | string | *(unset)* | Bearer token for the embeddings endpoint. Unset sends no `Authorization` header. |
+| `EMBEDDING_MODEL` | string | *(unset)* | Embedding model name. Required with `EMBEDDING_API_URL`. |
+| `EMBEDDING_TIMEOUT_MS` | integer | `8000` | Per-request timeout; non-positive or malformed falls back to 8,000. |
+| `EMBEDDING_DIMENSION` | integer | auto-detected | Expected vector size. Omit to detect from the first response; set it when a model's size must be pinned. |
+| `EMBEDDING_CANDIDATES` | integer | `400` | Recent memories scanned for injection and dedupe. Cap 10,000. |
+| `EMBEDDING_DEDUPE_THRESHOLD` | float | `0.93` | Cosine similarity at which a new memory counts as a duplicate. Cap 1. |
+
+After changing the embedding model, re-embed stored rows with `bun run db:embed` (see [scripts.md](./scripts.md)).
+
+## 27. Text-to-Speech (voice replies)
+
+`SpeakTool` is registered only when `TTS_API_KEY` is set. `src/utils/tts.ts` accepts any OpenAI-compatible `/v1/audio/speech` endpoint or ElevenLabs.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `TTS_PROVIDER` | string | `openai` | `openai` (any OpenAI-compatible server) or `elevenlabs`. Any other value resolves to `openai`. |
+| `TTS_API_KEY` | string | *(unset)* | API key. With no key the tool is not registered at all. |
+| `TTS_BASE_URL` | URL | `https://api.openai.com` | Provider base URL. ElevenLabs defaults to `https://api.elevenlabs.io`. |
+| `TTS_MODEL` | string | `tts-1` | Model id. ElevenLabs defaults to `eleven_multilingual_v2`. |
+| `TTS_VOICE` | string | `alloy` | Voice id. Required for ElevenLabs (there is no meaningful default, so an unset voice disables the tool). |
+| `TTS_MAX_CHARS` | integer | `2000` | Input character cap. Range 1–20,000. |
+| `TTS_TIMEOUT_MS` | integer | `60000` | Request timeout. Range 1,000–300,000. |
+
+## 28. Menfess relay
+
+`MenfessTool` (`/menfess`, `/anon`) relays a message to an allowlisted destination.
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `MENFESS_TARGETS` | string | *(empty)* | Comma-separated `alias:chatId` pairs or bare chat IDs. An alias form becomes `/menfess <alias>`; a bare ID becomes directly addressable. Without this variable the tool has no destinations. |
+
+## 29. Operations
+
+| Variable | Type | Default | Purpose |
+|---|---|---|---|
+| `LOG_ROOT` | string | first existing of `./logs`, `/var/log/elastrax`, `$HOME/.local/share/elastrax/logs`, else `/tmp/elastrax-logs` | Directory `OwnerTool` reads when an owner asks for log/system information. |
+| `WA_AUTH_IMPORT_DIR` | string | *(unset)* | One-time import of a legacy Baileys auth directory into the database-backed auth store. Only read when no stored credentials exist. |
+| `RETENTION_*` | — | dry-run by default | Retention knobs are documented in [database.md](./database.md#retention). |
+
+## How defaults are enforced
 
 - `validateEnv` (`src/config/env.ts`) throws at startup if any required var is missing or malformed: bad booleans, non-integer bounds, weak secrets (< 24 bytes), non-RFC3339 compatibility deadlines, unsafe hosts (non-loopback http), and credentials in URLs.
 - `readIntegerEnv` / `readFloatEnv` / `readBooleanEnv` (`src/config/runtime.ts`) fall back to the documented default with a warning when a value is malformed (except in test, where no warning is logged).

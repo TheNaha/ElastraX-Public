@@ -73,6 +73,17 @@ Both services use SQLite row-level leasing (`LEASE_MS = 120_000`) and `MAX_ATTEM
 
 A reminder whose text starts with `/task ` is executed as an agent turn in its room at fire time instead of being delivered as text. Off unless `SCHEDULED_TASKS_ENABLED=true` and the room is listed in `SCHEDULED_TASKS_ALLOWED_ROOMS`. The scheduler runs with the baseline `user` role only: every mutating tool is denied (`mutatingToolNames()` from the registry), and per-room/daily run ceilings apply (`SCHEDULED_TASKS_MAX_RUNS_PER_DAY`, `SCHEDULED_TASKS_MAX_RUNS_PER_ROOM_PER_DAY`, `SCHEDULED_TASKS_TIMEOUT_MS`).
 
+## Reminder delivery and retries
+
+`Scheduler.processReminders` runs every 30 s and claims at most 50 due rows per tick. A row is claimed by writing `reminders.claimed_at`; the claim is the only reselection gate, so a reminder is never processed twice concurrently.
+
+- **At-most-once claim, with a safe stale window.** The stale-claim window is `max(2 min, SCHEDULED_TASKS_TIMEOUT_MS)`. A tick that overlaps a still-running scheduled task (which may legitimately run for up to 15 min) therefore cannot steal the claim and send a duplicate.
+- **Send failure.** Retries use attempt-aware exponential backoff (30 s base, exponent capped at 7) and stop after `MAX_DELIVERY_ATTEMPTS = 5`, which retires the reminder with an error log. The retry is paced through `claimed_at`, not `remindAt`.
+- **Deferral (no sender for the platform).** When a provider is in degraded mode or absent, delivery cannot even be attempted. This is tracked in a separate counter with `MAX_DEFER_ATTEMPTS = 24` and a backoff capped at 1 h. A recurring reminder is **never** retired by this path; its next occurrence is the retry.
+- **Recurring schedules keep their anchor.** On failure and deferral, `remindAt` is left alone for recurring rows, so a transient error cannot re-base a 09:00 daily reminder to the retry time. Monthly cadence is anchored to `created_at`'s day-of-month, so a 31st-of-month reminder does not drift to the 28th.
+- **Permanent failures retire immediately.** A `room_key`/`chat_room_id` mismatch or an unparsable recurrence retires the row on first sight instead of retrying forever.
+- In-memory attempt counters are cleared when the row succeeds or is deleted.
+
 ## Verification
 
 ```

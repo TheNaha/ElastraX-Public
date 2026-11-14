@@ -45,7 +45,7 @@ Keep `.env` outside source control and out of Docker build context.
 
 ### WhatsApp
 
-Start the bot and scan the QR code with `BOT_OWNER_JID`. The Baileys authentication state is stored under the writable data directory. Back up that directory before moving hosts.
+Start the bot and scan the QR code with `BOT_OWNER_JID`. The Baileys authentication state is stored in the SQLite database (`src/utils/useDBAuthState.ts`), so the writable data volume holds it; back up that volume before moving hosts. To migrate from a legacy file-based auth directory, set `WA_AUTH_IMPORT_DIR` once on the first start with no stored credentials.
 
 ### Discord
 

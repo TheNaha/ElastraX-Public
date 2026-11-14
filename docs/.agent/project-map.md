@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit: `b4ad7af` (maintenance pass 2026-11-10)
-**Date:** 2026-11-10
+**Recorded Commit:** `5694063` (documentation pass 2026-11-14)
+**Date:** 2026-11-14
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -18,54 +18,96 @@ It connects WhatsApp (via Baileys), Discord (via discord.js), and Telegram (via 
 ```
 ElastraX/
 ├── src/
-│   ├── index.ts                 # Bootstrap: env validation, schema check, FlowHandler init, AppRuntime start, graceful shutdown
+│   ├── index.ts                 # Bootstrap: env validation, schema check, FlowHandler init, AppRuntime start, signal shutdown
+│   ├── webhookServer.ts         # Compatibility shim re-exporting src/webhooks/*
+│   ├── config/
+│   │   ├── env.ts               # validateEnv: required vars, bounds, secrets, URLs
+│   │   ├── llm.ts               # Provider resolution and Cloudflare base-URL shorthand
+│   │   ├── runtime.ts           # read*Env helpers and resolved runtime defaults
+│   │   ├── database.ts          # Database path/timeout resolution
+│   │   └── version.ts           # APP_VERSION / APP_RELEASE_TAG
 │   ├── runtime/
-│   │   ├── AppRuntime.ts        # Service coordinator: provider lifecycles, message queues, scheduler, media cleanup, webhooks
-│   │   └── startupDiagnostics.ts# Diagnostic coverage and configuration sanity checks
+│   │   ├── AppRuntime.ts        # Service coordinator: providers, queues, scheduler, media cleanup, webhooks
+│   │   └── startupDiagnostics.ts# Startup parser-coverage scan
 │   ├── core/
-│   │   ├── MessageContext.ts    # Normalized platform-agnostic message context (reply, react, attachments, PTT)
-│   │   ├── FlowHandler.ts       # Interactive multi-step wizards state machine in SQLite
+│   │   ├── MessageContext.ts    # Normalized platform-agnostic message context
+│   │   ├── FlowHandler.ts       # Interactive multi-step state machine in SQLite
 │   │   ├── platforms.ts         # Supported platform identifiers and helpers
-│   │   └── roleAccess.ts        # Role hierarchy and permission checker
-│   ├── providers/
-│   │   ├── BotProvider.ts       # Abstract interface implemented by messaging platform providers
-│   │   ├── whatsapp.ts          # WhatsApp provider via Baileys with SQLite auth store
-│   │   ├── discord.ts           # Discord provider via discord.js
-│   │   ├── telegram.ts          # Telegram provider via grammY
-│   │   └── process.ts           # Child process tracking and clean termination
+│   │   ├── roleAccess.ts        # Role hierarchy and permission checker
+│   │   ├── roomKeyFormat.ts     # Canonical room:<platform>:<id> format (only definition)
+│   │   ├── constants.ts         # Shared constants (flow cancel commands, limits)
+│   │   └── prompts.ts           # Default system prompt
 │   ├── agent/
-│   │   ├── index.ts             # handleIncomingMessage: room lookup, flow checks, slash command routing, LLM loop
+│   │   ├── index.ts             # handleIncomingMessage: room lookup, flows, slash routing, LLM loop
 │   │   ├── ToolSearchIndex.ts   # Dynamic tool discovery index
-│   │   └── prompts.ts          # Default system prompt loader (src/core/prompts.ts)
+│   │   ├── roomKey.ts           # Room-key resolution for agent lane
+│   │   ├── messageId.ts         # Event-id derivation for inbox dedupe
+│   │   └── toolProgress.ts      # Live [i/N] tool status message
+│   ├── ai/
+│   │   ├── client.ts            # OpenAI-compatible chat client (+ streaming)
+│   │   ├── streaming.ts         # Throttled edit-based streaming
+│   │   ├── sse.ts               # SSE parser
+│   │   ├── turnBudget.ts        # Per-turn tool-call/result budgets
+│   │   ├── errors.ts            # AIProtocolError
+│   │   ├── summaryStore.ts      # Rolling conversation summaries
+│   │   └── types.ts             # AI message/tool types
+│   ├── providers/
+│   │   ├── BotProvider.ts       # Abstract provider interface and status enum
+│   │   ├── whatsapp.ts          # WhatsApp via Baileys with SQLite auth store
+│   │   ├── discord.ts           # Discord via discord.js
+│   │   ├── telegram.ts          # Telegram via grammY
+│   │   ├── telegramText.ts      # Telegram text/markdown helpers
+│   │   ├── whatsappParser.ts    # Raw Baileys message parser
+│   │   ├── media.ts             # Shared provider media helpers
+│   │   ├── process.ts           # Child-process tracking and termination
+│   │   ├── semaphore.ts         # Concurrency limits
+│   │   ├── ssrf.ts              # SSRF-safe URL validation
+│   │   ├── errors.ts            # ProviderError
+│   │   ├── jellyfin/JellyfinClient.ts
+│   │   └── seerr/SeerrClient.ts
 │   ├── tools/
-│   │   ├── BaseTool.ts          # Abstract base tool with JSON schema definition & metadata
-│   │   └── registry.ts          # Builtin tool registry, plugin loader, permission validation
+│   │   ├── BaseTool.ts          # Abstract tool with JSON schema and metadata
+│   │   ├── registry.ts          # Builtin registry, plugin loader, admission, mutability table
+│   │   ├── index.ts             # Registry re-export
+│   │   └── *Tool.ts             # One file per built-in tool
 │   ├── plugins/
-│   │   └── manifest.ts          # Plugin security manifest parser and permission boundary checker
+│   │   ├── manifest.ts          # Manifest parser and permission boundaries
+│   │   └── ReloadPluginsTool.ts # Owner-only /reload
+│   ├── flows/
+│   │   └── registry.ts          # Built-in flow processor registration
 │   ├── db/
-│   │   ├── index.ts             # bun:sqlite driver initialization & Drizzle ORM client
-│   │   ├── schema.ts            # Drizzle table definitions (chat_rooms, room_keys, messages, reminders, etc.)
-│   │   ├── migrations.ts        # Migration checksum validator, journal reader, integrity enforcement
-│   │   └── retention.ts         # Timestamp-aware message & session retention pruning
+│   │   ├── index.ts             # bun:sqlite handle, Drizzle client, startup migration
+│   │   ├── schema.ts            # Drizzle table definitions
+│   │   ├── migrations.ts        # Journal/checksum validation and schema contract
+│   │   ├── rooms.ts             # Room-key registry and resolution
+│   │   ├── runtime.ts           # Runtime lease table
+│   │   ├── retention.ts         # Message/delivery retention pruning
+│   │   ├── maintenance.ts       # Retention policy parsing and scheduler
+│   │   └── backup.ts            # Backup/restore/preflight support
 │   ├── messaging/
-│   │   ├── InboxService.ts      # At-least-once inbound message deduplication
-│   │   ├── OutboxService.ts     # Outbound message retry & delivery guarantee
-│   │   └── roomKeys.ts          # Canonical roomKey (room:<platform>:<id>) resolution
+│   │   ├── InboxService.ts      # At-least-once inbound deduplication
+│   │   ├── OutboxService.ts     # Durable outbound retry and delivery
+│   │   └── roomKeys.ts          # Runtime room-key facade
 │   ├── webhooks/
-│   │   ├── WebhookServer.ts     # Bun.serve HTTP server (/health, /live, /ready, /metrics, /webhook/*)
-│   │   ├── adapters/            # Inbound payload adapters (GitHub HMAC, Seerr, Jellyfin)
-│   │   └── utils.ts             # Replay cache, rate limiter, body limits, HMAC verification
-│   └── utils/
-│       ├── logger.ts            # Pino logger instance
-│       ├── i18n.ts              # Internationalization dictionaries (en, id)
-│       ├── Scheduler.ts         # Cron & reminder background scheduler
-│       └── HealthMetrics.ts     # Process and runtime operational telemetry
+│   │   ├── WebhookServer.ts     # Bun.serve routes (/health, /live, /ready, /metrics, /webhook/*)
+│   │   ├── config.ts            # Webhook env parsing and secret rules
+│   │   ├── types.ts             # Delivery job/enqueue types
+│   │   ├── utils.ts             # Replay cache, rate limiter, body limits, HMAC
+│   │   ├── rooms.ts             # Webhook destination resolution
+│   │   └── adapters/            # GitHub, Seerr, Jellyfin, Grafana, Apprise, generic
+│   ├── admin/
+│   │   ├── auth.ts              # Token exchange, session cookie, CSRF, login throttle
+│   │   ├── routes.ts            # /admin pages and /admin/api/* views and actions
+│   │   └── data.ts              # Read-only data collectors for the dashboard
+│   ├── types/                   # Shared type declarations
+│   └── utils/                   # Shared infrastructure and services (see each file's header)
+├── scripts/                     # Operational CLIs (dbBackup, dbRoomKeys, ciDiagnostics, retention, …)
 ├── drizzle/
 │   ├── migrations/              # Applied SQL migrations with immutable hash history
-│   └── meta/_journal.json       # Migration journal with sequential integer versions
+│   └── migrations/meta/_journal.json # Sequential integer versions
 └── test/
-    ├── setup.ts                 # Preloaded test harness (mocks network, temp DB, clean env)
-    └── *.test.ts                # Hermetic integration and unit tests
+    ├── setup.ts                 # Preloaded harness (network throw, temp DB, clean env)
+    └── *.test.ts                # Hermetic unit/integration tests
 ```
 
 ---

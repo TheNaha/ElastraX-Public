@@ -40,7 +40,7 @@ Content-Type: application/json
 
 The response carries an `HttpOnly; SameSite=Strict` session cookie and a CSRF token. Send the CSRF token in the `x-admin-csrf` header on every mutating request. The cookie carries the `Secure` attribute except for a loopback request over plain HTTP, because a browser silently refuses to store a `Secure` cookie without TLS.
 
-If the dashboard is served through a reverse proxy, proxy `/admin` as well as `/webhook` — the deployment example in `docs/deployment.md` only proxies `/webhook`, which leaves the dashboard unreachable.
+If the dashboard is served through a reverse proxy, proxy `/admin` as well as `/webhook`; a proxy rule that only forwards `/webhook` leaves the dashboard unreachable. The example in `docs/deployment.md` includes both blocks.
 
 ## Authentication
 
@@ -99,7 +99,7 @@ Fan-out defaults to 25 destinations and is bounded by `WEBHOOK_MAX_DESTINATIONS`
 
 ## Replay and rate limits
 
-Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. IDs are retained in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`; a future durable outbox will use the same ID as its idempotency key.
+Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. IDs are retained in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`. When the durable outbox is registered, the same ID becomes the delivery idempotency key, so a replay that slips past the cache is still deduplicated by the outbox.
 
 `X-Webhook-Source` or the payload `source` identifies a source. Source and connection keys are independently governed by the token-bucket limits `WEBHOOK_RATE_LIMIT_MAX` and `WEBHOOK_RATE_LIMIT_WINDOW_MS`. Source length and the number of tracked rate-limit keys are bounded.
 
@@ -121,7 +121,7 @@ Without an outbox enqueuer, the current synchronous sender is preserved:
 - `200 {"ok":true,"delivered":N}` when every destination succeeds;
 - `207` with a bounded failed-destination list when only some sends fail.
 
-`WebhookServer.registerEnqueuer()` provides the future durable-outbox integration and supplies an `AbortSignal` with `WEBHOOK_ENQUEUE_TIMEOUT_MS`. When registered, the server returns `202` only after the enqueuer confirms that it durably accepted the job:
+`WebhookServer.registerEnqueuer()` is the durable-outbox integration; `AppRuntime` registers `enqueueWebhook` at boot and supplies an `AbortSignal` with `WEBHOOK_ENQUEUE_TIMEOUT_MS`. When registered, the server returns `202` only after the enqueuer confirms that it durably accepted the job:
 
 ```json
 {

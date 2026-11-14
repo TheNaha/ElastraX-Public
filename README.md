@@ -171,7 +171,7 @@ CI performs frozen installation, secret scanning, fatal migration-drift detectio
 - `src/flows` contains persisted interactive flow processors.
 - `src/db` owns Drizzle, forward migrations, repositories, and backup support.
 - `src/webhooks` contains exact route handling, auth, adapters, limits, and delivery contracts.
-- `src/providers` contains WhatsApp, Discord, media, and outbound integrations.
+- `src/providers` contains WhatsApp, Discord, Telegram, media, and outbound integrations.
 - `src/utils` contains shared infrastructure and services.
 - `src/plugins` contains runtime plugin tooling; user flow files are stored in the data directory.
 - `modal/` is a separate, experimental Python/vLLM adapter (not tracked in this repo, not part of the bot startup path or CI).

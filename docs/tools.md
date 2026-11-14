@@ -38,10 +38,13 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | **Stats** | `/stats` | Generates SQL-backed analytics for chat room activity (message counts, top users). |
 
 ## Integration Tools (Jellyfin / Seerr)
-- **Media Bind**: Links the chat room to specific Media Server APIs.
-- **Media Search**: Searches Jellyfin for available movies/shows.
-- **Media Request**: Submits requests via Overseerr/Jellyseerr.
-- **Media Library**: Browse recently added / available library items.
+
+| Tool | Alias | Description |
+|------|-------|-------------|
+| **Media Bind** | `/connect`, `/disconnect`, `/notify` | Links the chat room to specific Media Server APIs. |
+| **Media Search** | `/search-media`, `/find` | Searches Jellyfin for available movies/shows. |
+| **Media Request** | `/request`, `/request-media` | Submits requests via Overseerr/Jellyseerr. |
+| **Media Library** | `/library`, `/watching` | Browse recently added / available library items. |
 
 ## Misc & Discovery
 
@@ -56,7 +59,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | **Game Search** | — | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
 | **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
 | **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/` (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
-| **Owner Admin** | `/broadcast`, `/leave` | Owner-only: broadcast to all chats / leave a group. |
+| **Owner Admin** | `/owner`, `/broadcast`, `/leave`, `/botleave`, `/pinout` | Owner-only: broadcast to all chats, leave a group, `system_info` (memory/uptime/room count), and `pinout` (log inventory under `LOG_ROOT`). |
 
 ## Execution model
 

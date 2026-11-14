@@ -54,18 +54,20 @@ Annotations are not fetched by the script. If you have check-run annotations, pa
 
 ## Current repository state
 
-At the time of writing, the `gh` CLI is available and authenticated, and the diagnosis is unambiguous:
+This section is a point-in-time snapshot, not a permanent fact. Re-run the script rather than trusting it.
+
+As of 2026-11-14 (`bun run scripts/ciDiagnostics.ts --limit 8`):
 
 ```text
-Summary: 2 skipped, 2 no_step_scheduling_failure
-No in-repository failure detected; 2 run(s) still need account-side scheduling/billing verification.
+Summary: 4 skipped, 4 no_step_scheduling_failure
+No in-repository failure detected; 4 run(s) still need account-side scheduling/billing verification.
 ```
 
-- Every recent `CI` run (`push` and `pull_request`) concludes `failure` with a job that records **zero steps** and completes in roughly 3-4 seconds. No step log exists because nothing executed.
+- Recent `CI` runs (`push` and `pull_request`) conclude `failure` with a job that records **zero steps** and completes in about 4 seconds. No step log exists because nothing executed.
 - The paired `Docker Publish` runs conclude `skipped` because their `if:` gate requires a successful `CI` run. That skip is correct behaviour, not a second fault.
-- The last green `CI` run is 2026-08-25T09:29:40Z. The last successful `Docker Publish` run is 2026-07-31T11:41:53Z, so no image has been published from any revision since then.
+- No image has been published while CI cannot start a step.
 
-Conclusion: the repository's gates cannot be evaluated from Actions output, because Actions is not running any step. The remaining verification is local (`bun run check`) plus account-side repair of Actions enablement/billing. No workflow edit can prove the fix; see the note in [deployment](./deployment.md) about release gating.
+Conclusion: the repository's gates cannot be evaluated from Actions output while Actions is not running any step. The remaining verification is local (`bun run check`) plus account-side repair of Actions enablement/billing. No workflow edit can prove the fix; see the note in [deployment](./deployment.md) about release gating.
 
 ## Exit codes
 
