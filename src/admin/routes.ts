@@ -42,11 +42,48 @@ import {
   type ActionResult,
 } from './data';
 import { logger } from '../utils/logger';
+import { readRequestBytesWithLimit } from '../webhooks/utils';
 
 const log = logger.child({ module: 'AdminRoutes' });
 
 /** Only these verbs are ever accepted. */
 const ALLOWED_METHODS = new Set(['GET', 'HEAD', 'POST']);
+
+/**
+ * Caps for admin request bodies.
+ *
+ * The webhook intake path already reads through `readRequestBytesWithLimit`;
+ * the dashboard called `req.json()` directly, and the shared `Bun.serve`
+ * instance sets no `maxRequestBodySize`, so an unauthenticated client could push
+ * an arbitrarily large body into a full JSON parse on the event loop before the
+ * token was ever checked. Admin bodies are tiny: a token, an id, a room key.
+ */
+const ADMIN_LOGIN_MAX_BODY_BYTES = 4 * 1024;
+const ADMIN_ACTION_MAX_BODY_BYTES = 64 * 1024;
+
+type JsonBodyResult =
+  | { ok: true; value: Record<string, unknown> }
+  | { ok: false; status: 400 | 413; error: string };
+
+/** Read a bounded, object-shaped JSON body. Never throws. */
+async function readJsonObjectBody(req: Request, maxBytes: number): Promise<JsonBodyResult> {
+  let text: string;
+  try {
+    const bytes = await readRequestBytesWithLimit(req, maxBytes);
+    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  } catch {
+    return { ok: false, status: 413, error: 'Request body too large.' };
+  }
+  try {
+    const parsed: unknown = text.trim() === '' ? null : JSON.parse(text);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return { ok: false, status: 400, error: 'Invalid JSON body.' };
+    }
+    return { ok: true, value: parsed as Record<string, unknown> };
+  } catch {
+    return { ok: false, status: 400, error: 'Invalid JSON body.' };
+  }
+}
 
 const CSP = [
   "default-src 'none'",
@@ -170,13 +207,9 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       if (!throttle.attempt(ip, now())) {
         return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': '60' });
       }
-      let presented: string;
-      try {
-        const body = await req.json() as { token?: unknown };
-        presented = typeof body?.token === 'string' ? body.token : '';
-      } catch {
-        return json({ error: 'Expected a JSON body with a token.' }, 400);
-      }
+      const body = await readJsonObjectBody(req, ADMIN_LOGIN_MAX_BODY_BYTES);
+      if (!body.ok) return json({ error: body.error }, body.status);
+      const presented = typeof body.value.token === 'string' ? body.value.token : '';
       const session = auth.login(presented, now());
       if (!session) return json({ error: 'Invalid token.' }, 401);
       return json({ ok: true, csrf: session.csrf }, 200, {
@@ -248,15 +281,9 @@ function handleRead(path: string, url: URL): Response {
 }
 
 async function handleAction(req: Request, path: string, url: URL): Promise<Response> {
-  let params: Record<string, unknown> = {};
-  try {
-    const parsed: unknown = await req.json();
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      params = parsed as Record<string, unknown>;
-    }
-  } catch {
-    return json({ error: 'Invalid JSON body.' }, 400);
-  }
+  const body = await readJsonObjectBody(req, ADMIN_ACTION_MAX_BODY_BYTES);
+  if (!body.ok) return json({ error: body.error }, body.status);
+  const params = body.value;
 
   let result: ActionResult;
   switch (path) {

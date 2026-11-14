@@ -298,6 +298,27 @@ describe('admin mutations', () => {
     expect(response.status).toBe(403);
   });
 
+  test('rejects an oversized login body before parsing it', async () => {
+    const handler = handlerWith(SECRET);
+    const response = await call(handler, 'api/login', {
+      method: 'POST',
+      body: JSON.stringify({ token: 'x'.repeat(8_000) }),
+      ip: '10.0.0.77',
+    });
+    expect(response.status).toBe(413);
+  });
+
+  test('rejects an oversized action body', async () => {
+    const handler = handlerWith(SECRET);
+    const { cookie, csrf } = await signIn(handler);
+    const response = await call(handler, 'api/action/retention-report', {
+      method: 'POST',
+      headers: { cookie, [ADMIN_CSRF_HEADER]: csrf, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ padding: 'x'.repeat(80_000) }),
+    });
+    expect(response.status).toBe(413);
+  });
+
   test('a cross-origin mutation is rejected', async () => {
     const handler = handlerWith(SECRET);
     const { cookie, csrf } = await signIn(handler);

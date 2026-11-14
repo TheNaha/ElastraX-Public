@@ -65,4 +65,44 @@ describe('KnowledgeTool', () => {
     const result = await tool.execute({ action: 'invalid' }, ctx);
     expect(result).toBeString();
   });
+
+  test('remove requires admin permission', async () => {
+    const tool = new KnowledgeTool();
+    const checkPermissions = mock(async () => false);
+    const ctx = createMockCtx({
+      roomKey: 'room:whatsapp:chat-1',
+      isGroup: true,
+      checkPermissions,
+    });
+    const result = await tool.execute({ action: 'remove' }, ctx);
+    expect(checkPermissions).toHaveBeenCalledWith('admin');
+    expect(result).toBeString();
+    expect(result).toContain('admin');
+  });
+
+  test('index requires admin permission before touching media', async () => {
+    const tool = new KnowledgeTool();
+    const checkPermissions = mock(async () => false);
+    const ctx = createMockCtx({
+      roomKey: 'room:whatsapp:chat-1',
+      isGroup: true,
+      hasMedia: true,
+      checkPermissions,
+    });
+    const result = await tool.execute({ action: 'index' }, ctx);
+    expect(checkPermissions).toHaveBeenCalledWith('admin');
+    expect(result).toContain('admin');
+  });
+
+  test('read-only actions do not require admin permission', async () => {
+    const tool = new KnowledgeTool();
+    const checkPermissions = mock(async () => false);
+    const ctx = createMockCtx({
+      roomKey: 'room:whatsapp:chat-1',
+      isGroup: true,
+      checkPermissions,
+    });
+    await tool.execute({ action: 'list' }, ctx);
+    expect(checkPermissions).not.toHaveBeenCalled();
+  });
 });

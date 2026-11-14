@@ -74,6 +74,16 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
     // scope it to and must not silently fall back to a per-user store.
     if (!ctx.roomKey) return t(ctx.language, 'kb.no_room');
 
+    // The knowledge base is *shared room* state: writing to it or clearing it
+    // affects every member, so those actions need the same admin gate the
+    // sibling room-scoped writer (`MemoryTool`) already applies. Reads stay
+    // open to any member.
+    if (args.action === 'index' || args.action === 'remove') {
+      if (!(await ctx.checkPermissions('admin'))) {
+        return t(ctx.language, 'memory.no_group_permission');
+      }
+    }
+
     try {
       switch (args.action) {
         case 'index':
