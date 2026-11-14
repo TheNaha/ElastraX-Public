@@ -2,6 +2,7 @@ import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { timeoutSignal } from '../utils/withTimeout';
 import { validateSsrfUrl } from '../providers/ssrf';
 import { redactUrl } from './DownloadTool';
 
@@ -70,13 +71,7 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
         headers['Authorization'] = `Bearer ${process.env.JINA_API_KEY}`;
       }
 
-      const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-        ? AbortSignal.timeout(15000)
-        : (() => {
-          const controller = new AbortController();
-          setTimeout(() => controller.abort(), 15000);
-          return controller.signal;
-        })();
+      const signal = timeoutSignal(15_000);
 
       const response = await fetch(`https://r.jina.ai/${url.toString()}`, { headers, signal });
       if (!response.ok) return `Error fetching URL: HTTP ${response.status}`;

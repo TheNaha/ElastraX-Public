@@ -7,6 +7,24 @@ export class TimeoutError extends Error {
   }
 }
 
+/**
+ * An abort signal that fires after `ms`.
+ *
+ * Named `timeoutSignal` so it is not confused with {@link withTimeout}, which
+ * races a promise. Three call sites had hand-rolled this with a fallback timer
+ * that was never cleared and never `unref`'d, so each request left a timer
+ * holding its closure until the timeout elapsed even after the fetch finished.
+ */
+export function timeoutSignal(ms: number): AbortSignal {
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    return AbortSignal.timeout(ms);
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  timer.unref?.();
+  return controller.signal;
+}
+
 export interface WithTimeoutOptions {
   signal?: AbortSignal;
   abortController?: AbortController;

@@ -14,6 +14,7 @@ import { resolveLLMProviders } from '../config/llm';
 import { AIProtocolError, AINoChoiceError } from './errors';
 import { SSEDecoder, type SSEDecoderOptions } from './sse';
 import { safeErrorMessage } from '../utils/errorUtils';
+import { timeoutSignal } from '../utils/withTimeout';
 import {
   isToolCall,
   normalizeTokenUsage,
@@ -49,24 +50,6 @@ export interface AIClientConfig {
 }
 
 const log = logger.child({ module: 'AIClient' });
-
-/**
- * An abort signal that fires after `ms`.
- *
- * Named `timeoutSignal` rather than `withTimeout` so it cannot be confused with
- * `utils/withTimeout.ts`, which races a promise. The fallback keeps its timer
- * referenced by nothing but the closure: `unref` keeps it from holding the
- * process open, and the operation that owns the signal finishes long before it.
- */
-function timeoutSignal(ms: number): AbortSignal {
-  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
-    return AbortSignal.timeout(ms);
-  }
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ms);
-  timer.unref?.();
-  return controller.signal;
-}
 
 function isValidUrl(url: string): boolean {
   try {

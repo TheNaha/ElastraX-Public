@@ -330,14 +330,20 @@ export const IdentityService = {
       }).run();
       return;
     }
-    const staleIds = [...lidRows, ...pnRows]
-      .filter(candidate => candidate.updated_at < row.updated_at)
-      .map(candidate => candidate.updated_at.getTime());
-    for (const stale of staleIds) {
-      await deps.db.delete(deps.userIdentities).where(and(
-        eq(deps.userIdentities.platform, platform),
-        eq(deps.userIdentities.updated_at, new Date(stale)),
-      )).run();
+    const staleRows = [...lidRows, ...pnRows].filter(candidate => candidate.updated_at < row.updated_at);
+    for (const stale of staleRows) {
+      // Delete the stale row by its own identity columns. Keying the delete on
+      // `updated_at` matched every row written in the same millisecond, so two
+      // users upserted together could delete each other.
+      const identity = stale.lid
+        ? eq(deps.userIdentities.lid, stale.lid)
+        : stale.pn
+          ? eq(deps.userIdentities.pn, stale.pn)
+          : null;
+      if (!identity) continue;
+      await deps.db.delete(deps.userIdentities)
+        .where(and(eq(deps.userIdentities.platform, platform), identity))
+        .run();
     }
     await deps.db.update(deps.userIdentities)
       .set({

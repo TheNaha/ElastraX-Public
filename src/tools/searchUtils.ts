@@ -7,6 +7,7 @@
  */
 
 import { logger } from '../utils/logger';
+import { timeoutSignal } from '../utils/withTimeout';
 
 const log = logger.child({ module: 'searchUtils' });
 
@@ -69,14 +70,7 @@ export async function searchSearXng(
       'X-Forwarded-For': '127.0.0.1',
       'X-Real-IP': '127.0.0.1',
     },
-    signal:
-      typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
-        ? AbortSignal.timeout(timeoutMs)
-        : (() => {
-            const controller = new AbortController();
-            setTimeout(() => controller.abort(), timeoutMs);
-            return controller.signal;
-          })(),
+    signal: timeoutSignal(timeoutMs),
   };
 
   // A single-query tool (e.g. web_search without trusted sites/suffix) would

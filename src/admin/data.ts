@@ -6,7 +6,7 @@
  * string interpolation of user input, and secrets are never returned — config is
  * reported through an explicit allowlist of key names.
  */
-import { readFileSync } from 'fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync } from 'fs';
 import { and, desc, eq, sql, count, inArray } from 'drizzle-orm';
 import { db } from '../db';
 import {
@@ -359,7 +359,7 @@ export function feedbackInventory(limit = 100): {
   let malformedLines = 0;
   try {
     const path = readStringEnv(process.env.FEEDBACK_LOG_PATH, 'data/feedback.jsonl');
-    const text = readTextSafe(path);
+    const text = readTailSafe(path, FEEDBACK_TAIL_BYTES);
     const lines = text.split('\n').filter(line => line.trim().length > 0);
     for (const line of lines.slice(-limit)) {
       try {
@@ -386,10 +386,32 @@ export function feedbackInventory(limit = 100): {
   return { positive, negative, ratio: total > 0 ? Number((positive / total).toFixed(3)) : null, malformedLines, entries };
 }
 
-function readTextSafe(path: string): string {
-  // Synchronous on purpose: the file is operator-sized, and the alternative
-  // would force every caller in this module to become async.
-  return readFileSync(path, 'utf8');
+/** How much of the feedback log a dashboard refresh reads. */
+const FEEDBACK_TAIL_BYTES = 1024 * 1024;
+
+/**
+ * Read at most the last `maxBytes` of a file.
+ *
+ * Synchronous on purpose: the alternative would force every caller in this
+ * module to become async. Reading the whole file was the problem — the log grows
+ * by one line per feedback event for the life of the deployment, and the view
+ * only ever shows the last hundred entries, so a large log stalled the event
+ * loop (which also serves messages) for no benefit. A partial first line is
+ * dropped so every returned line is whole.
+ */
+function readTailSafe(path: string, maxBytes: number): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    if (size <= maxBytes) return readFileSync(path, 'utf8');
+    const buffer = Buffer.allocUnsafe(maxBytes);
+    const read = readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+    const text = buffer.subarray(0, read).toString('utf8');
+    const firstNewline = text.indexOf('\n');
+    return firstNewline >= 0 ? text.slice(firstNewline + 1) : text;
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /** Config keys the dashboard may report. Secrets are never included. */
