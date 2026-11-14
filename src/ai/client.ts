@@ -50,12 +50,21 @@ export interface AIClientConfig {
 
 const log = logger.child({ module: 'AIClient' });
 
-function withTimeout(ms: number): AbortSignal {
+/**
+ * An abort signal that fires after `ms`.
+ *
+ * Named `timeoutSignal` rather than `withTimeout` so it cannot be confused with
+ * `utils/withTimeout.ts`, which races a promise. The fallback keeps its timer
+ * referenced by nothing but the closure: `unref` keeps it from holding the
+ * process open, and the operation that owns the signal finishes long before it.
+ */
+function timeoutSignal(ms: number): AbortSignal {
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
     return AbortSignal.timeout(ms);
   }
   const controller = new AbortController();
-  setTimeout(() => controller.abort(), ms);
+  const timer = setTimeout(() => controller.abort(), ms);
+  timer.unref?.();
   return controller.signal;
 }
 
@@ -273,7 +282,7 @@ export class AIClient {
       method: 'POST',
       headers: this.headers(requestId),
       body: JSON.stringify(payload),
-      signal: withTimeout(opts.timeoutMs),
+      signal: timeoutSignal(opts.timeoutMs),
     });
 
     if (!response.ok) {

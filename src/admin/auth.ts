@@ -226,6 +226,8 @@ export function shouldUseSecureCookie(
 /** Per-IP token bucket for login attempts. */
 export class LoginThrottle {
   private readonly buckets = new Map<string, { count: number; resetAt: number }>();
+  /** Upper bound on tracked IPs, so a distributed flood cannot grow the map. */
+  private static readonly MAX_BUCKETS = 10_000;
 
   constructor(
     private readonly limit = 5,
@@ -237,6 +239,15 @@ export class LoginThrottle {
     if (this.buckets.size > 1000) this.prune(now);
     const bucket = this.buckets.get(ip);
     if (!bucket || bucket.resetAt <= now) {
+      // Hard cap. Pruning only removes *expired* buckets, so a flood of distinct
+      // source IPs inside one window could still grow the map without bound.
+      // Evict the oldest insertion (entry order matches window order, since the
+      // window length is fixed) rather than refuse: refusing would lock the real
+      // operator out because a stranger filled the table.
+      if (!bucket && this.buckets.size >= LoginThrottle.MAX_BUCKETS) {
+        const oldest = this.buckets.keys().next();
+        if (!oldest.done) this.buckets.delete(oldest.value);
+      }
       this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs });
       return true;
     }

@@ -195,6 +195,15 @@ export class HealthMonitor {
         const child = spawn(ytDlpPath, ['--version'], { stdio: ['ignore', 'pipe', 'pipe'] });
         let stdout = '';
         let stderr = '';
+        // Cleared once the child settles: the kill timer otherwise survived every
+        // successful check for ten more seconds, holding this closure alive.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const settle = (): void => {
+          if (timer !== undefined) {
+            clearTimeout(timer);
+            timer = undefined;
+          }
+        };
         child.stdout?.on('data', (chunk: Buffer | string) => {
           stdout += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
         });
@@ -202,16 +211,20 @@ export class HealthMonitor {
           stderr += typeof chunk === 'string' ? chunk : chunk.toString('utf8');
         });
         child.on('close', (code) => {
+          settle();
           if (code === 0) resolve();
           else reject(new Error(`exit code ${code}: ${stderr.trim() || stdout.trim()}`));
         });
         child.on('error', (error) => {
+          settle();
           reject(new Error(`spawn failed: ${error.message}`));
         });
-        setTimeout(() => {
+        timer = setTimeout(() => {
+          settle();
           child.kill('SIGTERM');
           reject(new Error('timed out'));
-        }, 10_000).unref?.();
+        }, 10_000);
+        timer.unref?.();
       });
       healthMetrics.setServiceHealth('yt-dlp', 'healthy');
     } catch (error) {

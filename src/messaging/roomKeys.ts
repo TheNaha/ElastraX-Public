@@ -231,10 +231,12 @@ export async function resolveCanonicalRoomKeyAsync(
 export function roomKeyForContext(ctx: { platform: string; chatId: string; roomKey?: string | null }): string {
   const explicit = typeof ctx.roomKey === 'string' ? ctx.roomKey.trim() : '';
   if (explicit) {
-    // Validate that an explicit key belongs to the context's platform so a
-    // stale or cross-platform key can never route a message to the wrong room.
+    // Validate that an explicit key belongs to *this* room and platform, so a
+    // stale or cross-room key can never file a message under another room's
+    // identity. Checking the platform alone accepted a key for a different room
+    // on the same platform.
     const parsed = parseCanonicalRoomKey(explicit);
-    if (parsed && parsed.platform === ctx.platform) return explicit;
+    if (parsed && parsed.platform === ctx.platform && parsed.remoteRoomId === ctx.chatId.trim()) return explicit;
   }
   return resolveCanonicalRoomKey(ctx.platform, ctx.chatId);
 }

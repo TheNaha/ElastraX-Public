@@ -328,7 +328,16 @@ async function executeRequestedToolCalls(
         options.ctx,
         () => executeToolWithTimeout(tool, validArgs, options.ctx),
       );
-      toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
+      try {
+        toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
+      } catch (budgetError: unknown) {
+        if (!(budgetError instanceof TurnBudgetExceededError)) throw budgetError;
+        // The tool itself succeeded; only the budget for returning its output is
+        // gone. Reporting that as "Error executing tool" told the model the call
+        // failed and threw away a successful result.
+        log.warn({ toolName, chatId: options.chatId }, 'Tool result dropped: turn budget exhausted');
+        toolResultText = `Tool ${toolName} ran, but its output was not returned: ${getErrorMessage(budgetError)}`;
+      }
       resultTier = tool.modelTier;
     } catch (err: unknown) {
       toolFailed = true;

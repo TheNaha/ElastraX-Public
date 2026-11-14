@@ -176,6 +176,9 @@ export class FlowHandler {
       clearInterval(this.sessionCleanupTimer);
     }
     this.sessionCleanupTimer = globalThis.setInterval(cleanup, CLEANUP_INTERVAL_MS);
+    // Every other interval in the codebase unrefs itself. Without this one, an
+    // idle process could not exit on its own and `bun test` kept the loop open.
+    this.sessionCleanupTimer.unref?.();
   }
 
   private static sessionKey(userId: string, platform: string, roomId?: string): string {

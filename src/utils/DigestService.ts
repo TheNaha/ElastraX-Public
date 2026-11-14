@@ -230,7 +230,11 @@ export function fetchRoomTranscript(
 
   const lines: string[] = [];
   let totalBytes = 0;
-  for (const r of rows) {
+  // Walk newest → oldest so the byte cap drops the *oldest* lines. Reading the
+  // rows oldest-first meant hitting the cap discarded the most recent messages,
+  // which is exactly what a "last N hours" digest is about.
+  for (let index = rows.length - 1; index >= 0; index -= 1) {
+    const r = rows[index]!;
     const text = (r.content ?? '').trim().slice(0, 2_000);
     if (!text) continue;
     const hh = String(r.created_at.getHours()).padStart(2, '0');
@@ -242,7 +246,7 @@ export function fetchRoomTranscript(
     totalBytes += bytes;
     lines.push(line);
   }
-  return lines;
+  return lines.reverse();
 }
 
 export async function defaultCallLLM(prompt: string): Promise<string> {

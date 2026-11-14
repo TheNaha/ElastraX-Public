@@ -154,3 +154,28 @@ describe('InboxService.recoverStranded', () => {
     expect(recovered.processing).toBe(0);
   });
 });
+
+
+describe('InboxService.admit', () => {
+  const ctx = (messageId: string, chatId: string) => ({
+    platform: 'whatsapp',
+    chatId,
+    senderId: 'user-1',
+    messageId,
+  }) as Parameters<typeof InboxService.admit>[0];
+
+  beforeEach(() => {
+    db.delete(messageInbox).run();
+  });
+
+  test('the same provider event is only admitted once', () => {
+    const chatId = 'admit-same-event';
+    const first = InboxService.admit(ctx('MSG-1', chatId));
+    expect(first.accepted).toBe(true);
+
+    const second = InboxService.admit(ctx('MSG-1', chatId));
+    expect(second.id).toBe(first.id);
+    expect(second.reason).toBe('duplicate');
+    expect(db.select().from(messageInbox).where(eq(messageInbox.chatRoomId, chatId)).all()).toHaveLength(1);
+  });
+});
