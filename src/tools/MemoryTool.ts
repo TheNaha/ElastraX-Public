@@ -2,11 +2,11 @@ import { BaseTool, type ToolDefinition, type ToolCommandGrammar } from './BaseTo
 import { MessageContext } from '../core/MessageContext';
 import { db } from '../db';
 import { appKv, chatRooms, memories } from '../db/schema';
-import { eq, and, desc, or, type SQL } from 'drizzle-orm';
+import { eq, and, desc, isNull, ne, or, type SQL } from 'drizzle-orm';
 import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 import { ConfigService } from '../utils/ConfigService';
-import { MAX_LISTED_MEMORIES } from '../core/constants';
+import { MAX_LISTED_MEMORIES, MEMORY_DOCUMENT_CATEGORY } from '../core/constants';
 import { findSemanticDuplicate, updateMemoryEmbedding } from '../utils/semanticMemory';
 import { chatRoomsRoomColumns, getCanonicalRoomKey, pickPreferredRoomRow, resolveRoomIdentity, roomIdentityCondition } from '../agent/roomKey';
 import { t } from '../utils/i18n';
@@ -44,9 +44,20 @@ export function getMemoryOwnerId(ctx: MessageContext, scope: 'private' | 'group'
  * Owner filter for a scope. Group scope dual-reads the pre-migration raw chat
  * id so existing group memories stay visible after the room key is adopted.
  */
+/**
+ * Owner scope for *memories*, excluding room knowledge.
+ *
+ * A group's owner id is its canonical room key, which also owns the
+ * `category='document'` chunks written by the room knowledge base. Without the
+ * category guard those chunks appeared in `/memory retrieve` and their bytes
+ * counted against the memory quota. `category` is nullable on legacy rows, so a
+ * missing value still counts as a memory.
+ */
 function memoryOwnerCondition(ownerId: string, roomId: string | null): SQL {
-  if (roomId === null || ownerId === roomId) return eq(memories.ownerId, ownerId);
-  return or(eq(memories.ownerId, ownerId), eq(memories.ownerId, roomId))!;
+  const owner = roomId === null || ownerId === roomId
+    ? eq(memories.ownerId, ownerId)
+    : or(eq(memories.ownerId, ownerId), eq(memories.ownerId, roomId))!;
+  return and(owner, or(isNull(memories.category), ne(memories.category, MEMORY_DOCUMENT_CATEGORY)))!;
 }
 
 export function isInertMemoryContent(content: string): boolean {

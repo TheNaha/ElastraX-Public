@@ -501,7 +501,10 @@ const pluginReports: PluginLoadReport[] = [];
  * `import(filePath)` is cached by specifier for the life of the process, so a
  * reload re-evaluated nothing: an edited plugin kept running its old code and
  * only newly *added* files were ever seen, which is not what `/reload` promises.
- * A unique specifier per load forces a fresh evaluation.
+ * A fresh specifier per load forces a fresh evaluation. One counter per load
+ * (not per file) keeps the number of distinct module instances to one set per
+ * reload — reloads are owner-initiated and rare, so the retained instances are
+ * an accepted cost of picking up edited code.
  */
 let pluginImportGeneration = 0;
 
@@ -520,6 +523,9 @@ async function loadPluginTools(): Promise<BaseTool[]> {
   // Each load reports only what *that* load saw. Appending to a module-level
   // array made every `/reload` double the previous entries.
   pluginReports.length = 0;
+  // One specifier suffix for the whole load, so every plugin file is evaluated
+  // exactly once per reload.
+  const importGeneration = ++pluginImportGeneration;
   let root: string;
   try {
     root = realpathSync(pluginsDir);
@@ -535,7 +541,7 @@ async function loadPluginTools(): Promise<BaseTool[]> {
     const filePath = join(pluginsDir, file);
     try {
       if (realpathSync(filePath).startsWith(`${root}${process.platform === 'win32' ? '\\' : '/'}`) === false) continue;
-      const module = await import(`${filePath}?v=${++pluginImportGeneration}`);
+      const module = await import(`${filePath}?v=${importGeneration}`);
       const admission = admitPluginManifest(
         (module as Record<string, unknown>).pluginManifest,
         allowedPermissions,

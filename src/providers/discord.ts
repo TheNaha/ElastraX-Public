@@ -492,8 +492,10 @@ export class DiscordProvider implements BotProvider {
           const files = await Promise.all(Array.from(msg.attachments.values(), async attachment => {
             // Same guards the download path applies: the attachment URL is
             // remote-controlled, so it must pass the host allow-list, a non-2xx
-            // response must not become an empty file, and an unbounded
-            // `arrayBuffer()` must not buffer an arbitrary payload in memory.
+            // response must not become an empty file, and the payload must be
+            // bounded *while reading*. A chunked CDN response carries no
+            // Content-Length, so checking after `arrayBuffer()` would already
+            // have buffered an arbitrary payload.
             validateDiscordMediaUrl(attachment.url);
             const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
             if (!response.ok) {
@@ -503,10 +505,7 @@ export class DiscordProvider implements BotProvider {
             if (Number.isSafeInteger(declared) && declared > HARD_MEDIA_MAX_BYTES) {
               throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
             }
-            const buffer = Buffer.from(await response.arrayBuffer());
-            if (buffer.byteLength > HARD_MEDIA_MAX_BYTES) {
-              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
-            }
+            const buffer = await readBoundedBody(response, HARD_MEDIA_MAX_BYTES, 'Discord attachment');
             return new AttachmentBuilder(buffer, { name: attachment.name });
           }));
           await targetChannel.send({
@@ -662,6 +661,36 @@ function validateDiscordMediaUrl(rawUrl: string): void {
   if (hostname !== 'discordapp.com' && hostname !== 'discordapp.net' && !hostname.endsWith('.discordapp.com') && !hostname.endsWith('.discordapp.net')) {
     throw new Error('Discord attachment URL is not on an allowed CDN host.');
   }
+}
+
+/**
+ * Read a response body into a Buffer, stopping as soon as it exceeds `maxBytes`.
+ *
+ * Streaming the read is what makes the cap meaningful: a chunked response has no
+ * `Content-Length`, so `arrayBuffer()` would have already buffered the whole
+ * payload by the time a size check could run.
+ */
+async function readBoundedBody(response: Response, maxBytes: number, label: string): Promise<Buffer> {
+  if (!response.body) return Buffer.alloc(0);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw new ProviderOperationError('discord', 'forwardMessage', `${label} exceeds ${maxBytes} bytes.`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return Buffer.concat(chunks, total);
 }
 
 function defaultMediaFilename(mimeType?: string): string {

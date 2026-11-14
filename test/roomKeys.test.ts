@@ -25,6 +25,7 @@ import {
   resolveRoomKeySync,
   toRoomKey,
 } from '../src/db/rooms';
+import { roomKeyForContext } from '../src/messaging/roomKeys';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const WA_ROOM = '6281234567890@s.whatsapp.net';
@@ -486,5 +487,27 @@ describe('room key coverage reporting', () => {
   test('reports the migration that introduced the room identity system', () => {
     expect(ROOM_KEY_MIGRATION_TAG).toBe('0022_room_keys');
     expect(ROOM_KEY_MIGRATION_WHEN).toBe(23);
+  });
+});
+
+describe('roomKeyForContext', () => {
+
+  test('accepts an explicit key for the same room and platform', () => {
+    const chatId = 'ctx-same-room';
+    expect(roomKeyForContext({ platform: 'whatsapp', chatId, roomKey: toRoomKey('whatsapp', chatId) }))
+      .toBe(toRoomKey('whatsapp', chatId));
+  });
+
+  test('rejects a key that names another room on the same platform', () => {
+    const chatId = 'ctx-room-a';
+    const otherKey = toRoomKey('whatsapp', 'ctx-room-b');
+    expect(roomKeyForContext({ platform: 'whatsapp', chatId, roomKey: otherKey }))
+      .toBe(toRoomKey('whatsapp', chatId));
+  });
+
+  test('rejects a key that names another platform', () => {
+    const chatId = 'ctx-room-c';
+    expect(roomKeyForContext({ platform: 'whatsapp', chatId, roomKey: toRoomKey('telegram', chatId) }))
+      .toBe(toRoomKey('whatsapp', chatId));
   });
 });

@@ -261,7 +261,9 @@ describe('handleIncomingMessage', () => {
         throw new Error('role lookup exploded');
       });
 
-      await expect(handleIncomingMessage(ctx)).resolves.toBeUndefined();
+      // The user is told, and the failure still propagates: the caller records
+      // the durable inbox row as failed rather than acknowledging it.
+      await expect(handleIncomingMessage(ctx)).rejects.toThrow('role lookup exploded');
       // Plain send, not the durable outbox: the database may be exactly what
       // failed, and an outbox row could not be written either.
       expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.');

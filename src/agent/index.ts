@@ -76,7 +76,7 @@ import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { isUsableProviderMessageId } from './messageId';
 import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowledge';
 import { sanitizeRawMessage } from '../utils/rawMessage';
-import { stripThinkTags } from '../utils/textUtils';
+import { stripPartialThinkTags, stripThinkTags } from '../utils/textUtils';
 import { OutboxService, DIRECT_SEND_GRACE_MS } from '../messaging/OutboxService';
 import { ToolProgressTracker, formatToolAction } from './toolProgress';
 import { getInlineMediaEligibility } from '../providers/media';
@@ -480,6 +480,10 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     await ctx.reply(t(ctx.language ?? 'en', 'agent.internal_error')).catch(err =>
       log.warn({ err, chatId: ctx.chatId }, '[Agent] Error reply failed'),
     );
+    // Rethrow: the caller owns durable delivery state. Swallowing the error made
+    // `AppRuntime` mark the inbox row `completed`, so a transient failure (a busy
+    // database, a room-config read) was acknowledged and could never be retried.
+    throw error;
   }
 }
 
@@ -1171,11 +1175,15 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
               const now = Date.now();
               if (now - lastEditTime >= editInterval) {
-                // The final edit and `extractAssistantText` both strip a
-                // reasoning model's think block; the live preview did not, so the
-                // user watched the model's chain of thought appear and then
-                // vanish.
-                const displayText = stripThinkTags(accumulated) + ' ▌';
+                // Strip the think block, including one still being streamed. The
+                // final edit and `extractAssistantText` already do; the preview
+                // did not, so the user watched the model's chain of thought
+                // appear and then vanish. While only reasoning has arrived there
+                // is nothing to show, and a bare cursor is not a message: wait
+                // for real text rather than sending one.
+                const preview = stripPartialThinkTags(accumulated);
+                if (!preview) continue;
+                const displayText = `${preview} ▌`;
                 if (!streamingFailed) {
                   if (!sentKey) {
                     try {

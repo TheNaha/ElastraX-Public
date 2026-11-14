@@ -37,6 +37,7 @@ import { toRoomKey } from '../core/roomKeyFormat';
 import { IdentityService } from '../utils/IdentityService';
 import { AuthService } from '../utils/AuthService';
 import { chunkTextFixed } from '../utils/textChunking';
+import { withTimeout } from '../utils/withTimeout';
 
 type BaileysSocket = ReturnType<typeof makeWASocket>;
 type SocketLogger = Parameters<typeof makeWASocket>[0]['logger'];
@@ -266,8 +267,14 @@ export class WhatsAppProvider implements BotProvider {
           // Await the close so its rejection cannot become an unhandled promise
           // rejection (fatal during shutdown, where the process-wide handler is
           // already removed) and so the old socket is really gone before a new
-          // one is created for this generation.
-          await existingSocket.end(new Error('Restarting WhatsApp socket'));
+          // one is created for this generation. Bounded: an `end()` that never
+          // settles would otherwise block every reconnect and leave the platform
+          // dead for the life of the process.
+          await withTimeout(
+            existingSocket.end(new Error('Restarting WhatsApp socket')),
+            10_000,
+            'whatsapp socket close',
+          );
         } catch (error) {
           logger.debug({ err: error }, '[WhatsApp] Existing socket close failed');
         }

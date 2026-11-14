@@ -122,6 +122,30 @@ describe('IdentityService', () => {
     expect(identity!.displayName).toBe('Merged');
   });
 
+  test('the legacy merge deletes only its own stale row, not another user with the same timestamp', async () => {
+    // Without canonical-identity deps the service merges rows directly in
+    // `user_identities`. Keying the delete on `updated_at` removed every row
+    // written in that millisecond, including another user's.
+    IdentityService.setDepsForTesting({ db: database.db, userIdentities, userRoles });
+    const sameInstant = new Date('2024-01-01T00:00:00Z');
+    await database.db.insert(userIdentities).values([
+      { lid: 'stale@lid', pn: null, platform: 'whatsapp', displayName: null, updated_at: sameInstant },
+      { lid: 'other@lid', pn: null, platform: 'whatsapp', displayName: 'Other user', updated_at: sameInstant },
+      { lid: null, pn: 'fresh@s.whatsapp.net', platform: 'whatsapp', displayName: 'Fresh', updated_at: new Date('2024-01-02T00:00:00Z') },
+    ]);
+
+    await IdentityService.upsert('stale@lid', 'fresh@s.whatsapp.net', 'Merged');
+
+    const rows = await database.db.select().from(userIdentities);
+    // Two rows: the merged identity (which now carries the stale lid) and the
+    // unrelated user, who must be untouched.
+    expect(rows).toHaveLength(2);
+    const merged = rows.find(row => row.lid === 'stale@lid');
+    expect(merged?.pn).toBe('fresh@s.whatsapp.net');
+    expect(merged?.displayName).toBe('Merged');
+    expect(rows.some(row => row.lid === 'other@lid' && row.displayName === 'Other user')).toBe(true);
+  });
+
   test('concurrent upserts of the same identity are serialized safely', async () => {
     const calls = Array.from({ length: 64 }, (_, index) => IdentityService.upsert(
       'race@lid',

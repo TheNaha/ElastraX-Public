@@ -352,14 +352,19 @@ export function feedbackInventory(limit = 100): {
   negative: number;
   ratio: number | null;
   malformedLines: number;
+  /** The log was longer than the tail window, so older lines were not read. */
+  truncated: boolean;
   entries: Array<Record<string, unknown>>;
 } {
   const metrics = healthMetrics.getMetrics();
   const entries: Array<Record<string, unknown>> = [];
   let malformedLines = 0;
+  let truncated = false;
   try {
     const path = readStringEnv(process.env.FEEDBACK_LOG_PATH, 'data/feedback.jsonl');
-    const text = readTailSafe(path, FEEDBACK_TAIL_BYTES);
+    const tail = readTailSafe(path, FEEDBACK_TAIL_BYTES);
+    truncated = tail.truncated;
+    const text = tail.text;
     const lines = text.split('\n').filter(line => line.trim().length > 0);
     for (const line of lines.slice(-limit)) {
       try {
@@ -383,7 +388,7 @@ export function feedbackInventory(limit = 100): {
   const negative = metrics.feedback.negative;
   const total = positive + negative;
   entries.reverse();
-  return { positive, negative, ratio: total > 0 ? Number((positive / total).toFixed(3)) : null, malformedLines, entries };
+  return { positive, negative, ratio: total > 0 ? Number((positive / total).toFixed(3)) : null, malformedLines, truncated, entries };
 }
 
 /** How much of the feedback log a dashboard refresh reads. */
@@ -399,16 +404,16 @@ const FEEDBACK_TAIL_BYTES = 1024 * 1024;
  * loop (which also serves messages) for no benefit. A partial first line is
  * dropped so every returned line is whole.
  */
-function readTailSafe(path: string, maxBytes: number): string {
+function readTailSafe(path: string, maxBytes: number): { text: string; truncated: boolean } {
   const fd = openSync(path, 'r');
   try {
     const size = fstatSync(fd).size;
-    if (size <= maxBytes) return readFileSync(path, 'utf8');
+    if (size <= maxBytes) return { text: readFileSync(path, 'utf8'), truncated: false };
     const buffer = Buffer.allocUnsafe(maxBytes);
     const read = readSync(fd, buffer, 0, maxBytes, size - maxBytes);
     const text = buffer.subarray(0, read).toString('utf8');
     const firstNewline = text.indexOf('\n');
-    return firstNewline >= 0 ? text.slice(firstNewline + 1) : text;
+    return { text: firstNewline >= 0 ? text.slice(firstNewline + 1) : text, truncated: true };
   } finally {
     closeSync(fd);
   }

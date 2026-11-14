@@ -319,7 +319,15 @@ export const IdentityService = {
           updated_at: deps.userIdentities.updated_at,
         }).from(deps.userIdentities).where(eq(deps.userIdentities.pn, normalizedPn))
       : [];
-    const row = lidRows[0] ?? pnRows[0];
+    const candidates = [...lidRows, ...pnRows];
+    // The survivor is the *newest* of the two partial rows, not whichever column
+    // happened to be queried first: the update below targets the survivor, and
+    // picking the older row made it rewrite both rows with the same unique alias
+    // (a UNIQUE violation) instead of merging them.
+    const row = candidates.reduce<(typeof candidates)[number] | null>(
+      (newest, candidate) => (!newest || candidate.updated_at > newest.updated_at ? candidate : newest),
+      null,
+    );
     if (!row) {
       await deps.db.insert(deps.userIdentities).values({
         lid: normalizedLid,
@@ -330,7 +338,9 @@ export const IdentityService = {
       }).run();
       return;
     }
-    const staleRows = [...lidRows, ...pnRows].filter(candidate => candidate.updated_at < row.updated_at);
+    const staleRows = candidates.filter(candidate =>
+      !(candidate.lid === row.lid && candidate.pn === row.pn),
+    );
     for (const stale of staleRows) {
       // Delete the stale row by its own identity columns. Keying the delete on
       // `updated_at` matched every row written in the same millisecond, so two

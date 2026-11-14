@@ -11,6 +11,9 @@
  * A bug in either would expose telemetry or, worse, the few write operations.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import * as fsModule from 'node:fs';
+import * as pathModule from 'node:path';
+import * as osModule from 'node:os';
 
 const { createAdminHandler } = await import('../src/admin/routes');
 const {
@@ -21,6 +24,8 @@ const {
   readAdminAuthConfig,
   ADMIN_CSRF_HEADER,
 } = await import('../src/admin/auth');
+const adminAuth = await import('../src/admin/auth');
+const adminData = await import('../src/admin/data');
 
 const SECRET = 'test-admin-secret-0123456789';
 const HOST = '127.0.0.1:3500';
@@ -411,5 +416,43 @@ describe('same-origin helper', () => {
 
   test('allows the same origin', () => {
     expect(isSameOrigin(new Request(`${BASE}/admin/`, { headers: { Origin: BASE } }), HOST)).toBe(true);
+  });
+});
+
+describe('admin hardening', () => {
+  const { LoginThrottle: Throttle } = adminAuth;
+  const { feedbackInventory } = adminData;
+
+  test('bounds the login throttle map under a flood of distinct IPs', () => {
+    const throttle = new Throttle(5, 60_000);
+    const now = Date.now();
+    for (let index = 0; index < 12_000; index += 1) {
+      throttle.attempt(`10.${(index >> 16) & 255}.${(index >> 8) & 255}.${index & 255}`, now);
+    }
+    expect(throttle.size).toBeLessThanOrEqual(10_000);
+    // The most recent IP is still tracked, so a live client keeps its history.
+    expect(throttle.attempt('10.255.255.255', now)).toBe(true);
+  });
+
+  test('reports a truncated feedback tail instead of silently narrowing it', () => {
+    const { mkdtempSync, writeFileSync } = fsModule;
+    const { join } = pathModule;
+    const { tmpdir } = osModule;
+    const dir = mkdtempSync(join(tmpdir(), 'feedback-tail-'));
+    const path = join(dir, 'feedback.jsonl');
+    const line = JSON.stringify({ at: 't', platform: 'whatsapp', chatRoomId: 'r', sentiment: 'positive', reaction: '👍' });
+    // 60 000 lines is comfortably past the 1 MiB tail window.
+    writeFileSync(path, `${Array.from({ length: 60_000 }, () => line).join('\n')}\n`);
+    const previous = process.env.FEEDBACK_LOG_PATH;
+    process.env.FEEDBACK_LOG_PATH = path;
+    try {
+      const inventory = feedbackInventory(5);
+      expect(inventory.truncated).toBe(true);
+      expect(inventory.entries.length).toBe(5);
+      expect(inventory.entries.every(entry => entry.sentiment === 'positive')).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.FEEDBACK_LOG_PATH;
+      else process.env.FEEDBACK_LOG_PATH = previous;
+    }
   });
 });

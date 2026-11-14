@@ -132,6 +132,23 @@ describe('fetchRoomTranscript', () => {
     expect(lines[1]).toContain('Bot: Sounds good!');
   });
 
+  test('drops the oldest lines, not the newest, when the byte cap is hit', async () => {
+    // The transcript stops at 500 KB. Filling that window from the oldest side
+    // discarded exactly the messages a "last N hours" digest is about.
+    const chatId = 'room-byte-cap';
+    await seedRoom(chatId, 'whatsapp');
+    const base = Date.now() - 400 * HOUR;
+    for (let index = 0; index < 300; index += 1) {
+      const marker = index === 0 ? 'OLDEST-MARKER' : index === 299 ? 'NEWEST-MARKER' : `filler-${index}`;
+      await seedMessage(chatId, 'user', 'Alice', `${marker} ${'x'.repeat(1_900)}`, new Date(base + index * 1_000));
+    }
+
+    const lines = fetchRoomTranscript(chatId, { since: new Date(0), limit: 1_000 });
+    expect(lines.length).toBeLessThan(300);
+    expect(lines.at(-1)).toContain('NEWEST-MARKER');
+    expect(lines.some(line => line.includes('OLDEST-MARKER'))).toBe(false);
+  });
+
   test('respects the limit cap on rows read, before empty rows are dropped', () => {
     // Newest two rows are the empty user message and the bot reply, so only one
     // line survives the empty-content filter.

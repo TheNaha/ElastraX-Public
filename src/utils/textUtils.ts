@@ -9,8 +9,23 @@
  */
 
 const THINK_TAG_PATTERN = /<think>[\s\S]*?<\/think>/gi;
+/** An unterminated think block — i.e. one that is still being streamed. */
+const OPEN_THINK_TAG_PATTERN = /<think>[\s\S]*$/i;
 
 /** Remove all think blocks and trim whitespace. */
 export function stripThinkTags(text: string): string {
   return text.replace(THINK_TAG_PATTERN, "").trim();
+}
+
+/**
+ * Remove think blocks from *partial* text, including one still being streamed.
+ *
+ * `stripThinkTags` only matches a closed block, so while a reasoning model is
+ * mid-block the whole block is still in the string and a preview built from it
+ * shows the model's chain of thought. When nothing but the open block has
+ * arrived the result is empty, which callers must treat as "nothing to show
+ * yet".
+ */
+export function stripPartialThinkTags(text: string): string {
+  return text.replace(THINK_TAG_PATTERN, "").replace(OPEN_THINK_TAG_PATTERN, "").trim();
 }
