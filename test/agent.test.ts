@@ -253,6 +253,20 @@ describe('handleIncomingMessage', () => {
   // ── Room initialisation ─────────────────────────────────────────────────────
 
   describe('room initialisation', () => {
+    test('replies with an internal error when the pre-AI phase throws', async () => {
+      // Role resolution runs before the AI phase's try block. A failure there used
+      // to escape the handler entirely, so the user got no reply at all.
+      const ctx = makeCtx({ text: 'Hello' });
+      (ctx.resolveRoles as MockFn).mockImplementation(async () => {
+        throw new Error('role lookup exploded');
+      });
+
+      await expect(handleIncomingMessage(ctx)).resolves.toBeUndefined();
+      // Plain send, not the durable outbox: the database may be exactly what
+      // failed, and an outbox row could not be written either.
+      expect(ctx.reply).toHaveBeenCalledWith('An internal error occurred while processing your message.');
+    });
+
     test('creates a room with platform defaults when the chat is new', async () => {
       const ctx = makeCtx({ text: 'Hello' });
       await handleIncomingMessage(ctx);

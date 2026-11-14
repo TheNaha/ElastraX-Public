@@ -457,6 +457,24 @@ async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null>
  * @param ctx - Normalised message context provided by the active BotProvider.
  */
 export async function handleIncomingMessage(ctx: MessageContext): Promise<void> {
+  try {
+    await handleMessageInternal(ctx);
+  } catch (error) {
+    // Everything from the room lookup through role resolution, flow handling and
+    // slash routing used to run outside any try, so a failure there escaped
+    // before the reply/error path existed: the provider only logged it and the
+    // user was silently ignored. The inner handler catches the AI phase itself,
+    // so this only fires for the phases before it.
+    log.error({ err: error, chatId: ctx.chatId, platform: ctx.platform }, 'Error handling message (pre-reply)');
+    healthMetrics.recordMessageError();
+    await ctx.react?.('❌').catch(err => log.warn({ err, chatId: ctx.chatId }, '[Agent] Reaction failed'));
+    await ctx.reply(t(ctx.language ?? 'en', 'agent.internal_error')).catch(err =>
+      log.warn({ err, chatId: ctx.chatId }, '[Agent] Error reply failed'),
+    );
+  }
+}
+
+async function handleMessageInternal(ctx: MessageContext): Promise<void> {
   const startMs = Date.now();
   const { chatId, platform, senderName, text, isGroup } = ctx;
   const verboseAiLogs = readBooleanEnv(process.env.AI_VERBOSE_LOGS, false);
@@ -1143,7 +1161,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
 
               const now = Date.now();
               if (now - lastEditTime >= editInterval) {
-                const displayText = accumulated + ' ▌';
+                // The final edit and `extractAssistantText` both strip a
+                // reasoning model's think block; the live preview did not, so the
+                // user watched the model's chain of thought appear and then
+                // vanish.
+                const displayText = stripThinkTags(accumulated) + ' ▌';
                 if (!streamingFailed) {
                   if (!sentKey) {
                     try {

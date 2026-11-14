@@ -70,9 +70,22 @@ function raceWithTimeout<T>(
     const onAbort = () => fail(abortReason(options.signal!));
     const timer = setTimeout(() => {
       const error = new TimeoutError(label, timeoutMs);
-      options.onTimeout?.(error);
-      options.abortController?.abort(error);
+      // Settle before running the callbacks. `abort()` invokes every listener
+      // synchronously, so a listener (or an `onTimeout` handler) that throws
+      // used to prevent `fail` from ever running and left this promise pending
+      // forever while the caller awaited it.
       fail(error);
+      try {
+        options.onTimeout?.(error);
+      } catch {
+        // A throwing timeout hook must not affect the outcome that is already
+        // decided.
+      }
+      try {
+        options.abortController?.abort(error);
+      } catch {
+        // Same: the operation is aborting; a throwing listener is its problem.
+      }
     }, timeoutMs);
     options.signal?.addEventListener('abort', onAbort, { once: true });
     promise.then(
