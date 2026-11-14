@@ -42,7 +42,7 @@ import {
   type ActionResult,
 } from './data';
 import { logger } from '../utils/logger';
-import { readRequestBytesWithLimit } from '../webhooks/utils';
+import { readRequestBytesWithLimit, WebhookRequestError } from '../webhooks/utils';
 
 const log = logger.child({ module: 'AdminRoutes' });
 
@@ -63,7 +63,7 @@ const ADMIN_ACTION_MAX_BODY_BYTES = 64 * 1024;
 
 type JsonBodyResult =
   | { ok: true; value: Record<string, unknown> }
-  | { ok: false; status: 400 | 413; error: string };
+  | { ok: false; status: 400 | 408 | 413; error: string };
 
 /** Read a bounded, object-shaped JSON body. Never throws. */
 async function readJsonObjectBody(req: Request, maxBytes: number): Promise<JsonBodyResult> {
@@ -71,8 +71,12 @@ async function readJsonObjectBody(req: Request, maxBytes: number): Promise<JsonB
   try {
     const bytes = await readRequestBytesWithLimit(req, maxBytes);
     text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-  } catch {
-    return { ok: false, status: 413, error: 'Request body too large.' };
+  } catch (error) {
+    if (error instanceof WebhookRequestError) {
+      const status = error.status === 400 || error.status === 408 ? error.status : 413;
+      return { ok: false, status, error: error.message };
+    }
+    return { ok: false, status: 400, error: 'Invalid request body.' };
   }
   try {
     const parsed: unknown = text.trim() === '' ? null : JSON.parse(text);

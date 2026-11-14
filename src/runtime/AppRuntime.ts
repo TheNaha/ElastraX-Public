@@ -437,7 +437,12 @@ export class AppRuntime {
    * and therefore who gets senders registered at boot.
    */
   private operationalProviders(): BotProvider[] {
-    return this.providers.filter(provider => provider.isOperational !== false);
+    return this.providers.filter(provider =>
+      provider.isOperational === true
+      // A test double that does not model operational state counts as
+      // operational only if its `start()` resolved.
+      || (provider.isOperational === undefined && this.activeProviders.includes(provider)),
+    );
   }
 
   getReadiness(): {
