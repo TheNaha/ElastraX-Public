@@ -2,6 +2,7 @@ import { describe, test, expect, beforeEach } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { userRoles, rolePrivileges, userIdentities } from '../src/db/schema';
+import { eq } from 'drizzle-orm';
 import { AuthService, BUILTIN_ROLES } from '../src/utils/AuthService';
 import { IdentityService } from '../src/utils/IdentityService';
 
@@ -179,6 +180,33 @@ describe('AuthService', () => {
     // HARDCODED.user defaults
     expect(privileges.maxMessagesPerWindow).toBe(10);
     expect(privileges.contextLimit).toBe(20);
+  });
+
+  test('loading one role does not keep another role\'s overrides cached past the TTL', async () => {
+    await db.insert(rolePrivileges).values({ role: 'admin', maxMessagesPerWindow: 50 });
+    await db.insert(rolePrivileges).values({ role: 'premium', maxMessagesPerWindow: 30 });
+
+    const realNow = Date.now;
+    let offset = 0;
+    Date.now = () => realNow() + offset;
+    try {
+      await AuthService.getPrivilegesForRole('admin');
+
+      // An operator changes the admin overrides.
+      await db.update(rolePrivileges).set({ maxMessagesPerWindow: 99 }).where(eq(rolePrivileges.role, 'admin'));
+
+      // Reading a *different* role is a cache miss, and the single-role load used
+      // to stamp the shared TTL — so the stale `admin` entry never expired even
+      // though it was older than the TTL.
+      offset = 50_000;
+      await AuthService.getPrivilegesForRole('premium');
+
+      offset = 100_000;
+      const admin = await AuthService.getPrivilegesForRole('admin');
+      expect(admin.maxMessagesPerWindow).toBe(99);
+    } finally {
+      Date.now = realNow;
+    }
   });
 
   test('getEffectivePrivileges -1 means unlimited', async () => {

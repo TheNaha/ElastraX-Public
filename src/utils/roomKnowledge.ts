@@ -24,11 +24,12 @@ import { logger } from './logger';
 import { EmbeddingService } from './EmbeddingService';
 import { updateMemoryEmbedding, embedInCurrentSpace, vectorMatchesSpace, cosineSimilarity, float32ToBytes } from './semanticMemory';
 import { getErrorMessage } from './errorUtils';
+import { MEMORY_DOCUMENT_CATEGORY } from '../core/constants';
 
 const log = logger.child({ module: 'RoomKnowledge' });
 
 /** Category marker distinguishing room documents from private memory rows. */
-export const DOCUMENT_CATEGORY = 'document';
+export const DOCUMENT_CATEGORY = MEMORY_DOCUMENT_CATEGORY;
 /** Prefix recorded in `content` so a chunk can be traced back to its document. */
 const SOURCE_PREFIX = '[source: ';
 /** The `]` that closes a source header, written so a `]` in the label is safe. */

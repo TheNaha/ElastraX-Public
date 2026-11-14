@@ -250,6 +250,8 @@ describe('KnowledgeTool', () => {
       isGroup: true,
       language: 'en',
       hasMedia: false,
+      // The knowledge base is shared room state: writes require admin.
+      checkPermissions: async () => true,
       ...overrides,
     } as unknown as MessageContext;
   }

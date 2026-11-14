@@ -1,10 +1,10 @@
 import { db } from '../db';
 import { memories } from '../db/schema';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, isNotNull, isNull, ne, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { getErrorMessage } from './errorUtils';
 import { EmbeddingService, type EmbeddingSpace } from './EmbeddingService';
-import { MAX_INJECTED_MEMORIES } from '../core/constants';
+import { MAX_INJECTED_MEMORIES, MEMORY_DOCUMENT_CATEGORY } from '../core/constants';
 
 const log = logger.child({ module: 'SemanticMemory' });
 
@@ -107,6 +107,23 @@ export interface DuplicateHit {
   similarity: number;
 }
 
+/**
+ * Candidate rows for a semantic memory operation.
+ *
+ * A group's owner id is its canonical room key — the same owner used for room
+ * knowledge chunks (`category = 'document'`, written by `utils/roomKnowledge`).
+ * Without this filter a group memory was compared against the room's documents
+ * (rejected as a duplicate of a document chunk, quoting document text back) and
+ * document chunks crowded the ranking pool. `category` is nullable on legacy
+ * rows, so a missing value still counts as a memory.
+ */
+function memoryCandidateCondition(ownerId: string) {
+  return and(
+    eq(memories.ownerId, ownerId),
+    or(isNull(memories.category), ne(memories.category, MEMORY_DOCUMENT_CATEGORY)),
+  );
+}
+
 export async function findSemanticDuplicate(
   ownerId: string,
   content: string,
@@ -126,7 +143,7 @@ export async function findSemanticDuplicate(
     })
       .from(memories)
       .where(and(
-        eq(memories.ownerId, ownerId),
+        memoryCandidateCondition(ownerId),
         isNotNull(memories.embedding),
         eq(memories.embeddingModel, embedded.space.id),
       ))
@@ -172,7 +189,7 @@ export async function rankMemoriesForInjection(
       created_at: memories.created_at,
     })
       .from(memories)
-      .where(eq(memories.ownerId, ownerId))
+      .where(memoryCandidateCondition(ownerId))
       .orderBy(desc(memories.created_at))
       .limit(CANDIDATE_POOL)
       .all();

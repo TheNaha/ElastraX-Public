@@ -19,14 +19,22 @@
 
 export type ChunkMode = 'fixed' | 'boundary';
 
-/** Last index in `text` (within [floor(limit/2), limit)) where any of `patterns` occurs. */
-function lastBreakBefore(text: string, limit: number, patterns: readonly string[]): number {
-  const floor = Math.floor(limit / 2);
+/**
+ * Offset just past the last occurrence of any of `patterns` in `window`, or
+ * `window.length` when none occurs.
+ *
+ * The caller has already narrowed the search to the trailing half of the chunk,
+ * so this must not apply a second half-window filter: doing so only accepted a
+ * break in the last *quarter* of the chunk and pushed ordinary messages into a
+ * hard character split. Advancing past the whole delimiter keeps a two-character
+ * paragraph break inside one chunk instead of splitting it across two.
+ */
+function lastBreakOffset(window: string, patterns: readonly string[]): number {
   for (const pattern of patterns) {
-    const index = text.lastIndexOf(pattern, limit);
-    if (index > floor) return index;
+    const index = window.lastIndexOf(pattern);
+    if (index >= 0) return index + pattern.length;
   }
-  return limit;
+  return window.length;
 }
 
 /**
@@ -55,8 +63,8 @@ export function chunkTextSmart(
     if (mode === 'boundary' && end < characters.length) {
       const searchStart = Math.max(offset + Math.floor(limit / 2), offset + 1);
       const boundary = characters.slice(searchStart, end);
-      const breakAt = lastBreakBefore(boundary.join(''), boundary.length, ['\n\n', '\n', ' ']);
-      if (breakAt < boundary.length) end = searchStart + breakAt + 1;
+      const breakAt = lastBreakOffset(boundary.join(''), ['\n\n', '\n', ' ']);
+      if (breakAt < boundary.length) end = searchStart + breakAt;
     }
     chunks.push(characters.slice(offset, end).join(''));
     offset = end;

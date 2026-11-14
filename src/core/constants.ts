@@ -31,6 +31,15 @@ export const MAX_ROOM_KNOWLEDGE_CHUNKS = 4;
 export const MAX_LISTED_MEMORIES = 200;
 
 /**
+ * `memories.category` value that marks a row as a room *document chunk* rather
+ * than a memory. Room knowledge shares the `memories` table (keyed on the room's
+ * owner id), so anything that reasons about "this owner's memories" must exclude
+ * it. Defined here so both the writer (`utils/roomKnowledge`) and the readers
+ * (`utils/semanticMemory`) share one value without an import cycle.
+ */
+export const MEMORY_DOCUMENT_CATEGORY = 'document';
+
+/**
  * Sentinel meaning "unlimited" for privilege fields such as contextLimit,
  * matching the `-1 = unlimited` convention used by ROLE_PRIV_* overrides.
  */

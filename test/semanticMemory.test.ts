@@ -163,16 +163,53 @@ describe('findSemanticDuplicate', () => {
     });
     expect(hit).toBeNull();
   });
+
+  test('room knowledge documents are not duplicate candidates', async () => {
+    // A group's owner id is its room key, which is also the owner of its
+    // category='document' chunks. Comparing a memory against those rejected the
+    // memory and quoted document text back to the user.
+    await db.insert(memories).values({
+      id: 'doc_chunk',
+      ownerId: 'owner',
+      content: '[source: faq.md] the wifi password is hunter2',
+      category: 'document',
+      created_at: new Date(),
+      embedding: float32ToBytes(V(1, 0)),
+      embeddingModel: spaceIdFor(2),
+      embeddedAt: new Date(),
+    });
+    const hit = await findSemanticDuplicate('owner', 'the wifi password is hunter2!', {
+      embed: async () => V(1, 0),
+    });
+    expect(hit).toBeNull();
+  });
 });
 
 describe('rankMemoriesForInjection', () => {
+  test('room knowledge documents are not ranked as memories', async () => {
+    await db.insert(memories).values({
+      id: 'doc_chunk',
+      ownerId: 'owner',
+      content: '[source: faq.md] document text',
+      category: 'document',
+      created_at: new Date(),
+      embedding: float32ToBytes(V(1, 0)),
+      embeddingModel: spaceIdFor(2),
+      embeddedAt: new Date(),
+    });
+    await insertMemory(memoryRow('m1', 'a real memory', V(1, 0), new Date()));
+    const ranked = await rankMemoriesForInjection('owner', 'match me', {
+      embed: async () => V(1, 0),
+    }, 3);
+    expect(ranked?.map(row => row.id)).toEqual(['m1']);
+  });
+
   test('empty query falls back to recency (null)', async () => {
     const ranked = await rankMemoriesForInjection('owner', '   ', { embed: async () => V(1) });
     expect(ranked).toBeNull();
   });
 
-  test('vectors from a foreign embedding space are not ranked', async () => {
-    await db.insert(memories).values({
+  test('vectors from a foreign embedding space are not ranked', async () => {    await db.insert(memories).values({
       id: 'A',
       ownerId: 'owner',
       content: 'exact match',
