@@ -6,7 +6,7 @@
  */
 
 import { expect, test, describe, beforeAll } from 'bun:test';
-import { reloadRegistry, tools, getToolByName, getToolByAliasOrName, getToolDefinitions, getAlwaysLoadedDefinitions, getTriggeredTools, toolSearchIndex } from '../src/tools';
+import { reloadRegistry, tools, getToolByName, getToolByAliasOrName, getToolDefinitions, getAlwaysLoadedDefinitions, getTriggeredTools, toolSearchIndex, getPluginLoadReports } from '../src/tools';
 
 describe('ToolRegistry reloadRegistry', () => {
   describe('after initial load', () => {
@@ -71,6 +71,13 @@ describe('ToolRegistry reloadRegistry', () => {
     test('tools array is non-empty after reload', async () => {
       await reloadRegistry();
       expect(tools.length).toBeGreaterThan(10);
+    });
+
+    test('plugin load reports are replaced, not appended, on each reload', async () => {
+      await reloadRegistry();
+      const first = getPluginLoadReports().length;
+      await reloadRegistry();
+      expect(getPluginLoadReports().length).toBe(first);
     });
 
     test('getToolByName returns undefined for unknown tool', async () => {

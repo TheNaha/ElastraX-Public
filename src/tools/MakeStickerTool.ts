@@ -103,7 +103,9 @@ export class MakeStickerTool extends BaseTool<StickerArgs> {
       if (typeof ctx.sendSticker === 'function') {
         await ctx.sendSticker(stickerBuffer);
       } else {
-        await ctx.reply(t(ctx.language, 'sticker.send_not_supported'));
+        // Returning success here told the model the sticker went out when the
+        // platform cannot send one at all.
+        return t(ctx.language, 'sticker.send_not_supported');
       }
 
       return t(ctx.language, 'sticker.success');

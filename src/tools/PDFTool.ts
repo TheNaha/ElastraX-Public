@@ -139,9 +139,17 @@ export class PDFTool extends BaseTool<PDFArgs> {
     const lang = ctx.language ?? 'en';
     const action = String(args.action || 'info') as PDFAction;
 
-    // Actions with special media requirements — handle before generic PDF resolve
-    if (action === 'img_to_pdf') return this.imgToPdf(ctx, lang);
-    if (action === 'merge') return this.mergePdfs(ctx, lang);
+    // Actions with special media requirements handle their own media. They must
+    // still run inside the guarded block: `img_to_pdf`/`merge` resolve media and
+    // persist flow state, and a failure there used to throw out of `execute`
+    // instead of returning a localized error like every other action.
+    try {
+      if (action === 'img_to_pdf') return await this.imgToPdf(ctx, lang);
+      if (action === 'merge') return await this.mergePdfs(ctx, lang);
+    } catch (error: unknown) {
+      log.error({ err: error, action, chatId: ctx.chatId }, 'PDF action failed');
+      return t(lang, 'pdf.error', { msg: getErrorMessage(error) });
+    }
 
     const media = await resolveTargetMedia(ctx);
     if (!media?.path) return t(lang, 'pdf.no_file');
@@ -210,7 +218,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
         case 'rotate': {
           if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
           const deg = Number(args.degrees);
-          if (![90, 180, 270].includes(deg)) return t(lang, 'pdf.invalid_pages');
+          if (![90, 180, 270].includes(deg)) return t(lang, 'pdf.invalid_degrees');
           await ctx.react?.('⏳');
           const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
           for (const page of doc.getPages()) {
