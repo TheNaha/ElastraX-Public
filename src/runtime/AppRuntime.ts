@@ -214,6 +214,8 @@ export class AppRuntime {
   private retentionPromise: Promise<void> | null = null;
   private startupCoveragePromise: Promise<void> | null = null;
   private activeProviders: BotProvider[] = [];
+  /** Platforms whose outbound lanes are registered (avoids double registration). */
+  private readonly senderPlatforms = new Set<string>();
   private unregisterWebhookHooks: Array<() => void> = [];
   private unregisterSenderHooks: Array<() => void> = [];
   private started = false;
@@ -423,14 +425,19 @@ export class AppRuntime {
   }
 
   /**
-   * Providers that are started AND currently able to accept an outbound send.
-   * `activeProviders` is the set whose `start()` resolved; a provider inside it
-   * may still be reconnecting, so delivery decisions consult this subset instead
-   * of the boot-time snapshot. Evaluating it lazily (rather than once at boot)
-   * is what lets a provider that connects late still receive traffic.
+   * Providers currently able to accept an outbound send.
+   *
+   * Deliberately derived from the full provider list rather than the boot-time
+   * `activeProviders` snapshot. A provider whose `start()` rejected while it
+   * scheduled its own reconnect (WhatsApp, Telegram) is absent from that
+   * snapshot forever, so every durable lane — webhook enqueue, the outbox claim,
+   * scheduled runs — would exclude that platform for the life of the process even
+   * after the retry loop connected it. Reading `isOperational` live makes the
+   * lanes self-healing; `activeProviders` still decides whose `start()` resolved
+   * and therefore who gets senders registered at boot.
    */
   private operationalProviders(): BotProvider[] {
-    return this.activeProviders.filter(provider => provider.isOperational !== false);
+    return this.providers.filter(provider => provider.isOperational !== false);
   }
 
   getReadiness(): {
@@ -505,6 +512,7 @@ export class AppRuntime {
       this.digestService.unregisterSender?.(provider.name);
       provider.onMessage?.(async () => {});
     }
+    this.senderPlatforms.clear();
     try {
       await this.stopBackgroundTasks();
       this.digestService.stop();
@@ -590,6 +598,9 @@ export class AppRuntime {
   private readonly enqueueWebhook: WebhookEnqueuer = async (job, signal) => {
     if (signal.aborted) throw signal.reason ?? new Error('Webhook enqueue aborted');
     if (job.destinations.length === 0) throw new Error('Webhook job has no destinations');
+    // A provider that connected after boot must be usable by the first webhook
+    // that arrives, not only after the next outbox tick.
+    this.reconcileProviderAdmission();
     // A `202` promises eventual delivery. If nothing is currently able to
     // deliver, say so instead of queueing rows no worker can claim — the
     // WebhookServer turns `accepted: false` into a retryable 503.
@@ -657,14 +668,42 @@ export class AppRuntime {
 
   private registerProviderSenders(): void {
     for (const provider of this.activeProviders) {
-      const send: SenderFn = async (chatId: string, text: string, signal?: AbortSignal) => {
-        if (signal) await provider.sendMessage(chatId, text, signal);
-        else await provider.sendMessage(chatId, text);
-      };
-      const unregister = this.webhookServer.registerSender(provider.name, send);
-      if (unregister) this.unregisterSenderHooks.push(unregister);
-      this.scheduler.registerSender(provider.name, send);
-      this.digestService.registerSender(provider.name, send);
+      this.registerSenderFor(provider);
+    }
+  }
+
+  /**
+   * Register the outbound lanes for one provider. Idempotent: a provider whose
+   * sender is already wired is skipped, so the reconcile pass cannot stack a
+   * second sender registration on the same platform.
+   */
+  private registerSenderFor(provider: BotProvider): void {
+    if (this.senderPlatforms.has(provider.name)) return;
+    const send: SenderFn = async (chatId: string, text: string, signal?: AbortSignal) => {
+      if (signal) await provider.sendMessage(chatId, text, signal);
+      else await provider.sendMessage(chatId, text);
+    };
+    const unregister = this.webhookServer.registerSender(provider.name, send);
+    if (unregister) this.unregisterSenderHooks.push(unregister);
+    this.scheduler.registerSender(provider.name, send);
+    this.digestService.registerSender(provider.name, send);
+    this.senderPlatforms.add(provider.name);
+  }
+
+  /**
+   * Wire the outbound lanes of a provider that only became operational after
+   * boot — the reconnect path a provider takes when its first `start()` failed.
+   * Without this, the platform could connect and still have no scheduler, digest
+   * or webhook sender for the rest of the process.
+   */
+  private reconcileProviderAdmission(): void {
+    if (!this.started || this.stopRequested) return;
+    for (const provider of this.providers) {
+      if (this.senderPlatforms.has(provider.name)) continue;
+      if (provider.isOperational !== true) continue;
+      logger.info({ provider: provider.name, status: provider.status }, 'Provider became operational after boot; wiring senders');
+      this.registerSenderFor(provider);
+      if (!this.activeProviders.includes(provider)) this.activeProviders.push(provider);
     }
   }
 
@@ -881,6 +920,8 @@ export class AppRuntime {
 
   private processOutbox(): void {
     if (!hasDurableMessagingStore() || this.outboxPromise) return;
+    // A provider that finished connecting after boot gets its lanes here.
+    this.reconcileProviderAdmission();
     const providers = new Map<string, BotProvider>(this.operationalProviders().map(provider => [provider.name, provider]));
     if (providers.size === 0) return;
     this.outboxPromise = (async () => {

@@ -263,7 +263,11 @@ export class WhatsAppProvider implements BotProvider {
       if (existingSocket) {
         this.sock = null;
         try {
-          existingSocket.end(new Error('Restarting WhatsApp socket'));
+          // Await the close so its rejection cannot become an unhandled promise
+          // rejection (fatal during shutdown, where the process-wide handler is
+          // already removed) and so the old socket is really gone before a new
+          // one is created for this generation.
+          await existingSocket.end(new Error('Restarting WhatsApp socket'));
         } catch (error) {
           logger.debug({ err: error }, '[WhatsApp] Existing socket close failed');
         }

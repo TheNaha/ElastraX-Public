@@ -24,6 +24,7 @@ const runToken = Math.random().toString(36).slice(2, 10);
 function createProvider(name: BotProvider['name']): FakeProvider {
   return {
     name,
+    isOperational: true,
     capturedHandler: null,
     start: mock(async () => {}),
     stop: mock(async () => {}),
@@ -211,8 +212,81 @@ describe('AppRuntime', () => {
     expect(provider.stop).toHaveBeenCalledTimes(1);
   });
 
-  test('drops incoming messages when stopRequested is set', async () => {
+  test('admits a provider that only becomes operational after boot', async () => {
+    // A provider whose first start() failed still retries on its own. Once that
+    // retry connects, the platform must get its outbound lanes back without a
+    // process restart: webhook enqueue and the outbox both read
+    // operationalProviders().
     const provider = createProvider('whatsapp');
+    let operational = false;
+    Object.defineProperty(provider, 'isOperational', { get: () => operational, configurable: true });
+    provider.start = mock(async () => {
+      throw new Error('boot blip');
+    });
+    const messageQueue = { enqueue: mock(() => {}), stop: mock(() => {}) };
+    const registeredSenders = new Map<string, RegisteredSender>();
+    const webhookServer = {
+      registerSender: mock((platform: string, fn: RegisteredSender) => {
+        registeredSenders.set(platform, fn);
+        return () => registeredSenders.delete(platform);
+      }),
+      registerEnqueuer: mock((_enqueuer: unknown) => () => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const registeredEnqueuers: Array<(job: unknown, signal: AbortSignal) => Promise<{ accepted: boolean }>> = [];
+    webhookServer.registerEnqueuer = mock((enqueuer: unknown) => {
+      registeredEnqueuers.push(enqueuer as (job: unknown, signal: AbortSignal) => Promise<{ accepted: boolean }>);
+      return () => {};
+    });
+    const scheduler = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      unregisterSender: mock((_platform: string) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const timers = {
+      setInterval: mock(() => ({ id: 'interval' } as FakeTimerHandle)),
+      clearInterval: mock(() => {}),
+      setTimeout: mock(() => ({ id: 'timeout' } as FakeTimerHandle)),
+      clearTimeout: mock(() => {}),
+    };
+
+    const runtime = new AppRuntime({
+      providers: [provider],
+      messageQueue,
+      webhookServer,
+      scheduler,
+      timers: timers as unknown as AppRuntimeDeps['timers'],
+    });
+
+    await runtime.start();
+
+    expect(provider.start).toHaveBeenCalledTimes(1);
+    expect(webhookServer.registerSender).not.toHaveBeenCalled();
+    expect(runtime.getReadiness().checks.providers.whatsapp).toBe(false);
+
+    // The provider's own reconnect loop connects it later.
+    operational = true;
+
+    const enqueuer = registeredEnqueuers[0];
+    if (!enqueuer) throw new Error('expected the webhook enqueuer to be registered');
+    const result = await enqueuer({
+      route: 'generic',
+      source: 'test',
+      text: 'hello',
+      receivedAt: new Date().toISOString(),
+      destinations: [{ chatRoomId: `late-room-${runToken}`, platform: 'whatsapp' }],
+    }, new AbortController().signal);
+
+    expect(result.accepted).toBe(true);
+    expect(webhookServer.registerSender).toHaveBeenCalledTimes(1);
+    expect(scheduler.registerSender).toHaveBeenCalledTimes(1);
+
+    await runtime.stop();
+  });
+
+  test('drops incoming messages when stopRequested is set', async () => {    const provider = createProvider('whatsapp');
     let enqueued = false;
     const messageQueue = {
       enqueue: mock(() => { enqueued = true; return true; }),

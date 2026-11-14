@@ -719,7 +719,11 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
     if (ctx.hasMedia || ctx.quoted?.hasMedia) {
       const syncDbMedia = async () => {
         try {
-          if (ctx.mediaPath) {
+          // A placeholder id (`unknown`/empty) is excluded from the dedupe index
+          // because every such row shares it, so an update keyed on it would
+          // stamp this message's media path onto every placeholder row in the
+          // room.
+          if (ctx.mediaPath && isUsableProviderMessageId(ctx.messageId)) {
             await db.update(messages)
               .set({ mediaPath: ctx.mediaPath, mimeType: ctx.mimeType })
               .where(and(
@@ -728,7 +732,7 @@ export async function handleIncomingMessage(ctx: MessageContext): Promise<void> 
                 eq(messages.providerMessageId, ctx.messageId),
               ));
           }
-          if (ctx.quoted?.mediaPath && ctx.quoted.stanzaId) {
+          if (ctx.quoted?.mediaPath && isUsableProviderMessageId(ctx.quoted.stanzaId)) {
             // Also update the quoted message in DB if it was downloaded here
             await db.update(messages)
               .set({ mediaPath: ctx.quoted.mediaPath, mimeType: ctx.quoted.mimeType })

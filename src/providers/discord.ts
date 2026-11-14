@@ -417,7 +417,8 @@ export class DiscordProvider implements BotProvider {
       if (this.client !== client || generation !== this.generation) throw new ProviderLifecycleError('discord', 'message action');
     };
 
-    const sendToProvider = (targetChatId: string, text: string, options?: { mentions?: string[] }) => this.sendMessage(targetChatId, text, undefined, options);
+    const sendToProvider = (targetChatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }) =>
+      this.sendMessage(targetChatId, text, signal, options);
     return {
       platform: 'discord',
       receivedAt: Date.now(),
@@ -489,8 +490,23 @@ export class DiscordProvider implements BotProvider {
             return;
           }
           const files = await Promise.all(Array.from(msg.attachments.values(), async attachment => {
+            // Same guards the download path applies: the attachment URL is
+            // remote-controlled, so it must pass the host allow-list, a non-2xx
+            // response must not become an empty file, and an unbounded
+            // `arrayBuffer()` must not buffer an arbitrary payload in memory.
+            validateDiscordMediaUrl(attachment.url);
             const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
+            if (!response.ok) {
+              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment fetch failed: HTTP ${response.status}`);
+            }
+            const declared = Number(response.headers.get('content-length'));
+            if (Number.isSafeInteger(declared) && declared > HARD_MEDIA_MAX_BYTES) {
+              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
+            }
             const buffer = Buffer.from(await response.arrayBuffer());
+            if (buffer.byteLength > HARD_MEDIA_MAX_BYTES) {
+              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
+            }
             return new AttachmentBuilder(buffer, { name: attachment.name });
           }));
           await targetChannel.send({
@@ -507,6 +523,11 @@ export class DiscordProvider implements BotProvider {
         ensureCurrentGeneration();
         const chunks = chunkDiscordText(replyText);
         for (let index = 0; index < chunks.length; index++) {
+          // Honour the caller's abort signal between chunks, as WhatsApp and
+          // Telegram do. The agent delivers its final answer under a
+          // cancellable timeout; without this a timed-out send kept going and
+          // the recipient could receive the message after it was rescheduled.
+          options?.signal?.throwIfAborted();
           const sent = await msg.reply({
             content: chunks[index],
             allowedMentions: discordAllowedMentions(index === 0 ? options?.mentions : undefined),
@@ -541,7 +562,7 @@ export class DiscordProvider implements BotProvider {
       sendToChat: async (targetChatId: string, text: string, options?: ReplyOptions) => {
         ensureCurrentGeneration();
         options?.signal?.throwIfAborted();
-        return sendToProvider(targetChatId, text, { mentions: options?.mentions });
+        return sendToProvider(targetChatId, text, options?.signal, { mentions: options?.mentions });
       },
 
       editMessage: async (key: unknown, text: string) => {
