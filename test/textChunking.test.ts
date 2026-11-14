@@ -44,6 +44,16 @@ describe('chunkTextSmart', () => {
     expect(chunks.join('')).toBe(text);
   });
 
+  test('keeps a paragraph break whole even when it straddles the hard limit', () => {
+    const text = 'aaa\n\nbbb';
+    const chunks = chunkTextSmart(text, { mode: 'boundary', limit: 4 });
+    expect(chunks.join('')).toBe(text);
+    // No chunk may end with the first half of the pair while the next starts with
+    // the second half.
+    for (const chunk of chunks) expect(chunk.startsWith('\n\n') || !chunk.startsWith('\n')).toBe(true);
+    expect(chunks.some(chunk => chunk.includes('\n\n'))).toBe(true);
+  });
+
   test('falls back to a hard split when no break exists in the window', () => {
     const text = 'a'.repeat(30);
     const chunks = chunkTextSmart(text, { mode: 'boundary', limit: 10 });

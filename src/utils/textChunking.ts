@@ -64,7 +64,14 @@ export function chunkTextSmart(
       const searchStart = Math.max(offset + Math.floor(limit / 2), offset + 1);
       const boundary = characters.slice(searchStart, end);
       const breakAt = lastBreakOffset(boundary.join(''), ['\n\n', '\n', ' ']);
-      if (breakAt < boundary.length) end = searchStart + breakAt;
+      if (breakAt < boundary.length) {
+        end = searchStart + breakAt;
+      } else if (end - 1 > offset && characters[end - 1] === '\n' && characters[end] === '\n') {
+        // The paragraph break straddles the hard limit, so no delimiter was found
+        // inside the window. Move the split one character earlier to keep the
+        // pair in the next chunk instead of splitting it.
+        end -= 1;
+      }
     }
     chunks.push(characters.slice(offset, end).join(''));
     offset = end;

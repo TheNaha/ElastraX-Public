@@ -889,6 +889,53 @@ describe('handleIncomingMessage', () => {
       expect(editedMessages.some(e => e.text.includes('✅ [1/1] 🔍 Searching web for "bun"...'))).toBe(true);
     });
 
+    test('never renders chain-of-thought while a think block is still streaming', async () => {
+      process.env.AI_STREAMING = 'true';
+      const OPEN = '<' + 'think>';
+      const CLOSE = '<' + '/think>';
+      const chunk = (text: string, finish: string | null = null): string =>
+        `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{ index: 0, delta: { content: text }, finish_reason: finish }],
+        })}\n\n`;
+
+      global.fetch = mock(async () => new Response(
+        [
+          chunk(`${OPEN}secret step one `),
+          chunk('secret step two'),
+          chunk(`${CLOSE}Visible answer.`, 'stop'),
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )) as unknown as typeof global.fetch;
+
+      const sent: string[] = [];
+      const edited: string[] = [];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Think then answer',
+        sendMessage: mock(async (text: string) => {
+          sent.push(text);
+          return { id: 'think-key-1' };
+        }),
+        editMessage: mock(async (_key: unknown, text: string) => {
+          edited.push(text);
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      // Nothing is sent while only reasoning has arrived, and no render ever
+      // contains the reasoning text.
+      for (const text of [...sent, ...edited]) {
+        expect(text).not.toContain('secret step');
+        expect(text).not.toContain(OPEN);
+      }
+      expect(sent.length).toBeGreaterThan(0);
+      expect(sent.every(text => text.includes('Visible answer.'))).toBe(true);
+    });
+
     test('finalises a streamed bubble that the progress tracker did not adopt', async () => {
       process.env.AI_STREAMING = 'true';
       const execSearch = mock(async () => 'Search results for bun');

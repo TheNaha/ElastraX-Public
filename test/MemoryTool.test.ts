@@ -308,6 +308,35 @@ describe('MemoryTool semantic dedupe integration', () => {
     expect(await storedMemoryFor(senderId)).toHaveLength(0);
   });
 
+  test('retrieve and forget ignore room knowledge documents that share the owner', async () => {
+    // A group's memory owner is the room key, which also owns the room's
+    // `category='document'` knowledge chunks. Those are not memories and must not
+    // appear in the listing (nor be deletable through `/memory forget`).
+    const roomKey = 'room:whatsapp:group-knowledge';
+    await db.insert(chatRooms).values({
+      id: roomKey,
+      platform: 'whatsapp',
+      language: 'en',
+      longTermMemory: true,
+      created_at: new Date(),
+    }).onConflictDoNothing().run();
+    await db.insert(memories).values([
+      { id: 'group-mem', ownerId: roomKey, content: `${INERT_DATA_MARKER} real memory`, category: 'inert', created_at: new Date(1) },
+      { id: 'group-doc', ownerId: roomKey, content: '[source: faq.md] document chunk', category: 'document', created_at: new Date(2) },
+    ]).run();
+    const ctx = createMockCtx({ senderId: 'someone', isGroup: true, roomKey, chatId: 'group-knowledge' });
+    (ctx.checkPermissions as unknown as ReturnType<typeof mock>).mockImplementation(async () => true);
+
+    const listed = await tool.execute({ action: 'retrieve', scope: 'group' }, ctx);
+    expect(listed).toContain('real memory');
+    expect(listed).not.toContain('document chunk');
+
+    const forgotten = await tool.execute({ action: 'forget', id: 'group-doc', scope: 'group' }, ctx);
+    expect(forgotten).toContain('not found');
+    const rows = await db.select().from(memories).where(eq(memories.ownerId, roomKey));
+    expect(rows.map(row => row.id).sort()).toEqual(['group-doc', 'group-mem']);
+  });
+
   test('forget reports missing memory', async () => {
     const result = await tool.execute({ action: 'forget', id: 'nope' }, createMockCtx({ senderId: nextSender() }));
     expect(result).toBe('❌ Memory ID nope not found.');

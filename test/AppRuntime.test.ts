@@ -286,7 +286,8 @@ describe('AppRuntime', () => {
     await runtime.stop();
   });
 
-  test('drops incoming messages when stopRequested is set', async () => {    const provider = createProvider('whatsapp');
+  test('drops incoming messages when stopRequested is set', async () => {
+    const provider = createProvider('whatsapp');
     let enqueued = false;
     const messageQueue = {
       enqueue: mock(() => { enqueued = true; return true; }),

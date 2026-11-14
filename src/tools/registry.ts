@@ -513,6 +513,11 @@ export function getPluginLoadReports(): readonly PluginLoadReport[] {
 }
 
 async function loadPluginTools(): Promise<BaseTool[]> {
+  // Each load reports only what *that* load saw. Appending to a module-level
+  // array made every `/reload` double the previous entries. Cleared before the
+  // directory check so a vanished plugin directory reports "nothing loaded"
+  // rather than the previous load's results.
+  pluginReports.length = 0;
   const pluginsDir = join(import.meta.dir, '..', 'plugins');
   if (!existsSync(pluginsDir)) {
     // No plugin directory is a normal deployment, not an error. Creating it here
@@ -520,9 +525,6 @@ async function loadPluginTools(): Promise<BaseTool[]> {
     // bot to core tools.
     return [];
   }
-  // Each load reports only what *that* load saw. Appending to a module-level
-  // array made every `/reload` double the previous entries.
-  pluginReports.length = 0;
   // One specifier suffix for the whole load, so every plugin file is evaluated
   // exactly once per reload.
   const importGeneration = ++pluginImportGeneration;
