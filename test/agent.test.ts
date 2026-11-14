@@ -887,6 +887,78 @@ describe('handleIncomingMessage', () => {
       expect(editedMessages.some(e => e.text.includes('✅ [1/1] 🔍 Searching web for "bun"...'))).toBe(true);
     });
 
+    test('finalises a streamed bubble that the progress tracker did not adopt', async () => {
+      process.env.AI_STREAMING = 'true';
+      const execSearch = mock(async () => 'Search results for bun');
+      registerTool(new FakeTool('web_search', execSearch));
+
+      const contentChunk = (text: string): string =>
+        `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+        })}\n\n`;
+      const toolCallChunk = (id: string): string =>
+        `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{
+            index: 0,
+            delta: {
+              tool_calls: [{
+                index: 0,
+                id,
+                type: 'function',
+                function: { name: 'web_search', arguments: '{"query":"bun"}' },
+              }],
+            },
+            finish_reason: null,
+          }],
+        })}\n\ndata: [DONE]\n\n`;
+      const textOnlyChunk = (text: string): string =>
+        `${contentChunk(text)}\n\ndata: [DONE]\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n`;
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        const body = callCount === 1
+          ? `${contentChunk('Checking. ')}${toolCallChunk('call-1')}`
+          : callCount === 2
+            ? `${contentChunk('Still checking. ')}${toolCallChunk('call-2')}`
+            : textOnlyChunk('Bun is fast.');
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }) as unknown as typeof global.fetch;
+
+      const sentMessages: Array<{ text: string; key: { id: string } }> = [];
+      const editedMessages: Array<{ key: unknown; text: string }> = [];
+      let sentKeyCounter = 0;
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Stream two searches',
+        sendMessage: mock(async (text: string) => {
+          const key = { id: `key-${++sentKeyCounter}` };
+          sentMessages.push({ text, key });
+          return key;
+        }),
+        editMessage: mock(async (key: unknown, text: string) => {
+          editedMessages.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(execSearch).toHaveBeenCalled();
+      // The second streamed bubble is not adopted by the tracker (it already owns
+      // the first), so it must be finalised without the cursor.
+      const secondBubble = sentMessages.find(entry => entry.key.id === 'key-2');
+      if (!secondBubble) throw new Error('expected a second streamed bubble');
+      expect(secondBubble.text).toContain('▌');
+      const finalised = editedMessages.find(
+        entry => (entry.key as { id?: string } | null)?.id === 'key-2' && entry.text.includes('Still checking.'),
+      );
+      expect(finalised).toBeDefined();
+      expect(finalised?.text).not.toContain('▌');
+    });
+
     test('delivers the full answer when the final streaming edit fails', async () => {
       process.env.AI_STREAMING = 'true';
       global.fetch = mock(async () => new Response([

@@ -147,10 +147,18 @@ export class ToolProgressTracker {
     );
   }
 
-  adoptMessageKey(key: unknown): void {
-    if (key !== null && key !== undefined && this.statusMessageKey === null) {
-      this.statusMessageKey = key;
-    }
+  /**
+   * Take ownership of a message key so tool-progress updates can edit that
+   * message.
+   *
+   * Returns `true` when the tracker owns the message afterwards. Only the first
+   * key is ever adopted, so a later streamed bubble is not owned and must be
+   * finalised by its sender.
+   */
+  adoptMessageKey(key: unknown): boolean {
+    if (key === null || key === undefined || this.statusMessageKey !== null) return false;
+    this.statusMessageKey = key;
+    return true;
   }
 
   addPlannedSteps(count: number): void {

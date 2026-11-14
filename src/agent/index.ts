@@ -1161,7 +1161,8 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
             if (delta.tool_calls) {
               toolCallAccumulator.consumeDelta(delta.tool_calls);
-              continue;
+              // Do not `continue`: a provider may put text and tool calls in the
+              // same delta, and skipping the content silently dropped that text.
             }
 
             // Accumulate text content
@@ -1201,8 +1202,17 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           // If the stream produced tool calls, we need to process them
           const streamedToolCalls = toolCallAccumulator.finish();
           if (streamedToolCalls.length > 0) {
+            let adopted = false;
             if (sentKey && !streamingFailed) {
-              progressTracker.adoptMessageKey(sentKey);
+              adopted = progressTracker.adoptMessageKey(sentKey);
+            }
+            if (sentKey && !streamingFailed && !adopted) {
+              // The tracker already owns an earlier bubble, so this one is never
+              // edited again — and it still ends in the streaming cursor. Finalise
+              // it here so the user is not left looking at a dangling "▌".
+              await ctx.editMessage!(sentKey, stripThinkTags(accumulated) || '…').catch((err: unknown) => {
+                log.warn({ err: getErrorMessage(err), chatId }, '[Agent] Failed to finalise an intermediate streamed bubble');
+              });
             }
             streamedResponseSent = false;
 
