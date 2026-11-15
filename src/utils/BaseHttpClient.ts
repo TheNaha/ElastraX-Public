@@ -221,7 +221,7 @@ async function readJsonResponse<T>(response: Response, maxBytes: number, service
   if (contentLength) {
     const parsed = Number(contentLength);
     if (Number.isFinite(parsed) && parsed > maxBytes) {
-      throw new HttpClientError('HTTP', response.status ? 'GET' : 'GET', '', 'RESPONSE_TOO_LARGE', `Upstream response exceeds ${maxBytes} bytes.`);
+      throw new HttpClientError(service, method, path, 'RESPONSE_TOO_LARGE', `Upstream response exceeds ${maxBytes} bytes.`);
     }
   }
   if (!response.body) {

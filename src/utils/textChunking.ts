@@ -20,21 +20,21 @@
 export type ChunkMode = 'fixed' | 'boundary';
 
 /**
- * Offset just past the last occurrence of any of `patterns` in `window`, or
- * `window.length` when none occurs.
+ * Length, in code points, of `window` up to and including the last occurrence of
+ * any of `patterns`, or `null` when none occurs.
  *
- * The caller has already narrowed the search to the trailing half of the chunk,
- * so this must not apply a second half-window filter: doing so only accepted a
- * break in the last *quarter* of the chunk and pushed ordinary messages into a
- * hard character split. Advancing past the whole delimiter keeps a two-character
- * paragraph break inside one chunk instead of splitting it across two.
+ * The caller indexes an array of code points (`Array.from(text)`), but
+ * `String.lastIndexOf` answers in UTF-16 units. Returning the raw index mixed the
+ * two scales: any astral character in the window (an emoji, most non-Latin
+ * symbols) shifted the split past the delimiter that was found, cutting a word in
+ * half.
  */
-function lastBreakOffset(window: string, patterns: readonly string[]): number {
+function lastBreakCodePoints(window: string, patterns: readonly string[]): number | null {
   for (const pattern of patterns) {
     const index = window.lastIndexOf(pattern);
-    if (index >= 0) return index + pattern.length;
+    if (index >= 0) return Array.from(window.slice(0, index + pattern.length)).length;
   }
-  return window.length;
+  return null;
 }
 
 /**
@@ -61,10 +61,14 @@ export function chunkTextSmart(
   while (offset < characters.length) {
     let end = Math.min(offset + limit, characters.length);
     if (mode === 'boundary' && end < characters.length) {
+      // The caller has already narrowed the search to the trailing half of the
+      // chunk; this must not apply a second half-window filter, which only
+      // accepted a break in the last quarter of the chunk and pushed ordinary
+      // messages into a hard character split.
       const searchStart = Math.max(offset + Math.floor(limit / 2), offset + 1);
       const boundary = characters.slice(searchStart, end);
-      const breakAt = lastBreakOffset(boundary.join(''), ['\n\n', '\n', ' ']);
-      if (breakAt < boundary.length) {
+      const breakAt = lastBreakCodePoints(boundary.join(''), ['\n\n', '\n', ' ']);
+      if (breakAt !== null && breakAt < boundary.length) {
         end = searchStart + breakAt;
       } else if (end - 1 > offset && characters[end - 1] === '\n' && characters[end] === '\n') {
         // The paragraph break straddles the hard limit, so no delimiter was found

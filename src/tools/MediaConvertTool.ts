@@ -186,12 +186,22 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
 
     if (!ctx.sendMedia) return t(lang, 'convert.not_supported');
 
-    // Resolve media: current message > quoted message > on-demand download
-    const media = await resolveTargetMedia(ctx, {
-      useDownloader: Boolean(ctx.downloadMedia),
-      beforeDownload: () => ctx.react?.('📥'),
-      attachmentId: typeof args.attachment_id === 'string' ? args.attachment_id : undefined,
-    });
+    // Resolve media: current message > quoted message > on-demand download.
+    // Inside the guard: `resolveTargetMedia` throws for an attachment id that no
+    // descriptor matches (`await ctx.mediaReady` can reject as well), and the
+    // model hallucinates `attachment_id` values readily, so it escaped `execute`
+    // as an unhandled tool error instead of a localized message.
+    let media: Awaited<ReturnType<typeof resolveTargetMedia>>;
+    try {
+      media = await resolveTargetMedia(ctx, {
+        useDownloader: Boolean(ctx.downloadMedia),
+        beforeDownload: () => ctx.react?.('📥'),
+        attachmentId: typeof args.attachment_id === 'string' ? args.attachment_id : undefined,
+      });
+    } catch (error: unknown) {
+      log.warn({ err: error, chatId: ctx.chatId }, 'Media conversion could not resolve its source');
+      return t(lang, 'convert.no_media');
+    }
     if (!media) return t(lang, 'convert.no_media');
 
     try {

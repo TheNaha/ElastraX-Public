@@ -16,6 +16,7 @@ import {
   getToolAccess,
   getToolMutability,
   mutatingToolNames,
+  registrationConflict,
   registryReady,
   MUTABILITY_OVERRIDES,
   toolsList,
@@ -125,5 +126,40 @@ describe('mutability', () => {
         inDenyList: expected,
       });
     }
+  });
+});
+
+/**
+ * Admission used to check a candidate's *aliases* against the taken keys but not
+ * its *name*, so a plugin named after an existing alias overwrote that alias:
+ * `/broadcast` then reached the plugin for every user while `OwnerTool` still
+ * advertised it.
+ */
+describe('registrationConflict', () => {
+  const names = new Set(['owner_admin', 'convert_media']);
+  const aliases = new Set(['owner_admin', 'owner', 'broadcast', 'convert_media', 'convert']);
+
+  test('a free name and aliases produce no conflict', () => {
+    expect(registrationConflict({ name: 'weather', aliases: ['cuaca'] }, names, aliases)).toBeNull();
+  });
+
+  test('a duplicate name is rejected', () => {
+    expect(registrationConflict({ name: 'convert_media', aliases: [] }, names, aliases)).toBe('convert_media');
+  });
+
+  test('a name that is an existing alias is rejected', () => {
+    expect(registrationConflict({ name: 'broadcast', aliases: [] }, names, aliases)).toBe('broadcast');
+  });
+
+  test('an alias that is an existing name is rejected', () => {
+    expect(registrationConflict({ name: 'weather', aliases: ['owner_admin'] }, names, aliases)).toBe('owner_admin');
+  });
+
+  test('an alias that is an existing alias is rejected', () => {
+    expect(registrationConflict({ name: 'weather', aliases: ['forecast', 'owner'] }, names, aliases)).toBe('owner');
+  });
+
+  test('matching is case-insensitive', () => {
+    expect(registrationConflict({ name: 'BROADCAST', aliases: [] }, names, aliases)).toBe('broadcast');
   });
 });

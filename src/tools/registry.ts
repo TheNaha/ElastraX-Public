@@ -608,6 +608,29 @@ function buildCoreTools(): BaseTool[] {
   ];
 }
 
+/**
+ * The key a candidate tool would capture from an already admitted one, or `null`.
+ *
+ * Both maps hold names *and* aliases, so a candidate must collide with neither:
+ * a name that matched an existing alias used to overwrite that alias mapping
+ * (`nextAliasMap.set(name, tool)` in the caller), which let a plugin named
+ * `broadcast` answer `/broadcast` for every user while `OwnerTool` kept
+ * advertising the alias.
+ */
+export function registrationConflict(
+  candidate: { name: string; aliases: readonly string[] },
+  admittedNames: ReadonlySet<string>,
+  admittedAliases: ReadonlySet<string>,
+): string | null {
+  const name = candidate.name.toLowerCase();
+  if (admittedNames.has(name) || admittedAliases.has(name)) return name;
+  for (const alias of candidate.aliases) {
+    const normalized = alias.toLowerCase();
+    if (admittedNames.has(normalized) || admittedAliases.has(normalized)) return normalized;
+  }
+  return null;
+}
+
 function applyCandidates(candidates: BaseTool[]): void {
   const nextToolsMap = new Map<string, BaseTool>();
   const nextAliasMap = new Map<string, BaseTool>();
@@ -615,10 +638,6 @@ function applyCandidates(candidates: BaseTool[]): void {
   for (const tool of candidates) {
     const name = tool.name.toLowerCase();
     if (!validCommandKey(name) || !Array.isArray(tool.aliases)) continue;
-    if (nextToolsMap.has(name)) {
-      log.warn({ toolName: tool.name }, 'Duplicate tool name rejected');
-      continue;
-    }
     if (tool.aliases.some((alias) => typeof alias !== 'string')) {
       log.warn({ toolName: tool.name }, 'Tool with invalid alias rejected');
       continue;
@@ -628,9 +647,13 @@ function applyCandidates(candidates: BaseTool[]): void {
       log.warn({ toolName: tool.name }, 'Tool with invalid alias rejected');
       continue;
     }
-    const collision = aliases.find((alias) => nextAliasMap.has(alias));
+    const collision = registrationConflict(
+      { name, aliases },
+      new Set(nextToolsMap.keys()),
+      new Set(nextAliasMap.keys()),
+    );
     if (collision) {
-      log.warn({ toolName: tool.name, alias: collision }, 'Tool alias collision rejected');
+      log.warn({ toolName: tool.name, collision }, 'Tool name or alias collision rejected');
       continue;
     }
     nextToolsMap.set(name, tool);

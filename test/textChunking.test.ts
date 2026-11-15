@@ -79,3 +79,30 @@ describe('chunkTextTelegram', () => {
     for (const chunk of chunks) expect(chunk).toBe(chunk.trimEnd());
   });
 });
+
+describe('chunkTextSmart — code points vs UTF-16 offsets', () => {
+  /**
+   * The window is indexed as an array of code points, but `String.lastIndexOf`
+   * answers in UTF-16 units. An emoji before the delimiter made the two scales
+   * disagree by one per astral character, so the split landed past the break it
+   * had found and cut a word in half.
+   */
+  test('breaks at the delimiter even when an astral character precedes it', () => {
+    const text = `${'😀'.repeat(30)} done\n${'x'.repeat(30)}`;
+    const chunks = chunkTextSmart(text, { mode: 'boundary', limit: 40 });
+
+    // Every chunk stays inside the limit and the first one ends at the newline,
+    // not after it and not in the middle of "done".
+    for (const chunk of chunks) expect(Array.from(chunk).length).toBeLessThanOrEqual(40);
+    expect(chunks[0]!.endsWith('\n')).toBe(true);
+    expect(chunks[0]!.trimEnd().endsWith('done')).toBe(true);
+    expect(chunks.join('')).toBe(text);
+  });
+
+  test('stays lossless and within the limit for emoji-only text', () => {
+    const text = '😀'.repeat(95);
+    const chunks = chunkTextSmart(text, { mode: 'boundary', limit: 20 });
+    for (const chunk of chunks) expect(Array.from(chunk).length).toBeLessThanOrEqual(20);
+    expect(chunks.join('')).toBe(text);
+  });
+});

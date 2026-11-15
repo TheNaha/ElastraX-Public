@@ -226,6 +226,47 @@ describe('DigestService.runDailyDigests', () => {
     const nextDay = dailyDeps({ now: () => new Date('2026-08-27T09:00:00.000Z') });
     expect(await DigestService.runDailyDigests(nextDay)).toBe(1);
   });
+
+  /**
+   * A failed digest releases its marker so the next 60-second poll retries it.
+   * With a *persistent* failure (no sender registered, provider down) that meant
+   * a full summarisation model call every minute for the rest of the day.
+   */
+  test('stops retrying a digest that keeps failing instead of calling the model all day', async () => {
+    process.env.DIGEST_ENABLED = 'true';
+    process.env.DIGEST_ROOMS = 'room-1@g.us';
+    process.env.DIGEST_HOUR_UTC = '8';
+    const at = () => new Date('2026-08-26T23:30:00.000Z');
+    let llmCalls = 0;
+    const failing = () => dailyDeps({
+      now: at,
+      send: async () => {
+        throw new Error('no sender registered for platform "whatsapp"');
+      },
+      callLLM: async () => {
+        llmCalls++;
+        return '• Topic A discussed';
+      },
+    });
+
+    for (let tick = 0; tick < 6; tick++) await DigestService.runDailyDigests(failing());
+
+    // Three attempts, then the marker is kept for the rest of the day.
+    expect(llmCalls).toBe(3);
+  });
+
+  test('prunes digest markers older than the retention window', async () => {
+    process.env.DIGEST_ENABLED = 'true';
+    process.env.DIGEST_ROOMS = 'room-1@g.us';
+    process.env.DIGEST_HOUR_UTC = '8';
+    const ancient = new Date(Date.parse('2026-01-01T00:00:00.000Z'));
+    await db.insert(appKv).values({ id: 'digest:daily:room-old:2026-01-01', value: 'x', updated_at: ancient }).run();
+
+    await DigestService.runDailyDigests(dailyDeps({ now: () => new Date('2026-08-26T23:30:00.000Z') }));
+
+    const remaining = db.select().from(appKv).all().map(row => row.id);
+    expect(remaining).not.toContain('digest:daily:room-old:2026-01-01');
+  });
 });
 
 describe('DigestService.runWeeklyMediaDigest', () => {

@@ -27,7 +27,7 @@
 
 import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
-import { and, desc, eq, gte, inArray, isNull, or } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, like, lt, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { dateKey, nowISO } from './date';
 import { getErrorMessage } from './errorUtils';
@@ -86,6 +86,23 @@ function readDigestConfig(): DigestConfig {
 
 // ── app_kv exactly-once markers ───────────────────────────────────────────────
 
+/**
+ * How many delivery attempts one day's/week's digest gets.
+ *
+ * A failed digest releases its marker so the next 60-second poll retries it, and
+ * a *persistent* failure (no sender for the platform, provider down, Jellyfin
+ * unconfigured) therefore retried a full model call every minute for the rest of
+ * the day — up to ~960 paid summarisation calls per room. After this many
+ * attempts the marker is kept, which parks the digest until the next day.
+ */
+const MAX_DIGEST_ATTEMPTS = 3;
+
+/** In-process attempt counter, keyed by marker id (same shape as `Scheduler`'s). */
+const digestAttempts = new Map<string, number>();
+
+/** Days a digest marker survives in `app_kv`; nothing else ever deletes them. */
+const DIGEST_MARKER_RETENTION_DAYS = 30;
+
 function claimMarker(id: string): boolean {
   const res = db.insert(appKv)
     .values({ id, value: nowISO(), updated_at: new Date() })
@@ -96,6 +113,35 @@ function claimMarker(id: string): boolean {
 
 function releaseMarker(id: string): void {
   db.delete(appKv).where(eq(appKv.id, id)).run();
+}
+
+/** Record a failed attempt; false once the marker has used its whole budget. */
+function mayRetryMarker(id: string): boolean {
+  const attempt = (digestAttempts.get(id) ?? 0) + 1;
+  if (attempt >= MAX_DIGEST_ATTEMPTS) return false;
+  digestAttempts.set(id, attempt);
+  return true;
+}
+
+function forgetMarkerAttempts(id: string): void {
+  digestAttempts.delete(id);
+}
+
+/**
+ * Drop markers older than {@link DIGEST_MARKER_RETENTION_DAYS}.
+ *
+ * `claimMarker` inserts one `app_kv` row per room per day and one per week, and
+ * neither `src/db/retention.ts` nor anything else covers the table, so every
+ * room accumulated ~365 permanent rows a year.
+ */
+function pruneDigestMarkers(now: Date): number {
+  const cutoff = new Date(now.getTime() - DIGEST_MARKER_RETENTION_DAYS * 86_400_000);
+  const result = db.delete(appKv)
+    .where(and(like(appKv.id, 'digest:%'), lt(appKv.updated_at, cutoff)))
+    .run() as unknown as { changes?: number };
+  const removed = Number(result?.changes ?? 0);
+  if (removed > 0) log.debug({ removed }, '[DigestService] Pruned old digest markers');
+  return removed;
 }
 
 /** UTC date key (YYYY-MM-DD) for daily markers. Delegated to {@link dateKey} in `./date`. */
@@ -371,6 +417,7 @@ export class DigestService {
     if (!cfg.enabled || cfg.rooms.length === 0) return 0;
     const now = deps?.now?.() ?? new Date();
     if (now.getUTCHours() < cfg.hourUtc) return 0;
+    pruneDigestMarkers(now);
 
     let sent = 0;
     for (const configuredRoom of cfg.rooms) {
@@ -396,10 +443,19 @@ export class DigestService {
         const text = `${t(lang, 'digest.header', { hours: String(cfg.lookbackHours) })}\n\n${result.text}`;
         await this.deliver(room.platform, room.remoteRoomId, text, deps);
         sent++;
+        forgetMarkerAttempts(marker);
         log.info({ roomKey: room.roomKey, roomId: room.remoteRoomId, messages: result.messageCount }, '[DigestService] Daily digest delivered');
       } catch (err) {
-        releaseMarker(marker);
-        log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Daily digest failed — will retry');
+        if (mayRetryMarker(marker)) {
+          releaseMarker(marker);
+          log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Daily digest failed — will retry');
+        } else {
+          forgetMarkerAttempts(marker);
+          log.error(
+            { err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId },
+            '[DigestService] Daily digest failed repeatedly; keeping the marker so it is not retried until tomorrow',
+          );
+        }
       }
     }
     return sent;
@@ -450,10 +506,19 @@ export class DigestService {
         }
         await this.deliver(room.platform, room.remoteRoomId, text, deps);
         sent++;
+        forgetMarkerAttempts(marker);
         log.info({ roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest delivered');
       } catch (err) {
-        releaseMarker(marker);
-        log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest failed — will retry');
+        if (mayRetryMarker(marker)) {
+          releaseMarker(marker);
+          log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest failed — will retry');
+        } else {
+          forgetMarkerAttempts(marker);
+          log.error(
+            { err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId },
+            '[DigestService] Weekly media digest failed repeatedly; keeping the marker so it is not retried this week',
+          );
+        }
       }
     }
     return sent;

@@ -13,10 +13,17 @@ const ALLOWED_FLAGS = new Set([
   '-vcodec', '-acodec', '-vn', '-an', '-q:a', '-movflags',
   '-vf', '-loop', '-ss', '-t', '-preset', '-fps_mode',
   '-vframes', '-lossless', '-quality', '-y',
+  // `MediaConvertTool` builds these for its documented `quality` and `resolution`
+  // parameters. They were missing here, so `quality=23` (CRF), `quality=128k`
+  // (audio bitrate), `preset=medium` and `resolution=720p` (`scale=-2:720`) each
+  // failed validation and surfaced as a generic "convert.error".
+  '-crf', '-b:a',
 ]);
 const ALLOWED_VALUES = new Set([
   'libmp3lame', 'libvorbis', 'aac', 'libopus', 'pcm_s16le', 'libx264', 'faststart',
   'libvpx-vp9', 'copy', 'fps=10,scale=320:-1:flags=lanczos', '0', '1', '2', '80', 'libwebp',
+  // x264/x265 encoder presets, the only values `MediaConvertTool` forwards.
+  'ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow',
 ]);
 
 /**
@@ -125,11 +132,24 @@ function validateArguments(args: string[]): void {
       && !ALLOWED_VALUES.has(arg)
       && !STICKER_ARG_VALUES.has(arg)
       && arg !== STICKER_WEBP_FILTER
-      && !/^scale=\d{1,4}:\d{1,4}$/.test(arg)
+      // `MediaConvertTool` joins its filters with ',', so `-vf` may receive a
+      // chain such as `scale=1280:720,fps=30`. Each segment has to be one of the
+      // two shapes the tool actually emits.
+      && !isAllowedFilterChain(arg)
+      // CRF (0-63) and audio bitrates ("128", "128k").
+      && !/^\d{1,5}[kKmM]?$/.test(arg)
       && !/^fps=\d{1,3}(?:,\d{1,4}:\d{1,4})?$/.test(arg)) {
       throw new Error(`Unsafe or unsupported FFmpeg value detected: ${arg}`);
     }
   }
+}
+
+/** One `-vf` value: a comma-separated chain of scale/fps segments. */
+function isAllowedFilterChain(value: string): boolean {
+  const segments = value.split(',');
+  return segments.every(segment =>
+    /^scale=-?\d{1,4}:\d{1,4}$/.test(segment) || /^fps=\d{1,3}$/.test(segment),
+  );
 }
 
 function normalizeOutputLimit(value?: number): number {
