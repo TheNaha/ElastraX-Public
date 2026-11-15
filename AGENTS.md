@@ -20,7 +20,7 @@ Bun 1.3.14 TypeScript bot (WhatsApp/Baileys, Discord, Telegram) with an LLM tool
 
 ## Database / migrations
 
-- Edit `src/db/schema.ts`, then run `bun run db:generate`. Never use `db:push` (it is disabled). `db:migrate` takes a backup first. The app also migrates itself on startup (`ensureDatabaseSchema`).
+- Edit `src/db/schema.ts`, then run `bun run db:generate`. Never use `db:push` (it is disabled). `db:migrate` applies pending migrations but does **not** take a backup first — run `bun run db:backup` before it. The app also migrates itself on startup (`ensureDatabaseSchema`).
 - `drizzle/migrations/meta/_journal.json` uses small sequential integers for `when` (1..N), not timestamps. `src/db/migrations.ts` validates these values and hardcodes some of them (`ROOM_KEY_MIGRATION_WHEN` and a checksum allowance keyed by journal position). Applied migrations are hash-checked, so never edit a shipped `.sql` file. After `drizzle-kit generate`, rename the new file and its journal tag to the next `00NN_` number, set `when` to the next integer, and make sure a matching `meta/00NN_snapshot.json` exists. Snapshots are missing for some old migrations, and drizzle-kit diffs against the newest snapshot.
 - The SQLite driver is `bun:sqlite`. `bunfig.toml` sets `peer = false` so `better-sqlite3` is not installed; don't add it.
 - Durable room references use the canonical `room:<platform>:<id>` key (`ctx.roomKey`). `ctx.chatId` is the raw provider ID and is used only for provider I/O. See `docs/room-identity-migration.md`.

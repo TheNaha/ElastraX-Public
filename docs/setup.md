@@ -14,7 +14,7 @@ Use `bun.lock` for all dependency operations. Do not mix npm or another package 
 bun install --frozen-lockfile
 ```
 
-FFmpeg and yt-dlp are optional for text-only local operation and required for media features. The container supplies pinned, checksum-verified copies automatically.
+FFmpeg and yt-dlp are optional for text-only local operation and required for media features. The container supplies pinned copies automatically (FFmpeg is checksum-verified; yt-dlp is pinned by version).
 
 ## 2. Configure the environment
 

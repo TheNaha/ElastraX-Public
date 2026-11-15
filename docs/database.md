@@ -32,7 +32,7 @@ The default handle is a singleton exposed as `db` (Drizzle client) and `sqlite` 
 
 - Edit `src/db/schema.ts`, then run `bun run db:generate` (drizzle-kit).
 - `db:push` is disabled (`package.json` script prints an error and exits 1).
-- `db:migrate` runs `scripts/dbBackup.ts migrate`: backs up first, then applies forward migrations.
+- `db:migrate` runs `scripts/dbBackup.ts migrate`, which calls `ensureDatabaseSchema` (back it up yourself first with `db:backup`; the script does not do it).
 - After `drizzle-kit generate`, rename the new file and its journal tag to the next `00NN_` number, set `when` to the next integer, and ensure a matching `meta/00NN_snapshot.json` exists.
 - `drizzle/migrations/meta/_journal.json` uses small sequential integers for `when` (1..N), not timestamps. `src/db/migrations.ts` validates these values and hardcodes some (`ROOM_KEY_MIGRATION_WHEN` and a checksum allowance keyed by journal position).
 - Applied migrations are hash-checked; never edit a shipped `.sql` file.
@@ -42,14 +42,14 @@ Snapshots are missing for some old migrations, and drizzle-kit diffs against the
 
 ## Retention
 
-`src/db/retention.ts` deletes terminal inbox/outbox rows, terminal deliveries, sent reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention runs on startup and every 24 h via AppRuntime, and overlaps with the hourly outbox prune; deletes are idempotent.
+`src/db/retention.ts` deletes terminal and stale inbox/outbox rows, sent one-off reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. Independently of those knobs, it clears `messages.raw_message`, `media_path`, and `mime_type` for rows older than 7 days. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention runs on startup and every 24 h via AppRuntime (only when a durable messaging store is present), and overlaps with the hourly outbox prune; deletes are idempotent.
 
 | Knob | Default | Purpose |
 |---|---|---|
 | `RETENTION_DRY_RUN` | `true` | Dry-run unless `false`. |
 | `RETENTION_MESSAGES_DAYS` | `180` | Delete messages older than this. |
 | `RETENTION_MESSAGE_GRACE_DAYS` | `30` | Grace period added to message retention. |
-| `RETENTION_TERMINAL_DELIVERY_DAYS` | `90` | Terminal delivery record retention. |
+| `RETENTION_TERMINAL_DELIVERY_DAYS` | `90` | Terminal **and stale** inbox/outbox row retention. |
 | `RETENTION_SENT_REMINDER_DAYS` | `90` | Sent reminder retention. |
 | `RETENTION_FLOW_SESSION_DAYS` | `30` | Flow session retention. |
 | `RETENTION_BATCH_SIZE` | `500` | Deletion batch size. |
@@ -68,7 +68,7 @@ Snapshots are missing for some old migrations, and drizzle-kit diffs against the
 | `bun run db:generate` | drizzle-kit | Generate a migration from `src/db/schema.ts`. Must leave no uncommitted drift. |
 | `bun run db:check` | drizzle-kit | Validate migration journal/snapshots. |
 | `bun run db:studio` | drizzle-kit | Open Drizzle Studio against the configured database (local dev only). |
-| `bun run db:migrate` | `scripts/dbBackup.ts migrate` | Apply forward migrations after a backup. |
+| `bun run db:migrate` | `scripts/dbBackup.ts migrate` | Apply pending forward migrations via `ensureDatabaseSchema`. Does not back up first; run `db:backup` before it. |
 | `bun run db:preflight` | `scripts/dbBackup.ts preflight` | Validate a restored copy before migration. |
 | `bun run db:backup` | `scripts/dbBackup.ts backup` | Write a consistent `VACUUM INTO` snapshot. |
 | `bun run db:restore` | `scripts/dbBackup.ts restore` | Restore from a backup (validates integrity/foreign keys/schema version). |

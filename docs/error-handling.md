@@ -26,6 +26,7 @@ ElastraX uses typed errors with codes and retryability flags. Startup validation
 | `WebhookRequestError` | `src/webhooks/utils.ts` | carries an HTTP status; server maps it to the response status | — |
 | `HttpClientError` | `src/utils/BaseHttpClient.ts` | `INVALID_URL`, `INVALID_PROTOCOL`, `TIMEOUT`, `NETWORK_ERROR`, `HTTP_ERROR`, `INVALID_RESPONSE`, `RESPONSE_TOO_LARGE`; carries `service`, `status`, `retryable` | `true` for timeouts, network failures, `429`, and `5xx` |
 | `TurnBudgetExceededError` | `src/ai/turnBudget.ts` | — | reported back to the model as a tool result; the turn still finishes |
+| `TimeoutError` | `src/utils/withTimeout.ts` | `TIMEOUT` | carries a label and the timeout; the wrapped operation is aborted when it accepts a signal |
 | `FlowVersionConflictError` | `src/core/FlowHandler.ts` | raised when a stale flow writer loses the version race | — |
 | `ScheduledTaskCapabilityError` | `src/runtime/AppRuntime.ts` | raised when a scheduled agent task reaches for a denied capability | — |
 | `ReadOnlyViolationError` | `scripts/ciDiagnostics.ts` | raised when a non-allowlisted `gh` command is attempted | — |
@@ -39,7 +40,15 @@ Provider failures surface as `ProviderError` subclasses. WhatsApp reconnect poli
 
 ## Inbox / Outbox dead-lettering
 
-Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan (24 h lease). Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`).
+Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan (24 h lease). Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`). Note that the inbox `failed` state is terminal in practice: no worker currently selects a failed inbox row for a re-run, so a rethrow from the agent is recorded but never retried.
+
+## Message-handling failures
+
+`handleIncomingMessage` (`src/agent/index.ts`) wraps every phase before the AI call — room lookup, role resolution, flow interception and slash routing. If one throws, the handler logs with `(pre-reply)`, records `healthMetrics.recordMessageError()`, reacts ❌, replies with the translated `agent.internal_error` string, and **rethrows**. The rethrow is deliberate: swallowing it made the caller mark the inbox row `completed`, so a transient failure (busy database, a room-config read) was acknowledged and could never be retried. The AI phase is caught inside the handler and produces its own user-facing error instead.
+
+## Timeouts
+
+`withTimeout` / `withCancellableTimeout` (`src/utils/withTimeout.ts`) race an operation against `TimeoutError`. Both settle the returned promise **before** invoking `onTimeout` and the abort controller, so a throwing abort listener cannot leave the caller awaiting a promise that never resolves. `withCancellableTimeout` passes the generated signal to the operation, so an HTTP client or child process is actually cancelled rather than merely ignored. `timeoutSignal(ms)` is the shared, `unref`'d alternative for `fetch` calls that only need a signal.
 
 ## Webhook errors
 

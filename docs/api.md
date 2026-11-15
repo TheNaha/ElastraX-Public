@@ -19,9 +19,9 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
 | `POST` | `/admin/api/logout` | End the session |
 | `GET` | `/admin/api/*` | Dashboard views (overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, …) |
-| `POST` | `/admin/api/action/*` | Dashboard actions (registry reload, outbox retry, delete knowledge, retention report) |
+| `POST` | `/admin/api/action/*` | Dashboard actions: `reload-registry`, `retry-outbox`, `delete-knowledge`, `retention-report` |
 
-All other paths return `404`. On the webhook routes a known path with the wrong method returns `405` and an `Allow` header. Every POST route requires `Content-Type: application/json`; other media types return `415`.
+All other paths return `404`. On the webhook routes a known path with the wrong method returns `405` and an `Allow` header. Webhook POST routes require `Content-Type: application/json`; other media types return `415`. Admin POST routes instead require the body to parse as a JSON object (no content-type gate) and enforce their own size caps.
 
 Inbound payloads are normalised by adapters: GitHub (HMAC + `X-GitHub-Delivery` replay key), Seerr and Jellyfin (media routes with their own secrets), Grafana (`X-Grafana-Origin`), Apprise, and a generic fallback. All adapters run over the already-sanitised body.
 
@@ -137,7 +137,7 @@ A rejected enqueue returns `503`; the server never fabricates durability or fall
 
 ## Operational endpoints
 
-`/health` and `/live` expose only process liveness. `/ready` returns `200 {"status":"ready"}` by default for compatibility. Integrations can register bounded readiness checks with `WebhookServer.registerReadinessCheck()`; any false, failed, or timed-out check produces a detail-free `503`.
+`/health` and `/live` expose only process liveness. `/ready` returns `200 {"status":"ready","version":"8.0.1","releaseTag":"v8.0.1"}` by default for compatibility. Integrations can register bounded readiness checks with `WebhookServer.registerReadinessCheck()`; any false, failed, or timed-out check produces `503 {"status":"not_ready","version":…,"releaseTag":…}` with no failure detail. Admin request bodies are capped separately (`4 KiB` for login, `64 KiB` for actions) and login is throttled per IP — see [admin-dashboard.md](./admin-dashboard.md).
 
 Set `METRICS_AUTH_TOKEN` to enable `/metrics`. Without it the route is hidden with `404`. With it, send `Authorization: Bearer <token>` or `X-Metrics-Token`. Query-string metrics authentication is not supported.
 

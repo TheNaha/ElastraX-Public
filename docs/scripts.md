@@ -9,7 +9,7 @@ All scripts run with Bun. Most are invoked via `package.json` scripts; some are 
 | `bun run db:generate` | drizzle-kit | Generate a migration from `src/db/schema.ts`. Must leave no uncommitted drift. |
 | `bun run db:check` | drizzle-kit | Validate migration journal/snapshots. |
 | `bun run db:studio` | drizzle-kit | Open Drizzle Studio against the configured database (local dev only). |
-| `bun run db:migrate` | `scripts/dbBackup.ts migrate` | Apply forward migrations after a backup. |
+| `bun run db:migrate` | `scripts/dbBackup.ts migrate` | Apply pending forward migrations via `ensureDatabaseSchema`. Does not back up first; run `db:backup` before it. |
 | `bun run db:preflight` | `scripts/dbBackup.ts preflight` | Validate a restored copy before migration. |
 | `bun run db:backup` | `scripts/dbBackup.ts backup` | Write a consistent `VACUUM INTO` snapshot. |
 | `bun run db:restore` | `scripts/dbBackup.ts restore` | Restore from a backup (validates integrity/foreign keys/schema version). |

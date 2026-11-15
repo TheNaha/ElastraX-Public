@@ -186,7 +186,7 @@ docker run --rm --tmpfs /tmp:rw,noexec,nosuid,size=64m \
 ```
 
 2. The five policy knobs (`RETENTION_MESSAGES_DAYS` 180, `RETENTION_MESSAGE_GRACE_DAYS` 30, `RETENTION_SENT_REMINDER_DAYS` 90, `RETENTION_TERMINAL_DELIVERY_DAYS` 90, `RETENTION_FLOW_SESSION_DAYS` 30) must be identical for the old and new image. Differing values mean the rollback image would apply different deletion windows to the same rows.
-3. Retention deletes messages, reminders, inbox/outbox rows, terminal deliveries, and flow sessions. A rollback to an image that expects columns retention removed must be rejected in preflight: the restore/contract validation covers this, which is why preflight and a scratch restore are mandatory.
+3. Retention deletes messages, sent reminders, inbox/outbox rows (terminal and stale), and flow sessions, and clears raw message payloads after 7 days. A rollback to an image that expects columns retention removed must be rejected in preflight: the restore/contract validation covers this, which is why preflight and a scratch restore are mandatory.
 4. Compare dry-run output before and after the canary. A sudden change in any count between the two digests is a retention-compatibility failure: stop and investigate before proceeding.
 5. `dryRun` defaults to true. Applying retention against a live bot without a verified backup and a stopped deployment is prohibited.
 

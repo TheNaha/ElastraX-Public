@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit:** `5694063` (documentation pass 2026-11-14)
-**Date:** 2026-11-14
+**Recorded Commit:** `577f7db` (documentation pass 2026-11-15; code through the 2026-11-15 maintenance pass)
+**Date:** 2026-11-15
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -33,7 +33,7 @@ ElastraX/
 │   │   ├── MessageContext.ts    # Normalized platform-agnostic message context
 │   │   ├── FlowHandler.ts       # Interactive multi-step state machine in SQLite
 │   │   ├── platforms.ts         # Supported platform identifiers and helpers
-│   │   ├── roleAccess.ts        # Role hierarchy and permission checker
+│   │   ├── roleAccess.ts        # Role satisfaction rule (exact role; owner universal)
 │   │   ├── roomKeyFormat.ts     # Canonical room:<platform>:<id> format (only definition)
 │   │   ├── constants.ts         # Shared constants (flow cancel commands, limits)
 │   │   └── prompts.ts           # Default system prompt
@@ -127,7 +127,7 @@ ElastraX/
 - Built-in tools extend `BaseTool`.
 - Dynamic tools in `src/plugins/` must export a `pluginManifest`.
 - The loader validates that plugin tool actions are explicitly covered by the manifest's declared permissions before registering.
-- Roles (`admin`, `moderator`, `user`) restrict mutating or administrative tools.
+- Roles (`user`, `premium`, `admin`, `owner`) restrict mutating or administrative tools. A check needs the exact role; `owner` satisfies every role and `user` is implicit.
 
 ### Database & Migrations
 - SQLite accessed via Bun's native driver (`bun:sqlite`), wrapped by Drizzle ORM.

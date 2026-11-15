@@ -26,7 +26,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | **Make Sticker** | `/sticker` | Converts attached/quoted images, videos, and GIFs into WhatsApp WebP stickers using `node-webpmux` and `ffmpeg`. |
 | **Media Convert** | `/convert` | Converts audio and video formats using `ffmpeg` (e.g., `.ogg` to `.mp3`, or `.mkv` to `.mp4`). |
 | **Transcribe** | `/transcribe`| Transcribes Voice Notes and audio files using a configured Whisper endpoint. |
-| **Speak** | `/speak` | Sends a reply as a voice note via text-to-speech (opt-in: registered only when `TTS_API_KEY` is set). |
+| **Speak** | `/speak` | Sends a reply as a voice note via text-to-speech (opt-in: registered only when TTS is configured — `TTS_API_KEY`, plus `TTS_VOICE` for ElevenLabs). |
 
 ## Admin & Configuration
 
@@ -51,14 +51,14 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | Tool | Alias | Description |
 |------|-------|-------------|
 | **Menu** | `/menu`, `/help` | Lists available commands grouped by category. |
-| **Find Tools** | `/findtools` | Asks the LLM to discover and lazily load tools matching a description. |
+| **Find Tools** | `/find_tools` | Asks the LLM to discover and lazily load tools matching a description. There is no short alias: `/findtools` does not resolve. |
 | **Get ID** | `/id` | Shows the current chat/user JID (useful for wiring webhooks and roles). |
 | **Language** | `/language` | Switches reply language (`en`/`id`) per chat. |
 | **Delete Message** | `/del` | Deletes a quoted bot message (WhatsApp) or the quoted message (Discord). |
 | **Menfess** | `/menfess` | Anonymous confession relay to configured target chats. |
 | **Game Search** | — | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
 | **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
-| **Reload Plugins** | `/reload` | Owner-only: hot-reloads plugin tools from `src/plugins/` (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
+| **Reload Plugins** | `/reload` | Owner-only: reloads the tool registry and re-evaluates plugin files from `src/plugins/` so edited code takes effect (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
 | **Owner Admin** | `/owner`, `/broadcast`, `/leave`, `/botleave`, `/pinout` | Owner-only: broadcast to all chats, leave a group, `system_info` (memory/uptime/room count), and `pinout` (log inventory under `LOG_ROOT`). |
 
 ## Execution model
@@ -67,9 +67,9 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 - `TOOL_LOADING_MODE` is `search` (default) or `all`. In `search` mode only always-loaded tools plus triggered ones are sent to the model; the rest are discoverable through `find_tools`.
 - Opt-in tools (`GameSearchTool`, `SoftwareSearchTool`, `SpeakTool`) are not registered at all unless their own flag (`ENABLE_GAME_SEARCH`, `ENABLE_SOFTWARE_SEARCH`, `TTS_API_KEY`) is set; their slash command then reads as an unknown command rather than advertising an undeliverable feature.
 - Mutating tools pass an admission check: a per-user/per-tool cost budget over 60 s (`TOOL_MUTATION_COST_LIMIT`, default 100) and per-user serialization of mutating calls.
-- Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`.
+- Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`, which re-evaluates edited plugin files.
 - Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.
-- While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
+- While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (⏳/✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
 
 ## Tool metadata reference
 
@@ -79,7 +79,7 @@ Mutating (non-`read`) tools and their overrides (`src/tools/registry.ts`, `MUTAB
 
 | Tool | Mutability | Notes |
 |---|---|---|
-| `owner_admin` | `admin` | `/broadcast`, `/leave` — owner only, group-only aliases. |
+| `owner_admin` | `admin` | `/owner`, `/broadcast`, `/leave`, `/botleave`, `/pinout` — owner only; `leave`/`botleave` are group-only. |
 | `config` | `admin` | `/config set`/`reset` — admin only. |
 | `language` | `local-write` | `/language set`/`reset` — admin only. |
 | `reminder` | `local-write` | `/remind` — local state write. |
@@ -88,6 +88,8 @@ Mutating (non-`read`) tools and their overrides (`src/tools/registry.ts`, `MUTAB
 | `convert_media` | `local-write` | `/convert` — writes converted files. |
 | `groupadmin` | `external-mutation` | `/kick`, `/promote`, etc. — mutates provider group state. |
 | `knowledge` | `local-write` | `/kb` — persists room documents. |
+| `memory` | `local-write` | `/memory` — writes long-term user/room facts. |
+| `role` | `admin` | `/role grant`/`revoke`/`setpriv` — changes role grants and privilege overrides. |
 | `media_account` | `external-mutation` | `/connect` — links media-service accounts. |
 | `media_request` | `external-mutation` | `/request` — submits Seerr/Jellyfin requests. |
 | `menfess` | `external-mutation` | `/menfess` — relays messages to targets. |
@@ -102,7 +104,7 @@ All other built-in tools default to `read` mutability unless their own `metadata
 |---|---|---|
 | `GameSearchTool` | `ENABLE_GAME_SEARCH=true` | `true` |
 | `SoftwareSearchTool` | `ENABLE_SOFTWARE_SEARCH=true` | `true` |
-| `SpeakTool` | `TTS_API_KEY` set | key present (and `TTS_PROVIDER`/`TTS_BASE_URL`/`TTS_MODEL`/`TTS_VOICE`/`TTS_MAX_CHARS`/`TTS_TIMEOUT_MS` configured) |
+| `SpeakTool` | `TTS_API_KEY` set | key present (`isTtsConfigured`: key + base URL, plus `TTS_VOICE` for ElevenLabs) |
 
 Unset → tool absent from `/menu`, absent from the model's tool list, and its slash command reads as "unknown command".
 
@@ -112,4 +114,4 @@ Media tools (`media_search`, `media_request`, `media_library`) declare `requires
 
 ### Per-tool parameters
 
-Each tool's JSON Schema parameter definition lives in its own file under `src/tools/` (the `definition` getter on `BaseTool`). Parameters are validated server-side by `validateToolArguments` regardless of what the model is told; `additionalProperties` is closed to prevent injection. Inspect live definitions via `/findtools` or the admin dashboard Tools view.
+Each tool's JSON Schema parameter definition lives in its own file under `src/tools/` (the `definition` getter on `BaseTool`). Parameters are validated server-side by `validateToolArguments` regardless of what the model is told; `additionalProperties` is closed to prevent injection. Inspect live definitions via `/find_tools` or the admin dashboard Tools view.

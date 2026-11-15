@@ -29,14 +29,17 @@ export const pluginManifest = {
 };
 ```
 
-`admitPluginManifest` compares the manifest's declared permissions against `PLUGIN_ALLOWED_PERMISSIONS` (env var, comma-separated; default `user,premium`). A permission not in the allowed set causes refusal.
+`admitPluginManifest` compares the manifest's declared permissions against `PLUGIN_ALLOWED_PERMISSIONS` (env var, comma-separated; default `user,premium`). A permission above the highest allowed level causes refusal.
 
 ## Permissions
 
-Levels are ordered: `user` < `premium` < `admin` < `owner`. `owner` satisfies every level.
+Two different rules apply here, and they are easy to confuse:
+
+- **Runtime permission check** (`roleSatisfies` in `src/core/roleAccess.ts`): the sender must hold the **exact** role. `user` is implicit for everyone and `owner` satisfies every check, but `premium` does not imply `admin`. The roles are independent grants, not a ladder.
+- **Plugin admission allowlist** (`resolveAllowedPluginPermissions` in `src/plugins/manifest.ts`): a ceiling. The highest level listed — or `user`, `premium` when the variable is unset — becomes the maximum a plugin may declare, and every lower level is admitted with it. So `PLUGIN_ALLOWED_PERMISSIONS=admin` admits `user`, `premium` and `admin` plugins; a plugin declaring `owner` needs `owner` in the list.
 
 - `PLUGIN_ALLOWED_PERMISSIONS` defaults to `user,premium` when unset.
-- A plugin declaring `admin` or `owner` permissions requires those values in `PLUGIN_ALLOWED_PERMISSIONS`.
+- Unknown values in the list are ignored; an empty or entirely unknown list falls back to the default.
 
 ## Reloading plugins
 
@@ -47,7 +50,7 @@ PLUGIN_ALLOWED_PERMISSIONS=owner
 ENABLE_PLUGIN_RELOAD=true
 ```
 
-Then `/reload` hot-reloads plugin tools from `src/plugins/`. The reload is serialized through `reloadRegistry()` (a promise chain so concurrent reloads don't race).
+Then `/reload` reloads the tool registry from `src/plugins/`. Each load imports every plugin with a fresh cache-busting specifier, so an **edited** plugin file is re-evaluated rather than served from the module cache; load reports are replaced per load instead of appended. The reload is serialized through `reloadRegistry()` (a promise chain so concurrent reloads don't race), and the admin dashboard's `reload-registry` action uses the same path.
 
 ## Bundled plugins
 

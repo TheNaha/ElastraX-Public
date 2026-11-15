@@ -11,12 +11,14 @@ ElastraX runs several long-lived services and timers inside the single bot proce
 | Scheduler | `src/utils/Scheduler.ts` | Cron/countdown reminders from the `reminders` table; drives scheduled agent tasks (`/task ` marker). Polls every 30 s. |
 | DigestService | `src/utils/DigestService.ts` | Nightly per-room conversation summaries + weekly Jellyfin "new media" rollup; exactly-once delivery via `app_kv` markers. Polls every 60 s. |
 | HealthMonitor | `src/utils/HealthMonitor.ts` | Pings Jellyfin, Seerr, each configured LLM provider, and yt-dlp every 60 s; records service health in `HealthMetrics`. |
-| InboxService | `src/messaging/InboxService.ts` | At-least-once inbound deduplication: admits provider events into `message_inbox`, dedupes by `platform:event_key`, leases rows for 120 s, dead-letters after 5 attempts. |
+| InboxService | `src/messaging/InboxService.ts` | At-least-once inbound deduplication: admits provider events into `message_inbox`, dedupes by `platform:event_key`, leases rows for 120 s, dead-letters after 5 attempts. `recoverStranded` fails never-claimed rows and re-queues expired-lease `processing` rows. |
 | OutboxService | `src/messaging/OutboxService.ts` | Durable outbound delivery: enqueues replies/reminders/webhook messages, claims and delivers with retries and exponential backoff, dead-letters after 5 attempts. |
 | MediaService | `src/utils/MediaService.ts` | Jellyfin client for media rollups and watch links. |
 | NotificationSubscriptionService | `src/utils/NotificationSubscriptionService.ts` | Room-level notification subscriptions (seerr/jellyfin, notify types). |
 | ConfigService | `src/utils/ConfigService.ts` | Per-room resolved config: system prompt, context limit, temperature, allow tools, auto-reply-all, summarize, long-term memory. |
 | AuthService | `src/utils/AuthService.ts` | Role and privilege resolution for senders; merges DB roles with role defaults. |
+| IdentityService | `src/utils/IdentityService.ts` | Canonical user identity: LID/pn alias resolution and merge of a legacy identity into the canonical one. |
+| ServiceBindingService | `src/utils/ServiceBindingService.ts` | CRUD for external account bindings (Jellyfin, Seerr) used by the binding-gated media tools. |
 | EmbeddingService | `src/utils/EmbeddingService.ts` | Semantic memory embeddings and near-duplicate suppression (OpenAI-compatible embeddings endpoint). |
 | MediaCleanup | `src/utils/MediaCleanup.ts` | Deletes cached media files older than `MEDIA_RETENTION_HOURS`; runs on startup and every `MEDIA_CLEANUP_INTERVAL_MS`. |
 | RateLimiter | `src/utils/RateLimiter.ts` | Token-bucket rate limiting per sender/platform; pruned every 10 minutes. |
@@ -29,7 +31,7 @@ ElastraX runs several long-lived services and timers inside the single bot proce
 1. Wait for the tool registry (`registryReady`) so slash commands and LLM tool lookups never hit an empty registry.
 2. Register all flow processors via `safeRegisterFlows()`.
 3. Register `onMessage` handlers on every provider.
-4. Start all providers via `Promise.allSettled`. A provider that fails to start is logged and skipped (degraded mode); a provider that connects asynchronously (WhatsApp reports `running` only from its socket `open` handler) is still included in `activeProviders` so late-connecting providers receive traffic.
+4. Start all providers via `Promise.allSettled`. A provider that fails to start is logged and skipped (degraded mode). Admission to `activeProviders` is based on `start()` *resolving*, not on `isOperational`: WhatsApp only reports `running` from its socket `open` handler, which fires after `start()` returns. A provider whose `start()` rejected while it scheduled its own reconnect is not in that boot snapshot; `reconcileProviderAdmission()` wires its senders (and appends it to `activeProviders`) as soon as it becomes operational, and runs on every outbox tick and webhook enqueue. `operationalProviders()` reads `isOperational` live across the full provider list, so the delivery lanes self-heal without a restart.
 5. Register the admin dashboard handler, provider senders, scheduled tasks, webhook readiness check, and (if present) the durable outbox enqueuer.
 6. Start the webhook server (`Bun.serve`), the scheduler (30 s poll), the digest service (60 s poll), and the health monitor (60 s pings).
 7. Start background timers (see below).
@@ -46,7 +48,7 @@ ElastraX runs several long-lived services and timers inside the single bot proce
 | Inbox recovery | 1 h | `InboxService.recoverStranded` (24 h lease) re-claims `received`/expired-lease rows |
 | Flow-session TTL prune | 1 h | `FlowHandler.pruneAllExpired` (24 h local TTL) |
 | Media cleanup | startup + `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h) | `MediaCleanup.pruneOldFiles` deletes files older than `MEDIA_RETENTION_HOURS` |
-| Retention maintenance | startup + 24 h | `runRetentionMaintenance` (dry-run unless `RETENTION_DRY_RUN=false`) |
+| Retention maintenance | startup + 24 h (durable store only) | `runRetentionMaintenance` (dry-run unless `RETENTION_DRY_RUN=false`) |
 | Startup coverage scan | once, 5 s after boot | `runStartupCoverageScan` (non-fatal; only wired when `runStartupCoverageScan` is passed) |
 | Scheduler | 30 s | `Scheduler.processReminders` |
 | Digest service | 60 s | `DigestService.processDue` |
@@ -66,7 +68,7 @@ Configuration knobs live in `.env.example` and are summarized in `docs/configura
 
 Both services use SQLite row-level leasing (`LEASE_MS = 120_000`) and `MAX_ATTEMPTS = 5`:
 
-- **Inbox**: `admit(ctx)` inserts a row keyed by `platform:event_key` (SHA-256 of `platform + chatId + messageId`). Replays of the same event return `accepted: false, reason: 'completed'` and log `Provider event already completed`. A claimed row is processed; on success it is marked `completed`, on failure `fail` increments attempts and retries with exponential backoff, dead-lettering after 5 attempts. `recoverStranded(24 h)` re-claims rows stuck in `received` or with an expired lease.
+- **Inbox**: `admit(ctx)` inserts a row keyed by `platform:event_key` (SHA-256 of `platform + chatId + messageId`). Replays of the same event return `accepted: false, reason: 'completed'` and log `Provider event already completed`. A claimed row is processed; on success it is marked `completed`, on failure `fail` increments attempts and retries with exponential backoff, dead-lettering after 5 attempts. `recoverStranded(24 h)` marks never-claimed `received` rows as `failed` and returns expired-lease `processing` rows to `received` (dead-lettering those at `MAX_ATTEMPTS`).
 - **Outbox**: `enqueueText` / `enqueueDirectText` insert a row with an idempotency key (SHA-256 of the job parts). The 1 s worker claims up to 10 rows for operational platforms and delivers concurrently. A direct send parks the row for `DIRECT_SEND_GRACE_MS = 20_000` ms so the 1 s poller cannot claim it mid-send; the agent's own send is bounded to `DIRECT_SEND_TIMEOUT_MS` (inside the grace). Failures are recorded via `fail`, retried with backoff, dead-lettered after 5 attempts. `prune(ms)` removes terminal rows older than the media retention window.
 
 ## Scheduled agent tasks

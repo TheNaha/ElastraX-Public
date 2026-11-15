@@ -56,12 +56,22 @@ The `/admin/api/*` views are read-only operator surfaces:
 
 `POST /admin/api/action/*` mutating actions:
 
-- **Registry reload**: reloads the tool registry (built-in tools + plugins from `src/plugins/`).
-- **Outbox retry**: retries dead-lettered or pending outbox rows.
-- **Delete knowledge**: removes room knowledge base entries.
-- **Retention report**: runs retention in dry-run mode and returns counts.
+- `reload-registry` — reloads the tool registry (built-in tools plus a fresh evaluation of every plugin in `src/plugins/`). In-flight tool calls are unaffected.
+- `retry-outbox` — returns a `failed` or `dead_letter` outbox row to `pending` with its attempt counter cleared; the normal claim path delivers it on its next tick.
+- `delete-knowledge` — removes room knowledge base entries.
+- `retention-report` — runs retention in dry-run mode and returns counts.
 
 Every mutating request requires the CSRF token in `x-admin-csrf`.
+
+## Request bounds
+
+The dashboard shares a listener that sets no `maxRequestBodySize`, so its own handlers bound every body before parsing:
+
+- `POST /admin/api/login` reads at most **4 KiB**;
+- `POST /admin/api/action/*` reads at most **64 KiB**;
+- oversized bodies fail with `413`, a stalled read with `408`, and a non-object or malformed JSON body with `400`.
+
+Login attempts are throttled per client IP (5 attempts per 60 s, bounded table), and at most 32 sessions are kept; the oldest is evicted on login. A rejected mutation also needs the request to be same-origin, a valid session, and the CSRF header.
 
 ## Deployment notes
 

@@ -13,6 +13,7 @@ Nothing in this document may be automated with production credentials, and no ce
 bun run scripts/providerStagingHarness.ts
 bun run scripts/providerStagingHarness.ts --json
 bun run scripts/providerStagingHarness.ts --only duplicate_event,media_failure
+bun run scripts/providerStagingHarness.ts --platform whatsapp
 bun test --no-env-file test/ProviderStagingHarness.test.ts
 ```
 

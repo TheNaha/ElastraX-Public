@@ -24,12 +24,13 @@
 | `mediaPath` | `string` | no | Local cached path of downloaded media (V7.2). |
 | `mimeType` | `string` | no | MIME type of the media. |
 | `mediaReady` | `Promise<void>` | yes | Resolves once lazy media acquisition has completed. Constructing a context does not start downloads. |
-| `mediaAttachments` | `MediaAttachmentDescriptor[]` | no | Attachment descriptors with `id`, `index`, `origin`, `state` (`pending`\|`ready`\|`skipped`\|`error`), `filename`, `mimeType`, `sizeBytes`, `mediaPath`, `error`. |
+| `mediaAttachments` | `MediaAttachmentDescriptor[]` | no | Attachment descriptors with `id`, `index`, `origin` (`current`\|`quoted`), `state` (`pending`\|`ready`\|`skipped`\|`error`), `providerId`, `filename`, `mimeType`, `sizeBytes`, `mediaPath`, `error`. |
 | `selectedAttachmentId` | `string` | no | Currently selected attachment id. |
 | `selectMediaAttachment` / `getMediaAttachment` | function | no | Attachment accessors. |
 | `quoted` | `{ messageType, body, text, senderId, hasMedia, stanzaId?, mediaPath?, mimeType?, rawMessage }` | no | Quoted/replied-to message context. |
 | `messageId` | `string` | yes | Unique provider message id. |
 | `rawMessage` | `RawProviderMessage \| null` | yes | Raw original provider metadata. Nullable: the scheduled-task path builds a synthetic context with no provider message behind it. |
+| `signal` | `AbortSignal` | no | Cancellation signal for the current turn. The agent passes it to `sendMessage`/`reply` so a shutdown or timeout aborts in-flight output. |
 
 ## Outgoing capabilities
 

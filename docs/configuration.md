@@ -120,7 +120,7 @@ Override role defaults via `ROLE_PRIV_{ROLE}_{FIELD}` env vars. -1 = unlimited. 
 | `ROLE_PRIV_OWNER_CONTEXT_LIMIT` | integer | `100` |
 | `ROLE_PRIV_OWNER_MAX_DOWNLOAD_MB` | integer | `-1` |
 
-Levels are ordered: user < premium < admin < owner. `ROLE_PRIV_{ROLE}_RATE_WINDOW_SEC` exists for every role (default `60`) and is not listed per role above for brevity. Out-of-range values fall back to the built-in defaults (the table above).
+A permission check requires the **exact** role: `user` is implicit for everyone and `owner` satisfies every check, but `premium` does not imply `admin` (`roleSatisfies` in `src/core/roleAccess.ts`). The defaults above merely grow with the role name. `ROLE_PRIV_{ROLE}_RATE_WINDOW_SEC` exists for every role (default `60`) and is not listed per role above for brevity. Out-of-range values fall back to the built-in defaults (the table above).
 
 ## 9. Media / Downloads
 
@@ -158,7 +158,7 @@ Webhook intake is enabled by default (`WEBHOOK_ENABLED=true`). Native processes 
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `WEBHOOK_ENABLED` | boolean | `true` | no | Enable/disable the webhook listener entirely. |
+| `WEBHOOK_ENABLED` | boolean | `true` | no | Reject `POST /webhook*` with `503` when `false`. The listener still binds, so `/health`, `/live`, `/ready`, `/metrics` and `/admin` keep serving. |
 | `WEBHOOK_HOST` | string | `127.0.0.1` | no | Bind address: `127.0.0.1`, `::1`, or `0.0.0.0` (latter requires `WEBHOOK_CONTAINER_MODE=true`). |
 | `WEBHOOK_PORT` | integer | `3500` | no | Listen port. `0` binds an ephemeral port (CI smoke test). Range 0–65,535. |
 | `WEBHOOK_SECRET` | string | *(unset)* | no | Required for `/webhook` and `/webhook/github`. At least 24 bytes. Prefer `X-Webhook-Secret` header. |
@@ -268,7 +268,7 @@ On-demand digests are always available in-chat via `/digest [hours]` (1–168).
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `PLUGIN_ALLOWED_PERMISSIONS` | string | `user,premium` | no | Comma-separated allowed plugin permissions. Plugins declaring a permission not listed are refused. |
+| `PLUGIN_ALLOWED_PERMISSIONS` | string | `user,premium` | no | Comma-separated plugin permission ceiling: the highest level listed is the maximum a plugin may declare, and lower levels are admitted with it. Plugins declaring a higher permission are refused. |
 | `ENABLE_PLUGIN_RELOAD` | boolean | `false` | no | Enables the owner-only `/reload` plugin tool (requires `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
 
 ## 23. Opt-in tools (feature flags)
@@ -345,7 +345,7 @@ After changing the embedding model, re-embed stored rows with `bun run db:embed`
 
 | Variable | Type | Default | Purpose |
 |---|---|---|---|
-| `LOG_ROOT` | string | first existing of `./logs`, `/var/log/elastrax`, `$HOME/.local/share/elastrax/logs`, else `/tmp/elastrax-logs` | Directory `OwnerTool` reads when an owner asks for log/system information. |
+| `LOG_ROOT` | string | `LOG_ROOT` if set; else the first existing of `<repo>/logs`, `/var/log/elastrax`; else `$HOME/.local/share/elastrax/logs` (returned without an existence check); else `/tmp/elastrax-logs` when `HOME` is unset | Directory `OwnerTool` reads when an owner asks for log/system information. |
 | `WA_AUTH_IMPORT_DIR` | string | *(unset)* | One-time import of a legacy Baileys auth directory into the database-backed auth store. Only read when no stored credentials exist. |
 | `RETENTION_*` | — | dry-run by default | Retention knobs are documented in [database.md](./database.md#retention). |
 

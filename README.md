@@ -110,7 +110,7 @@ Exact routes, limits, replay behavior, and the optional durable-outbox `202` con
 ## Operations
 
 - `GET /health` and `GET /live` return minimal process liveness (`{"status":"ok","version":"8.0.1","releaseTag":"v8.0.1"}`). Both return the same payload; neither runs readiness checks.
-- `GET /ready` runs registered readiness checks (database, message queue, providers) and returns `200 {"status":"ready"}` when all pass, or `503 {"status":"not_ready"}` otherwise.
+- `GET /ready` runs registered readiness checks (database, message queue, providers) and returns `200 {"status":"ready","version":"8.0.1","releaseTag":"v8.0.1"}` when all pass, or `503 {"status":"not_ready",…}` otherwise.
 - `GET /metrics` is hidden unless `METRICS_AUTH_TOKEN` is configured and protected with a Bearer token.
 - `/admin` is a read-mostly operator dashboard on the same port. It needs `METRICS_AUTH_TOKEN` (24+ bytes) and answers `404` on every path without it. A reverse proxy must forward `/admin` as well as `/webhook` — see [docs/deployment.md](docs/deployment.md).
 - Native startup binds loopback by default. Never publish the webhook port directly to the Internet.
@@ -118,7 +118,7 @@ Exact routes, limits, replay behavior, and the optional durable-outbox `202` con
 
 ## Docker
 
-The image uses a digest-pinned Bun base, checksum-verified yt-dlp/FFmpeg downloads, a non-root user, a read-only root filesystem, a writable named data volume, dropped capabilities, and no public host port.
+The image uses a digest-pinned Bun base, a checksum-verified FFmpeg download plus a version-pinned yt-dlp install, a non-root user, a read-only root filesystem, a writable named data volume, dropped capabilities, and no public host port.
 
 ```bash
 docker network create proxy
@@ -183,5 +183,5 @@ See [docs/architecture.md](docs/architecture.md), [docs/flows.md](docs/flows.md)
 - Do not commit `.env`, databases, backups, or Litestream credentials.
 - Generate at least 24 random bytes for every webhook/metrics secret.
 - Keep the listener private and use a reverse proxy for TLS and access controls.
-- Do not grant `allow_all` tool permissions; use owner/admin/user/allowed-user scopes.
+- Tool permission is an exact role check (`user`, `premium`, `admin`, `owner`); grant `admin` or `owner` deliberately. `owner` satisfies every check, but `premium` does not imply `admin`.
 - Keep generated backups out of the Git working tree.

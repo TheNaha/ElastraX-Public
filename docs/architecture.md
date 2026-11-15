@@ -23,7 +23,7 @@ Platform implementations live in `src/providers/` and implement the `BotProvider
 
 ### 3. Provider lifecycle and status
 
-Every provider exposes `status` (`stopped`, `starting`, `running`, `backoff`, `not_configured`, `error`) and `isOperational`, which is true only while `status === 'running'`. `AppRuntime.operationalProviders()` filters outbound delivery, scheduler and digest senders through it, so a provider that is reconnecting is temporarily skipped instead of failing sends; a destination platform with no operational provider makes a webhook enqueue return `503` rather than queueing a row no worker can claim.
+Every provider exposes `status` (`stopped`, `starting`, `running`, `backoff`, `not_configured`, `error`) and `isOperational`, which is true only while `status === 'running'`. `AppRuntime.operationalProviders()` filters outbound delivery, scheduler and digest senders through it, so a provider that is reconnecting is temporarily skipped instead of failing sends; a destination platform with no operational provider makes a webhook enqueue return `503` rather than queueing a row no worker can claim. Admission at boot follows `start()` resolving, not `isOperational`, because WhatsApp flips to `running` only from its socket `open` handler. A provider whose `start()` rejected while it scheduled its own reconnect is wired later by `reconcileProviderAdmission()` — run on every outbox tick and webhook enqueue — which registers its senders and adds it to `activeProviders` once it is operational.
 
 - WhatsApp reconnects on every disconnect reason except `DisconnectReason.loggedOut` (`401`), with 1,500 ms doubling backoff capped at 300,000 ms. `401` is terminal and requires re-pairing.
 - Discord enters `backoff` on a gateway reconnect and returns to `running` on `shardResume`/`shardReady` as well as `clientReady`, so a transient reconnect does not remove it from delivery for the life of the process.
@@ -37,6 +37,8 @@ The `handleIncomingMessage` function is the single entry point for all normalize
 3. **Intent / Rule Checking**: Decides if the bot should reply (e.g., ignoring group messages where the bot isn't mentioned).
 4. **LLM Inference**: Fetches chat history, builds the context, and invokes the `AIClient`.
 5. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with ✅/❌ icons (see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the final answer is delivered as a separate message.
+
+With `AI_STREAMING=true` and a platform that supports `sendMessage`/`editMessage`, tokens are accumulated and edited into one live message at `STREAMING_EDIT_INTERVAL_WA` / `_DC`. The preview strips a `think` block even while it is still streaming, so chain-of-thought never reaches the user, and nothing is sent until real text arrives. If a streamed bubble also carries tool calls and the progress tracker does not adopt that message, the bubble is finalised (without the trailing cursor) before the tool status message takes over. A send or edit failure degrades to the non-streaming path for the rest of the turn.
 
 ### 5. Interactive State Management (`FlowHandler.ts`)
 For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
@@ -72,7 +74,7 @@ The AI layer features a highly resilient Failover Router:
 
 ### 12. Retention
 
-`src/db/retention.ts` deletes terminal inbox/outbox rows, terminal deliveries, sent reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention overlaps with AppRuntime's hourly outbox prune; deletes are idempotent.
+`src/db/retention.ts` deletes terminal and stale inbox/outbox rows, sent one-off reminders, flow sessions, and old messages according to the `RETENTION_*` knobs, and clears raw provider payloads (`raw_message`, `media_path`, `mime_type`) after a fixed 7 days. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention overlaps with AppRuntime's hourly outbox prune; deletes are idempotent.
 
 ### 13. Background tasks
 
@@ -84,13 +86,13 @@ The AI layer features a highly resilient Failover Router:
 - Inbox recovery: every hour, re-claiming stranded `received`/expired-lease rows (`InboxService.recoverStranded`, 24 h lease).
 - Flow-session TTL prune: every hour (`FlowHandler.pruneAllExpired`, 24 h local TTL).
 - Media cleanup: on startup and every `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h), deleting files older than `MEDIA_RETENTION_HOURS`.
-- Retention maintenance: on startup and every 24 h (`src/db/retention.ts`, dry-run unless `RETENTION_DRY_RUN=false`).
+- Retention maintenance: on startup and every 24 h, only when a durable messaging store is present (`src/db/retention.ts`, dry-run unless `RETENTION_DRY_RUN=false`).
 - Startup parser-coverage scan: once, 5 s after boot, when `runStartupCoverageScan` is wired (non-fatal).
 - Scheduler and digest service: driven by their own `start()` loops.
 
 `MEDIA_CLEANUP_INTERVAL_MS`, `MEDIA_RETENTION_HOURS`, and `RETENTION_*` control these. Retention overlaps with the hourly outbox prune; deletes are idempotent.
 
-`ConfigService`, `AuthService`, `EmbeddingService`, `MediaService`, `ConversationSummarizer`, and `NotificationSubscriptionService` run on demand rather than on a timer. See [docs/services.md](./services.md) for per-service configuration and lifecycle detail.
+`ConfigService`, `AuthService`, `IdentityService`, `ServiceBindingService`, `EmbeddingService`, `MediaService`, `ConversationSummarizer`, and `NotificationSubscriptionService` run on demand rather than on a timer. See [docs/services.md](./services.md) for per-service configuration and lifecycle detail.
 
 ### 14. Digests
 

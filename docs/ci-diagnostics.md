@@ -5,6 +5,7 @@
 ```bash
 bun run scripts/ciDiagnostics.ts
 bun run scripts/ciDiagnostics.ts --workflow CI --limit 10
+bun run scripts/ciDiagnostics.ts --branch main --event push
 bun run scripts/ciDiagnostics.ts --repo TheNaha/ElastraX --json
 bun run scripts/ciDiagnostics.ts --help
 ```
@@ -56,7 +57,7 @@ Annotations are not fetched by the script. If you have check-run annotations, pa
 
 This section is a point-in-time snapshot, not a permanent fact. Re-run the script rather than trusting it.
 
-As of 2026-11-14 (`bun run scripts/ciDiagnostics.ts --limit 8`):
+As of 2026-11-15 (`bun run scripts/ciDiagnostics.ts --limit 8`):
 
 ```text
 Summary: 4 skipped, 4 no_step_scheduling_failure
