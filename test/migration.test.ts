@@ -13,7 +13,7 @@ import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writ
 import { tmpdir } from 'node:os';
 import { test, describe, expect, beforeEach, afterEach } from 'bun:test';
 import * as schema from '../src/db/schema';
-import { inspectMigrationState, readMigrationJournal } from '../src/db/migrations';
+import { inspectMigrationState, readMigrationJournal, REQUIRED_INDEXES } from '../src/db/migrations';
 
 /** Hash `0008_calm_token_room` had before commit 8f08ac7 rewrote it. */
 const LEGACY_0008_HASH = '84b40bcf66aa0c826f82253174f26177e1d3ba883c00a05d630f5fe8b845606d';
@@ -84,8 +84,25 @@ describe('Database Migrations', () => {
         .toThrow(/unexpected checksum/);
     });
 
-    test('all migration files have corresponding journal entries', () => {
-      const migrationsDir = join(ROOT_DIR, 'drizzle/migrations');
+    /**
+     * `validateSchemaContract` only guards the indexes named in
+     * `REQUIRED_INDEXES`, so an index that exists after a migration but is
+     * missing from that list is unguarded: dropping it then boots cleanly on an
+     * unindexed hot path. The list had fallen five behind before this test
+     * existed, so assert set equality against a freshly migrated database.
+     */
+    test('the schema contract lists every index a fresh migration creates', async () => {
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      const actual = sqlite
+        .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'")
+        .all()
+        .map(row => row.name)
+        .sort();
+
+      expect([...new Set(REQUIRED_INDEXES)].sort()).toEqual(actual);
+    });
+
+    test('all migration files have corresponding journal entries', () => {      const migrationsDir = join(ROOT_DIR, 'drizzle/migrations');
       const journalPath = join(migrationsDir, 'meta/_journal.json');
       const migrationFiles = readdirSync(migrationsDir)
         .filter(f => /^\d{4}_.+\.sql$/.test(f))

@@ -128,6 +128,11 @@ export function withImmediateTransaction<T>(sqlite: Database, operation: () => T
     const result = operation();
     if (result instanceof Promise) {
       sqlite.exec('ROLLBACK');
+      // The callback's promise is already running: it cannot be cancelled, so it
+      // will keep executing after this rollback and any statement it reaches now
+      // runs in autocommit. Observe it, otherwise a later rejection surfaces as
+      // an unhandled rejection, which is fatal under Bun's default policy.
+      void result.catch(() => undefined);
       throw new TypeError(
         'withImmediateTransaction: operation returned a Promise — the callback is synchronous. '
         + 'Use an async wrapper or restructure to avoid awaiting inside.',

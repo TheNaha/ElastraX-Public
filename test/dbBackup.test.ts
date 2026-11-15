@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { randomUUID } from 'crypto';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getTestWorkerPaths } from './helpers/paths';
 
@@ -84,8 +84,65 @@ describe('backupDatabase', () => {
     expect(overwrite.error).toContain('new file');
   });
 
-  test('rejects a tampered backup without publishing the restore destination', async () => {
-    const sourcePath = join(TMP, 'tamper-source.db');
+  /**
+   * `snapshot.file` is read back out of a JSON file in the backup directory.
+   * Pruning joined it onto the directory without a check, so a planted manifest
+   * naming `../victim.db` made the sweep delete a file outside the directory.
+   */
+  test('refuses to prune a snapshot whose manifest names a path outside the backup directory', async () => {
+    const backupDir = join(TMP, 'traversal-backups');
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+    const victimPath = join(TMP, 'victim.db');
+    writeFileSync(victimPath, 'keep me');
+
+    writeFileSync(
+      join(backupDir, 'planted.db.manifest.json'),
+      JSON.stringify({
+        formatVersion: 1,
+        createdAt: new Date(Date.now() - 86_400_000).toISOString(),
+        sourceName: 'bot.db',
+        snapshot: { file: '../victim.db', bytes: 7, sha256: 'a'.repeat(64) },
+        database: { integrityCheck: 'ok', foreignKeyViolations: 0, schemaFingerprint: 'x', migrationCount: 0, latestMigration: null, schemaVersion: null, userVersion: 0 },
+      }),
+      { mode: 0o600 },
+    );
+
+    const sourcePath = join(TMP, 'traversal-source.db');
+    const source = newLiveDb(sourcePath);
+    source.close();
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir, keep: 1 });
+    expect(result.ok).toBe(true);
+
+    expect(readFileSync(victimPath, 'utf8')).toBe('keep me');
+    expect(result.pruned.some(path => path.endsWith('victim.db'))).toBe(false);
+  });
+
+  /**
+   * A snapshot is published just before its manifest, so a crash in between
+   * leaves a `.db` nothing points at. The sweep removes it once it is older than
+   * the grace window and leaves a fresh one (it may be mid-publication) alone.
+   */
+  test('sweeps orphaned snapshots but keeps a freshly written one', async () => {
+    const backupDir = join(TMP, 'orphan-backups');
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+    const orphanPath = join(backupDir, 'orphan.db');
+    const freshPath = join(backupDir, 'fresh.db');
+    writeFileSync(orphanPath, 'orphan');
+    writeFileSync(freshPath, 'fresh');
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(orphanPath, old, old);
+
+    const sourcePath = join(TMP, 'orphan-source.db');
+    const source = newLiveDb(sourcePath);
+    source.close();
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir, keep: 5 });
+    expect(result.ok).toBe(true);
+
+    expect(() => statSync(orphanPath)).toThrow();
+    expect(statSync(freshPath).size).toBe('fresh'.length);
+  });
+
+  test('rejects a tampered backup without publishing the restore destination', async () => {    const sourcePath = join(TMP, 'tamper-source.db');
     const source = newLiveDb(sourcePath);
     source.close();
     const result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'tamper-backups') });

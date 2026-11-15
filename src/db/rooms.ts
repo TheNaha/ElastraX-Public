@@ -22,7 +22,7 @@
 
 import type { Database } from 'bun:sqlite';
 import { tableExists, withImmediateTransaction } from './runtime';
-import { getDefaultDatabase } from './index';
+import { getDefaultDatabase, afterMigrationCallbacks } from './index';
 import { ROOM_KEY_MIGRATION_INDEX, ROOM_KEY_MIGRATION_TAG, ROOM_KEY_MIGRATION_WHEN } from './migrations';
 import {
   parseCanonicalRoomKey,
@@ -92,6 +92,53 @@ export interface RoomKeyCollision {
 
 const MAX_IDENTIFIER_LENGTH = 512;
 
+/**
+ * Memoised `sqlite_master` / `pragma_table_xinfo` probes.
+ *
+ * Every inbound message resolves a room key, which consulted the schema catalog
+ * three or four times (`tableExists('room_keys')`, then `hasColumn('chat_rooms',
+ * 'platform')` from `legacyRoomExists`), and `getRoomKeyStats` runs sixteen of
+ * them per admin request. The catalog can only change through a migration, so it
+ * is cached per database handle and dropped by the
+ * `afterMigrationCallbacks` hook that `src/db/index.ts` already invokes once
+ * `migrate()` finishes — the hook existed for exactly this purpose and nothing
+ * had ever registered with it.
+ */
+interface SchemaCatalog {
+  generation: number;
+  tables: Map<string, boolean>;
+  columns: Map<string, boolean>;
+}
+
+const schemaCatalogGeneration = { value: 0 };
+const schemaCatalogs = new WeakMap<Database, SchemaCatalog>();
+
+/** Drop every memoised catalog probe; called after a migration completes. */
+export function invalidateRoomCatalogCache(): void {
+  schemaCatalogGeneration.value += 1;
+}
+
+afterMigrationCallbacks.push(invalidateRoomCatalogCache);
+
+function catalogFor(sqlite: Database): SchemaCatalog {
+  const generation = schemaCatalogGeneration.value;
+  const existing = schemaCatalogs.get(sqlite);
+  if (existing && existing.generation === generation) return existing;
+  const fresh: SchemaCatalog = { generation, tables: new Map(), columns: new Map() };
+  schemaCatalogs.set(sqlite, fresh);
+  return fresh;
+}
+
+/** `tableExists`, memoised per handle for the lifetime of the current schema. */
+function hasTableCached(sqlite: Database, table: string): boolean {
+  const catalog = catalogFor(sqlite);
+  const cached = catalog.tables.get(table);
+  if (cached !== undefined) return cached;
+  const exists = tableExists(sqlite, table);
+  catalog.tables.set(table, exists);
+  return exists;
+}
+
 function trimValue(value: unknown, field: string): string {
   if (typeof value !== 'string') throw new TypeError(`${field} must be a string`);
   const trimmed = value.trim();
@@ -111,11 +158,20 @@ function defaultDatabase(): Database {
 }
 
 function hasColumn(sqlite: Database, table: string, column: string): boolean {
-  if (!tableExists(sqlite, table)) return false;
+  const catalog = catalogFor(sqlite);
+  const key = `${table}.${column}`;
+  const cached = catalog.columns.get(key);
+  if (cached !== undefined) return cached;
+  if (!hasTableCached(sqlite, table)) {
+    catalog.columns.set(key, false);
+    return false;
+  }
   const rows = sqlite
     .query<{ name: string }, [string]>('SELECT name FROM pragma_table_xinfo(?) ORDER BY cid')
     .all(table) as Array<{ name: string }>;
-  return rows.some(row => row.name === column);
+  const exists = rows.some(row => row.name === column);
+  catalog.columns.set(key, exists);
+  return exists;
 }
 
 /**
@@ -190,7 +246,7 @@ export async function resolveRoomKey(
 ): Promise<string | null> {
   const normalizedPlatform = trimValue(platform, 'platform');
   const normalizedRemoteRoomId = trimValue(remoteRoomId, 'remoteRoomId');
-  if (!tableExists(sqlite, 'room_keys')) {
+  if (!hasTableCached(sqlite, 'room_keys')) {
     return legacyRoomExists(sqlite, normalizedPlatform, normalizedRemoteRoomId)
       ? toRoomKey(normalizedPlatform, normalizedRemoteRoomId)
       : null;
@@ -213,7 +269,7 @@ export function resolveRoomKeySync(
 ): string | null {
   const normalizedPlatform = trimValue(platform, 'platform');
   const normalizedRemoteRoomId = trimValue(remoteRoomId, 'remoteRoomId');
-  if (!tableExists(sqlite, 'room_keys')) {
+  if (!hasTableCached(sqlite, 'room_keys')) {
     return legacyRoomExists(sqlite, normalizedPlatform, normalizedRemoteRoomId)
       ? toRoomKey(normalizedPlatform, normalizedRemoteRoomId)
       : null;
@@ -255,7 +311,7 @@ export function resolveOrCreateRoomKeySync(
   const canonical = toRoomKey(normalizedPlatform, normalizedRemoteRoomId);
   const now = options.now ?? Date.now();
 
-  if (!tableExists(sqlite, 'room_keys')) {
+  if (!hasTableCached(sqlite, 'room_keys')) {
     return {
       roomKey: canonical,
       platform: normalizedPlatform,
@@ -340,7 +396,7 @@ export function assertRoomKeyMatches(
   // The registry is consulted first: a key that disagrees with the registered
   // room is a real identity conflict and needs the more specific message.
   const sqlite = options.sqlite;
-  if (sqlite && tableExists(sqlite, 'room_keys')) {
+  if (sqlite && hasTableCached(sqlite, 'room_keys')) {
     const row = selectRegistryRow(sqlite, normalizedPlatform, normalizedRemoteRoomId);
     if (row && row.room_key !== actual) {
       throw new RoomKeyMismatchError(
@@ -397,7 +453,7 @@ function roomKeySql(platformExpr: string, idExpr: string): string {
 }
 
 export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeyStats {
-  const hasRegistry = tableExists(sqlite, 'room_keys');
+  const hasRegistry = hasTableCached(sqlite, 'room_keys');
   const coverage = COVERAGE_TARGETS
     .filter(target => hasColumn(sqlite, target.table, target.column))
     .map(target => {
@@ -420,7 +476,7 @@ export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeySt
   const withLegacyRoomId = hasRegistry
     ? count(sqlite, "SELECT count(*) AS count FROM room_keys WHERE legacy_room_id IS NOT NULL AND legacy_room_id <> ''")
     : 0;
-  const chatRooms = tableExists(sqlite, 'chat_rooms')
+  const chatRooms = hasTableCached(sqlite, 'chat_rooms')
     ? count(sqlite, 'SELECT count(*) AS count FROM chat_rooms')
     : 0;
   const unregisteredChatRooms = hasRegistry && hasColumn(sqlite, 'chat_rooms', 'room_key')
@@ -448,7 +504,7 @@ export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeySt
          )`,
       )
     : 0;
-  const hasConflictTable = tableExists(sqlite, 'room_key_conflicts');
+  const hasConflictTable = hasTableCached(sqlite, 'room_key_conflicts');
   const conflicts = hasConflictTable
     ? count(sqlite, 'SELECT count(*) AS count FROM room_key_conflicts')
     : 0;
@@ -477,9 +533,9 @@ export function getRoomKeyStats(sqlite: Database = defaultDatabase()): RoomKeySt
  */
 export function findRoomKeyCollisions(sqlite: Database = defaultDatabase()): RoomKeyCollision[] {
   const collisions: RoomKeyCollision[] = [];
-  const hasRegistry = tableExists(sqlite, 'room_keys');
-  const hasConflictTable = tableExists(sqlite, 'room_key_conflicts');
-  const hasChatRooms = tableExists(sqlite, 'chat_rooms');
+  const hasRegistry = hasTableCached(sqlite, 'room_keys');
+  const hasConflictTable = hasTableCached(sqlite, 'room_key_conflicts');
+  const hasChatRooms = hasTableCached(sqlite, 'chat_rooms');
   const chatRoomsHaveRoomKey = hasChatRooms && hasColumn(sqlite, 'chat_rooms', 'room_key');
 
   if (chatRoomsHaveRoomKey) {

@@ -16,6 +16,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { safeErrorMessage } from '../utils/errorUtils.js';
 import { nowISO } from '../utils/date.js';
+import { logger } from '../utils/logger.js';
 import {
   fingerprintSchema,
   readMigrationJournal,
@@ -87,6 +88,13 @@ function ensureDirectory(path: string): void {
 function temporarySibling(path: string, suffix: string): string {
   return join(dirname(path), `.${basename(path)}.${randomUUID()}${suffix}`);
 }
+
+/**
+ * How long an unreferenced snapshot must sit in the backup directory before the
+ * orphan sweep deletes it. A snapshot is published a moment before its manifest,
+ * so a sweep running in that window must not treat it as garbage.
+ */
+const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
 function removeFile(path: string): void {
   try {
@@ -219,11 +227,41 @@ function pruneBackups(backupDir: string, keep: number, currentManifestPath: stri
     if (entry.manifestPath === currentManifestPath) continue;
     const manifest = parseManifest(entry.manifestPath);
     if (!manifest) continue;
+    // `snapshot.file` comes out of a JSON file on disk, so it must be a bare
+    // filename: `join(backupDir, '../../x')` would otherwise let a planted
+    // manifest delete a file outside the backup directory.
+    if (basename(manifest.snapshot.file) !== manifest.snapshot.file) {
+      logger.warn({ manifestPath: entry.manifestPath, file: manifest.snapshot.file }, '[backup] Manifest names a file outside the backup directory; refusing to prune it');
+      continue;
+    }
     const databasePath = join(backupDir, manifest.snapshot.file);
     try {
       removeFile(databasePath);
       unlinkSync(entry.manifestPath);
       removed.push(databasePath);
+    } catch (error) {
+      void error;
+    }
+  }
+
+  // Snapshots are published just before their manifest, so a crash in between
+  // leaves a `.db` that no manifest points at and nothing ever deletes. Sweep
+  // the orphans that are older than the current run (the one being written is
+  // still a temporary sibling, not a `*.db` in the directory).
+  const live = new Set<string>();
+  for (const name of readdirSync(backupDir)) {
+    if (!name.endsWith('.db.manifest.json')) continue;
+    const manifest = parseManifest(join(backupDir, name));
+    if (manifest) live.add(manifest.snapshot.file);
+  }
+  for (const name of readdirSync(backupDir)) {
+    if (!name.endsWith('.db') || name.startsWith('.')) continue;
+    if (live.has(name)) continue;
+    const path = join(backupDir, name);
+    try {
+      if (Date.now() - statSync(path).mtimeMs < ORPHAN_GRACE_MS) continue;
+      removeFile(path);
+      removed.push(path);
     } catch (error) {
       void error;
     }

@@ -99,8 +99,18 @@ const REQUIRED_TABLES = [
   'wa_auth_state',
 ];
 
-const REQUIRED_INDEXES = [
+/**
+ * Every index the schema must have.
+ *
+ * Hand-maintained, and it silently fell five behind (the four indexes the
+ * Phase-2 audit added plus `canonical_identities_platform_updated_idx`), so a
+ * dropped index passed `validateSchemaContract` and boot proceeded on
+ * unindexed hot paths. When you add an index to a migration, add its name here:
+ * `test/migration.test.ts` proves the list matches a freshly migrated database.
+ */
+export const REQUIRED_INDEXES = [
   'canonical_identities_platform_primary_idx',
+  'canonical_identities_platform_updated_idx',
   'chat_rooms_platform_idx',
   'chat_rooms_room_key_idx',
   'chat_rooms_room_key_unique_idx',
@@ -110,17 +120,20 @@ const REQUIRED_INDEXES = [
   'identity_aliases_platform_alias_unique_idx',
   'message_inbox_platform_event_unique_idx',
   'message_inbox_platform_provider_unique_idx',
+  'message_inbox_room_idx',
   'message_inbox_room_key_idx',
   'message_inbox_work_idx',
   'message_outbox_platform_idempotency_unique_idx',
   'message_outbox_platform_provider_unique_idx',
   'message_outbox_room_key_idx',
   'message_outbox_work_idx',
+  'memories_category_idx',
   'memories_owner_idx',
   'messages_chat_room_id_created_at_idx',
   'messages_chat_room_id_idx',
   'messages_platform_provider_message_id_unique',
   'messages_room_key_created_at_idx',
+  'reminders_claimed_at_idx',
   'reminders_due_idx',
   'reminders_remind_at_idx',
   'reminders_room_key_idx',
@@ -145,6 +158,7 @@ const REQUIRED_INDEXES = [
   'user_identities_platform_lid_unique_idx',
   'user_identities_platform_pn_unique_idx',
   'user_roles_platform_user_scope_unique_idx',
+  'user_roles_role_idx',
   'user_roles_scope_idx',
   'user_roles_scope_room_key_idx',
 ];
