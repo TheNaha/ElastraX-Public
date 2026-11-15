@@ -178,7 +178,10 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
       if (terminationError) return;
       terminationError = error;
       killProcessGroup(child, 'SIGTERM');
-      activeProcesses.delete(child);
+      // The child is *not* removed from `activeProcesses` here: it stays alive for
+      // the SIGKILL grace below (or indefinitely if it ignores SIGTERM), and
+      // `cancelActiveProcesses()` is what a shutdown uses to find and kill it.
+      // `cleanup()` removes the entry once the child has actually settled.
       killTimer = setTimeout(() => killProcessGroup(child, 'SIGKILL'), 2000);
       killTimer.unref?.();
     };

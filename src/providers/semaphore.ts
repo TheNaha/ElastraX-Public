@@ -50,6 +50,11 @@ export class CancellableSemaphore {
           const index = this.waiters.indexOf(waiter);
           if (index >= 0) this.waiters.splice(index, 1);
           reject(abortError(signal));
+          // Removing a waiter can unblock the ones behind it: `drain` is FIFO by
+          // permits, so a removed head waiter must hand its turn on. Without this
+          // a small request queued behind an aborted reservation waited for an
+          // unrelated release.
+          this.drain();
         };
         signal.addEventListener('abort', waiter.onAbort, { once: true });
       }

@@ -3,6 +3,9 @@ import type { LookupAddress } from 'node:dns';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
+import { logger } from '../utils/logger';
+
+const log = logger.child({ module: 'SSRF' });
 
 const BLOCKED_HOST_SUFFIXES = ['.localhost', '.local', '.internal', '.intranet', '.lan', '.home', '.arpa'];
 const ALLOWED_PORTS = new Set([80, 443]);
@@ -114,9 +117,16 @@ export class SsrfSafeProxy {
     });
     this.server = server;
     await new Promise<void>((resolve, reject) => {
-      server.once('error', reject);
+      const onListenError = (error: Error) => reject(error);
+      server.once('error', onListenError);
       server.listen(0, '127.0.0.1', () => {
-        server.off('error', reject);
+        server.off('error', onListenError);
+        // Keep a listener installed: without one, any later server-level error
+        // (`EMFILE`, an accept failure) is an unhandled 'error' event and takes
+        // the whole process down during a download.
+        server.on('error', (error) => {
+          log.warn({ err: error }, '[SSRF] Proxy server error');
+        });
         const address = server.address();
         if (!address || typeof address === 'string') {
           reject(new Error('Unable to determine SSRF proxy port.'));

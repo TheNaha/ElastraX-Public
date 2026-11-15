@@ -305,38 +305,26 @@ export class AuthService {
     const { db, userRoles } = this.deps;
     logger.info({ role, scope, platform }, '[AuthService] setRole - start');
 
-    const existing = await db
-      .select()
-      .from(userRoles)
-      .where(and(
-        eq(userRoles.userId, userId),
-        eq(userRoles.platform, platform),
-        eq(userRoles.scope, scope),
-      ));
-
-    if (existing.length > 0) {
-      const current = existing[0]!;
-      await db
-        .update(userRoles)
-        .set({ role, grantedBy, scopeRoomKey: normalizedScope.scopeRoomKey })
-        .where(and(
-          eq(userRoles.userId, userId),
-          eq(userRoles.platform, platform),
-          eq(userRoles.scope, scope),
-        ));
-      logger.info({ role, scope, platform, replacedRole: current.role === role ? undefined : current.role }, '[AuthService] setRole - updated');
-    } else {
-      await db.insert(userRoles).values({
-        userId,
-        platform,
-        scope,
-        scopeRoomKey: normalizedScope.scopeRoomKey,
-        role,
-        grantedBy,
-        created_at: new Date(),
-      });
-      logger.info({ role, scope, platform }, '[AuthService] setRole - inserted');
-    }
+    // One atomic upsert. Read-then-insert is what raced the unique index: two
+    // concurrent callers (Discord's duplicate ready event seeding the owner) both
+    // saw no row and the second INSERT failed with UNIQUE. The upsert also keeps
+    // the single-role-per-scope rule without a read.
+    const inserted = await db.insert(userRoles).values({
+      userId,
+      platform,
+      scope,
+      scopeRoomKey: normalizedScope.scopeRoomKey,
+      role,
+      grantedBy,
+      created_at: new Date(),
+    }).onConflictDoUpdate({
+      target: [userRoles.platform, userRoles.userId, userRoles.scope],
+      set: { role, grantedBy, scopeRoomKey: normalizedScope.scopeRoomKey },
+    }).run() as unknown as { changes: number };
+    logger.info(
+      { role, scope, platform, inserted: Number(inserted?.changes ?? 0) === 1 },
+      '[AuthService] setRole - upserted',
+    );
   }
 
   static async removeRole(

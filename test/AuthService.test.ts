@@ -24,7 +24,7 @@ describe('AuthService', () => {
         granted_by TEXT NOT NULL,
         created_at INTEGER NOT NULL
       );
-      CREATE UNIQUE INDEX IF NOT EXISTS user_roles_user_scope_idx ON user_roles (user_id, scope);
+      CREATE UNIQUE INDEX IF NOT EXISTS user_roles_platform_user_scope_unique_idx ON user_roles (platform, user_id, scope);
       CREATE INDEX IF NOT EXISTS user_roles_scope_idx ON user_roles (scope, role);
 
       CREATE TABLE IF NOT EXISTS role_privileges (
@@ -230,6 +230,21 @@ describe('AuthService', () => {
     const roles = await AuthService.resolveRoles('user-1', 'chat-1');
     expect(roles).toContain('admin');
     expect(roles).not.toContain('premium');
+  });
+
+  test('setRole is idempotent under a concurrent seed of the same role', async () => {
+    // Discord emits both `ready` and `clientReady` for one login, so the owner
+    // seed used to run twice at once: both callers saw no row and the second
+    // INSERT failed with UNIQUE.
+    await Promise.all([
+      AuthService.setRole('race-user', 'owner', 'global', 'discord', 'system:startup'),
+      AuthService.setRole('race-user', 'owner', 'global', 'discord', 'system:startup'),
+    ]);
+
+    const roles = await AuthService.resolveRoles('race-user', 'chat-1', false, undefined, 'discord');
+    expect(roles).toContain('owner');
+    const rows = db.select().from(userRoles).where(eq(userRoles.userId, 'race-user')).all();
+    expect(rows).toHaveLength(1);
   });
 
   test('removeRole with no matching entry returns false', async () => {

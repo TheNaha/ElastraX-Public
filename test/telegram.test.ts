@@ -225,6 +225,117 @@ describe('TelegramProvider lifecycle', () => {
 
     await provider.stop();
   });
+
+  /**
+   * Telegram answers 400 "message to be replied not found" when the original is
+   * deleted for everyone in the seconds before the answer. The whole reply used
+   * to be lost; it must fall back to a plain send.
+   */
+  test('retries the first chunk without reply_parameters when the replied message is gone', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+    const sent: Array<{ text: string; options: unknown }> = [];
+    let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+    telegramProviderDeps.createBot = () => ({
+      on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+        if (event === 'message') messageCallback = handler;
+      },
+      api: {
+        sendMessage: async (_chatId: string, text: string, options?: unknown) => {
+          const replyParameters = (options as { reply_parameters?: unknown } | undefined)?.reply_parameters;
+          if (replyParameters) {
+            throw Object.assign(new Error('Bad Request: message to be replied not found'), {
+              description: 'Bad Request: message to be replied not found',
+            });
+          }
+          sent.push({ text, options });
+          return { message_id: 500 + sent.length };
+        },
+      } as never,
+      stop: () => undefined,
+      start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+        await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+      },
+    }) as never;
+
+    const provider = new TelegramProvider();
+    let receivedContext: MessageContext | null = null;
+    provider.onMessage(async ctx => {
+      receivedContext = ctx;
+    });
+    await provider.start();
+
+    await messageCallback!({
+      chat: { id: 12345, type: 'private' },
+      from: { id: 67890, first_name: 'TestUser', is_bot: false },
+      message: { message_id: 42, text: 'hello', date: 1000, from: { id: 67890, first_name: 'TestUser' }, entities: [] },
+      date: 1000,
+    });
+
+    await receivedContext!.reply('the answer that must survive');
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.text).toBe('the answer that must survive');
+    expect((sent[0]?.options as { reply_parameters?: unknown } | undefined)?.reply_parameters).toBeUndefined();
+    await provider.stop();
+  });
+
+  /**
+   * `editMessage` split the text with `String.slice`, which cuts a surrogate pair
+   * when an astral character straddles the limit: both halves rendered as U+FFFD.
+   */
+  test('editMessage splits long text on code points', async () => {
+    process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+    let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+    const edits: string[] = [];
+    const continuations: string[] = [];
+    telegramProviderDeps.createBot = () => ({
+      on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+        if (event === 'message') messageCallback = handler;
+      },
+      api: {
+        sendMessage: async (_chatId: string, text: string) => {
+          continuations.push(text);
+          return { message_id: 900 + continuations.length };
+        },
+        editMessageText: async (_chatId: number, _messageId: number, text: string) => {
+          edits.push(text);
+          return true;
+        },
+      } as never,
+      stop: () => undefined,
+      start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+        await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+      },
+    }) as never;
+
+    const provider = new TelegramProvider();
+    let receivedContext: MessageContext | null = null;
+    provider.onMessage(async ctx => {
+      receivedContext = ctx;
+    });
+    await provider.start();
+
+    await messageCallback!({
+      chat: { id: 12345, type: 'private' },
+      from: { id: 67890, first_name: 'TestUser', is_bot: false },
+      message: { message_id: 42, text: 'hello', date: 1000, from: { id: 67890, first_name: 'TestUser' }, entities: [] },
+      date: 1000,
+    });
+
+    // The emoji sits exactly across the limit, where a UTF-16 slice would cut it.
+    const sentKey = await receivedContext!.sendMessage!('placeholder');
+    continuations.length = 0;
+    const longText = `${'a'.repeat(TELEGRAM_TEXT_LIMIT - 1)}😀 b`;
+    await receivedContext!.editMessage!(sentKey, longText);
+
+    expect(edits).toHaveLength(1);
+    expect(edits[0]!.endsWith('😀')).toBe(true);
+    expect(edits[0]!.includes('\uFFFD')).toBe(false);
+    expect(continuations).toHaveLength(1);
+    expect(continuations[0]!.startsWith('\u2026 ')).toBe(true);
+    expect(`${edits[0]}${continuations[0]!.replace(/^\u2026 /, '')}`).toBe(longText);
+    await provider.stop();
+  });
 });
 
 afterAll(() => {

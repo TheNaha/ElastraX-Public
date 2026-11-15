@@ -146,10 +146,16 @@ export class WhatsAppProvider implements BotProvider {
 
   async start(): Promise<void> {
     if (this.isOperational) return;
-    if (this.startPromise) {
+    if (this.startPromise && this.providerStatus === 'starting') {
       // If a start is already in flight, return its promise rather than racing
       // a second connection that would overwrite the socket and the start
       // promise, discarding the first connection's result.
+      //
+      // The status check matters: `stop()` invalidates the run's generation but
+      // cannot clear `startPromise`, so a start issued while the previous run is
+      // still unwinding used to adopt that dead promise — it resolved without
+      // creating a socket or scheduling a reconnect, and `start()` reported
+      // success with WhatsApp offline.
       return this.startPromise;
     }
     this.desiredRunning = true;

@@ -24,6 +24,9 @@ import { chunkTextDiscord } from '../utils/textChunking';
 
 export const DISCORD_TEXT_LIMIT = 2000;
 
+/** Deadline for one attachment download from the Discord CDN. */
+const DISCORD_MEDIA_TIMEOUT_MS = 60_000;
+
 type DiscordAttachment = {
   id: string;
   url: string;
@@ -171,6 +174,10 @@ export class DiscordProvider implements BotProvider {
     // gateway that still reported 'running'.
     const markReady = (): void => {
       if (this.client !== client || generation !== this.generation) return;
+      // discord.js 14 emits `ready` and `clientReady` for the same login, so this
+      // runs twice. `seedOwner` was therefore called twice concurrently, and its
+      // read-then-insert raced the unique role index.
+      if (this.providerStatus === 'running') return;
       this.providerStatus = 'running';
       this.providerError = null;
       logger.info(`[Discord] Logged in as ${client.user?.tag ?? 'unknown'}.`);
@@ -347,17 +354,21 @@ export class DiscordProvider implements BotProvider {
       if (!source) return null;
       const controller = new AbortController();
       this.mediaControllers.add(controller);
+      // Bound the fetch: `controller` is only aborted by `stop()`, so a CDN that
+      // accepts the connection and never answers held one of the four global
+      // media slots (and its byte reservation) for the life of the process.
+      const fetchSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(DISCORD_MEDIA_TIMEOUT_MS)]);
       try {
         validateDiscordMediaUrl(source.attachment.url);
         const response = await discordProviderDeps.fetch(source.attachment.url, {
           redirect: 'error',
-          signal: controller.signal,
+          signal: fetchSignal,
         });
         const saved = await saveMediaResponse(response, {
           maxBytes: HARD_MEDIA_MAX_BYTES,
           contentLength: Number.isSafeInteger(source.attachment.size) ? source.attachment.size : null,
           fallbackMime: source.attachment.contentType || descriptor.mimeType,
-          signal: controller.signal,
+          signal: fetchSignal,
         });
         descriptor.mediaPath = saved.path;
         descriptor.mimeType = saved.mime;

@@ -56,6 +56,21 @@ function isGroupChat(ctx: GrammyContext): boolean {
   return ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup' || ctx.chat?.type === 'channel';
 }
 
+/**
+ * Whether a grammy error is the Bot API's "message to be replied not found".
+ *
+ * Telegram returns 400 with that description when the message a reply points at
+ * was deleted for everyone in the seconds between receipt and answer; the send
+ * succeeds once the reply reference is dropped.
+ */
+function isMissingReplyTarget(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const description = (error as { description?: unknown }).description;
+  if (typeof description === 'string' && /message to be replied not found/i.test(description)) return true;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && /message to be replied not found/i.test(message);
+}
+
 function senderDisplayName(ctx: GrammyContext): string {
   const from = ctx.from;
   if (!from) return 'unknown';
@@ -571,13 +586,24 @@ export class TelegramProvider implements BotProvider {
       const activeBot = ensureCurrent();
       options?.signal?.throwIfAborted();
       const chunks = chunkTelegramText(replyText);
+      const replyTo = targetChatId === String(chatId) ? msg.message_id : undefined;
       let last: unknown = null;
       for (let i = 0; i < chunks.length; i++) {
         options?.signal?.throwIfAborted();
         const chunk = chunks[i];
-        const replied = await activeBot.api.sendMessage(targetChatId, chunk, {
-          ...(i === 0 && targetChatId === String(chatId) ? { reply_parameters: { message_id: msg.message_id } } : {}),
-        });
+        let replied: unknown;
+        try {
+          replied = await activeBot.api.sendMessage(targetChatId, chunk!, {
+            ...(i === 0 && replyTo !== undefined ? { reply_parameters: { message_id: replyTo } } : {}),
+          });
+        } catch (error: unknown) {
+          // Telegram answers 400 "message to be replied not found" when the user
+          // deletes the message we are replying to. There is no other delivery
+          // path in the streaming case, so the whole answer used to be lost.
+          if (i !== 0 || replyTo === undefined || !isMissingReplyTarget(error)) throw error;
+          log.warn({ chatId: targetChatId }, '[Telegram] Reply target was deleted; sending without reply_parameters');
+          replied = await activeBot.api.sendMessage(targetChatId, chunk!);
+        }
         const id = (replied as { message_id?: number } | null)?.message_id;
         if (typeof id === 'number') noteBotMessageSent('telegram', String(id));
         last = replied;
@@ -646,10 +672,16 @@ export class TelegramProvider implements BotProvider {
         const activeBot = ensureCurrent();
         const messageId = resolveSentMessageId(key);
         if (!messageId) throw new ProviderOperationError('telegram', 'editMessage', `Cannot resolve message id for edit key: ${String(key)}`, undefined, 'INVALID_TARGET');
-        const head = nextText.slice(0, TELEGRAM_TEXT_LIMIT);
+        // Split by code point, like `chunkTelegramText`: a UTF-16 slice at the
+        // limit leaves a lone surrogate at the end of the edit and its partner at
+        // the start of the remainder, so both displayed as U+FFFD.
+        const characters = Array.from(nextText);
+        const head = characters.length <= TELEGRAM_TEXT_LIMIT
+          ? nextText
+          : characters.slice(0, TELEGRAM_TEXT_LIMIT).join('');
         await activeBot.api.editMessageText(chatId, messageId, head);
         if (head.length < nextText.length) {
-          const remainder = nextText.slice(head.length);
+          const remainder = characters.slice(TELEGRAM_TEXT_LIMIT).join('');
           const chunks = chunkTelegramText(remainder);
           for (let i = 0; i < chunks.length; i++) {
             const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];
