@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit:** `577f7db` (documentation pass 2026-11-15; code through the 2026-11-15 maintenance pass)
-**Date:** 2026-11-15
+**Recorded Commit:** `a77f4c7` (code through the 2026-11-16 maintenance pass)
+**Date:** 2026-11-16
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -79,7 +79,7 @@ ElastraX/
 │   │   ├── index.ts             # bun:sqlite handle, Drizzle client, startup migration
 │   │   ├── schema.ts            # Drizzle table definitions
 │   │   ├── migrations.ts        # Journal/checksum validation and schema contract
-│   │   ├── rooms.ts             # Room-key registry and resolution
+│   │   ├── rooms.ts             # Room-key registry and resolution (schema-catalog probes memoised per handle)
 │   │   ├── runtime.ts           # Runtime lease table
 │   │   ├── retention.ts         # Message/delivery retention pruning
 │   │   ├── maintenance.ts       # Retention policy parsing and scheduler
@@ -134,6 +134,7 @@ ElastraX/
 - `drizzle/migrations/meta/_journal.json` uses sequential integers (`when: 1..N`).
 - Startup checks verify migration hashes against on-disk files; uncommitted or edited migrations abort startup.
 - `drizzle-kit push` is disabled. All schema updates must generate migrations (`bun run db:generate`).
+- `REQUIRED_INDEXES` in `src/db/migrations.ts` is the index contract; `test/migration.test.ts` asserts set equality with a freshly migrated database, so a new index must be listed.
 
 ---
 
