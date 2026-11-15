@@ -102,7 +102,8 @@ describe('Database Migrations', () => {
       expect([...new Set(REQUIRED_INDEXES)].sort()).toEqual(actual);
     });
 
-    test('all migration files have corresponding journal entries', () => {      const migrationsDir = join(ROOT_DIR, 'drizzle/migrations');
+    test('all migration files have corresponding journal entries', () => {
+      const migrationsDir = join(ROOT_DIR, 'drizzle/migrations');
       const journalPath = join(migrationsDir, 'meta/_journal.json');
       const migrationFiles = readdirSync(migrationsDir)
         .filter(f => /^\d{4}_.+\.sql$/.test(f))

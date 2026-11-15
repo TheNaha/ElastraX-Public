@@ -142,7 +142,8 @@ describe('backupDatabase', () => {
     expect(statSync(freshPath).size).toBe('fresh'.length);
   });
 
-  test('rejects a tampered backup without publishing the restore destination', async () => {    const sourcePath = join(TMP, 'tamper-source.db');
+  test('rejects a tampered backup without publishing the restore destination', async () => {
+    const sourcePath = join(TMP, 'tamper-source.db');
     const source = newLiveDb(sourcePath);
     source.close();
     const result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'tamper-backups') });

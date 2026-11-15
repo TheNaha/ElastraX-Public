@@ -309,7 +309,7 @@ export class AuthService {
     // concurrent callers (Discord's duplicate ready event seeding the owner) both
     // saw no row and the second INSERT failed with UNIQUE. The upsert also keeps
     // the single-role-per-scope rule without a read.
-    const inserted = await db.insert(userRoles).values({
+    await db.insert(userRoles).values({
       userId,
       platform,
       scope,
@@ -320,11 +320,8 @@ export class AuthService {
     }).onConflictDoUpdate({
       target: [userRoles.platform, userRoles.userId, userRoles.scope],
       set: { role, grantedBy, scopeRoomKey: normalizedScope.scopeRoomKey },
-    }).run() as unknown as { changes: number };
-    logger.info(
-      { role, scope, platform, inserted: Number(inserted?.changes ?? 0) === 1 },
-      '[AuthService] setRole - upserted',
-    );
+    }).run();
+    logger.info({ role, scope, platform }, '[AuthService] setRole - upserted');
   }
 
   static async removeRole(

@@ -97,7 +97,10 @@ function readDigestConfig(): DigestConfig {
  */
 const MAX_DIGEST_ATTEMPTS = 3;
 
-/** In-process attempt counter, keyed by marker id (same shape as `Scheduler`'s). */
+/** In-process attempt counter, keyed by marker id (same shape as `Scheduler`'s).
+ *
+ * The budget is per process: a restart starts over, which is fine for a cost cap
+ * whose whole point is to stop a *tight* retry loop, not to be a durable limit. */
 const digestAttempts = new Map<string, number>();
 
 /** Days a digest marker survives in `app_kv`; nothing else ever deletes them. */

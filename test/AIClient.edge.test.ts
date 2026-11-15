@@ -211,7 +211,8 @@ describe('AIClient – edge cases', () => {
     expect(chunks[1].usage?.total_tokens).toBe(4);
   });
 
-  test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
+  test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     assignFetch(async () => new Response(
       ': keepalive\n\n' +

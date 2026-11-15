@@ -146,7 +146,17 @@ const SUMMARY_LOOKAHEAD = 16;
 /** Smallest summarization batch worth a model call. */
 const SUMMARY_MIN_BATCH = 8;
 
-const DIRECT_SEND_TIMEOUT_MS = Math.max(1_000, DIRECT_SEND_GRACE_MS - 5_000);
+/**
+ * Direct-send budget inside {@link DIRECT_SEND_GRACE_MS}.
+ *
+ * The grace exists so the 1 s poller cannot claim a row while the agent is
+ * sending it itself. `OutboxService` compares `available_at` against
+ * `Date.now() + CLOCK_SKEW_BUFFER_MS` (5 s), so the row becomes claimable
+ * `GRACE - SKEW` seconds after it was written — the timeout has to stay inside
+ * *that*, not inside the raw grace, or the last seconds of a slow send overlap
+ * the tick that claims the row.
+ */
+const DIRECT_SEND_TIMEOUT_MS = Math.max(1_000, DIRECT_SEND_GRACE_MS - 10_000);
 
 /**
  * Parts of an outbox idempotency key for one assistant reply.
@@ -177,9 +187,15 @@ const STREAM_PREVIEW_LIMIT = 1_800;
 
 /** Preview text with a trailing ellipsis once it passes {@link STREAM_PREVIEW_LIMIT}. */
 function clampStreamPreview(text: string): string {
-  const characters = Array.from(text);
-  if (characters.length <= STREAM_PREVIEW_LIMIT) return text;
-  return `${characters.slice(0, STREAM_PREVIEW_LIMIT).join('')}…`;
+  // Measured in UTF-16 units, which is what the providers count when they decide
+  // whether an edit needs a continuation. Counting code points let an all-emoji
+  // answer reach 3600 units before the 1800-point cap applied.
+  if (text.length <= STREAM_PREVIEW_LIMIT) return text;
+  let end = STREAM_PREVIEW_LIMIT;
+  const last = text.charCodeAt(end - 1);
+  // Never split a surrogate pair: keep the high surrogate with its partner.
+  if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+  return `${text.slice(0, end)}…`;
 }
 
 /**

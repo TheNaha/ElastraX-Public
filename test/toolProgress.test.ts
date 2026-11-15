@@ -179,3 +179,32 @@ describe('ToolProgressTracker', () => {
     await expect(tracker.startStep('Step 2')).resolves.toBe(1);
   });
 });
+
+describe('ToolProgressTracker render bound', () => {
+  /**
+   * `editMessage` grows a message by re-editing its head and posting the
+   * remainder as *new* messages, so an unbounded step list re-posted its tail on
+   * every sync — the same duplication the assistant preview avoids.
+   */
+  test('bounds the rendered status instead of growing without limit', async () => {
+    const sent: string[] = [];
+    const ctx = {
+      chatId: 'test-chat',
+      sendMessage: mock(async (text: string) => {
+        sent.push(text);
+        return { id: 'msg-long' };
+      }),
+      editMessage: mock(async () => undefined),
+    };
+
+    const tracker = new ToolProgressTracker(ctx);
+    for (let i = 0; i < 60; i++) {
+      await tracker.startStep(`step ${i} ${'x'.repeat(40)}`);
+    }
+
+    const rendered = tracker.render();
+    expect(rendered.length).toBeLessThanOrEqual(1_803);
+    expect(rendered).toContain('more steps');
+    expect(sent[0]!.length).toBeLessThanOrEqual(1_803);
+  });
+});

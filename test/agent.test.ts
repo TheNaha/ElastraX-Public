@@ -474,7 +474,8 @@ describe('handleIncomingMessage', () => {
       expect(String((ctx.reply as MockFn).mock.calls[0]?.[0])).toContain('Slow down');
     });
 
-    test('strips the /chat prefix from the user content', async () => {      const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
+    test('strips the /chat prefix from the user content', async () => {
+      const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
       await handleIncomingMessage(ctx);
       expectReply(ctx.reply, 'Hello, I am ElastraX!');
 
@@ -1021,7 +1022,8 @@ describe('handleIncomingMessage', () => {
       expect(edited.at(-1)).toBe(body);
     });
 
-    test('finalises a streamed bubble that the progress tracker did not adopt', async () => {      process.env.AI_STREAMING = 'true';
+    test('finalises a streamed bubble that the progress tracker did not adopt', async () => {
+      process.env.AI_STREAMING = 'true';
       const execSearch = mock(async () => 'Search results for bun');
       registerTool(new FakeTool('web_search', execSearch));
 
@@ -1332,7 +1334,8 @@ describe('handleIncomingMessage', () => {
       ['video/mp4', 'video.mp4'],
       ['audio/ogg', 'audio.ogg'],
       ['application/pdf', 'document.pdf'],
-    ])('builds AI context for %s attachments from history', async (mimeType, fileName) => {      const mediaPath = writeMediaFile(fileName, 'payload');
+    ])('builds AI context for %s attachments from history', async (mimeType, fileName) => {
+      const mediaPath = writeMediaFile(fileName, 'payload');
       const chatId = nextId('room');
       await seedHistory(chatId, [
         { role: 'user', content: 'previous media', senderName: 'Alice', mediaPath, mimeType, createdAt: new Date(Date.now() - 60_000) },

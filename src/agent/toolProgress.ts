@@ -2,6 +2,9 @@ import type { MessageContext } from '../core/MessageContext';
 
 export type ToolStepState = 'running' | 'completed' | 'failed';
 
+/** Longest rendered progress message; see {@link ToolProgressTracker.render}. */
+const MAX_PROGRESS_CHARS = 1_800;
+
 export interface ToolProgressStep {
   description: string;
   state: ToolStepState;
@@ -169,12 +172,21 @@ export class ToolProgressTracker {
 
   render(): string {
     const total = Math.max(this.steps.length, this.plannedTotal);
-    return this.steps
-      .map((step, i) => {
-        const icon = step.state === 'running' ? '⏳' : step.state === 'completed' ? '✅' : '❌';
-        return `${icon} [${i + 1}/${total}] ${step.description}`;
-      })
-      .join('\n');
+    const lines = this.steps.map((step, i) => {
+      const icon = step.state === 'running' ? '⏳' : step.state === 'completed' ? '✅' : '❌';
+      return `${icon} [${i + 1}/${total}] ${step.description}`;
+    });
+    // Bound the rendered status: `editMessage` grows a message by editing its head
+    // and posting the remainder as *new* messages, so an unbounded step list
+    // re-posted its tail on every sync — the same duplication the assistant
+    // preview avoids. The cap matches Discord's smallest platform limit.
+    const text = lines.join('\n');
+    if (text.length <= MAX_PROGRESS_CHARS) return text;
+    const dropped = lines.length - 1;
+    let end = MAX_PROGRESS_CHARS - 20;
+    const last = text.charCodeAt(end - 1);
+    if (last >= 0xd800 && last <= 0xdbff) end -= 1;
+    return `${text.slice(0, end)}…\n(+${dropped} more step${dropped === 1 ? '' : 's'})`;
   }
 
   async startStep(description: string): Promise<number> {

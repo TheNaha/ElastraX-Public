@@ -111,7 +111,9 @@ export class OutboxService {
            room_key = excluded.room_key,
            payload = excluded.payload,
            available_at = MAX(message_outbox.available_at, excluded.available_at),
-           updated_at = excluded.updated_at
+           updated_at = excluded.updated_at,
+           attempt_count = 0,
+           last_error = NULL
          WHERE message_outbox.state IN ('pending', 'failed')
          RETURNING id`,
       )
@@ -172,6 +174,7 @@ export class OutboxService {
            state = 'sent',
            sent_at = excluded.sent_at,
            room_key = excluded.room_key,
+           payload = excluded.payload,
            lease_owner = NULL,
            lease_expires_at = NULL,
            last_error = NULL,
