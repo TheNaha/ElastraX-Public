@@ -387,11 +387,19 @@ export class AIClient {
     previous: AIStreamChunk | undefined,
     requestId: string,
   ): AIStreamChunk {
-    if (!isPlainObject(value) || !Array.isArray(value.choices)) {
+    if (!isPlainObject(value)) {
+      throw new AIProtocolError('invalid_chunk', 'SSE data must be an object.');
+    }
+    // OpenAI-compatible gateways end a stream with a usage-only chunk
+    // (`{"usage":{...}}`, no `choices`) when usage reporting is requested. It is
+    // not malformed and it arrives *after* the text has been yielded, so
+    // rejecting it replaced a complete answer with "internal error".
+    const rawChoices = value.choices;
+    if (rawChoices !== undefined && !Array.isArray(rawChoices)) {
       throw new AIProtocolError('invalid_chunk', 'SSE data must contain a choices array.');
     }
 
-    const choices: ChatCompletionChunkChoice[] = value.choices.map((entry): ChatCompletionChunkChoice => {
+    const choices: ChatCompletionChunkChoice[] = (rawChoices ?? []).map((entry): ChatCompletionChunkChoice => {
       if (!isPlainObject(entry) || !isPlainObject(entry.delta)) {
         throw new AIProtocolError('invalid_chunk', 'SSE choice is missing its delta object.');
       }

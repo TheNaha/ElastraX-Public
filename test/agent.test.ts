@@ -21,6 +21,7 @@ process.env.CONTEXT_MESSAGE_LIMIT = '10';
 
 import * as toolsModule from '../src/tools';
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '../src/tools/BaseTool';
+import { RateLimiter } from '../src/utils/RateLimiter';
 
 const { handleIncomingMessage } = await import('../src/agent/index');
 
@@ -434,8 +435,46 @@ describe('handleIncomingMessage', () => {
       expect(ctx.reply).toHaveBeenCalled();
     });
 
-    test('strips the /chat prefix from the user content', async () => {
-      const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
+    /**
+     * The rate limiter used to run before the trigger decision, so group chatter
+     * the bot was never addressed in consumed the sender's budget and then got a
+     * "rate limited" reply posted into the group.
+     */
+    test('does not rate-limit or reply to group chatter the bot was not addressed in', async () => {
+      const senderId = 'rate-limit-untriggered@s.whatsapp.net';
+      const ctx = makeCtx({
+        isGroup: true,
+        text: 'just talking among ourselves',
+        mentionedIds: [],
+        senderId,
+        resolveRoles: mock(async () => ['user']),
+      });
+      for (let i = 0; i < 10; i++) RateLimiter.checkWithLimits(senderId, 'whatsapp', 10, 60);
+
+      await handleIncomingMessage(ctx);
+
+      expect(ctx.reply).not.toHaveBeenCalled();
+    });
+
+    test('still rate-limits a mention the bot would answer', async () => {
+      const senderId = 'rate-limit-triggered@s.whatsapp.net';
+      const ctx = makeCtx({
+        isGroup: true,
+        text: 'hey bot are you there?',
+        mentionedIds: ['bot@s.whatsapp.net'],
+        isBotMentioned: true,
+        senderId,
+        resolveRoles: mock(async () => ['user']),
+      });
+      for (let i = 0; i < 10; i++) RateLimiter.checkWithLimits(senderId, 'whatsapp', 10, 60);
+
+      await handleIncomingMessage(ctx);
+
+      expect(ctx.reply).toHaveBeenCalledTimes(1);
+      expect(String((ctx.reply as MockFn).mock.calls[0]?.[0])).toContain('Slow down');
+    });
+
+    test('strips the /chat prefix from the user content', async () => {      const ctx = makeCtx({ isGroup: true, text: '/chat What is AI?', mentionedIds: [] });
       await handleIncomingMessage(ctx);
       expectReply(ctx.reply, 'Hello, I am ElastraX!');
 
@@ -936,8 +975,53 @@ describe('handleIncomingMessage', () => {
       expect(sent.every(text => text.includes('Visible answer.'))).toBe(true);
     });
 
-    test('finalises a streamed bubble that the progress tracker did not adopt', async () => {
+    /**
+     * `editMessage` grows a message by re-editing its head and posting the
+     * remainder as *new* messages, so a preview past the platform limit re-posts
+     * the whole tail on every edit. The preview is frozen instead; the final edit
+     * still carries the complete answer (head plus one continuation).
+     */
+    test('freezes the streaming preview below the platform limit and still delivers the full text', async () => {
       process.env.AI_STREAMING = 'true';
+      const body = `${'a'.repeat(2_400)}TAILMARKER${'b'.repeat(200)}`;
+      const chunk = (text: string, finish: string | null = null): string =>
+        `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{ index: 0, delta: { content: text }, finish_reason: finish }],
+        })}\n\n`;
+
+      global.fetch = mock(async () => new Response(
+        [chunk(body, 'stop'), 'data: [DONE]', ''].join('\n'),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )) as unknown as typeof global.fetch;
+
+      const sent: string[] = [];
+      const edited: string[] = [];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Give me a long answer',
+        sendMessage: mock(async (text: string) => {
+          sent.push(text);
+          return { id: 'long-stream-key' };
+        }),
+        editMessage: mock(async (_key: unknown, text: string) => {
+          edited.push(text);
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toContain('…');
+      expect(sent[0]).not.toContain('TAILMARKER');
+      expect(Array.from(sent[0]!).length).toBeLessThanOrEqual(1_803);
+
+      // The final edit replaces the cursor with the complete answer.
+      expect(edited.at(-1)).toContain('TAILMARKER');
+      expect(edited.at(-1)).toBe(body);
+    });
+
+    test('finalises a streamed bubble that the progress tracker did not adopt', async () => {      process.env.AI_STREAMING = 'true';
       const execSearch = mock(async () => 'Search results for bun');
       registerTool(new FakeTool('web_search', execSearch));
 
@@ -1193,13 +1277,62 @@ describe('handleIncomingMessage', () => {
       expect(stored.find(row => row.providerMessageId === quotedStanzaId)?.mediaPath).toBe(mediaPath);
     });
 
+    /**
+     * The "quoted attachment omitted" note used to replace the whole content with
+     * a plain string, which threw away an image embedded for the *current*
+     * message: sending a photo as a reply to another photo meant the model only
+     * saw text.
+     */
+    test('keeps the current message image when the message also quotes media', async () => {
+      // A real 1x1 PNG: inlining is only attempted for an image whose dimensions
+      // can be read from its header.
+      const currentPath = join(mediaDir, `${RUN_TOKEN}-current.png`);
+      writeFileSync(currentPath, Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+        'base64',
+      ));
+      const capturedBodies: Array<{ messages?: Array<{ role: string; content: unknown }> }> = [];
+      global.fetch = mock(async (_url: unknown, init?: { body?: unknown }) => {
+        capturedBodies.push(JSON.parse(String(init?.body)) as (typeof capturedBodies)[number]);
+        return makeFetchResponse('Nice picture.');
+      }) as unknown as typeof global.fetch;
+
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'what is different here?',
+        hasMedia: true,
+        mediaPath: currentPath,
+        mimeType: 'image/png',
+        mediaReady: Promise.resolve(),
+        quoted: {
+          messageType: 'imageMessage',
+          body: 'old photo',
+          text: 'old photo',
+          senderId: 'user-x',
+          hasMedia: true,
+          mediaPath: join(mediaDir, `${RUN_TOKEN}-quoted-old.png`),
+          mimeType: 'image/png',
+          rawMessage: { key: { fromMe: false } },
+        },
+      });
+
+      await handleIncomingMessage(ctx);
+
+      const mediaTurn = capturedBodies
+        .flatMap(body => body.messages ?? [])
+        .find(message => message.role === 'user' && Array.isArray(message.content));
+      expect(mediaTurn).toBeDefined();
+      const parts = mediaTurn!.content as Array<{ type: string; text?: string }>;
+      expect(parts.some(part => part.type === 'image_url')).toBe(true);
+      expect(parts.some(part => part.type === 'text' && part.text?.includes('Quoted attachment omitted'))).toBe(true);
+    });
+
     test.each([
       ['image/jpeg', 'image.jpg'],
       ['video/mp4', 'video.mp4'],
       ['audio/ogg', 'audio.ogg'],
       ['application/pdf', 'document.pdf'],
-    ])('builds AI context for %s attachments from history', async (mimeType, fileName) => {
-      const mediaPath = writeMediaFile(fileName, 'payload');
+    ])('builds AI context for %s attachments from history', async (mimeType, fileName) => {      const mediaPath = writeMediaFile(fileName, 'payload');
       const chatId = nextId('room');
       await seedHistory(chatId, [
         { role: 'user', content: 'previous media', senderName: 'Alice', mediaPath, mimeType, createdAt: new Date(Date.now() - 60_000) },

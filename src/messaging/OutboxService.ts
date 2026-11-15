@@ -107,7 +107,12 @@ export class OutboxService {
            (id, platform, chat_room_id, room_key, idempotency_key, payload, state,
             available_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
-         ON CONFLICT(platform, idempotency_key) DO NOTHING
+         ON CONFLICT(platform, idempotency_key) DO UPDATE SET
+           room_key = excluded.room_key,
+           payload = excluded.payload,
+           available_at = MAX(message_outbox.available_at, excluded.available_at),
+           updated_at = excluded.updated_at
+         WHERE message_outbox.state IN ('pending', 'failed')
          RETURNING id`,
       )
       .get(id, platform, chatRoomId, roomKey, key, payload, availableAt, now, now);
@@ -163,7 +168,15 @@ export class OutboxService {
            (id, platform, chat_room_id, room_key, idempotency_key, payload, state,
             sent_at, available_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, ?, ?, ?)
-         ON CONFLICT(platform, idempotency_key) DO NOTHING
+         ON CONFLICT(platform, idempotency_key) DO UPDATE SET
+           state = 'sent',
+           sent_at = excluded.sent_at,
+           room_key = excluded.room_key,
+           lease_owner = NULL,
+           lease_expires_at = NULL,
+           last_error = NULL,
+           updated_at = excluded.updated_at
+         WHERE message_outbox.state <> 'sent'
          RETURNING id`,
       )
       .get(id, platform, chatRoomId, roomKey, key, payload, now, availableAt, now, now);
@@ -204,23 +217,20 @@ export class OutboxService {
         .all(...platforms, now, MAX_ATTEMPTS, now, Math.max(1, Math.min(50, limit)));
       const claimed: ClaimedOutboxMessage[] = [];
       for (const candidate of candidates) {
-        const result = sqlite
-          .query<never, [string, number, number, string, number, number, number]>(
+        // Claim and read in one statement: the lease update already knows which
+        // row it won, so the follow-up SELECT was a second round trip inside the
+        // write transaction for every delivered message.
+        const row = sqlite
+          .query<{ id: string; platform: string; roomKey: string | null; chatRoomId: string; payload: string; attemptCount: number }, [string, number, number, string, number, number, number]>(
             `UPDATE message_outbox
              SET state = 'leased', lease_owner = ?, lease_expires_at = ?,
                  attempt_count = attempt_count + 1, updated_at = ?
              WHERE id = ? AND available_at <= ? AND attempt_count < ?
-               AND (state IN ('pending', 'failed') OR (state = 'leased' AND lease_expires_at <= ?))`,
+               AND (state IN ('pending', 'failed') OR (state = 'leased' AND lease_expires_at <= ?))
+             RETURNING id, platform, ${roomKeyColumn} AS roomKey, chat_room_id AS chatRoomId, payload,
+                       attempt_count AS attemptCount`,
           )
-          .run(owner, now + LEASE_MS, now, candidate.id, now, MAX_ATTEMPTS, now);
-        if (Number(result.changes) !== 1) continue;
-        const row = sqlite
-          .query<{ id: string; platform: string; roomKey: string; chatRoomId: string; payload: string; attemptCount: number }, [string]>(
-            `SELECT id, platform, ${roomKeyColumn} AS roomKey, chat_room_id AS chatRoomId, payload,
-                    attempt_count AS attemptCount
-             FROM message_outbox WHERE id = ?`,
-          )
-          .get(candidate.id);
+          .get(owner, now + LEASE_MS, now, candidate.id, now, MAX_ATTEMPTS, now);
         if (!row) continue;
         let text: string;
         let mentions: string[] = [];
@@ -353,9 +363,13 @@ export class OutboxService {
   }
 
   /**
-   * Prune terminal outbox rows older than `olderThanMs`. `failed` and
-   * `dead_letter` rows are never claimed by the delivery worker, so without a
-   * prune they accumulate indefinitely.
+   * Prune terminal outbox rows older than `olderThanMs`.
+   *
+   * `failed` rows are included because `claim()` retries them within seconds
+   * (`exponentialBackoff` starts at 5 s and `MAX_ATTEMPTS` is 5), so a `failed`
+   * row older than any sane window is one nothing will ever claim again. Window
+   * length is a retention decision that still disagrees with
+   * `src/db/retention.ts` — see IG-12 in the 2026-11-16 audit.
    */
   static prune(olderThanMs: number): number {
     const cutoff = Date.now() - olderThanMs;

@@ -73,6 +73,7 @@ import { healthMetrics } from '../utils/HealthMetrics';
 import { getMaxToolIterations, getStreamingConfig, getToolLoadingMode, getToolTimeoutMs as getConfiguredToolTimeoutMs, getTurnBudgetConfig, readBooleanEnv } from '../config/runtime';
 import { isAudioMimeType, isTranscriptionConfigured, resolveTranscriptionSource, transcribeSource } from '../utils/transcription';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
+import { randomUUID } from 'node:crypto';
 import { isUsableProviderMessageId } from './messageId';
 import { retrieveRoomKnowledge, formatRoomKnowledge } from '../utils/roomKnowledge';
 import { sanitizeRawMessage } from '../utils/rawMessage';
@@ -148,6 +149,40 @@ const SUMMARY_MIN_BATCH = 8;
 const DIRECT_SEND_TIMEOUT_MS = Math.max(1_000, DIRECT_SEND_GRACE_MS - 5_000);
 
 /**
+ * Parts of an outbox idempotency key for one assistant reply.
+ *
+ * The provider message id identifies the turn, and it is only usable when the
+ * provider actually supplied one: WhatsApp falls back to `'unknown'`, and every
+ * such message in a room hashed to the same key, so a second reply's row was
+ * suppressed by the first (and a failed direct send of the second had nothing
+ * left to retry). `InboxService.eventKeyFor` already randomises this case; the
+ * outbox now agrees with it.
+ */
+function outboxKeyParts(messageId: string | undefined, source: string): string[] {
+  return isUsableProviderMessageId(messageId) ? [messageId, source] : [`local:${randomUUID()}`, source];
+}
+
+/**
+ * Longest streaming preview the agent renders inline.
+ *
+ * Every provider's `editMessage` grows a message by re-editing its head and
+ * posting the remainder as *new* messages, so a preview that passes the
+ * platform limit re-posts the whole tail on every edit interval — a
+ * 6000-character Discord answer arrived as a dozen stacked copies of its tail.
+ * The preview is therefore frozen below the smallest platform limit (Discord's
+ * 2000 characters). Nothing is lost: the final edit still sends the complete
+ * text, head plus one continuation.
+ */
+const STREAM_PREVIEW_LIMIT = 1_800;
+
+/** Preview text with a trailing ellipsis once it passes {@link STREAM_PREVIEW_LIMIT}. */
+function clampStreamPreview(text: string): string {
+  const characters = Array.from(text);
+  if (characters.length <= STREAM_PREVIEW_LIMIT) return text;
+  return `${characters.slice(0, STREAM_PREVIEW_LIMIT).join('')}…`;
+}
+
+/**
  * Fast path for an outgoing reply: enqueue it durably, send it immediately, and
  * mark the row sent.
  *
@@ -162,7 +197,7 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
     ctx.platform,
     ctx.chatId,
     text,
-    [ctx.messageId, source],
+    outboxKeyParts(ctx.messageId, source),
     { mentions },
   );
   try {
@@ -552,24 +587,6 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     '[Agent] Role & privilege resolution complete',
   );
 
-  // Rate limit based on the user's merged privileges (-1 = unlimited → skip).
-  if (privileges.maxMessagesPerWindow !== -1) {
-    const rl = RateLimiter.checkWithLimits(
-      ctx.senderId,
-      platform,
-      privileges.maxMessagesPerWindow,
-      privileges.rateLimitWindowSec,
-    );
-    if (!rl.allowed) {
-      logger.info(
-        { senderId: ctx.senderId, waitSeconds: rl.waitSeconds, limit: privileges.maxMessagesPerWindow },
-        '[Agent] Rate limited — rejecting message',
-      );
-      await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
-      return;
-    }
-  }
-
   // Resolve dynamic configurations for this room
   const config = ConfigService.getResolvedConfig(room, ctx.isGroup);
 
@@ -596,9 +613,33 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     }
   }
 
-  // Handle active interactive sessions (bypass normal commands and AI)
+  // Handle active interactive sessions (bypass normal commands and AI).
+  // This runs *before* the rate limiter: a wizard step is a direct answer to the
+  // bot, and rejecting it with "rate limited" dropped the answer while leaving
+  // the session active, so the user had to know /cancel to get out.
   const inFlow = await FlowHandler.handle(ctx);
   if (inFlow) return;
+
+  // Rate limit only what the bot will actually process. This used to run for
+  // every inbound message, so group chatter the bot was never addressed in
+  // consumed the sender's budget and then got a "rate limited" reply in the
+  // group.
+  if ((shouldTriggerAI || text.startsWith('/')) && privileges.maxMessagesPerWindow !== -1) {
+    const rl = RateLimiter.checkWithLimits(
+      ctx.senderId,
+      platform,
+      privileges.maxMessagesPerWindow,
+      privileges.rateLimitWindowSec,
+    );
+    if (!rl.allowed) {
+      logger.info(
+        { senderId: ctx.senderId, waitSeconds: rl.waitSeconds, limit: privileges.maxMessagesPerWindow },
+        '[Agent] Rate limited — rejecting message',
+      );
+      await ctx.reply(t(ctx.language, 'agent.rate_limited', { seconds: String(rl.waitSeconds || 1) }));
+      return;
+    }
+  }
 
   // Handle explicit commands (bypass AI conversation loop)
   if (text.startsWith('/') && !isChatCommand(text)) {
@@ -983,9 +1024,16 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       const embedInlet = !!isCurrentMessage;
       let finalContent = await buildMediaParts(m.mediaPath || '', m.mimeType || '', textContent, embedInlet);
 
-      // Inject quoted media inline into the context of the CURRENT message only
+      // Inject quoted media inline into the context of the CURRENT message only.
+      // When the current message embeds its own image `finalContent` is already an
+      // array of content parts; replacing it with the plain text dropped the
+      // user's attachment entirely, so the model never saw an image sent as a
+      // reply to a media message.
       if (isCurrentMessage && ctx.quoted?.hasMedia) {
-        finalContent = `${typeof finalContent === 'string' ? finalContent : textContent}\n[Quoted attachment omitted from inline model context]`;
+        const note = '[Quoted attachment omitted from inline model context]';
+        finalContent = Array.isArray(finalContent)
+          ? [...finalContent, { type: 'text', text: note }]
+          : `${finalContent}\n${note}`;
       }
 
       return {
@@ -1183,7 +1231,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
                 // for real text rather than sending one.
                 const preview = stripPartialThinkTags(accumulated);
                 if (!preview) continue;
-                const displayText = `${preview} ▌`;
+                const displayText = `${clampStreamPreview(preview)} ▌`;
                 if (!streamingFailed) {
                   if (!sentKey) {
                     try {
@@ -1373,14 +1421,15 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     });
 
     const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
+    const keyParts = outboxKeyParts(ctx.messageId, 'assistant');
     if (replyAlreadyDelivered) {
-      OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, [ctx.messageId, 'assistant']);
+      OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
     } else {
       const deliveryId = OutboxService.enqueueDirectText(
         platform,
         chatId,
         finalAiResponseText,
-        [ctx.messageId, 'assistant'],
+        keyParts,
       );
       try {
         const result = await withCancellableTimeout(

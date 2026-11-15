@@ -179,3 +179,61 @@ describe('InboxService.admit', () => {
     expect(db.select().from(messageInbox).where(eq(messageInbox.chatRoomId, chatId)).all()).toHaveLength(1);
   });
 });
+
+describe('OutboxService idempotency conflicts', () => {
+  const row = (id: string) => db.select().from(messageOutbox).where(eq(messageOutbox.id, id)).all()[0]!;
+
+  beforeEach(() => {
+    db.delete(messageOutbox).run();
+  });
+
+  /**
+   * `enqueueDirectText` parks the row for `DIRECT_SEND_GRACE_MS` so the 1 s
+   * poller cannot deliver it while the agent sends the message itself. That only
+   * worked when the insert actually landed: a re-run of the same event found the
+   * row already in `failed` with a past `available_at`, `DO NOTHING` left it
+   * claimable, and the outbox delivered the previous text while the agent sent
+   * the new one.
+   */
+  test('a retried direct send re-parks an existing failed row instead of leaving it claimable', () => {
+    const key = ['message-without-id', 'assistant'];
+    const id = OutboxService.enqueueDirectText('whatsapp', 'room-conflict', 'first draft', key);
+    db.update(messageOutbox).set({ state: 'failed', availableAt: 0 }).where(eq(messageOutbox.id, id)).run();
+
+    const again = OutboxService.enqueueDirectText('whatsapp', 'room-conflict', 'second draft', key);
+
+    expect(again).toBe(id);
+    const stored = row(id);
+    expect(stored.availableAt).toBeGreaterThan(Date.now() + 5_000);
+    expect(JSON.parse(stored.payload).text).toBe('second draft');
+    expect(OutboxService.claim('worker-conflict', ['whatsapp'], 10).some(message => message.id === id)).toBe(false);
+  });
+
+  /**
+   * A turn whose first attempt left a `failed` row can succeed by streaming.
+   * `recordTextDelivered` said "delivered" only in a fresh row, so the leftover
+   * `failed` row stayed claimable and the same text went out a second time.
+   */
+  test('recordTextDelivered promotes an existing retryable row so it is never re-sent', () => {
+    const key = ['message-streamed', 'assistant'];
+    const id = OutboxService.enqueueText('whatsapp', 'room-streamed', 'streamed answer', key);
+    db.update(messageOutbox).set({ state: 'failed', availableAt: 0 }).where(eq(messageOutbox.id, id)).run();
+
+    const recorded = OutboxService.recordTextDelivered('whatsapp', 'room-streamed', 'streamed answer', key);
+
+    expect(recorded).toBe(id);
+    expect(row(id).state).toBe('sent');
+    expect(OutboxService.claim('worker-streamed', ['whatsapp'], 10).some(message => message.id === id)).toBe(false);
+  });
+
+  test('a terminal row is not resurrected by a later enqueue', () => {
+    const key = ['message-terminal', 'assistant'];
+    const id = OutboxService.enqueueText('whatsapp', 'room-terminal', 'done', key);
+    OutboxService.markEnqueuedSent(id, 'provider-1');
+
+    const again = OutboxService.enqueueText('whatsapp', 'room-terminal', 'done', key);
+
+    expect(again).toBe(id);
+    expect(row(id).state).toBe('sent');
+  });
+});

@@ -184,8 +184,34 @@ describe('AIClient – edge cases', () => {
     expect(chunks[1].choices[0]?.delta?.content).toBe('lo');
   });
 
-  test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {
+  /**
+   * Gateways that report usage on the stream path end with a chunk that has no
+   * `choices` at all. It arrives after the text, and rejecting it replaced a
+   * complete answer with "internal error" (protocol errors are not retried by
+   * `ModelRouter`).
+   */
+  test('chatCompletionStream accepts a trailing usage-only chunk', async () => {
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
+
+    assignFetch(async () => new Response(
+      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\n' +
+      'data: {"id":"1","object":"chat.completion.chunk","created":1,"model":"m","usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}\n\n' +
+      'data: [DONE]\n\n',
+      { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+    ));
+
+    const chunks = [];
+    for await (const chunk of client.chatCompletionStream([{ role: 'user', content: 'hi' }])) {
+      chunks.push(chunk);
+    }
+
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].choices[0]?.delta?.content).toBe('hello');
+    expect(chunks[1].choices).toHaveLength(0);
+    expect(chunks[1].usage?.total_tokens).toBe(4);
+  });
+
+  test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
 
     assignFetch(async () => new Response(
       ': keepalive\n\n' +
