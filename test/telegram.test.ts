@@ -283,7 +283,7 @@ describe('TelegramProvider lifecycle', () => {
    * `editMessage` split the text with `String.slice`, which cuts a surrogate pair
    * when an astral character straddles the limit: both halves rendered as U+FFFD.
    */
-  test('editMessage splits long text on code points', async () => {
+  test('editMessage splits long text on UTF-16 units', async () => {
     process.env.TELEGRAM_BOT_TOKEN = 'test-token';
     let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
     const edits: string[] = [];
@@ -323,13 +323,16 @@ describe('TelegramProvider lifecycle', () => {
     });
 
     // The emoji sits exactly across the limit, where a UTF-16 slice would cut it.
+    // Telegram counts UTF-16 units, so the head stops one unit short of the emoji
+    // instead of including it (4095 'a' + a 2-unit emoji exceeds 4096).
     const sentKey = await receivedContext!.sendMessage!('placeholder');
     continuations.length = 0;
     const longText = `${'a'.repeat(TELEGRAM_TEXT_LIMIT - 1)}😀 b`;
     await receivedContext!.editMessage!(sentKey, longText);
 
     expect(edits).toHaveLength(1);
-    expect(edits[0]!.endsWith('😀')).toBe(true);
+    expect(edits[0]!.endsWith('a')).toBe(true);
+    expect(edits[0]!.length).toBe(TELEGRAM_TEXT_LIMIT - 1);
     expect(edits[0]!.includes('\uFFFD')).toBe(false);
     expect(continuations).toHaveLength(1);
     expect(continuations[0]!.startsWith('\u2026 ')).toBe(true);

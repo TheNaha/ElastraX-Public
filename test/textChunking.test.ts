@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { chunkTextSmart, chunkTextDiscord, chunkTextTelegram, chunkTextFixed } from '../src/utils/textChunking';
+import { chunkTextSmart, chunkTextDiscord, chunkTextTelegram, chunkTextFixed, splitTextAtUtf16Limit } from '../src/utils/textChunking';
 
 describe('chunkTextSmart', () => {
   test('empty input returns one empty chunk', () => {
@@ -104,5 +104,54 @@ describe('chunkTextSmart — code points vs UTF-16 offsets', () => {
     const chunks = chunkTextSmart(text, { mode: 'boundary', limit: 20 });
     for (const chunk of chunks) expect(Array.from(chunk).length).toBeLessThanOrEqual(20);
     expect(chunks.join('')).toBe(text);
+  });
+
+  test('utf16 measure keeps emoji chunks inside the provider limit', () => {
+    // 3000 emoji are 6000 UTF-16 units: the Bot API would reject a single
+    // 4096-code-point chunk as "message is too long".
+    const text = '😀'.repeat(3000);
+    const chunks = chunkTextSmart(text, { mode: 'fixed', limit: 4096, measure: 'utf16' });
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(4096);
+      // No lone surrogate at either edge of the chunk.
+      expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(chunk)).toBe(false);
+      expect(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/.test(chunk)).toBe(false);
+    }
+    expect(chunks.join('')).toBe(text);
+  });
+});
+
+describe('chunkTextTelegram — UTF-16 limit', () => {
+  test('splits emoji text by UTF-16 units, not code points', () => {
+    const text = '😀'.repeat(3000);
+    const chunks = chunkTextTelegram(text);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(4096);
+    expect(chunks.join('')).toBe(text);
+  });
+
+  test('ASCII text still chunks at 4096 characters', () => {
+    expect(chunkTextTelegram('a'.repeat(4200))).toEqual(['a'.repeat(4096), 'a'.repeat(104)]);
+  });
+});
+
+describe('splitTextAtUtf16Limit', () => {
+  test('leaves short text untouched', () => {
+    expect(splitTextAtUtf16Limit('hello', 4096)).toEqual({ head: 'hello', rest: '' });
+  });
+
+  test('never splits a surrogate pair', () => {
+    const { head, rest } = splitTextAtUtf16Limit(`${'a'.repeat(4)}😀b`, 4);
+    expect(head).toBe('aaaa');
+    expect(rest).toBe('😀b');
+    const splitInside = splitTextAtUtf16Limit(`${'a'.repeat(3)}😀b`, 4);
+    expect(splitInside.head).toBe('aaa');
+    expect(splitInside.rest).toBe('😀b');
+    expect(splitInside.head.length + splitInside.rest.length).toBe(`${'a'.repeat(3)}😀b`.length);
+  });
+
+  test('rejects a non-positive limit', () => {
+    expect(() => splitTextAtUtf16Limit('x', 0)).toThrow('positive integer');
   });
 });

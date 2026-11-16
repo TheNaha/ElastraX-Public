@@ -30,6 +30,7 @@ import { MessageContext, type PlatformName, type ReplyOptions } from '../core/Me
 import type { MediaAttachmentDescriptor } from '../core/MessageContext';
 import { ProviderError, ProviderLifecycleError, ProviderOperationError } from './errors';
 import { chunkTelegramText, TELEGRAM_TEXT_LIMIT } from './telegramText';
+import { splitTextAtUtf16Limit } from '../utils/textChunking';
 import { logger } from '../utils/logger';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
@@ -672,17 +673,14 @@ export class TelegramProvider implements BotProvider {
         const activeBot = ensureCurrent();
         const messageId = resolveSentMessageId(key);
         if (!messageId) throw new ProviderOperationError('telegram', 'editMessage', `Cannot resolve message id for edit key: ${String(key)}`, undefined, 'INVALID_TARGET');
-        // Split by code point, like `chunkTelegramText`: a UTF-16 slice at the
-        // limit leaves a lone surrogate at the end of the edit and its partner at
-        // the start of the remainder, so both displayed as U+FFFD.
-        const characters = Array.from(nextText);
-        const head = characters.length <= TELEGRAM_TEXT_LIMIT
-          ? nextText
-          : characters.slice(0, TELEGRAM_TEXT_LIMIT).join('');
+        // The Bot API counts its 4096 limit in UTF-16 units, so the head is cut
+        // with the shared splitter (which never separates a surrogate pair).
+        // Counting code points here let an emoji-heavy answer exceed the limit
+        // and made every edit of it fail.
+        const { head, rest } = splitTextAtUtf16Limit(nextText, TELEGRAM_TEXT_LIMIT);
         await activeBot.api.editMessageText(chatId, messageId, head);
-        if (head.length < nextText.length) {
-          const remainder = characters.slice(TELEGRAM_TEXT_LIMIT).join('');
-          const chunks = chunkTelegramText(remainder);
+        if (rest.length > 0) {
+          const chunks = chunkTelegramText(rest);
           for (let i = 0; i < chunks.length; i++) {
             const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];
             const extra = await activeBot.api.sendMessage(chatId, chunk);
