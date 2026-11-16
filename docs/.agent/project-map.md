@@ -1,6 +1,6 @@
 # Project Map — ElastraX
 
-**Recorded Commit:** `a77f4c7` (code through the 2026-11-16 maintenance pass)
+**Recorded Commit:** `3db7713` (code through the 2026-11-16 maintenance pass)
 **Date:** 2026-11-16
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
@@ -126,7 +126,7 @@ ElastraX/
 ### Tool Calling & Plugin Sandboxing
 - Built-in tools extend `BaseTool`.
 - Dynamic tools in `src/plugins/` must export a `pluginManifest`.
-- The loader validates that plugin tool actions are explicitly covered by the manifest's declared permissions before registering.
+- The loader validates that plugin tool actions are explicitly covered by the manifest's declared permissions before registering, and rejects a tool whose name or alias collides with an already-admitted tool.
 - Roles (`user`, `premium`, `admin`, `owner`) restrict mutating or administrative tools. A check needs the exact role; `owner` satisfies every role and `user` is implicit.
 
 ### Database & Migrations

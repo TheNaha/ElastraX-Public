@@ -24,7 +24,7 @@ The default handle is a singleton exposed as `db` (Drizzle client) and `sqlite` 
 4. Verifies the stored schema fingerprint.
 5. Applies pending forward migrations with `drizzle migrate`.
 6. Validates the schema contract (`validateSchemaContract` in `src/db/migrations.ts`).
-7. Runs `afterMigrationCallbacks` to invalidate schema-aware caches.
+7. Runs `afterMigrationCallbacks` to invalidate schema-aware caches. The only registered callback is the room-key schema catalog (`src/db/rooms.ts`), which memoises `sqlite_master` / `pragma_table_xinfo` probes per database handle so room-key resolution does not query the catalog on every inbound message.
 8. Records a schema fingerprint keyed by the newest journal `when` value and applied migration count.
 9. Acquires the runtime lease (`elastrax:runtime`) with a heartbeat (renewed every `ttlMs / 3`, default 300 s TTL). If the runtime lease is held by another process, startup fails — this is the single-instance guard: two bots must never open the same data volume.
 
@@ -37,6 +37,7 @@ The default handle is a singleton exposed as `db` (Drizzle client) and `sqlite` 
 - `drizzle/migrations/meta/_journal.json` uses small sequential integers for `when` (1..N), not timestamps. `src/db/migrations.ts` validates these values and hardcodes some (`ROOM_KEY_MIGRATION_WHEN` and a checksum allowance keyed by journal position).
 - Applied migrations are hash-checked; never edit a shipped `.sql` file.
 - CI runs `bun run db:generate` and fails if it changes `drizzle.config.ts`, `drizzle/`, or `src/db/schema.ts` — schema/migration drift is fatal.
+- `REQUIRED_INDEXES` in `src/db/migrations.ts` is the index contract: startup validation fails when a required index is missing, and `test/migration.test.ts` asserts set equality against a freshly migrated database, so a new index must be added to the list.
 
 Snapshots are missing for some old migrations, and drizzle-kit diffs against the newest snapshot.
 
@@ -56,7 +57,7 @@ Snapshots are missing for some old migrations, and drizzle-kit diffs against the
 
 ## Backups and restore
 
-- `bun run db:backup` writes consistent `VACUUM INTO` snapshots to `BACKUP_DIR` (default `./data/backups`), keeps `BACKUP_KEEP` (default 7).
+- `bun run db:backup` writes consistent `VACUUM INTO` snapshots to `BACKUP_DIR` (default `./data/backups`), keeps `BACKUP_KEEP` (default 7), and prunes older snapshots with their manifests. Pruning refuses a manifest whose `snapshot.file` is not a bare filename inside the backup directory, and sweeps `*.db` snapshots that have no manifest after a 1 h grace (a snapshot is published just before its manifest).
 - `bun run db:restore` restores from a backup, validating integrity, foreign keys, schema version, and fingerprint before writing.
 - `bun run db:preflight` validates a restored copy before migration (read-only).
 - Never point tests at `data/bot.db`; the test harness uses temp databases and fails the run if anything under repo `data/` changes.

@@ -82,4 +82,4 @@ Record for every cell: date, operator, commit SHA, image digest or `bun.lock` ha
 
 The release record must contain, for every cell: the evidence artifact, the operator, and the date. Cells without evidence are `NOT RUN`, never `PASS`. Any `FAIL` blocks the release and is recorded in the same table with the reproduction steps.
 
-This matrix complements — and never replaces — the hermetic suite, the CI gates in [deployment](./deployment.md), and the canary procedure in [canary-runbook.md).
+This matrix complements — and never replaces — the hermetic suite, the CI gates in [deployment](./deployment.md), and the canary procedure in [canary-runbook](./canary-runbook.md).

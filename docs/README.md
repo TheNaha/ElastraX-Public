@@ -7,7 +7,7 @@
 - [API & Webhooks](./api.md) — exact routes, authentication, limits, replay handling, and delivery semantics.
 - [Admin Dashboard](./admin-dashboard.md) — operator dashboard auth, session cookie, CSRF, and `/admin/api/*` routes.
 - [Tools](./tools.md) — tool catalog and execution model.
-- [Services](./services.md) — background services (Scheduler, DigestService, HealthMonitor, InboxService, OutboxService, MediaService, NotificationSubscriptionService, ConfigService, AuthService, EmbeddingService).
+- [Services](./services.md) — long-lived services and timers started by `AppRuntime`, plus inbox/outbox delivery guarantees and scheduler retry semantics.
 - [Database](./database.md) — SQLite schema, migrations, lease behavior, and retention.
 - [Error Handling](./error-handling.md) — error types, codes, retryability, and startup validation.
 - [Logging](./logging.md) — Pino usage, log levels, transport, child loggers.

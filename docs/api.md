@@ -18,7 +18,7 @@ ElastraX exposes one Bun HTTP listener for inbound webhooks and operational endp
 | `GET` | `/admin/login` | Dashboard login page |
 | `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
 | `POST` | `/admin/api/logout` | End the session |
-| `GET` | `/admin/api/*` | Dashboard views (overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, …) |
+| `GET` | `/admin/api/*` | Dashboard views (overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, session) |
 | `POST` | `/admin/api/action/*` | Dashboard actions: `reload-registry`, `retry-outbox`, `delete-knowledge`, `retention-report` |
 
 All other paths return `404`. On the webhook routes a known path with the wrong method returns `405` and an `Allow` header. Webhook POST routes require `Content-Type: application/json`; other media types return `415`. Admin POST routes instead require the body to parse as a JSON object (no content-type gate) and enforce their own size caps.

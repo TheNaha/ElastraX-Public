@@ -24,7 +24,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 |------|-------|-------------|
 | **Download** | `/dl` | Downloads audio or video from 1000+ sites (YouTube, TikTok, Twitter) via `yt-dlp`. Enforces file size limits dynamically. |
 | **Make Sticker** | `/sticker` | Converts attached/quoted images, videos, and GIFs into WhatsApp WebP stickers using `node-webpmux` and `ffmpeg`. |
-| **Media Convert** | `/convert` | Converts audio and video formats using `ffmpeg` (e.g., `.ogg` to `.mp3`, or `.mkv` to `.mp4`). |
+| **Media Convert** | `/convert`, `/cv` | Converts audio and video formats using `ffmpeg` (e.g., `.ogg` to `.mp3`, or `.mkv` to `.mp4`). Optional `resolution` (`720p` or `640x480`), `fps`, `quality` (CRF for video, bitrate such as `128k` for audio) and `preset` (encoder preset) are applied when given. |
 | **Transcribe** | `/transcribe`| Transcribes Voice Notes and audio files using a configured Whisper endpoint. |
 | **Speak** | `/speak` | Sends a reply as a voice note via text-to-speech (opt-in: registered only when TTS is configured — `TTS_API_KEY`, plus `TTS_VOICE` for ElevenLabs). |
 
@@ -69,7 +69,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 - Mutating tools pass an admission check: a per-user/per-tool cost budget over 60 s (`TOOL_MUTATION_COST_LIMIT`, default 100) and per-user serialization of mutating calls.
 - Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`, which re-evaluates edited plugin files.
 - Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.
-- While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (⏳/✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
+- While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (⏳/✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. The rendered status is bounded to 1,800 UTF-16 units, because `editMessage` grows a message by re-editing its head and posting the remainder, so an unbounded status would duplicate its tail on every step. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
 
 ## Tool metadata reference
 

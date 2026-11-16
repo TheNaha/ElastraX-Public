@@ -34,7 +34,7 @@ A shorter token disables both `/metrics` and `/admin` (they fail closed) and log
 | `GET` | `/admin/login` | Dashboard login page |
 | `POST` | `/admin/api/login` | Exchange `METRICS_AUTH_TOKEN` for a session cookie |
 | `POST` | `/admin/api/logout` | End the session |
-| `GET` | `/admin/api/*` | Dashboard views: overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, … |
+| `GET` | `/admin/api/*` | Dashboard views: overview, tools, rooms, delivery, reminders, roomkeys, feedback, config, session |
 | `POST` | `/admin/api/action/*` | Dashboard actions: registry reload, outbox retry, delete knowledge, retention report |
 
 All other paths return `404`. The admin handler shares the webhook port; reverse proxies must forward `/admin` as well as `/webhook`. The Caddy example in `docs/deployment.md` proxies both.

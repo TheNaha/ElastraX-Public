@@ -50,6 +50,10 @@ Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempt
 
 `withTimeout` / `withCancellableTimeout` (`src/utils/withTimeout.ts`) race an operation against `TimeoutError`. Both settle the returned promise **before** invoking `onTimeout` and the abort controller, so a throwing abort listener cannot leave the caller awaiting a promise that never resolves. `withCancellableTimeout` passes the generated signal to the operation, so an HTTP client or child process is actually cancelled rather than merely ignored. `timeoutSignal(ms)` is the shared, `unref`'d alternative for `fetch` calls that only need a signal.
 
+## Transactions
+
+`withImmediateTransaction` (`src/db/runtime.ts`) is **synchronous by contract**. A callback that returns a promise makes it roll back, observe and swallow the abandoned promise (so a later rejection cannot become an unhandled rejection, which Bun treats as fatal), and throw a `TypeError`. Restructure the work or wrap the synchronous write instead of awaiting inside the callback.
+
 ## Webhook errors
 
 `WebhookRequestError` carries an HTTP status:

@@ -1,6 +1,6 @@
 # Architecture & Design
 
-ElastraX is designed with a domain-driven architecture that completely decouples the messaging platforms (WhatsApp, Discord) from the core conversational logic (the Agent).
+ElastraX is designed with a domain-driven architecture that completely decouples the messaging platforms (WhatsApp, Discord, Telegram) from the core conversational logic (the Agent).
 
 ## Core Concepts
 
@@ -31,16 +31,17 @@ Every provider exposes `status` (`stopped`, `starting`, `running`, `backoff`, `n
 - `stop()` awaits each provider's socket/poller shutdown; `AppRuntime.teardown` bounds each stop with a 10 s timeout and logs a failure instead of hanging shutdown.
 
 ### 4. The Agent Loop (`src/agent/index.ts`)
-The `handleIncomingMessage` function is the single entry point for all normalized messages. It performs the following pipeline:
-1. **Flow Interception**: Checks if the user is in an active interactive flow (e.g. PDF multi-image collection).
-2. **Explicit Commands**: Routes slash commands directly to their tool implementations (bypassing the LLM).
-3. **Intent / Rule Checking**: Decides if the bot should reply (e.g., ignoring group messages where the bot isn't mentioned).
-4. **LLM Inference**: Fetches chat history, builds the context, and invokes the `AIClient`.
-5. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with ✅/❌ icons (see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the final answer is delivered as a separate message.
+The `handleIncomingMessage` function is the single entry point for all normalized messages. It resolves the room, the sender's roles and the room config, then runs this pipeline in order:
+1. **Intent / Rule Checking**: Decides if the bot should reply (e.g., ignoring group messages where the bot isn't mentioned).
+2. **Flow Interception**: Checks if the user is in an active interactive flow (e.g. PDF multi-image collection) and lets it consume the message.
+3. **Rate Limiting**: Per-sender, per-role limit; only messages the bot will actually process are counted (see below).
+4. **Explicit Commands**: Routes slash commands directly to their tool implementations (bypassing the LLM).
+5. **LLM Inference**: Fetches chat history, builds the context, and invokes the `AIClient`.
+6. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with running/completed/failed icons (⏳/✅/❌, see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the final answer is delivered as a separate message.
 
-Per-role rate limiting is applied *after* steps 1 and 3: it only counts messages the bot will actually process (a triggered group message or a slash command). Group chatter the bot ignores neither consumes a sender's budget nor earns a "rate limited" reply, and an active flow step is never dropped by the limiter.
+The limiter runs after the flow check and after the trigger decision, so group chatter the bot ignores neither consumes a sender's budget nor earns a "rate limited" reply, an active flow step is never dropped by it, and a slash command is still limited.
 
-With `AI_STREAMING=true` and a platform that supports `sendMessage`/`editMessage`, tokens are accumulated and edited into one live message at `STREAMING_EDIT_INTERVAL_WA` / `_DC`. The preview strips a `think` block even while it is still streaming, so chain-of-thought never reaches the user, and nothing is sent until real text arrives. The preview is also frozen at 1800 characters: `editMessage` grows a message by re-editing its head and posting the remainder as new messages, so an unbounded preview past the platform limit re-posted the whole tail on every edit. The final edit still delivers the complete answer. If a streamed bubble also carries tool calls and the progress tracker does not adopt that message, the bubble is finalised (without the trailing cursor) before the tool status message takes over. A send or edit failure degrades to the non-streaming path for the rest of the turn.
+With `AI_STREAMING=true` and a platform that supports `sendMessage`/`editMessage`, tokens are accumulated and edited into one live message at `STREAMING_EDIT_INTERVAL_WA` / `_DC`. The preview strips a `think` block even while it is still streaming, so chain-of-thought never reaches the user, and nothing is sent until real text arrives. The preview is also frozen at 1,800 UTF-16 units — the unit the providers count when they decide whether an edit needs a continuation — and the clamp never splits an emoji's surrogate pair: `editMessage` grows a message by re-editing its head and posting the remainder as new messages, so an unbounded preview past the platform limit re-posted the whole tail on every edit. The final edit still delivers the complete answer. If a streamed bubble also carries tool calls and the progress tracker does not adopt that message, the bubble is finalised (without the trailing cursor) before the tool status message takes over. A send or edit failure degrades to the non-streaming path for the rest of the turn.
 
 ### 5. Interactive State Management (`FlowHandler.ts`)
 For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
@@ -62,11 +63,13 @@ The AI layer features a highly resilient Failover Router:
 
 `src/providers/telegram.ts` implements the same `BotProvider` contract using grammy. It is optional: without `TELEGRAM_BOT_TOKEN` it reports `not_configured` and never blocks boot. Because a Telegram user id is a numeric snowflake that can never match `BOT_OWNER_JID`, a deployment that enables Telegram must also set `BOT_OWNER_TELEGRAM_ID`, otherwise the platform starts with no owner and every owner-only tool is unreachable. `BOT_OWNER_DISCORD_ID` exists for the same reason on Discord; both fall back to `BOT_OWNER_JID` when unset.
 
+The first chunk of a reply carries `reply_parameters`. If the user deletes their message in the seconds before delivery the Bot API answers `400`, so that chunk is re-sent without `reply_parameters` instead of losing the answer. Replies are chunked on code points, and `editMessage` splits head/remainder the same way, so an emoji at the limit is never cut into lone surrogates.
+
 ### 10. Durable Delivery (Inbox / Outbox)
 
 `src/messaging/InboxService.ts` and `src/messaging/OutboxService.ts` provide at-least-once delivery:
 
-- Inbound events are deduplicated by `senderId:messageId` and recorded in the inbox; replayed events log `Provider event already completed`.
+- Inbound events are deduplicated by a SHA-256 of `platform`, `chatId` and `messageId`; when the provider supplies no usable id (WhatsApp falls back to `'unknown'`), the inbox randomises the key so such events are never collapsed together. Replayed events log `Provider event already completed`.
 - Outbound replies are enqueued to the outbox and retried on failure; `WebhookServer.registerEnqueuer()` switches `/webhook` to the durable path and returns `202` only after durable acceptance. Both inbox and outbox dead-letter a row after 5 failed attempts and use attempt-aware exponential backoff; stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan.
 - `src/runtime/AppRuntime.ts` registers provider senders at boot and runs an hourly outbox prune plus stranded-inbox recovery.
 
@@ -98,7 +101,7 @@ The AI layer features a highly resilient Failover Router:
 
 ### 14. Digests
 
-`src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.
+`src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. A failed delivery releases its marker so the 60 s poll retries it, but only for `MAX_DIGEST_ATTEMPTS = 3` attempts per day/week; after that the marker is kept, which parks the digest until the next period instead of re-running a paid summarisation call every minute. Markers older than 30 days are pruned during the daily pass, because nothing else covers `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.
 
 ### 15. Admin Dashboard
 

@@ -12,8 +12,9 @@ The loader (`src/tools/registry.ts`, `loadPluginTools`):
 4. Calls `admitPluginManifest(manifest, allowedPermissions)` from `src/plugins/manifest.ts`; if not allowed, the plugin is refused and logged.
 5. Instantiates every exported `BaseTool` subclass (or tool instance).
 6. Validates each tool's metadata (valid command key, valid aliases).
-7. Calls `admitPluginTools(manifest, tools, allowedPermissions)`: binds the manifest to what the file actually exports, so a plugin cannot declare `permissions: ['user']` and still register an `owner` tool.
-8. Reports the result as `loaded`, `loaded-unreviewed` (no manifest), or `refused` (with reason).
+7. Rejects a tool whose **name** or any alias collides with an already-admitted tool name or alias (`registrationConflict`), so a plugin cannot capture a built-in command such as `/broadcast` by naming a tool after one of its aliases.
+8. Calls `admitPluginTools(manifest, tools, allowedPermissions)`: binds the manifest to what the file actually exports, so a plugin cannot declare `permissions: ['user']` and still register an `owner` tool.
+9. Reports the result as `loaded`, `loaded-unreviewed` (no manifest), or `refused` (with reason).
 
 Reports are surfaced through `getPluginLoadReports()` and visible in the admin dashboard's Tools view.
 

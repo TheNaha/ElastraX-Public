@@ -149,7 +149,7 @@ A permission check requires the **exact** role: `user` is implicit for everyone 
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `SEARXNG_URL` | URL | *(unset)* | no | SearXNG instance URL used by the `web_search` tool. Unset disables web search. http allowed on loopback. (`.env.example` ships a placeholder URL.) |
+| `SEARXNG_URL` | URL | *(unset)* | no | SearXNG instance URL used by the `web_search` tool. The tool stays registered when unset, but every call answers that web search is not configured. http allowed on loopback. (`.env.example` ships a placeholder URL.) |
 | `JINA_API_KEY` | string | *(unset)* | no | Optional Jina.ai API key used by the `web_scrape` tool. |
 
 ## 12. Webhook Inbound Server
