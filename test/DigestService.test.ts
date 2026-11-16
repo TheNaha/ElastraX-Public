@@ -289,8 +289,11 @@ describe('DigestService.runWeeklyMediaDigest', () => {
 
   test('delivers fresh items to subscribed rooms and skips opted-out ones', async () => {
     MEDIA_CLIENT_STATE.items = [
-      { Id: 'i1', Name: 'Fresh Movie', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-25T10:00:00Z' },
+      // The digest reports the *completed* week (Mon 17 Aug - Mon 24 Aug) on
+      // Wednesday 26 Aug, so the fresh item sits inside that window.
+      { Id: 'i1', Name: 'Fresh Movie', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-20T10:00:00Z' },
       { Id: 'i2', Name: 'Old Movie', Type: 'Movie', ProductionYear: 2021, DateCreated: '2026-01-01T00:00:00Z' },
+      { Id: 'i3', Name: 'This Week Movie', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-25T10:00:00Z' },
     ];
     await seedSubscription('room-1@g.us', null);
     await seedSubscription('dc-room-1', JSON.stringify(['play']));
@@ -306,6 +309,9 @@ describe('DigestService.runWeeklyMediaDigest', () => {
     expect(room1.text).toContain('Film: Fresh Movie (2026)');
     expect(room1.text).toContain('https://jf.example/web/index.html#!/details?id=i1');
     expect(room1.text).not.toContain('Old Movie');
+    // The window is bounded above by this week's Monday: a finished week does
+    // not leak items that belong to the current one.
+    expect(room1.text).not.toContain('This Week Movie');
 
     const dcRoom2 = deps.sent.find(s => s.roomId === 'dc-room-2')!;
     expect(dcRoom2.platform).toBe('discord');
@@ -333,7 +339,7 @@ describe('DigestService.runWeeklyMediaDigest', () => {
 
     MEDIA_CLIENT_STATE.configured = true;
     MEDIA_CLIENT_STATE.items = [
-      { Id: 'i9', Name: 'Late Add', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-25T12:00:00Z' },
+      { Id: 'i9', Name: 'Late Add', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-20T12:00:00Z' },
     ];
     const second = dailyDeps();
     expect(await DigestService.runWeeklyMediaDigest(second)).toBe(1);
@@ -341,7 +347,7 @@ describe('DigestService.runWeeklyMediaDigest', () => {
 
   test('does not resend to a room that already received this week', async () => {
     MEDIA_CLIENT_STATE.items = [
-      { Id: 'i1', Name: 'Fresh Movie', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-25T10:00:00Z' },
+      { Id: 'i1', Name: 'Fresh Movie', Type: 'Movie', ProductionYear: 2026, DateCreated: '2026-08-20T10:00:00Z' },
     ];
     await seedSubscription('room-1@g.us', null);
 

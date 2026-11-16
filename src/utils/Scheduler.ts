@@ -430,16 +430,16 @@ export class Scheduler {
           }
 
           if (reminder.recurrence) {
-            // Anchor the monthly cadence to a day-of-month that does not move.
-            // `'anchorDay' in reminder` was always false — no such column exists
-            // in the schema, in any migration, or in ReminderTool — so the anchor
-            // always fell back to `remindAt.getDate()`, which is the *clamped*
-            // date the previous fire produced. A reminder set for the 31st went
-            // Jan 31 -> Feb 28 -> Mar 28 -> Apr 28 for the rest of its life.
-            //
-            // `created_at` is immutable, so it is the stable anchor; `remindAt` is
-            // only a fallback for rows that predate it.
-            const anchorDay = reminder.created_at?.getDate() ?? reminder.remindAt.getDate();
+            // Anchor the monthly cadence to the day the user actually chose.
+            // `anchor_day` is written when the reminder is created; it cannot be
+            // derived later, because `remind_at` holds the *clamped* date of the
+            // previous fire (Jan 31 -> Feb 28) and `created_at` is unrelated to
+            // the fire date (a reminder set on the 28th for Dec 1 drifted to the
+            // 28th of every month). Rows created before the column existed fall
+            // back to the previous behaviour.
+            const anchorDay = reminder.anchorDay
+              ?? reminder.created_at?.getDate()
+              ?? reminder.remindAt.getDate();
             const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
             if (!nextFire) {
               db.update(reminders)

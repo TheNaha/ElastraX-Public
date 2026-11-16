@@ -149,6 +149,16 @@ export const reminders = sqliteTable('reminders', {
   platform: text('platform').notNull().default('whatsapp'),
   /** Cron-style recurrence pattern (e.g. 'daily', 'weekly', 'monthly', or cron expression). Null = one-shot. */
   recurrence: text('recurrence'),
+  /**
+   * Day of the month a `monthly` reminder recurs on.
+   *
+   * Captured from the first fire at scheduling time. Deriving it later from
+   * `created_at` moved the cadence whenever the first fire fell on another day
+   * ("in 3 days, monthly"), and `remind_at` holds the *clamped* date of the last
+   * fire. Null on rows created before this column existed; the scheduler then
+   * falls back to the old values.
+   */
+  anchorDay: integer('anchor_day'),
   /** V8: Language code used when firing this reminder, so messages respect room language. */
   language: text('language').notNull().default('en'),
   /** V8.1: Canonical room identity copied from `chat_rooms.room_key`. Null = not backfilled yet. */

@@ -24,6 +24,9 @@ const log = logger.child({ module: 'ScheduledTasks' });
 /** Reserved prefix marking a reminder's message as an agent instruction. */
 export const AGENT_TASK_PREFIX = '/task';
 
+/** The marker followed by whitespace, a colon or the end of the string. */
+const AGENT_TASK_PATTERN = /^\/task(?=[\s:]|$)/i;
+
 export type ScheduledTaskPolicy = {
   enabled: boolean;
   allowedRooms: string[];
@@ -61,8 +64,12 @@ export function isAgentTaskMessage(message: string): boolean {
 /** The instruction with its marker removed. */
 export function parseAgentTaskMessage(message: string): string | null {
   const trimmed = message.trim();
-  if (!trimmed.toLowerCase().startsWith(AGENT_TASK_PREFIX)) return null;
-  const instruction = trimmed.slice(AGENT_TASK_PREFIX.length).trim();
+  // A delimiter is required after the marker: `startsWith` alone turned a
+  // reminder that legitimately begins with the text "/taskforce …" or
+  // "/tasklist …" into an unattended agent run, so the reminder the user wrote
+  // was never delivered.
+  if (!AGENT_TASK_PATTERN.test(trimmed)) return null;
+  const instruction = trimmed.slice(AGENT_TASK_PREFIX.length).replace(/^\s*:\s*/, '').trim();
   return instruction.length > 0 ? instruction : null;
 }
 

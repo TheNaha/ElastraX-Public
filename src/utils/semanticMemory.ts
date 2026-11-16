@@ -49,7 +49,12 @@ export function cosineSimilarity(a: Float32Array | Buffer, b: Float32Array | Buf
     normB += fb[i]! * fb[i]!;
   }
   const denom = Math.sqrt(normA) * Math.sqrt(normB);
-  return denom === 0 ? 0 : dot / denom;
+  if (!Number.isFinite(dot) || !Number.isFinite(denom) || denom === 0) return 0;
+  const similarity = dot / denom;
+  // A stored blob that contains NaN or Infinity (a legacy or corrupted row)
+  // poisons the dot product. Returning NaN made the dedupe comparison silently
+  // false and turned sort comparators into unspecified order.
+  return Number.isFinite(similarity) ? similarity : 0;
 }
 
 export function bytesToFloat32(buf: Buffer): Float32Array {
@@ -74,7 +79,11 @@ export async function embedInCurrentSpace(
 
 export function vectorMatchesSpace(embedding: Buffer, space: EmbeddingSpace): Float32Array | null {
   if (embedding.byteLength !== space.dimension * Float32Array.BYTES_PER_ELEMENT) return null;
-  return bytesToFloat32(embedding);
+  const vector = bytesToFloat32(embedding);
+  // Reject a blob that is not a usable vector instead of handing NaN/Infinity to
+  // every similarity computation that touches it.
+  for (const value of vector) if (!Number.isFinite(value)) return null;
+  return vector;
 }
 
 export async function updateMemoryEmbedding(

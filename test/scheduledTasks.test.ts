@@ -103,6 +103,16 @@ describe('agent task message detection', () => {
     expect(parseAgentTaskMessage('/task')).toBeNull();
   });
 
+  test('requires a delimiter after the marker', () => {
+    // `startsWith('/task')` turned reminders whose text merely begins with those
+    // characters into unattended agent runs, so the reminder was never sent.
+    expect(parseAgentTaskMessage('/taskforce call at 9')).toBeNull();
+    expect(parseAgentTaskMessage('/tasklist for the week')).toBeNull();
+    expect(isAgentTaskMessage('/tasklist for the week')).toBe(false);
+    expect(parseAgentTaskMessage('/task: summarise')).toBe('summarise');
+    expect(parseAgentTaskMessage('/TASK summarise')).toBe('summarise');
+  });
+
   test('leaves an ordinary reminder untouched', () => {
     expect(parseAgentTaskMessage('buy milk')).toBeNull();
     expect(isAgentTaskMessage('buy milk')).toBe(false);

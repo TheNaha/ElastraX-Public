@@ -413,6 +413,10 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         isSent: false,
         platform: ctx.platform,
         recurrence: recurrence ? String(recurrence).trim() : null,
+        // The intended day-of-month, captured before the first fire can clamp it
+        // (Jan 31 -> Feb 28). The scheduler used to derive it from `created_at`,
+        // which is unrelated to the fire date.
+        anchorDay: fireAt.getDate(),
         language: ctx.language ?? 'en',
         created_at: new Date(),
       }).run();

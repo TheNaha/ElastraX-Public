@@ -368,7 +368,7 @@ export class DigestService {
   private static senders = new Map<string, SendFn>();
   private static timer: ReturnType<typeof setInterval> | null = null;
   private static running = false;
-  private static mediaCache: { weekStart: number; items: JellyfinMediaItem[] } | null = null;
+  private static mediaCache: { weekStart: number | string; items: JellyfinMediaItem[] } | null = null;
 
   /** Register a send callback for a given platform. */
   static registerSender(platform: string, fn: SendFn): void {
@@ -473,9 +473,19 @@ export class DigestService {
     if (!cfg.mediaEnabled) return 0;
     const now = deps?.now?.() ?? new Date();
     if (now.getUTCHours() < cfg.hourUtc) return 0;
+    // A media-only deployment has no DIGEST_ROOMS, so the daily loop (the other
+    // pruning site) returns before it prunes; without this call the weekly
+    // markers in `app_kv` accumulate forever.
+    pruneDigestMarkers(now);
 
-    const wk = weekKey(now);
-    const weekStart = new Date(`${wk}T00:00:00.000Z`);
+    // Report the *completed* week. The window used to be
+    // `[Monday of the current week, now)`, and the first tick lands on Monday
+    // just after DIGEST_HOUR_UTC — so a long-running deployment reported about
+    // eight hours, and everything added Tue–Sun was never in any digest.
+    const currentWeekStart = new Date(`${weekKey(now)}T00:00:00.000Z`);
+    const weekEnd = currentWeekStart;
+    const weekStart = new Date(weekEnd.getTime() - 7 * 86_400_000);
+    const wk = weekKey(weekStart);
 
     // Fetch all jellyfin/seerr subscriptions, then apply the notifyTypes filter
     // in JS so null (all types), JSON arrays and raw strings are handled uniformly.
@@ -501,7 +511,7 @@ export class DigestService {
       if (!claimMarker(marker)) continue;
       try {
         const lang = languageForRoom(room.roomKey);
-        const text = await this.buildMediaRollup(weekStart, deps, lang);
+        const text = await this.buildMediaRollup(weekStart, deps, lang, weekEnd);
         if (!text) {
           // Nothing new this week — keep the marker, stay silent.
           log.debug({ roomKey: room.roomKey }, '[DigestService] Weekly media digest skipped (nothing new)');
@@ -532,13 +542,18 @@ export class DigestService {
    * Returns null when the client is unconfigured (marker released → retried later)
    * or nothing new was added (marker kept → silent).
    */
-  static async buildMediaRollup(weekStart: Date, _deps?: DigestDeps, lang: Locale = 'en'): Promise<string | null> {
-    const items = await this.loadWeeklyMedia(weekStart);
+  static async buildMediaRollup(
+    weekStart: Date,
+    _deps?: DigestDeps,
+    lang: Locale = 'en',
+    weekEnd?: Date,
+  ): Promise<string | null> {
+    const items = await this.loadWeeklyMedia(weekStart, weekEnd);
     return this.renderMediaRollup(items, lang);
   }
 
-  private static loadWeeklyMedia(weekStart: Date): Promise<JellyfinMediaItem[]> {
-    const key = weekStart.getTime();
+  private static loadWeeklyMedia(weekStart: Date, weekEnd?: Date): Promise<JellyfinMediaItem[]> {
+    const key = weekEnd ? `${weekStart.getTime()}:${weekEnd.getTime()}` : String(weekStart.getTime());
     if (this.mediaCache?.weekStart === key) return Promise.resolve(this.mediaCache.items);
     const client = MediaService.createJellyfinClient();
     if (!client.isConfigured) {
@@ -547,7 +562,9 @@ export class DigestService {
     const items = client.getLatestMedia({ limit: 15 })
       .then(media => media.filter(item => {
         const created = item.DateCreated ? new Date(String(item.DateCreated)) : null;
-        return !created || created.getTime() >= weekStart.getTime();
+        if (!created) return true;
+        const at = created.getTime();
+        return at >= weekStart.getTime() && (weekEnd === undefined || at < weekEnd.getTime());
       }))
       .then(filtered => {
         // Publish only resolved values to the cache, and never clobber an entry

@@ -136,6 +136,12 @@
       "when": 25,
       "tag": "0024_drop_scheduled_deliveries",
       "breakpoints": true
+    },
+    {
+      "version": "6",
+      "when": 26,
+      "tag": "0025_reminder_anchor_day",
+      "breakpoints": true
     }
   ]
 }

@@ -27,6 +27,7 @@ async function insertReminder(
     isSent?: boolean;
     claimedAt?: Date | null;
     recurrence?: string | null;
+    anchorDay?: number | null;
     language?: string;
     roomKey?: string;
     chatRoomId?: string;
@@ -41,6 +42,7 @@ async function insertReminder(
     isSent = false,
     claimedAt = null,
     recurrence = null,
+    anchorDay = null,
     language = 'en',
     roomKey = TEST_ROOM_KEY,
     chatRoomId = TEST_CHAT_ROOM_ID,
@@ -55,6 +57,7 @@ async function insertReminder(
     claimedAt,
     platform,
     recurrence,
+    anchorDay,
     language,
     roomKey,
     created_at: new Date(),
@@ -206,6 +209,33 @@ describe('Scheduler', () => {
     expect(reminder?.recurrence).toBe('daily');
     // remindAt should be advanced to next occurrence
     expect(reminder!.remindAt.getTime()).toBeGreaterThan(now.getTime());
+  });
+
+  test('a monthly reminder recurs on its stored anchor day, not the creation day', async () => {
+    let senderCalled = false;
+    Scheduler.registerSender('whatsapp', async () => {
+      senderCalled = true;
+    });
+
+    // Created today (17th) for a first fire that is not on the 17th; the user
+    // chose the 15th. Deriving the anchor from `created_at` moved the cadence to
+    // the 17th of every later month.
+    const id = await insertReminder({
+      message: 'monthly reminder',
+      remindAt: new Date(Date.now() - 60_000),
+      isSent: false,
+      claimedAt: null,
+      recurrence: 'monthly',
+      anchorDay: 15,
+    });
+
+    await schedulerInternals.processReminders();
+
+    expect(senderCalled).toBe(true);
+    const reminder = await getReminder(id);
+    expect(reminder?.isSent).toBe(false);
+    expect(reminder!.remindAt.getDate()).toBe(15);
+    expect(reminder!.remindAt.getTime()).toBeGreaterThan(Date.now());
   });
 
   test('a deferral preserves a recurring reminder\'s schedule anchor', async () => {
