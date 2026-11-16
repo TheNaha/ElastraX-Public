@@ -60,6 +60,21 @@ describe('slash command positional parsing', () => {
     expect(parse('role', 'grant 628 admin')).toMatchObject({ action: 'grant', user: '628', role: 'admin' });
   });
 
+  // The positional cursor counted `positional` entries but read tokens out of
+  // `values`, which still held the `field=value` overrides; and the exhausted-
+  // cursor `break` skipped the override-only fields after it.
+  test('/pdf edit_metadata keeps key=value overrides out of positional slots', () => {
+    expect(parse('pdf', 'edit_metadata title=Report The Final')).toMatchObject({
+      action: 'edit_metadata', title: 'Report', author: 'The', subject: 'Final',
+    });
+  });
+
+  test('/notify add reads room_id= even when no positional precedes it', () => {
+    expect(parse('notify', 'add room_id=123456')).toMatchObject({
+      action: 'notify', notify_action: 'add', room_id: '123456',
+    });
+  });
+
   // `number` is the 4th declared property, so the positional loop never reached
   // it and `/remind cancel 3` put "3" into `time`.
   test('/remind cancel targets the reminder number', () => {

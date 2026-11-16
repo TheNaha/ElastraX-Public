@@ -49,7 +49,7 @@ import {
   executeAuthorizedCommand,
   runMutatingTool,
   secureDefinition,
-  validateToolArguments,
+  validateAndAuthorizeInvocation,
 } from '../tools';
 import { ServiceBindingService } from '../utils/ServiceBindingService';
 
@@ -283,6 +283,13 @@ async function executeRequestedToolCalls(
     turnBudget: TurnBudget;
     mode?: 'stream';
     progressTracker?: ToolProgressTracker;
+    /**
+     * Role/context used for per-action authorization. The slash path has always
+     * applied `COMMAND_POLICIES`; the model path previously validated arguments
+     * only, so a table entry such as `language.set: admin` protected nothing
+     * when the model (not the user) chose the action.
+     */
+    accessContext: { roles: string[]; isGroup: boolean; isOwner: boolean; platform: string; userId: string };
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
   // The turn budget is a self-imposed guard, not a system failure. Claiming the
@@ -325,9 +332,17 @@ async function executeRequestedToolCalls(
       if (!args) {
         prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Arguments for ${toolName} must be a valid JSON object.` });
       } else {
-        const validation = validateToolArguments(tool, args);
+        const validation = validateAndAuthorizeInvocation(tool, args, options.accessContext);
         if (!validation.valid || !isPlainObject(validation.value)) {
-          prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}` });
+          const denied = validation.issues?.some(issue => issue.keyword === 'access') ?? false;
+          prepared.push({
+            kind: 'error',
+            toolCall,
+            toolName,
+            errorText: denied
+              ? `Error: You do not have permission to use ${toolName} for this action.`
+              : `Error: Invalid arguments for ${toolName}: ${validation.errors.join('; ')}`,
+          });
         } else {
           prepared.push({ kind: 'ready', toolCall, toolName, tool, validArgs: validation.value });
         }
@@ -597,6 +612,14 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
   // V7.11: Resolve user roles once and compute privilege-based rate limits.
   const { roles: userRoles, privileges } = await AuthService.getAccessProfile(await ctx.resolveRoles());
+  /** Authorization context for per-action tool policies (see `COMMAND_POLICIES`). */
+  const accessContext = {
+    roles: userRoles,
+    isGroup: ctx.isGroup,
+    isOwner: userRoles.includes('owner'),
+    platform,
+    userId: ctx.senderId,
+  };
 
   logger.debug(
     { senderId: ctx.senderId, senderPn: ctx.senderPn, chatId: ctx.chatId, userRoles, privileges },
@@ -1315,6 +1338,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               turnBudget: toolTurnBudget,
               mode: 'stream',
               progressTracker,
+              accessContext,
             });
             preferredTier = execution.preferredTier;
             messagesForAI.push(...execution.toolResults);
@@ -1387,6 +1411,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
             logMalformedArgs: true,
             turnBudget: toolTurnBudget,
             progressTracker,
+            accessContext,
           });
           preferredTier = execution.preferredTier;
           messagesForAI.push(...execution.toolResults);

@@ -21,6 +21,7 @@ import {
   MUTABILITY_OVERRIDES,
   toolsList,
   reloadRegistry,
+  validateAndAuthorizeInvocation,
 } from '../src/tools/registry';
 import type { BaseTool } from '../src/tools/BaseTool';
 
@@ -161,5 +162,39 @@ describe('registrationConflict', () => {
 
   test('matching is case-insensitive', () => {
     expect(registrationConflict({ name: 'BROADCAST', aliases: [] }, names, aliases)).toBe('broadcast');
+  });
+});
+
+
+/**
+ * The model tool-call path validates arguments only; the per-action table was
+ * reachable solely from the slash path, so an action the operator restricted to
+ * admin was open whenever the model (rather than the user) picked it.
+ */
+describe('per-action authorization on the invocation path', () => {
+  // `role.grant` is admin-only in COMMAND_POLICIES and its tool-level permission
+  // is `user`, so it exercises the table rather than the tool's own check.
+  const roleTool = toolsList.find(tool => tool.name === 'role');
+  if (!roleTool) throw new Error('role tool is not registered');
+  const args = { action: 'grant', user: '628', role: 'admin' };
+  const user = { roles: ['user'], isGroup: false, isOwner: false, platform: 'whatsapp' };
+  const admin = { roles: ['admin'], isGroup: false, isOwner: false, platform: 'whatsapp' };
+
+  test('a user cannot invoke an admin-only action', () => {
+    const result = validateAndAuthorizeInvocation(roleTool, args, user);
+    expect(result.valid).toBe(false);
+    expect(result.issues?.some(issue => issue.keyword === 'access')).toBe(true);
+  });
+
+  test('an admin can invoke the same action', () => {
+    const result = validateAndAuthorizeInvocation(roleTool, args, admin);
+    expect(result.valid).toBe(true);
+  });
+
+  test('an ordinary action is not restricted', () => {
+    const reminder = toolsList.find(candidate => candidate.name === 'reminder');
+    if (!reminder) throw new Error('reminder tool is not registered');
+    const result = validateAndAuthorizeInvocation(reminder, { action: 'list' }, user);
+    expect(result.valid).toBe(true);
   });
 });

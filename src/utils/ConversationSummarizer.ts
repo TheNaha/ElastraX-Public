@@ -123,7 +123,7 @@ export class ConversationSummaryService {
     const minBatch = Math.max(1, Math.floor(Number.isFinite(request.minBatch) ? request.minBatch! : DEFAULT_MIN_BATCH));
     const previous = await this.store.load(request.scope);
     const entries = entriesAfterWatermark(request.entries, previous);
-    const activeEntries = entries.slice(-keepCount);
+    let activeEntries = entries.slice(-keepCount);
     let summarizedEntries = entries.slice(0, Math.max(0, entries.length - keepCount));
 
     // Batch threshold.
@@ -135,11 +135,14 @@ export class ConversationSummaryService {
     // LLM spend, and each call re-carried the entire rolling summary as its
     // prompt prefix, so the cost per call grew with the conversation.
     //
-    // Below the threshold the entries stay in the active window (still capped at
-    // `keepCount`, so the context limit holds) and are picked up by a later,
-    // larger batch. The watermark is not advanced, so nothing is lost.
+    // Below the threshold the batch is deferred to a later, larger call: the
+    // watermark is not advanced, so nothing is lost. The whole un-summarized
+    // set stays in the active window for that turn — the earlier slice(-keepCount)
+    // had already dropped the overflow, so the oldest 1..minBatch-1 messages
+    // were neither summarized nor sent to the model.
     if (summarizedEntries.length > 0 && summarizedEntries.length < minBatch) {
       summarizedEntries = [];
+      activeEntries = entries;
     }
 
     if (summarizedEntries.length === 0) {

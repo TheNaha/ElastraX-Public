@@ -398,8 +398,14 @@ export async function retrieveRoomKnowledge(options: {
             similarity: cosineSimilarity(embedded.vector, vector),
           });
         }
-        hits.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
-        return hits.slice(0, limit);
+        // Fall through to the keyword pass when the vector search matched
+        // nothing: chunks stored while embedding backfill was failing, and chunks
+        // embedded under a previous model space, are skipped above and would
+        // otherwise be unreachable even though they are stored and searchable.
+        if (hits.length > 0) {
+          hits.sort((a, b) => (b.similarity ?? 0) - (a.similarity ?? 0));
+          return hits.slice(0, limit);
+        }
       }
     } catch (error: unknown) {
       log.debug({ err: getErrorMessage(error) }, 'Room knowledge embedding search unavailable; using keyword match');

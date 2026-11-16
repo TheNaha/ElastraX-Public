@@ -325,7 +325,7 @@ function isToolInvocationAccessible(tool: BaseTool, args: { action?: unknown; __
   return isToolAccessible(tool, context);
 }
 
-function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, context: ToolAccessContext = {}): ValidationResult {
+export function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, context: ToolAccessContext = {}): ValidationResult {
   if (!isToolInvocationAccessible(tool, args as { action?: unknown; __command?: unknown } | null, context)) {
     return { valid: false, value: args, errors: ['Tool invocation is not authorized for this context.'], issues: [{ path: '$', message: 'Tool invocation is not authorized for this context.', keyword: 'access' }] };
   }

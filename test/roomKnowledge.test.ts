@@ -132,6 +132,31 @@ describe('room knowledge retrieval', () => {
     expect(hits[0]!.source).toBe('ops.md');
   });
 
+  test('falls back to keyword matching when embeddings are on but no chunk has one', async () => {
+    // Ingest while embeddings are off, so every chunk is stored unembedded —
+    // exactly the state a failed backfill batch leaves behind. The vector pass
+    // matches nothing, and the chunk must still be retrievable by keyword.
+    await ingestRoomDocument({
+      roomKey: ROOM_A,
+      source: 'unembedded.md',
+      text: 'Emergency rollback procedure for the scheduler queue.',
+    });
+    process.env.EMBEDDING_API_URL = 'https://embeddings.invalid/v1';
+    process.env.EMBEDDING_MODEL = 'test-embed';
+    try {
+      const hits = await retrieveRoomKnowledge({
+        roomKey: ROOM_A,
+        query: 'rollback procedure',
+        embed: async () => new Float32Array([1, 0, 0, 0]),
+      });
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0]!.content).toContain('rollback procedure');
+    } finally {
+      delete process.env.EMBEDDING_API_URL;
+      delete process.env.EMBEDDING_MODEL;
+    }
+  });
+
   test('returns nothing for an empty query or unknown room', async () => {
     await ingestRoomDocument({ roomKey: ROOM_A, source: 'a', text: 'something' });
     expect(await retrieveRoomKnowledge({ roomKey: ROOM_A, query: '   ' })).toEqual([]);

@@ -206,15 +206,19 @@ function parseActionSpecific(
       result[field] = parseScalar(overrides[field], properties[field], field);
       continue;
     }
-    if (index >= positional.length) break;
+    // `index` and `positional` are the same scale: `values` still holds the
+    // `field=value` tokens, so reading it here bound an override token to the
+    // next positional slot. Skipping (rather than breaking) when the cursor is
+    // exhausted still lets a later field be filled from its override.
+    if (index >= positional.length) continue;
     const remaining = fields.slice(fieldIndex + 1).length;
     const parameter = properties[field];
     const trailingField = ['query', 'message', 'content', 'watermark_text', 'text'].includes(field);
     if (parameter?.type === 'string' && (fieldIndex === fields.length - 1 || remaining === 0 || trailingField)) {
       result[field] = positional.slice(index).join(' ');
-      index = values.length;
+      index = positional.length;
     } else {
-      result[field] = parseScalar(values[index] as string, parameter, field);
+      result[field] = parseScalar(positional[index] as string, parameter, field);
       index += 1;
     }
   }

@@ -155,8 +155,9 @@ describe('summarization batching', () => {
 
     expect(llmCalls).toBeGreaterThan(0);
     expect(llmCalls).toBeLessThanOrEqual(2);
-    // The context limit still holds even on the turns that skip summarization.
-    expect(maxActive).toBeLessThanOrEqual(keepCount);
+    // The active window may carry the deferred overflow, but never more than the
+    // agent fetches (keepCount + lookahead); it must not silently drop entries.
+    expect(maxActive).toBeLessThanOrEqual(keepCount + lookahead);
   });
 
   test('a large batch is still summarized immediately', async () => {
@@ -187,7 +188,10 @@ describe('summarization batching', () => {
     expect(callLLM).not.toHaveBeenCalled();
     // The watermark must not advance, or the carried entries would be lost.
     expect(first.watermark).toBeNull();
-    // And they are still visible in the active window.
-    expect(first.activeHistory).toHaveLength(keepCount);
+    // And every un-summarized entry is still visible in the active window: the
+    // overflow used to be sliced off before the threshold was applied, so the
+    // two oldest messages were neither summarized nor sent to the model.
+    expect(first.activeHistory).toHaveLength(entries.length);
+    expect(first.activeHistory).toEqual(entries.map(entry => entry.message));
   });
 });
