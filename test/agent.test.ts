@@ -652,6 +652,37 @@ describe('handleIncomingMessage', () => {
       expectReply(ctx.reply, 'Here are the results!');
     });
 
+    test('makes a final text-only call when the tool budget is exhausted', async () => {
+      // Every iteration up to the budget may run tools. A turn that legitimately
+      // used all of them ended with `isDone === false` and the accumulated answer
+      // was replaced by "An internal error occurred".
+      process.env.AI_MAX_TOOL_ITERATIONS = '1';
+      process.env.AI_STREAMING = 'false';
+      const execute = mock(async () => 'Search results here');
+      registerTool(new FakeTool('web_search', execute));
+
+      const bodies: string[] = [];
+      let callCount = 0;
+      global.fetch = mock(async (_url: unknown, init?: { body?: string }) => {
+        callCount++;
+        if (init?.body) bodies.push(init.body);
+        if (callCount === 1) {
+          return makeToolCallResponse([{ id: 'call-budget', name: 'web_search', args: '{"query":"bun"}' }]);
+        }
+        return makeFetchResponse('Answer after the budget ran out.');
+      }) as unknown as typeof global.fetch;
+
+      const ctx = makeCtx({ isGroup: false, text: 'Search for bun' });
+      await handleIncomingMessage(ctx);
+
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(callCount).toBe(2);
+      expectReply(ctx.reply, 'Answer after the budget ran out.');
+      // The extra round must not offer tools again, or the model could loop.
+      const finalRequest = JSON.parse(bodies[1]!) as { tools?: unknown[] };
+      expect(finalRequest.tools).toBeUndefined();
+    });
+
     test('reports an unknown tool name to the model instead of crashing', async () => {
       registerNoTools();
 

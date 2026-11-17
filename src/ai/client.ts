@@ -318,12 +318,14 @@ export class AIClient {
     const elapsed = Date.now() - startTime;
 
     let raw: unknown;
+    // The size guard runs before the JSON conversion so its own diagnostic code
+    // survives: it used to be thrown inside the `try` that rewrites *everything*
+    // to `invalid_response`, so an oversized body looked like malformed JSON.
+    const contentLength = response.headers.get('content-length');
+    if (contentLength && Number(contentLength) > getAIRequestConfig().maxResponseBytes) {
+      throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
+    }
     try {
-      // Guard against unbounded response bodies that could exhaust memory.
-      const contentLength = response.headers.get('content-length');
-      if (contentLength && Number(contentLength) > getAIRequestConfig().maxResponseBytes) {
-        throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
-      }
       raw = await response.json();
     } catch (error: unknown) {
       throw new AIProtocolError('invalid_response', 'Chat completion response was not valid JSON.', {

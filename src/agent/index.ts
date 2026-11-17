@@ -395,7 +395,13 @@ async function executeRequestedToolCalls(
         () => executeToolWithTimeout(tool, validArgs, options.ctx),
       );
       try {
-        toolResultText = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult)).value;
+        const constrained = options.turnBudget.constrainTextResult(resolveToolResultText(rawResult));
+        // Keep the fact that the result was cut. The model used to receive a
+        // silently truncated JSON/text result and could report a partial list
+        // as the complete answer.
+        toolResultText = constrained.truncated
+          ? `${constrained.value}\n\n[Tool output truncated to fit the per-turn result budget]`
+          : constrained.value;
       } catch (budgetError: unknown) {
         if (!(budgetError instanceof TurnBudgetExceededError)) throw budgetError;
         // The tool itself succeeded; only the budget for returning its output is
@@ -1217,7 +1223,13 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       log.warn({ err: getErrorMessage(err), chatId, phase }, '[Agent] Tool progress update failed');
     });
 
-    for (let iteration = 0; iteration < maxToolIterations && !isDone; iteration++) {
+    for (let iteration = 0; iteration <= maxToolIterations && !isDone; iteration++) {
+      // Every iteration up to the budget may run tools; the extra iteration past
+      // it is a text-only round. Without it a turn that legitimately used its
+      // whole tool budget ended with `isDone === false` and the accumulated
+      // answer was replaced by "An internal error occurred".
+      const forceTextOnly = iteration >= maxToolIterations;
+      const iterationTools = forceTextOnly ? undefined : availableTools;
       try {
         // Show typing indicator before each LLM call
         await ctx.sendTyping?.().catch(err => log.warn({ err, chatId, iteration }, '[Agent] Typing indicator failed'));
@@ -1239,7 +1251,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           let streamingFailed = false;
           const toolCallAccumulator = new StreamingToolCallAccumulator();
 
-          const streamTools = availableTools;
+          const streamTools = iterationTools;
           for await (const chunk of modelRouter.chatCompletionStream(
             messagesForAI,
             streamTools,
@@ -1296,7 +1308,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
           // If the stream produced tool calls, we need to process them
           const streamedToolCalls = toolCallAccumulator.finish();
-          if (streamedToolCalls.length > 0) {
+          if (streamedToolCalls.length > 0 && !forceTextOnly) {
             let adopted = false;
             if (sentKey && !streamingFailed) {
               adopted = progressTracker.adoptMessageKey(sentKey);
@@ -1376,7 +1388,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
         // ── Non-streaming (original) path ───────────────────────────────────
         const aiMsgObj: ChatCompletionMessage = await modelRouter.chatCompletion(
-          messagesForAI, availableTools, config.temperature, config.maxTokens, preferredTier,
+          messagesForAI, iterationTools, config.temperature, config.maxTokens, preferredTier,
         );
 
         if (verboseAiLogs) {
@@ -1396,7 +1408,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           ...(aiMsgObj.tool_calls ? { tool_calls: aiMsgObj.tool_calls } : {}),
         });
 
-        if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0) {
+        if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0 && !forceTextOnly) {
           log.info({ chatId, toolCount: aiMsgObj.tool_calls.length, iteration }, 'LLM requested tool calls');
           // Tool Call Requested - Parallel Execution
           const execution = await executeRequestedToolCalls(aiMsgObj.tool_calls, {
