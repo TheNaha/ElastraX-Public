@@ -173,14 +173,16 @@ export class HealthMetricsCollector {
     this.llmRequests++;
     if (!success) this.llmFailures++;
 
-    if (success) {
-      const win = this.llmLatency;
-      if (win.values.length < win.maxSize) {
-        win.values.push(latencyMs);
-      } else {
-        win.values[win.cursor] = latencyMs;
-        win.cursor = (win.cursor + 1) % win.maxSize;
-      }
+    // Every request, not only the successful ones: a timeout is the slowest
+    // request an operator can have, and excluding failures hid exactly the
+    // latency spike a p99 alert is supposed to catch. A fast 4xx failure is
+    // legitimately fast and belongs in the distribution.
+    const win = this.llmLatency;
+    if (win.values.length < win.maxSize) {
+      win.values.push(latencyMs);
+    } else {
+      win.values[win.cursor] = latencyMs;
+      win.cursor = (win.cursor + 1) % win.maxSize;
     }
 
     if (!this.providerStats.has(providerName)) {

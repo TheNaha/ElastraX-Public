@@ -271,8 +271,12 @@ describe('slash commands that parse correctly but fail in the tool', () => {
   });
 
   test('/speak still accepts an explicit voice alongside free text', () => {
+    // `voice` is a declared property, so `voice=alloy` is now an override
+    // rather than part of the sentence. The old behaviour spoke the literal
+    // text "good morning everyone voice=alloy" and never selected the voice.
     const parsed = parseSpeak('good morning everyone voice=alloy');
-    expect(parsed.text).toBe('good morning everyone voice=alloy');
+    expect(parsed.text).toBe('good morning everyone');
+    expect(parsed.voice).toBe('alloy');
   });
 
   test('/request-media reaches the request action', () => {

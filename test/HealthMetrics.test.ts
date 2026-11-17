@@ -59,14 +59,16 @@ describe('HealthMetrics', () => {
     expect(after.providers['fail-provider'].failures).toBeGreaterThanOrEqual(1);
   });
 
-  test('failed llm requests do not skew latency percentiles', () => {
+  test('failed llm requests are included in latency percentiles', () => {
     const isolated = new HealthMetricsCollector();
     isolated.recordLLMRequest('ok-provider', 200, true);
-    isolated.recordLLMRequest('fail-provider', 0, false);
+    isolated.recordLLMRequest('fail-provider', 2000, false);
 
     const metrics = isolated.getMetrics();
+    // A timeout is the slowest request there is; dropping failures from the
+    // window meant p95/p99 never showed the spike an alert is meant to catch.
     expect(metrics.llm.latencyP50).toBe(200);
-    expect(metrics.llm.latencyP95).toBe(200);
+    expect(metrics.llm.latencyP95).toBe(2000);
   });
 
   test('recordToolInvocation increments tool counter', () => {

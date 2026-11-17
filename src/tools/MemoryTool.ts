@@ -17,7 +17,24 @@ export const INERT_DATA_MARKER = '[INERT_DATA]';
 export const MEMORY_ENTRY_QUOTA = 500;
 export const MEMORY_BYTES_QUOTA = 1_048_576;
 const MEMORY_CONTENT_QUOTA = 16_384;
+/**
+ * Process-local consent used only when `app_kv` cannot be written.
+ *
+ * Nothing else prunes this and it is consulted on every memory read, so it is
+ * bounded and evicts oldest-first: a database outage must not become an
+ * unbounded per-sender set.
+ */
+const CONSENT_FALLBACK_MAX = 5_000;
 const consentFallback = new Set<string>();
+
+function rememberConsentFallback(key: string): void {
+  consentFallback.add(key);
+  while (consentFallback.size > CONSENT_FALLBACK_MAX) {
+    const oldest = consentFallback.values().next();
+    if (oldest.done) break;
+    consentFallback.delete(oldest.value);
+  }
+}
 
 type MemoryArgs = {
   action?: string;
@@ -88,7 +105,7 @@ async function hasStoredConsent(ctx: MessageContext): Promise<boolean> {
 
 async function grantConsent(ctx: MessageContext): Promise<void> {
   const key = consentKey(ctx);
-  consentFallback.add(key);
+  rememberConsentFallback(key);
   try {
     const rows = await db.select().from(appKv).where(eq(appKv.id, key)).limit(1);
     if (rows.length > 0) await db.update(appKv).set({ value: 'true', updated_at: new Date() }).where(eq(appKv.id, key));
