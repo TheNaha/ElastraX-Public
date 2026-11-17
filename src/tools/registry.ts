@@ -140,7 +140,10 @@ export function getToolAccess(tool: BaseTool): ToolMetadata['access'] {
  * {@link isToolInvocationAccessible}.
  */
 const COMMAND_POLICIES: Record<string, Record<string, string>> = {
-  language: { set: 'admin', reset: 'admin' },
+  // `language` is deliberately absent: LanguageTool takes only `lang_code` and
+  // has no `set`/`reset` action, so a row here could never match. It also
+  // contradicted the tool, which requires `admin` only in groups
+  // (`LanguageTool.ts:73`), so in a DM any user may change the language.
   config: { set: 'admin', reset: 'admin' },
   media_account: { connect: 'user' },
   role: { grant: 'admin', revoke: 'admin', setpriv: 'owner', resetpriv: 'owner' },

@@ -44,7 +44,7 @@ const TABLES: ReadonlyArray<{ table: string; keys: readonly string[] }> = [
   },
   {
     table: 'COMMAND_POLICIES',
-    keys: ['language', 'config', 'media_account', 'role', 'owner_admin'],
+    keys: ['config', 'media_account', 'role', 'owner_admin'],
   },
 ];
 
