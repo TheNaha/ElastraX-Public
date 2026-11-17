@@ -338,7 +338,11 @@ export class DiscordProvider implements BotProvider {
       selectedAttachmentId = descriptor.id;
       mediaPath = descriptor.mediaPath;
       mimeType = descriptor.mimeType;
-      if (descriptor.origin === 'quoted' && descriptor.index === 0 && quoted) {
+      if (descriptor.origin === 'quoted' && quoted) {
+        // Mirror whichever quoted attachment was selected, not only index 0:
+        // a reply to a multi-attachment message that picks the second one left
+        // `ctx.quoted.mediaPath` pointing at the first (WhatsApp already mirrors
+        // any selected quoted descriptor).
         quoted.mediaPath = descriptor.mediaPath;
         quoted.mimeType = descriptor.mimeType;
       }

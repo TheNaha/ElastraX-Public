@@ -43,6 +43,8 @@ const log = logger.child({ module: 'Telegram' });
 
 /** Largest media we will accept from Telegram, matching the shared hard cap. */
 const MAX_MEDIA_BYTES = 200 * 1024 * 1024;
+/** Public Bot API upload cap (documents included; only `file_id` re-sends are larger). */
+const TELEGRAM_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
 /** Injectable seams so tests do not need a live bot token. */
@@ -433,22 +435,36 @@ export class TelegramProvider implements BotProvider {
     bot.on('message_reaction', async ctx => {
       if (!this.isCurrent(bot, generation)) return;
       if (ctx.from?.is_bot) return;
-      // A reaction update carries the reacted-to message id directly; ctx.msg is
-      // narrowed to never by grammy for this update type.
-      const reactedMessage = (ctx.msg ?? { message_id: ctx.messageReaction?.message_id ?? 0 }) as { message_id: number };
-      if (!reactedMessage.message_id) return;
+      // A grammy reaction update is the *new state* of the reaction set:
+      // `{ old_reaction, new_reaction }`, each a list of `ReactionType`. The
+      // handler used to read a top-level `type`/`emoji` that does not exist, so
+      // no Telegram reaction was ever recorded (and removals never could be).
+      const reaction = ctx.messageReaction as
+        | { message_id?: number; old_reaction?: unknown[]; new_reaction?: unknown[] }
+        | undefined;
+      const messageId = reaction?.message_id ?? 0;
+      if (!messageId) return;
       try {
-        // A grammy reaction update is a single object describing the new state,
-        // not a list of added reactions.
-        const reaction = ctx.messageReaction as { type?: string; emoji?: { text?: string } } | undefined;
-        if (reaction?.type === 'emoji' && reaction.emoji?.text) {
-          recordReactionFeedback({
-            platform: 'telegram',
-            chatRoomId: String(ctx.chat?.id ?? ''),
-            messageId: String(reactedMessage.message_id),
-            reaction: reaction.emoji.text,
-            removed: false,
-          });
+        const chatRoomId = String(ctx.chat?.id ?? '');
+        const emojiOf = (types: unknown[] | undefined): string[] => {
+          const out: string[] = [];
+          for (const type of types ?? []) {
+            if (!type || typeof type !== 'object') continue;
+            const entry = type as { type?: unknown; emoji?: unknown };
+            if (entry.type === 'emoji' && typeof entry.emoji === 'string') out.push(entry.emoji);
+          }
+          return out;
+        };
+        const before = new Set(emojiOf(reaction?.old_reaction));
+        const after = emojiOf(reaction?.new_reaction);
+        const afterSet = new Set(after);
+        for (const emoji of after) {
+          if (before.has(emoji)) continue;
+          recordReactionFeedback({ platform: 'telegram', chatRoomId, messageId: String(messageId), reaction: emoji, removed: false });
+        }
+        for (const emoji of before) {
+          if (afterSet.has(emoji)) continue;
+          recordReactionFeedback({ platform: 'telegram', chatRoomId, messageId: String(messageId), reaction: emoji, removed: true });
         }
       } catch (error) {
         log.debug({ err: error }, '[Telegram] Failed to record reaction feedback');
@@ -654,7 +670,7 @@ export class TelegramProvider implements BotProvider {
       resolveRoles,
       checkPermissions: async required => roleSatisfies(await resolveRoles(), required),
       reply: (replyText, options) => sendText(String(chatId), replyText, options),
-      sendToChat: (targetChatId: string, replyText: string) => sendText(targetChatId, replyText),
+      sendToChat: (targetChatId: string, replyText: string, options?: ReplyOptions) => sendText(targetChatId, replyText, options),
       sendMessage: (replyText, options) => sendText(String(chatId), replyText, options),
       sendTyping: async () => {
         const activeBot = ensureCurrent();
@@ -696,9 +712,20 @@ export class TelegramProvider implements BotProvider {
         const activeBot = ensureCurrent();
         const mime = options.mimetype ?? 'application/octet-stream';
         const filename = options.filename ?? defaultFilename(options.mimetype);
-        // Telegram caps uploads at 50 MB; anything larger must be sent as a
-        // document, which has a much higher limit.
-        if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('image/')) {
+        // The public Bot API caps every upload at 50 MB — photos, voice, video
+        // and documents alike (the higher server-side limit only applies to
+        // re-sending an existing `file_id`). The document branch used to accept
+        // up to 200 MB and then fail inside the API with a raw 413.
+        if (buffer.byteLength > TELEGRAM_UPLOAD_LIMIT_BYTES) {
+          throw new ProviderOperationError(
+            'telegram',
+            'sendMedia',
+            `Telegram uploads are limited to ${TELEGRAM_UPLOAD_LIMIT_BYTES} bytes; this file is ${buffer.byteLength}.`,
+            undefined,
+            'UNSUPPORTED',
+          );
+        }
+        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('image/')) {
           const sent = await activeBot.api.sendPhoto(chatId, new InputFile(buffer), { caption: options.caption });
           // The reaction recorder looks a message up by *message id*. Recording
           // the media `file_id` instead made every reaction on a media reply
@@ -706,12 +733,12 @@ export class TelegramProvider implements BotProvider {
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
-        if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('audio/') && (options.ptt || mime.includes('ogg'))) {
+        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('audio/') && (options.ptt || mime.includes('ogg'))) {
           const sent = await activeBot.api.sendVoice(chatId, new InputFile(buffer), { caption: options.caption });
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
-        if (buffer.byteLength <= 50 * 1024 * 1024 && mime.startsWith('video/')) {
+        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('video/')) {
           const sent = await activeBot.api.sendVideo(chatId, new InputFile(buffer), { caption: options.caption });
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;

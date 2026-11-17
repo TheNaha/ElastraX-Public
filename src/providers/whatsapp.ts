@@ -79,6 +79,18 @@ type MediaSource = {
 
 export const WHATSAPP_TEXT_LIMIT = 65_536;
 
+/**
+ * Upper bound on one media download.
+ *
+ * `downloadMediaMessage` is handed a controller that only `stop()` aborts, and
+ * `saveMediaStream` takes one of the four global download slots and reserves up
+ * to 200 MiB before it consumes the stream. A media host that accepted the
+ * connection and never sent anything therefore pinned a slot and its byte
+ * reservation for the life of the process. Discord and Telegram already bound
+ * their downloads; this matches them.
+ */
+const WHATSAPP_MEDIA_TIMEOUT_MS = 60_000;
+
 export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
   return chunkTextFixed(text, limit);
 }
@@ -625,19 +637,20 @@ export class WhatsAppProvider implements BotProvider {
       if (!source) return null;
       const controller = new AbortController();
       this.mediaControllers.add(controller);
+      const downloadSignal = AbortSignal.any([controller.signal, AbortSignal.timeout(WHATSAPP_MEDIA_TIMEOUT_MS)]);
       let savedPath: string | undefined;
       try {
         const stream = await downloadMediaMessage(
           source.message,
           'stream',
-          { options: { signal: controller.signal } },
+          { options: { signal: downloadSignal } },
           createMediaDownloadOptions(socket),
         );
         const saved = await saveMediaStream(stream, {
           maxBytes: HARD_MEDIA_MAX_BYTES,
           contentLength: source.info.sizeBytes ?? null,
           fallbackMime: source.info.mimeType,
-          signal: controller.signal,
+          signal: downloadSignal,
         });
         savedPath = saved.path;
         this.ensureSocket(socket, generation, 'downloadMedia');
