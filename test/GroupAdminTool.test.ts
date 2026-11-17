@@ -1,9 +1,22 @@
 import { expect, test, describe, mock } from 'bun:test';
 import { GroupAdminTool } from '../src/tools/GroupAdminTool';
-import { parseExplicitCommand } from '../src/tools/ParameterValidator';
+import { parseExplicitCommand, validateToolArguments } from '../src/tools/ParameterValidator';
 import { MessageContext } from '../src/core/MessageContext';
 
 describe('GroupAdminTool', () => {
+  // The participant actions are documented to accept the quoted message when no
+  // user token is given. `user` used to be required in both the grammar and
+  // ACTION_REQUIREMENTS, so /kick as a reply failed validation before the tool
+  // ever saw the quote.
+  test('a participant action validates with a quoted target and no user token', () => {
+    const tool = new GroupAdminTool();
+    for (const command of ['kick', 'add', 'remove', 'promote', 'demote']) {
+      const parsed = parseExplicitCommand(tool, '', command);
+      const result = validateToolArguments(tool, parsed);
+      expect(result.valid).toBe(true);
+    }
+  });
+
   test('should have basic properties', () => {
     const tool = new GroupAdminTool();
     expect(tool.name).toBe('groupadmin');

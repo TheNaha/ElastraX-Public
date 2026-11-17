@@ -1,5 +1,6 @@
 import { expect, test, describe, mock } from 'bun:test';
 import { KnowledgeTool } from '../src/tools/KnowledgeTool';
+import { ParameterValidator } from '../src/tools/ParameterValidator';
 import type { MessageContext } from '../src/core/MessageContext';
 
 const createMockCtx = (overrides: Partial<MessageContext> = {}): MessageContext => ({
@@ -92,6 +93,24 @@ describe('KnowledgeTool', () => {
     const result = await tool.execute({ action: 'index' }, ctx);
     expect(checkPermissions).toHaveBeenCalledWith('admin');
     expect(result).toContain('admin');
+  });
+
+  // `/kb remove <id>` used to bind the id to `query` and leave `document_id`
+  // undefined, and `removeRoomDocument(roomKey, undefined)` deletes every chunk
+  // in the room. This is the most destructive slash-command bug in the tool.
+  test('the slash parser binds a document id for remove', () => {
+    const tool = new KnowledgeTool();
+    const parsed = ParameterValidator.parseArgs(tool, 'remove abc123', 'kb');
+    expect(parsed.action).toBe('remove');
+    expect(parsed.document_id).toBe('abc123');
+    expect(parsed.query).toBeUndefined();
+  });
+
+  test('the slash parser binds a search query', () => {
+    const tool = new KnowledgeTool();
+    const parsed = ParameterValidator.parseArgs(tool, 'search jellyfin tips', 'kb');
+    expect(parsed.action).toBe('search');
+    expect(parsed.query).toBe('jellyfin tips');
   });
 
   test('read-only actions do not require admin permission', async () => {

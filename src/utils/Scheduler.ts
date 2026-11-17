@@ -191,8 +191,10 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
  * reminder would fire again on the very next tick. When the cap is hit the
  * remaining whole periods are added in one step instead.
  */
-function advanceCalendarDays(from: Date, days: number, now: number): Date {
+function advanceCalendarDays(from: Date, days: number, now: number): Date | null {
+  if (!Number.isSafeInteger(days) || days <= 0) return null;
   let next = addCalendarDays(from, days);
+  if (!Number.isFinite(next.getTime())) return null;
   let guard = 0;
   while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
     next = addCalendarDays(next, days);
@@ -208,7 +210,10 @@ function advanceCalendarDays(from: Date, days: number, now: number): Date {
     const periods = Math.max(1, Math.floor((nowDay - fromDay) / 86_400_000 / days) + 1);
     next = addCalendarDays(from, periods * days);
   }
-  return next;
+  // An out-of-range `days` makes `addCalendarDays` produce an Invalid Date.
+  // Returning it would be truthy, so `processReminders` (which only checks for
+  // null) would write NaN into remind_at and retry the send as a failure.
+  return Number.isFinite(next.getTime()) ? next : null;
 }
 
 function addCalendarDays(from: Date, days: number): Date {
@@ -245,8 +250,12 @@ export function computeNextOccurrence(
     // A whole number of days is a calendar cadence: `every 1 day` at 09:00 must
     // still fire at 09:00 after a DST change, exactly like `daily`. A fractional
     // day has no calendar meaning, so it keeps the fixed-millisecond behaviour.
-    if (unit === 'd' && Number.isInteger(amount)) return advanceCalendarDays(lastFire, amount, now);
     intervalMs = amount * (unit === 'm' ? 60_000 : unit === 'h' ? 3_600_000 : 86_400_000);
+    // Validate before the day special-case, or a whole number of days skips the
+    // bound check entirely and an absurd interval (or an Invalid Date) passes
+    // `isValidRecurrence`.
+    if (!Number.isFinite(intervalMs) || intervalMs < MIN_INTERVAL_MS || intervalMs > MAX_INTERVAL_MS) return null;
+    if (unit === 'd' && Number.isInteger(amount)) return advanceCalendarDays(lastFire, amount, now);
   }
 
   if (!Number.isFinite(intervalMs) || intervalMs < MIN_INTERVAL_MS || intervalMs > MAX_INTERVAL_MS) return null;

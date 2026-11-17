@@ -488,10 +488,11 @@ export class TelegramProvider implements BotProvider {
   /** Download a Telegram file to a stored media path. */
   private async downloadToStorage(ctx: GrammyContext): Promise<{ mediaPath: string; mime: string } | null> {
     const bot = this.requireBot('downloadMedia');
-    // Read the message itself, not the Context: grammy exposes `photo`/`video`/
-    // `document`/… as getters on `Context.prototype`, and a spread or a direct
-    // property read on the Context yields `undefined`. Reading `ctx.msg` is what
-    // made every Telegram attachment invisible (hasMedia=false, no download).
+    // Read the message itself, not the Context: grammy's `Context` exposes only
+    // `msg`, `message`, `chat`, `from` and `me`. The media fields (`photo`,
+    // `video`, `document`, …) and `text`/`caption` live on the message, so
+    // reading them off the Context yielded `undefined` - which made every
+    // Telegram attachment invisible (hasMedia=false, no download).
     const media = mediaOf(ctx.msg as unknown as MessageCarrier | undefined);
     if (!media) return null;
     if (media.size && media.size > MAX_MEDIA_BYTES) {
@@ -838,9 +839,9 @@ export class TelegramProvider implements BotProvider {
   private buildQuoted(ctx: GrammyContext): MessageContext['quoted'] {
     const replyTo = ctx.msg?.reply_to_message;
     if (!replyTo) return undefined;
-    // Spread would copy only grammy Context's own properties (`update`, `api`,
-    // `me`) and silently drop every media getter, so the quoted message always
-    // looked like plain text. Build the carrier from the replied-to message.
+    // Spread would copy only grammy Context's own enumerable properties
+    // (`update`, `api`, `me`), so the quoted message always looked like plain
+    // text. Build the carrier from the replied-to message instead.
     const carrier: MessageCarrier = {
       msg: replyTo,
       text: replyTo.text,

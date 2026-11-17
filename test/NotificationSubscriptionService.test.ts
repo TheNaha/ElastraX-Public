@@ -52,7 +52,7 @@ function createFakeDb(selectResults: unknown[], options: { uniqueOnInsert?: numb
     })),
   };
 
-  return { db, inserts, updates, deletes };
+  return { db, inserts, updates, deletes, insertAttempts: () => insertCount };
 }
 
 // A real drizzle table so the service can detect its canonical `roomKey` column.
@@ -97,6 +97,10 @@ describe('NotificationSubscriptionService', () => {
     });
 
     expect(fake.inserts).toHaveLength(1);
+    // The discriminator for the read-then-insert fix: the pre-fix code selected
+    // first, found the row and never attempted an insert on the second call, so
+    // `insertAttempts` was 1 and the test passed against the buggy code too.
+    expect(fake.insertAttempts()).toBe(2);
     // The insert dual-writes the canonical key next to the legacy raw room id.
     expect(fake.inserts[0]).toMatchObject({ chatRoomId: 'room-a', roomKey: 'room:discord:room-a' });
     // A row the migration has not backfilled yet is repaired on update.

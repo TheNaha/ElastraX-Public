@@ -260,8 +260,8 @@ function migrateHandle(
 
     try {
       // The runtime lease only matters to a caller that is taking one. Tests and
-      // `scripts/dbBackup.ts` pass `leaseName: null` explicitly, and a live bot
-      // made even a read-only preflight fail on that check.
+      // the schema-compatibility checks pass `leaseName: null` explicitly, and a
+      // live bot made even a read-only preflight fail on that check.
       if (leaseName !== null && isDatabaseLeaseActive(sqlite, RUNTIME_LEASE)) {
         throw new Error(`Database lease ${RUNTIME_LEASE} is held by another process`);
       }

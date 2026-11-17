@@ -66,11 +66,15 @@ export class ServiceBindingService {
       // devices, two workers) used to make the loser's INSERT fail with a
       // UNIQUE constraint instead of updating the row it had just read.
       if (!isUniqueConstraintError(error)) throw error;
-      await db.update(serviceBindings).set(update).where(and(
+      const result = await db.update(serviceBindings).set(update).where(and(
         eq(serviceBindings.userId, opts.userId),
         eq(serviceBindings.platform, opts.platform),
         eq(serviceBindings.serviceType, opts.serviceType),
-      ));
+      )) as unknown as { changes?: number };
+      // The row the winner created must still exist. If it does not, the insert
+      // failed for a reason recovery cannot fix - report it instead of logging a
+      // success that stored nothing.
+      if (typeof result?.changes === 'number' && result.changes !== 1) throw error;
       log.info({ userId: opts.userId, serviceType: opts.serviceType }, 'Updated service binding after a concurrent create');
     }
   }

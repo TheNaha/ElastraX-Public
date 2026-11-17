@@ -426,13 +426,15 @@ export class WebhookServer {
     }
 
     if (targets.length === 0) {
-      this.completeReplay(replay);
       if (resolutionFailure) {
         // Every candidate was dropped and at least one failed to resolve: report
         // the original reason instead of a misleading "No subscribers", which
-        // the sender would read as a successful delivery to nobody.
+        // the sender would read as a successful delivery to nobody. The replay
+        // is released by the catch in handlePost, so a retry re-processes the
+        // event instead of being answered `202 duplicate`.
         throw new WebhookRequestError(400, resolutionFailure);
       }
+      this.completeReplay(replay);
       return jsonResponse({ ok: true, delivered: 0, note: 'No subscribers' });
     }
 

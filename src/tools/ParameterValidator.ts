@@ -292,6 +292,7 @@ function defaultNoArgAliases(toolName: string): string[] {
     media_account: ['connect', 'disconnect', 'notify'],
     media_library: ['library', 'watching'],
     media_search: ['find', 'search-media'],
+    memory: ['mem'],
     role: [],
   };
   return values[toolName] ?? [];
@@ -309,7 +310,7 @@ function commandAction(toolName: string, command: string): string | undefined {
     // the three documented slash routes to the tool's primary action were dead.
     media_request: { request: 'request', 'request-media': 'request', status: 'status', 'my-requests': 'my-requests' },
     reminder: { remind: 'set', reminder: 'set' },
-    memory: { mem: 'store', remember: 'store', forget: 'forget', recall: 'retrieve' },
+    memory: { remember: 'store', forget: 'forget', recall: 'retrieve' },
     role: { role: 'check', roles: 'check', permission: 'check', perm: 'check' },
     groupadmin: { mute: 'mute', unmute: 'unmute', grouplink: 'link', kick: 'remove', add: 'add', remove: 'remove', promote: 'promote', demote: 'demote' },
     owner_admin: { leave: 'leave', botleave: 'leave' },
@@ -431,6 +432,24 @@ export class ParameterValidator {
     const actionProperty = keys.length > 0 ? properties[keys[0]] : undefined;
     const actionValues = actionProperty?.enum?.map((value) => String(value).toLowerCase()) ?? [];
     let effectiveInferred = inferred;
+    // `mem` is an alias of the memory *tool*, not an action: the action is the
+    // next token (`/mem remember X` stores X, `/mem recall X` retrieves). Mapping
+    // `mem` itself to `store` made a mistyped action persist as content -
+    // `/mem retrieve` stored the memory "retrieve".
+    if (tool.name === 'memory' && normalizedCommand === 'mem' && tokens.length > 0) {
+      const nextToken = tokens[0]!.toLowerCase();
+      if (actionValues.includes(nextToken)) {
+        effectiveInferred = nextToken;
+      } else {
+        const mapped = commandAction(tool.name, nextToken);
+        if (mapped) {
+          effectiveInferred = mapped;
+          tokens.shift();
+        } else {
+          effectiveInferred = 'store';
+        }
+      }
+    }
     // When the typed command is itself a valid action value (`/broadcast`,
     // `/leave`), the command name *is* the action. Requiring `noArg` here meant
     // that `/broadcast <text>` had no inferred action at all, so the first

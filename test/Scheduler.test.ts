@@ -2,7 +2,7 @@ import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
 import { db } from '../src/db';
 import { reminders, chatRooms } from '../src/db/schema';
 import { eq } from 'drizzle-orm';
-import { Scheduler, computeNextOccurrence } from '../src/utils/Scheduler';
+import { Scheduler, computeNextOccurrence, isValidRecurrence } from '../src/utils/Scheduler';
 
 const TEST_CHAT_ROOM_ID = 'scheduler-chat-1';
 const TEST_ROOM_KEY = 'room:whatsapp:scheduler-chat-1';
@@ -137,6 +137,17 @@ describe('Scheduler', () => {
   // The catch-up loop is capped at MAX_CATCHUP_STEPS periods. A reminder left
   // unfired for longer than that used to return a date that was still in the
   // past, so processReminders wrote it back and fired again on the next tick.
+  // The day special-case must not skip the interval bounds: an absurd interval
+  // used to reach isValidRecurrence, and an interval large enough to overflow
+  // the Date range produced an Invalid Date that `if (!nextFire)` accepts.
+  test('an out-of-range day interval is rejected', () => {
+    expect(computeNextOccurrence(new Date(), 'every 100000 days')).toBeNull();
+    expect(computeNextOccurrence(new Date(), 'every 1000000000 days')).toBeNull();
+    expect(isValidRecurrence('every 100000 days')).toBe(false);
+    expect(isValidRecurrence('every 1000000000 days')).toBe(false);
+    expect(isValidRecurrence('every 1 day')).toBe(true);
+  });
+
   test('a reminder far behind the catch-up cap still lands in the future', () => {
     const base = new Date(2024, 0, 1, 9, 0, 0, 0);
     for (const recurrence of ['daily', 'weekly', 'every 3 days']) {

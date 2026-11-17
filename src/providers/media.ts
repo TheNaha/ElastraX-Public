@@ -84,8 +84,15 @@ export async function getInlineMediaEligibility(
   // Dimension parsing needs the PNG header (byte 16), a JPEG SOF marker and a
   // WebP/VP8X header - all within the first tens of KiB. Reading a full MiB for
   // every image message put an avoidable disk read on the hot path.
-  const prefix = await readPrefix(mediaPath, Math.min(info.size, 64 * 1024));
-  const detected = getImageDimensions(prefix);
+  let prefix = await readPrefix(mediaPath, Math.min(info.size, 64 * 1024));
+  let detected = getImageDimensions(prefix);
+  if (!detected && prefix.length < info.size) {
+    // A JPEG can carry a large EXIF/ICC block before its SOF marker. Pay for the
+    // bigger read only when the cheap one could not find the dimensions, so a
+    // previously-inline image is not demoted to "dimensions-unavailable".
+    prefix = await readPrefix(mediaPath, Math.min(info.size, MIB));
+    detected = getImageDimensions(prefix);
+  }
   return evaluateInlineMediaMetadata({
     sizeBytes: info.size,
     mimeType,

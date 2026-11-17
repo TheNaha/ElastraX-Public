@@ -55,5 +55,8 @@ export function getErrorMessage(error: unknown, fallback: string = 'Unknown erro
  * exists, so the insert can be retried as an update instead of surfacing a 500.
  */
 export function isUniqueConstraintError(error: unknown): boolean {
-  return /unique constraint|primary key|constraint failed/i.test(getErrorMessage(error));
+  // Deliberately narrow: a bare /constraint failed/i also matched NOT NULL and
+  // CHECK violations, which no amount of "someone else created it" recovery can
+  // fix - the caller's update then matched zero rows and logged a false success.
+  return /unique constraint failed|primary key|already exists|duplicate key/i.test(getErrorMessage(error));
 }

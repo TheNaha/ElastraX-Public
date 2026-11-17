@@ -345,12 +345,11 @@ describe('TelegramProvider lifecycle', () => {
     await provider.stop();
   });
 
-  // These two drive the handler with a real `grammy` `Context`, not a plain
-  // object. The media fields (`photo`, `video`, `document`, …) are getters on
-  // `Context.prototype`, so a plain-object stand-in silently hides the class of
-  // bug where the provider reads them off the Context instead of the message:
-  // every Telegram attachment then reports `hasMedia: false` and no tool can
-  // reach it.
+  // These drive the handler with a real `grammy` `Context`, not a plain object.
+  // The media fields (`photo`, `video`, `document`, …) live on the message, not
+  // on the Context, so a plain-object stand-in silently hides the class of bug
+  // where the provider reads them off the Context instead of the message: every
+  // Telegram attachment then reports `hasMedia: false` and no tool can reach it.
   describe('real grammy Context', () => {
     function makeContext(update: Record<string, unknown>): InstanceType<typeof GrammyContext> {
       return new GrammyContext(

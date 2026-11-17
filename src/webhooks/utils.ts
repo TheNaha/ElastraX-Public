@@ -358,7 +358,8 @@ export class WebhookRateLimiter {
     }
   }
 
-  /** Number of tracked buckets. Bounded by `maxSources`. */
+  /** Number of tracked buckets. Bounded by `maxSources`; stale entries are
+   *  reclaimed by `consume` when a request needs room. */
   get size(): number {
     return this.buckets.size;
   }
