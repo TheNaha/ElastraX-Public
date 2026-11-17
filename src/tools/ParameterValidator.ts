@@ -481,11 +481,33 @@ export class ParameterValidator {
       return result;
     }
 
+    // `field=value` overrides. They were only honoured by parseActionSpecific,
+    // so every tool without a command grammar bound the token to the next
+    // positional slot instead: `/convert mp3 resolution=720p` produced
+    // `attachment_id='resolution=720p'` and the media lookup failed with
+    // "Attachment not found". Only declared properties are treated as
+    // overrides, so free text that merely contains '=' is left alone.
+    const overrides: Record<string, string> = {};
+    const positional = tokens.filter(token => {
+      const match = token.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      const name = match?.[1];
+      if (name && Object.prototype.hasOwnProperty.call(properties, name)) {
+        overrides[name] = match![2]!;
+        return false;
+      }
+      return true;
+    });
+
     const result: ParsedCommandArgs = {};
     let index = 0;
     for (let keyIndex = 0; keyIndex < keys.length; keyIndex++) {
       const key = keys[keyIndex];
       const property = properties[key];
+      const override = overrides[key];
+      if (override !== undefined) {
+        result[key] = parseScalar(override, property, key);
+        continue;
+      }
       if (keyIndex === 0 && explicitAction && actionValues.length > 0 && tokens.length > 0 && !actionValues.includes(tokens[0].toLowerCase())) {
         // Use the action that was actually resolved (token-detected first, then
         // inferred). Reading `effectiveInferred` here discarded the token and
@@ -494,7 +516,9 @@ export class ParameterValidator {
         result.action = explicitAction;
         continue;
       }
-      if (index >= tokens.length) break;
+      // Skip, do not break: a later field may still be filled from its own
+      // `field=value` override after the positional cursor is exhausted.
+      if (index >= positional.length) continue;
       const remainingRequired = keys.slice(keyIndex + 1).filter((next) => def.required?.includes(next)).length;
       const isFinal = keyIndex === keys.length - 1;
       const laterKeys = keys.slice(keyIndex + 1);
@@ -510,16 +534,16 @@ export class ParameterValidator {
       // `text` is a single token ahead of a required field is unaffected.
       const trailingString = ['query', 'message', 'content', 'watermark_text', 'text'].includes(key) && !laterKeys.some((next) => def.required?.includes(next));
       const isLastString = (property?.type === 'string' && !laterKeys.some((next) => properties[next]?.type === 'string') && (isFinal || !laterKeys.some((next) => def.required?.includes(next)))) || trailingString;
-      if (isLastString && tokens.length - index > remainingRequired) {
-        result[key] = tokens.slice(index).join(' ');
-        index = tokens.length;
+      if (isLastString && positional.length - index > remainingRequired) {
+        result[key] = positional.slice(index).join(' ');
+        index = positional.length;
       } else {
-        result[key] = parseScalar(tokens[index] as string, property, key);
+        result[key] = parseScalar(positional[index] as string, property, key);
         index += 1;
       }
     }
 
-    if (index < tokens.length) throw new Error(`Unexpected argument: ${tokens.slice(index).join(' ')}`);
+    if (index < positional.length) throw new Error(`Unexpected argument: ${positional.slice(index).join(' ')}`);
     const missing = def.required?.filter((key) => result[key] === undefined) ?? [];
     if (missing.length > 0 && !noArg) throw new Error(this.getUsageHelp(tool));
     if (effectiveInferred && result.action === undefined) result.action = effectiveInferred;
