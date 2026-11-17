@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { isLoopbackHost as isLoopbackHostShared } from '../utils/netAddress';
 
 type Env = Record<string, string | undefined>;
 
@@ -46,8 +47,7 @@ function validateFloat(
 }
 
 function isLoopbackHost(hostname: string): boolean {
-  const value = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  return value === 'localhost' || value === '::1' || /^127(?:\.\d{1,3}){3}$/.test(value);
+  return isLoopbackHostShared(hostname);
 }
 
 function validateUrl(
