@@ -95,6 +95,21 @@ export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): st
   return chunkTextFixed(text, limit);
 }
 
+/**
+ * JIDs that are not conversations and must never reach the agent.
+ *
+ * Baileys decodes and upserts both status updates (`status@broadcast`) and
+ * newsletter/channel posts (`@newsletter`) as ordinary `notify` messages with
+ * `fromMe === false`. Without this filter each contact status update and every
+ * followed channel post was treated as an inbound DM: a chat room and message
+ * row were created (under `room:whatsapp:status@broadcast`), an LLM turn was
+ * spent, and a reply was attempted to a JID that cannot receive one.
+ */
+function isNonConversationalJid(jid: string | null | undefined): boolean {
+  if (!jid) return false;
+  return jid.endsWith('@broadcast') || jid.endsWith('@newsletter');
+}
+
 export const whatsAppProviderDeps = {
   useAuthState: useDBAuthState,
   fetchLatestVersion: fetchLatestBaileysVersion,
@@ -412,6 +427,7 @@ export class WhatsAppProvider implements BotProvider {
       if (!this.isCurrent(socket, generation) || event.type !== 'notify') return;
       await Promise.all(event.messages.map(async message => {
         if (!message.message || message.key.fromMe) return;
+        if (isNonConversationalJid(message.key.remoteJid)) return;
         if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
         const ctx = await this.createContext(message, generation).catch(error => {
           logger.warn({ err: error, key: message.key }, '[WhatsApp] Failed to create message context');
@@ -477,6 +493,7 @@ export class WhatsAppProvider implements BotProvider {
     if (!socket || !this.desiredRunning || generation !== this.generation) return null;
     const jid = message.key.remoteJid;
     if (!jid) return null;
+    if (isNonConversationalJid(jid)) return null;
     if (!this.botLid && socket.user?.id) {
       try {
         const botLid = await resolveLidForPn(socket, WhatsAppProvider.botPnJid(socket.user.id));

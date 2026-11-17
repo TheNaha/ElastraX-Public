@@ -183,6 +183,56 @@ describe('WhatsAppProvider', () => {
     createContextSpy.mockRestore();
   });
 
+  test('ignores status broadcasts and newsletter posts instead of treating them as DMs', async () => {
+    const { sock, emit } = createFakeSocket();
+
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    whatsAppProviderDeps.renderQr = mock(() => {});
+
+    const provider = new WhatsAppProvider();
+    const handler = mock(async () => {});
+    const createContextSpy = spyOn(
+      provider as unknown as { createContext: (message: unknown) => Promise<unknown> },
+      'createContext',
+    ).mockResolvedValue({ platform: 'whatsapp', chatId: 'x' } as Pick<MessageContext, 'platform' | 'chatId'>);
+
+    provider.onMessage(handler);
+    await provider.start();
+    await emit('messages.upsert', {
+      type: 'notify',
+      messages: [
+        { key: { id: 'status-1', remoteJid: 'status@broadcast', fromMe: false }, message: { conversation: 'status update' } },
+        { key: { id: 'chan-1', remoteJid: '1234567890@newsletter', fromMe: false }, message: { conversation: 'channel post' } },
+      ],
+    });
+
+    expect(createContextSpy).not.toHaveBeenCalled();
+    expect(handler).not.toHaveBeenCalled();
+    expect(sock.readMessages).not.toHaveBeenCalled();
+
+    createContextSpy.mockRestore();
+  });
+
+  test('createContext refuses a status or newsletter jid defensively', async () => {
+    const { sock } = createFakeSocket();
+
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    whatsAppProviderDeps.renderQr = mock(() => {});
+
+    const provider = new WhatsAppProvider();
+    await provider.start();
+
+    const createContext = (provider as unknown as {
+      createContext: (message: unknown) => Promise<unknown>;
+    }).createContext.bind(provider);
+    expect(await createContext({ key: { remoteJid: 'status@broadcast' }, message: {} })).toBeNull();
+    expect(await createContext({ key: { remoteJid: 'abc@newsletter' }, message: {} })).toBeNull();
+  });
+
   test('schedules reconnect on close and clears it on stop', async () => {
     const { sock, emit } = createFakeSocket();
 
