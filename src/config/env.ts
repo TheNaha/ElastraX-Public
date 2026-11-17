@@ -54,7 +54,7 @@ function validateUrl(
   raw: string | undefined,
   key: string,
   errors: string[],
-  options: { required?: boolean; allowLoopbackHttp?: boolean } = {},
+  options: { required?: boolean; allowPlainHttp?: boolean } = {},
 ): URL | undefined {
   if (raw === undefined || raw.trim() === '') {
     if (options.required) errors.push(`${key} is required`);
@@ -66,7 +66,13 @@ function validateUrl(
       errors.push(`${key} must use http or https`);
       return undefined;
     }
-    if (url.protocol === 'http:' && !options.allowLoopbackHttp && !isLoopbackHost(url.hostname)) {
+    // Loopback http is always allowed. `allowPlainHttp` is the narrower,
+    // opt-in escape hatch for self-hosted internal services that genuinely have
+    // no TLS (Jellyfin on a docker hostname, SearXNG on a LAN box). Endpoints
+    // that carry a credential - the AI base URLs and transcription - do not get
+    // it, so a typo like `http://api.openai.com/v1` is rejected instead of
+    // sending the key in cleartext.
+    if (url.protocol === 'http:' && !options.allowPlainHttp && !isLoopbackHost(url.hostname)) {
       errors.push(`${key} must use https unless it points to a loopback address`);
     }
     if (url.username || url.password) {
@@ -101,7 +107,7 @@ export function validateEnv(env: Env = process.env): void {
       env.AI_API_BASE_URL || (env.AI_CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${env.AI_CF_ACCOUNT_ID.trim()}/ai/v1` : ''),
       'AI_API_BASE_URL',
       errors,
-      { required: true, allowLoopbackHttp: true },
+      { required: true },
     );
     const apiKey = env.AI_API_KEY?.trim() || env.AI_CF_API_TOKEN?.trim();
     if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -122,7 +128,7 @@ export function validateEnv(env: Env = process.env): void {
         env[`AI_${upper}_BASE_URL`] || (env[`AI_${upper}_CF_ACCOUNT_ID`] ? `https://api.cloudflare.com/client/v4/accounts/${env[`AI_${upper}_CF_ACCOUNT_ID`]?.trim()}/ai/v1` : ''),
         `AI_${upper}_BASE_URL`,
         errors,
-        { required: true, allowLoopbackHttp: true },
+        { required: true },
       );
       const apiKey = env[`AI_${upper}_API_KEY`]?.trim() || env[`AI_${upper}_CF_API_TOKEN`]?.trim();
       if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -189,10 +195,10 @@ export function validateEnv(env: Env = process.env): void {
     validateBoolean(env[key], key, errors);
   }
 
-  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors, { allowLoopbackHttp: true });
-  validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors, { allowLoopbackHttp: true });
-  validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors, { allowLoopbackHttp: true });
-  validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors, { allowLoopbackHttp: true });
+  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
+  validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors, { allowPlainHttp: true });
+  validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors, { allowPlainHttp: true });
+  validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors, { allowPlainHttp: true });
   validateUrl(env.JELLYFIN_EXTERNAL_URL, 'JELLYFIN_EXTERNAL_URL', errors);
 
   validateSecret(env.WEBHOOK_SECRET, 'WEBHOOK_SECRET', errors, false);

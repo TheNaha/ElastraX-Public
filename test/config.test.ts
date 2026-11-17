@@ -181,6 +181,34 @@ describe("Config Validation", () => {
     expect(() => validateEnv({ ...baseValidEnv, WEBHOOK_SECRET: "a".repeat(32) })).not.toThrow();
   });
 
+  test("should reject a plain-http AI base URL that is not loopback", () => {
+    // A typo like http://api.openai.com/v1 would otherwise send the API key in
+    // cleartext; only loopback http is allowed for credential-bearing endpoints.
+    expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: "http://api.openai.com/v1" }))
+      .toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("AI_API_BASE_URL must use https unless it points to a loopback address");
+  });
+
+  test("should accept a loopback plain-http AI base URL", () => {
+    expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: "http://127.0.0.1:8000/v1" })).not.toThrow();
+    expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: "http://localhost:8000/v1" })).not.toThrow();
+  });
+
+  test("should reject a plain-http transcription endpoint that is not loopback", () => {
+    expect(() => validateEnv({ ...baseValidEnv, TRANSCRIBE_ENDPOINT: "http://whisper.lan:9000/transcribe" }))
+      .toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("TRANSCRIBE_ENDPOINT must use https unless it points to a loopback address");
+  });
+
+  test("should still allow plain http for self-hosted internal media services", () => {
+    expect(() => validateEnv({
+      ...baseValidEnv,
+      JELLYFIN_API_URL: "http://jellyfin:8096",
+      SEERR_API_URL: "http://seerr:5055/api/v1",
+      SEARXNG_URL: "http://searxng.lan:8080",
+    })).not.toThrow();
+  });
+
   test("should require the external Jellyfin URL to be https", () => {
     expect(() => validateEnv({ ...baseValidEnv, JELLYFIN_EXTERNAL_URL: "http://jellyfin.example.com" }))
       .toThrow("Environment validation failed");
