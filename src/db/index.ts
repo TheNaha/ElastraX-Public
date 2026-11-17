@@ -92,17 +92,34 @@ function quotePragma(value: string): string {
 }
 
 function startLeaseHeartbeat(handle: DatabaseHandle, lease: Lease, ttlMs: number): void {
+  // A thrown renewal (e.g. a transient SQLITE_BUSY, or one long event-loop
+  // stall) used to close the database immediately and permanently
+  // (`getDefaultHandle()` throws from then on), with no log line: the outbox
+  // timer then logged 'Outbox worker failed' once a second while every inbound
+  // message was dropped. A thrown error is treated as transient and only a
+  // sustained run of them closes the handle.
+  let consecutiveFailures = 0;
   const timer = setInterval(() => {
+    let renewed: Lease | null;
     try {
-      const renewed = renewDatabaseLease(handle.sqlite, lease, ttlMs);
-      if (!renewed) {
-        closeDatabase(handle);
-        return;
-      }
-      lease.expiresAt = renewed.expiresAt;
-    } catch {
+      renewed = renewDatabaseLease(handle.sqlite, lease, ttlMs);
+    } catch (error) {
+      consecutiveFailures += 1;
+      logger.warn({ err: error, failures: consecutiveFailures }, '[db] Lease renewal failed; will retry');
+      if (consecutiveFailures < 3) return;
+      logger.error({ failures: consecutiveFailures }, '[db] Lease renewal kept failing; closing the database');
       closeDatabase(handle);
+      return;
     }
+    consecutiveFailures = 0;
+    if (!renewed) {
+      // The row expired or another owner took it. Closing is the correct
+      // single-writer response, but it must be visible.
+      logger.error({ lease: lease.name, owner: lease.owner }, '[db] Database lease was lost to another owner; closing this handle');
+      closeDatabase(handle);
+      return;
+    }
+    lease.expiresAt = renewed.expiresAt;
   }, Math.max(1_000, Math.floor(ttlMs / 3)));
   timer.unref?.();
   leaseTimers.set(handle.sqlite, timer);

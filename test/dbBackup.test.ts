@@ -148,6 +148,30 @@ describe('backupDatabase', () => {
     expect(statSync(freshPath).size).toBe('fresh'.length);
   });
 
+  /**
+   * A manifest the reader cannot parse (bit rot, a future `formatVersion`, a
+   * hand edit) made its otherwise-valid snapshot look like an orphan, and the
+   * sweep deleted a real backup. Skipping the sweep when any manifest is
+   * unreadable keeps the backup rather than guessing.
+   */
+  test('keeps orphan-like snapshots when a manifest is unreadable', async () => {
+    const backupDir = join(TMP, 'unreadable-manifest-backups');
+    mkdirSync(backupDir, { recursive: true, mode: 0o700 });
+    const snapshotPath = join(backupDir, 'kept.db');
+    writeFileSync(snapshotPath, 'keep me');
+    const old = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(snapshotPath, old, old);
+    writeFileSync(join(backupDir, 'broken.db.manifest.json'), '{ this is not json', { mode: 0o600 });
+
+    const sourcePath = join(TMP, 'unreadable-source.db');
+    const source = newLiveDb(sourcePath);
+    source.close();
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir, keep: 5 });
+    expect(result.ok).toBe(true);
+
+    expect(readFileSync(snapshotPath, 'utf8')).toBe('keep me');
+  });
+
   test('rejects a tampered backup without publishing the restore destination', async () => {
     const sourcePath = join(TMP, 'tamper-source.db');
     const source = newLiveDb(sourcePath);

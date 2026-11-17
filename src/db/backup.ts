@@ -248,22 +248,32 @@ function pruneBackups(backupDir: string, keep: number, currentManifestPath: stri
   // leaves a `.db` that no manifest points at and nothing ever deletes. Sweep
   // the orphans that are older than the current run (the one being written is
   // still a temporary sibling, not a `*.db` in the directory).
+  //
+  // If any manifest cannot be read (bit rot, a future formatVersion, a hand
+  // edit) its snapshot is indistinguishable from an orphan, so the sweep is
+  // skipped rather than deleting a real backup.
   const live = new Set<string>();
+  let unreadableManifest = false;
   for (const name of readdirSync(backupDir)) {
     if (!name.endsWith('.db.manifest.json')) continue;
     const manifest = parseManifest(join(backupDir, name));
     if (manifest) live.add(manifest.snapshot.file);
+    else unreadableManifest = true;
   }
-  for (const name of readdirSync(backupDir)) {
-    if (!name.endsWith('.db') || name.startsWith('.')) continue;
-    if (live.has(name)) continue;
-    const path = join(backupDir, name);
-    try {
-      if (Date.now() - statSync(path).mtimeMs < ORPHAN_GRACE_MS) continue;
-      removeFile(path);
-      removed.push(path);
-    } catch (error) {
-      void error;
+  if (unreadableManifest) {
+    logger.warn({ backupDir }, '[backup] Skipping the orphan sweep: at least one manifest could not be parsed');
+  } else {
+    for (const name of readdirSync(backupDir)) {
+      if (!name.endsWith('.db') || name.startsWith('.')) continue;
+      if (live.has(name)) continue;
+      const path = join(backupDir, name);
+      try {
+        if (Date.now() - statSync(path).mtimeMs < ORPHAN_GRACE_MS) continue;
+        removeFile(path);
+        removed.push(path);
+      } catch (error) {
+        void error;
+      }
     }
   }
   return removed;
