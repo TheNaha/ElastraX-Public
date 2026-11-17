@@ -198,7 +198,11 @@ export function validateEnv(env: Env = process.env): void {
   validateSecret(env.WEBHOOK_SECRET, 'WEBHOOK_SECRET', errors, false);
   validateSecret(env.SEERR_WEBHOOK_SECRET, 'SEERR_WEBHOOK_SECRET', errors, false);
   validateSecret(env.JELLYFIN_WEBHOOK_SECRET, 'JELLYFIN_WEBHOOK_SECRET', errors, false);
-  validateSecret(env.METRICS_AUTH_TOKEN, 'METRICS_AUTH_TOKEN', errors, false);
+  // METRICS_AUTH_TOKEN is deliberately not length-checked here: a short token
+  // only disables /metrics and /admin (readOptionalSharedSecret fails soft),
+  // which is the documented behaviour. Failing startup over a telemetry token
+  // contradicted it. WEBHOOK_SECRET and the per-service secrets still hard-fail
+  // because intake cannot authenticate without them.
 
   if (errors.length > 0) {
     for (const error of errors) logger.error(error);

@@ -20,6 +20,7 @@ import { DigestService } from '../utils/DigestService';
 import { healthMetrics } from '../utils/HealthMetrics';
 import { logger } from '../utils/logger';
 import { WebhookServer } from '../webhookServer';
+import { parseWebhookConfig } from '../webhooks/config';
 import { healthMonitor, type HealthMonitor } from '../utils/HealthMonitor';
 import { getMediaCleanupIntervalMs, getMediaRetentionHours, getQueueConfig } from '../config/runtime';
 import { registryReady, mutatingToolNames } from '../tools';
@@ -291,6 +292,15 @@ export class AppRuntime {
 
     // Register all flow processors in a centralized location.
     await safeRegisterFlows();
+
+    // Parse the webhook configuration before any provider connects.
+    // `webhookServer.start()` parses it again, but by then WhatsApp/Discord/
+    // Telegram have already joined and the catch below tears them all down: a
+    // single typo in a WEBHOOK_* value used to take the whole bot down *after*
+    // the providers were connected, which is the most disruptive moment to
+    // restart. Failing here leaves nothing to unwind.
+    parseWebhookConfig(process.env, Date.now());
+
     if (this.stopRequested) {
       logger.info('Startup interrupted before providers were started');
       return;
