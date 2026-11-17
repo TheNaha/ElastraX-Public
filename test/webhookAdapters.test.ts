@@ -7,18 +7,18 @@
  */
 import { describe, test, expect } from 'bun:test';
 import { WebhookRateLimiter, WebhookReplayCache } from '../src/webhooks/utils';
-import { buildWebhookMessage } from '../src/webhooks/adapters';
-import { adaptJellyfin } from '../src/webhooks/adapters';
+import { adaptJellyfin, buildWebhookMessage } from '../src/webhooks/adapters';
 
 describe('WebhookRateLimiter capacity', () => {
   test('a known key is never refused because its sibling key is unseen', () => {
-    // maxSources 2: one known source fills the map; the request also carries a
-    // fresh peer address. Refusing here locked a legitimate sender out whenever
-    // its NAT/proxy address changed while the table was at capacity.
-    const limiter = new WebhookRateLimiter(10, 60_000, 2);
+    // maxSources 1: the known source already fills the map, and the request also
+    // carries a fresh peer address. The old guard refused this request, locking a
+    // legitimate sender out whenever its NAT/proxy address changed.
+    const limiter = new WebhookRateLimiter(10, 60_000, 1);
     const now = 1_000_000;
     expect(limiter.consume(['source:github:ci'], now).allowed).toBe(true);
     expect(limiter.consume(['source:github:ci', 'ip:10.0.0.1'], now + 1).allowed).toBe(true);
+    expect(limiter.size).toBe(1);
   });
 
   test('the bucket map does not grow past maxSources', () => {

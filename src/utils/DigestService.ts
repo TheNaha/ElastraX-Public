@@ -368,7 +368,8 @@ export class DigestService {
   private static senders = new Map<string, SendFn>();
   private static timer: ReturnType<typeof setInterval> | null = null;
   private static running = false;
-  private static mediaCache: { weekStart: number | string; items: JellyfinMediaItem[] } | null = null;
+  /** Cached rollup, keyed by the week window it was resolved for. */
+  private static mediaCache: { weekStart: string; items: JellyfinMediaItem[] } | null = null;
 
   /** Register a send callback for a given platform. */
   static registerSender(platform: string, fn: SendFn): void {

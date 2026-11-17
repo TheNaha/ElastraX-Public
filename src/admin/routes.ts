@@ -285,42 +285,34 @@ function handleRead(path: string, url: URL): Response {
   }
 }
 
-const ADMIN_ACTIONS = new Set([
-  'api/action/reload-registry',
-  'api/action/retry-outbox',
-  'api/action/delete-knowledge',
-  'api/action/retention-report',
-]);
+/**
+ * One handler per action path: the map is the route table, so an entry cannot be
+ * reachable from the 404 check but missing from the dispatch (or the reverse).
+ */
+const ADMIN_ACTIONS: Record<string, (params: Record<string, unknown>, url: URL) => Promise<ActionResult> | ActionResult> = {
+  'api/action/reload-registry': () => actionReloadRegistry(),
+  'api/action/retry-outbox': (params, url) =>
+    actionRetryOutbox(String(params.id ?? url.searchParams.get('id') ?? '')),
+  'api/action/delete-knowledge': params =>
+    actionDeleteKnowledge(
+      String(params.roomKey ?? ''),
+      typeof params.documentId === 'string' ? params.documentId : undefined,
+    ),
+  'api/action/retention-report': () => actionRetentionReport(),
+};
 
 async function handleAction(req: Request, path: string, url: URL): Promise<Response> {
   // Resolve the action before reading the body: an unknown path is a 404
   // regardless of how malformed the payload is.
-  if (!ADMIN_ACTIONS.has(path)) return json({ error: 'Not Found' }, 404);
+  const action = ADMIN_ACTIONS[path];
+  if (!action) return json({ error: 'Not Found' }, 404);
 
   const body = await readJsonObjectBody(req, ADMIN_ACTION_MAX_BODY_BYTES);
   if (!body.ok) return json({ error: body.error }, body.status);
   const params = body.value;
 
   try {
-    let result: ActionResult;
-    switch (path) {
-      case 'api/action/reload-registry':
-        result = await actionReloadRegistry();
-        break;
-      case 'api/action/retry-outbox':
-        result = await actionRetryOutbox(String(params.id ?? url.searchParams.get('id') ?? ''));
-        break;
-      case 'api/action/delete-knowledge':
-        result = await actionDeleteKnowledge(
-          String(params.roomKey ?? ''),
-          typeof params.documentId === 'string' ? params.documentId : undefined,
-        );
-        break;
-      case 'api/action/retention-report':
-      default:
-        result = actionRetentionReport();
-        break;
-    }
+    const result = await action(params, url);
     return json(result, result.ok ? 200 : 400);
   } catch (error) {
     // `actionDeleteKnowledge` throws for a malformed document id, and a database

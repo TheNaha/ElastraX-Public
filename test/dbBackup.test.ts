@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { getTestWorkerPaths } from './helpers/paths';
+import { ROOT_DIR } from '../src/core/constants';
 
 import { backupDatabase, restoreDatabase } from '../src/db/backup';
 import { createDatabase, ensureDatabaseSchema } from '../src/db';
@@ -57,7 +58,10 @@ describe('backupDatabase', () => {
 
     const manifest = JSON.parse(readFileSync(result.manifestPath!, 'utf8'));
     expect(manifest.formatVersion).toBe(1);
-    expect(manifest.database.migrationCount).toBeGreaterThanOrEqual(25);
+    const journal = JSON.parse(
+      readFileSync(join(ROOT_DIR, 'drizzle/migrations/meta/_journal.json'), 'utf8'),
+    ) as { entries: unknown[] };
+    expect(manifest.database.migrationCount).toBe(journal.entries.length);
     expect(manifest.snapshot.sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const destination = join(TMP, 'restored-new.db');

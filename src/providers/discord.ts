@@ -591,7 +591,10 @@ export class DiscordProvider implements BotProvider {
             throw new ProviderOperationError('discord', 'editMessage', 'Discord channel cannot send the remainder of an over-long edit.', undefined, 'UNSUPPORTED');
           }
           const remainder = text.slice(head.length);
-          const chunks = chunkDiscordText(remainder);
+          // Reserve room for the continuation marker on the first chunk: chunking
+          // at the full limit and then prefixing made that chunk exceed it, and
+          // Discord rejects the whole send.
+          const chunks = chunkDiscordText(remainder, DISCORD_TEXT_LIMIT - 2);
           // Add continuation marker to the first remainder chunk
           for (let i = 0; i < chunks.length; i++) {
             const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];

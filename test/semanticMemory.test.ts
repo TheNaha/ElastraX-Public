@@ -6,6 +6,7 @@ import { EmbeddingService } from '../src/utils/EmbeddingService';
 import {
   bytesToFloat32,
   float32ToBytes,
+  cosineSimilarity,
   findSemanticDuplicate,
   rankMemoriesForInjection,
   updateMemoryEmbedding,
@@ -262,5 +263,16 @@ describe('rankMemoriesForInjection', () => {
       embed: async () => V(1, 0),
     }, 1);
     expect(ranked?.map((r) => r.id)).toEqual(['A']);
+  });
+});
+
+describe('cosineSimilarity — damaged vectors', () => {
+  test('returns 0 instead of NaN for a non-finite stored vector', () => {
+    const vector = new Float32Array([1, 0]);
+    const corrupted = new Float32Array([Number.NaN, 1]);
+    // NaN would silently fail every `>= threshold` comparison and turn sort
+    // comparators into unspecified order.
+    expect(cosineSimilarity(vector, corrupted)).toBe(0);
+    expect(cosineSimilarity(new Float32Array([1, 0]), new Float32Array([1, 0]))).toBe(1);
   });
 });

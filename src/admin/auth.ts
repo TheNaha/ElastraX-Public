@@ -210,7 +210,7 @@ function hostnameOf(value: string | null | undefined): string | null {
 
 /** Whether a `Host` value names the local machine. */
 export function isLoopbackHost(host: string): boolean {
-  const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '').replace(/\.$/, '');
   return name === 'localhost' || name === '::1' || /^127(?:\.\d{1,3}){3}$/.test(name);
 }
 

@@ -333,7 +333,6 @@ export class HealthMetricsCollector {
   }
 
   /** Get Prometheus-compatible text exposition format. */
-
   getPrometheusMetrics(): string {
     const m = this.getMetrics();
     const lines: string[] = [];

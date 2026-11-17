@@ -680,7 +680,10 @@ export class TelegramProvider implements BotProvider {
         const { head, rest } = splitTextAtUtf16Limit(nextText, TELEGRAM_TEXT_LIMIT);
         await activeBot.api.editMessageText(chatId, messageId, head);
         if (rest.length > 0) {
-          const chunks = chunkTelegramText(rest);
+          // Two units are reserved for the continuation marker on the first chunk;
+          // chunking at the full limit and then prefixing exceeded it and the Bot
+          // API rejected the message.
+          const chunks = chunkTelegramText(rest, TELEGRAM_TEXT_LIMIT - 2);
           for (let i = 0; i < chunks.length; i++) {
             const chunk = i === 0 ? `\u2026 ${chunks[i]}` : chunks[i];
             const extra = await activeBot.api.sendMessage(chatId, chunk);

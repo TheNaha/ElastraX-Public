@@ -475,12 +475,32 @@ describe('admin hardening', () => {
       url,
       true,
     )).toBe(false);
+    // A trailing dot is the same host.
+    expect(shouldUseSecureCookie(
+      new Request('http://localhost.:3500/admin', { headers: { host: 'localhost.:3500' } }),
+      new URL('http://localhost.:3500/admin'),
+      true,
+    )).toBe(false);
     // A forwarded https proto still wins.
     expect(shouldUseSecureCookie(
       new Request('http://bot:3500/admin', { headers: { 'x-forwarded-proto': 'https' } }),
       new URL('http://bot:3500/admin'),
       true,
     )).toBe(true);
+  });
+
+  test('config view strips credentials embedded in URLs', () => {
+    const { configInventory } = adminData;
+    const inventory = configInventory({
+      AI_API_BASE_URL: 'https://user:secret-key@llm.example/v1?api_key=abc123',
+      SEERR_URL: 'https://seerr.example',
+    } as NodeJS.ProcessEnv);
+    const base = inventory.keys.find(entry => entry.name === 'AI_API_BASE_URL')!;
+    expect(base.value).not.toContain('secret-key');
+    expect(base.value).not.toContain('abc123');
+    expect(base.value).toContain('llm.example');
+    const plain = inventory.keys.find(entry => entry.name === 'SEERR_URL')!;
+    expect(plain.value).toBe('https://seerr.example/');
   });
 
   test('reports a truncated feedback tail instead of silently narrowing it', () => {

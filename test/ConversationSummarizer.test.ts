@@ -155,9 +155,9 @@ describe('summarization batching', () => {
 
     expect(llmCalls).toBeGreaterThan(0);
     expect(llmCalls).toBeLessThanOrEqual(2);
-    // The active window may carry the deferred overflow, but never more than the
-    // agent fetches (keepCount + lookahead); it must not silently drop entries.
-    expect(maxActive).toBeLessThanOrEqual(keepCount + lookahead);
+    // A deferred overflow is smaller than minBatch, so the window can never carry
+    // more than keepCount + minBatch - 1; it must not silently drop entries.
+    expect(maxActive).toBeLessThanOrEqual(keepCount + minBatch - 1);
   });
 
   test('a large batch is still summarized immediately', async () => {
