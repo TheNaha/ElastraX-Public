@@ -5,18 +5,30 @@ import { exponentialBackoff } from '../utils/backoff';
 import type { MessageContext } from '../core/MessageContext';
 import { remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 import { safeErrorMessage } from '../utils/errorUtils';
+import { getAIRequestConfig, getMaxToolIterations, getToolTimeoutMs } from '../config/runtime';
 
 /**
  * How long a claimed inbox row is invisible to another worker.
  *
- * Nothing renews it between `claim()` and `complete()`, and a turn is bounded
- * only by its tool iterations (each with its own provider timeout), so a 120 s
- * lease let the hourly recovery scan return a *live* worker's row to `received`
- * while it was still running: its completion was rejected and a duplicate
- * provider delivery re-ran the whole turn. The recovery scan runs hourly, so a
- * longer lease costs no recovery latency.
+ * Nothing renews it between `claim()` and `complete()`, so it must cover the
+ * longest turn the configured budgets allow: one model call per tool iteration
+ * (plus the final text-only round) and one tool timeout per iteration. A fixed
+ * 120 s lease let the hourly recovery scan return a *live* worker's row to
+ * `received`; its completion was then rejected and a duplicate provider
+ * delivery re-ran the whole turn. The recovery scan runs hourly, so a longer
+ * lease costs no recovery latency.
  */
-const LEASE_MS = 10 * 60_000;
+function resolveInboxLeaseMs(): number {
+  const iterations = getMaxToolIterations();
+  const aiTimeoutMs = Math.max(
+    getAIRequestConfig(process.env, false).timeoutMs,
+    getAIRequestConfig(process.env, true).timeoutMs,
+  );
+  const worstTurnMs = (iterations + 1) * aiTimeoutMs + iterations * getToolTimeoutMs();
+  return Math.min(60 * 60_000, Math.max(10 * 60_000, worstTurnMs + 60_000));
+}
+
+const LEASE_MS = resolveInboxLeaseMs();
 const MAX_ATTEMPTS = 5;
 
 export type InboxAdmission = {
