@@ -11,6 +11,7 @@
  * A bug in either would expose telemetry or, worse, the few write operations.
  */
 import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
+import { eq } from 'drizzle-orm';
 import * as fsModule from 'node:fs';
 import * as pathModule from 'node:path';
 import * as osModule from 'node:os';
@@ -26,6 +27,8 @@ const {
 } = await import('../src/admin/auth');
 const adminAuth = await import('../src/admin/auth');
 const adminData = await import('../src/admin/data');
+const { db: adminDb } = await import('../src/db');
+const { messageOutbox: outboxTable, chatRooms: roomsTable, memories: memoriesTable } = await import('../src/db/schema');
 
 const SECRET = 'test-admin-secret-0123456789';
 const HOST = '127.0.0.1:3500';
@@ -503,8 +506,7 @@ describe('admin hardening', () => {
     expect(plain.value).toBe('https://seerr.example/');
   });
 
-  test('reports a truncated feedback tail instead of silently narrowing it', () => {
-    const { mkdtempSync, writeFileSync } = fsModule;
+  test('reports a truncated feedback tail instead of silently narrowing it', () => {    const { mkdtempSync, writeFileSync } = fsModule;
     const { join } = pathModule;
     const { tmpdir } = osModule;
     const dir = mkdtempSync(join(tmpdir(), 'feedback-tail-'));
@@ -523,5 +525,86 @@ describe('admin hardening', () => {
       if (previous === undefined) delete process.env.FEEDBACK_LOG_PATH;
       else process.env.FEEDBACK_LOG_PATH = previous;
     }
+  });
+});
+
+describe('admin outbox retry action', () => {
+  const { actionRetryOutbox } = adminData;
+  const db = adminDb;
+  const messageOutbox = outboxTable;
+
+  function seedRow(state: 'sent' | 'dead_letter'): string {
+    const id = `retry-${Math.random().toString(36).slice(2, 10)}`;
+    const now = Date.now();
+    db.insert(messageOutbox).values({
+      id,
+      platform: 'whatsapp',
+      chatRoomId: `room-${id}`,
+      roomKey: `room:whatsapp:room-${id}`,
+      idempotencyKey: `key-${id}`,
+      payload: JSON.stringify({ text: 'hello' }),
+      state,
+      attemptCount: 5,
+      availableAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    return id;
+  }
+
+  test('refuses to resurrect a row that is no longer failed or dead-lettered', async () => {
+    // The action read the row, checked its state, then updated with no state
+    // predicate: a row the worker delivered in between was returned to pending
+    // and sent a second time.
+    const id = seedRow('sent');
+    const result = await actionRetryOutbox(id);
+    expect(result.ok).toBe(false);
+    const [row] = db.select().from(messageOutbox).where(eq(messageOutbox.id, id)).all();
+    expect(row?.state).toBe('sent');
+  });
+
+  test('requeues a dead-lettered row', async () => {
+    const id = seedRow('dead_letter');
+    const result = await actionRetryOutbox(id);
+    expect(result.ok).toBe(true);
+    const [row] = db.select().from(messageOutbox).where(eq(messageOutbox.id, id)).all();
+    expect(row?.state).toBe('pending');
+    expect(row?.attemptCount).toBe(0);
+  });
+});
+
+describe('admin room inventory', () => {
+  const { roomInventory } = adminData;
+
+  test('counts documents, not chunks', () => {
+    // Room knowledge stores one row per chunk. Counting rows turned a 2-chunk
+    // document into two "documents" in the Rooms table.
+    const suffix = Math.random().toString(36).slice(2, 10);
+    const roomKey = `room:whatsapp:inventory-${suffix}`;
+    const now = new Date();
+    adminDb.insert(roomsTable).values({
+      id: roomKey,
+      platform: 'whatsapp',
+      roomKey,
+      created_at: now,
+    }).run();
+    const chunks = [
+      { id: `docA_${suffix}_0`, content: '[source: guide #1] first' },
+      { id: `docA_${suffix}_1`, content: '[source: guide #2] second' },
+      { id: `docB_${suffix}_0`, content: '[source: notes #1] only' },
+    ];
+    for (const chunk of chunks) {
+      adminDb.insert(memoriesTable).values({
+        id: chunk.id,
+        ownerId: roomKey,
+        content: chunk.content,
+        category: 'document',
+        created_at: now,
+      }).run();
+    }
+
+    const inventory = roomInventory();
+    const room = inventory.rooms.find(entry => entry.roomKey === roomKey);
+    expect(room?.knowledgeDocuments).toBe(2);
   });
 });

@@ -24,7 +24,7 @@ import { getRoomKeyStats } from '../db/rooms';
 import { getToolCatalog, getPluginLoadReports, getAlwaysLoadedDefinitions, getTriggeredTools } from '../tools/registry';
 import { reloadRegistry } from '../tools/registry';
 import type { ToolDefinition } from '../tools/BaseTool';
-import { removeRoomDocument, listRoomDocuments, DOCUMENT_CATEGORY } from '../utils/roomKnowledge';
+import { removeRoomDocument, listRoomDocuments, documentIdOf, DOCUMENT_CATEGORY } from '../utils/roomKnowledge';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
 import { readBooleanEnv, readStringEnv } from '../config/runtime';
@@ -161,16 +161,22 @@ export function roomInventory(limit = MAX_TABLE_ROWS): { rooms: RoomRow[]; total
   if (rows.length > 0) {
     const scopedKeys = rows.map(room => room.roomKey).filter((key): key is string => Boolean(key));
     if (scopedKeys.length > 0) {
-      for (const row of db.select({ ownerId: memories.ownerId, n: count() })
+      // Room knowledge stores one row per *chunk* (`<documentId>_<ordinal>`), so
+      // counting rows reported a 40-chunk PDF as 40 documents. Collapse by the
+      // document id, exactly like the canonical `listRoomDocuments` reader.
+      const documentsByRoom = new Map<string, Set<string>>();
+      for (const row of db.select({ ownerId: memories.ownerId, id: memories.id })
         .from(memories)
         .where(and(
           inArray(memories.ownerId, scopedKeys),
           eq(memories.category, DOCUMENT_CATEGORY),
         ))
-        .groupBy(memories.ownerId)
         .all()) {
-        documentCounts.set(row.ownerId, row.n);
+        const ids = documentsByRoom.get(row.ownerId) ?? new Set<string>();
+        ids.add(documentIdOf(row.id));
+        documentsByRoom.set(row.ownerId, ids);
       }
+      for (const [ownerId, ids] of documentsByRoom) documentCounts.set(ownerId, ids.size);
     }
   }
   const reminderCounts = new Map<string, number>();
@@ -517,10 +523,23 @@ export async function actionRetryOutbox(rawId: string | number): Promise<ActionR
   }
   // Back to pending with the attempt counter cleared, so the normal claim path
   // picks it up on its next tick.
-  db.update(messageOutbox)
+  //
+  // The state guard lives in the UPDATE, not only in the read above: two
+  // overlapping POSTs (the button is not disabled) or a worker claim between the
+  // read and the write could return an already-delivered row to `pending`, and
+  // the claim query never re-checks the idempotency key, so the message was
+  // delivered twice.
+  const changed = db.update(messageOutbox)
     .set({ state: 'pending', attemptCount: 0, lastError: null, availableAt: Date.now(), leaseOwner: null, leaseExpiresAt: null })
-    .where(eq(messageOutbox.id, id))
-    .run();
+    .where(and(
+      eq(messageOutbox.id, id),
+      inArray(messageOutbox.state, ['failed', 'dead_letter']),
+    ))
+    .returning({ id: messageOutbox.id })
+    .all();
+  if (changed.length !== 1) {
+    return { ok: false, message: `Row ${id} is no longer failed or dead-lettered; nothing was requeued.` };
+  }
   log.info({ id, platform: row.platform }, '[Admin] Outbox row requeued');
   return { ok: true, message: `Outbox row ${id} requeued for delivery.`, detail: { id } };
 }
