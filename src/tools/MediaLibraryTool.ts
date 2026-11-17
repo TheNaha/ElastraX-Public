@@ -150,20 +150,28 @@ export class MediaLibraryTool extends BaseTool {
         }
         case 'link': {
           if (!args.item_id) return t(lang, 'media_library.no_item_id');
-          if (typeof (jellyfin as unknown as { searchItems?: unknown }).searchItems === 'function') {
-            const visible = await jellyfin.searchItems(args.item_id, { userId: ownedUserId ?? undefined, limit: 10, includeTypes: ['Movie', 'Series', 'Episode'] });
-            if (!visible.Items.some((item) => item.Id === args.item_id)) return t(lang, 'media_library.item_not_available');
+          // The catalog lookup by id used to go through `searchItems(item_id)`,
+          // which is a full-text `searchTerm` query: a GUID never matches a
+          // title, so every real id was reported as unavailable. `getItem` is
+          // the id-addressed read (and throws when the item is missing).
+          try {
+            await jellyfin.getItem(args.item_id);
+          } catch (error) {
+            log.debug({ err: error, itemId: args.item_id }, 'Jellyfin item is not available for a watch link');
+            return t(lang, 'media_library.item_not_available');
           }
           const link = jellyfin.getWatchLink(args.item_id);
           return t(lang, 'media_library.watch_link', { link });
         }
         case 'info': {
           if (!args.item_id) return t(lang, 'media_library.no_item_id');
-          if (typeof (jellyfin as unknown as { searchItems?: unknown }).searchItems === 'function') {
-            const visible = await jellyfin.searchItems(args.item_id, { userId: ownedUserId ?? undefined, limit: 10, includeTypes: ['Movie', 'Series', 'Episode'] });
-            if (!visible.Items.some((item) => item.Id === args.item_id)) return t(lang, 'media_library.item_not_available');
+          let item;
+          try {
+            item = await jellyfin.getItem(args.item_id);
+          } catch (error) {
+            log.debug({ err: error, itemId: args.item_id }, 'Jellyfin item is not available');
+            return t(lang, 'media_library.item_not_available');
           }
-          const item = await jellyfin.getItem(args.item_id);
           const year = item.ProductionYear ? ` (${item.ProductionYear})` : '';
           const genres = item.Genres?.length ? item.Genres.join(', ') : t(lang, 'media_library.info_na');
           return [
