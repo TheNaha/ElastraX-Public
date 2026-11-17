@@ -81,7 +81,10 @@ export async function getInlineMediaEligibility(
   if (info.size > INLINE_MEDIA_MAX_BYTES) {
     return evaluateInlineMediaMetadata({ sizeBytes: info.size, mimeType, width: 0, height: 0 });
   }
-  const prefix = await readPrefix(mediaPath, Math.min(info.size, MIB));
+  // Dimension parsing needs the PNG header (byte 16), a JPEG SOF marker and a
+  // WebP/VP8X header - all within the first tens of KiB. Reading a full MiB for
+  // every image message put an avoidable disk read on the hot path.
+  const prefix = await readPrefix(mediaPath, Math.min(info.size, 64 * 1024));
   const detected = getImageDimensions(prefix);
   return evaluateInlineMediaMetadata({
     sizeBytes: info.size,

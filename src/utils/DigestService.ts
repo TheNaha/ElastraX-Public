@@ -96,6 +96,11 @@ function readDigestConfig(): DigestConfig {
  * attempts the marker is kept, which parks the digest until the next day.
  */
 const MAX_DIGEST_ATTEMPTS = 3;
+/**
+ * Weekly rollup attempts. The marker is keyed by the *previous* week, so giving
+ * up here does not retry tomorrow - it waits another week.
+ */
+const MAX_WEEKLY_DIGEST_ATTEMPTS = 30;
 
 /** In-process attempt counter, keyed by marker id (same shape as `Scheduler`'s).
  *
@@ -118,10 +123,18 @@ function releaseMarker(id: string): void {
   db.delete(appKv).where(eq(appKv.id, id)).run();
 }
 
-/** Record a failed attempt; false once the marker has used its whole budget. */
-function mayRetryMarker(id: string): boolean {
+/**
+ * Record a failed attempt; false once the marker has used its whole budget.
+ *
+ * The weekly media rollup takes a much larger budget: the poll runs every 60 s,
+ * so three attempts were spent in about two minutes and a short Monday-morning
+ * Jellyfin outage parked the whole week's digest until the *next* Monday. Each
+ * weekly attempt is one Jellyfin API call, not a paid model call, so 30 minutes
+ * of retries is cheap.
+ */
+function mayRetryMarker(id: string, maxAttempts: number = MAX_DIGEST_ATTEMPTS): boolean {
   const attempt = (digestAttempts.get(id) ?? 0) + 1;
-  if (attempt >= MAX_DIGEST_ATTEMPTS) return false;
+  if (attempt >= maxAttempts) return false;
   digestAttempts.set(id, attempt);
   return true;
 }
@@ -523,7 +536,7 @@ export class DigestService {
         forgetMarkerAttempts(marker);
         log.info({ roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest delivered');
       } catch (err) {
-        if (mayRetryMarker(marker)) {
+        if (mayRetryMarker(marker, MAX_WEEKLY_DIGEST_ATTEMPTS)) {
           releaseMarker(marker);
           log.warn({ err: getErrorMessage(err), roomKey: room.roomKey, roomId: room.remoteRoomId }, '[DigestService] Weekly media digest failed — will retry');
         } else {

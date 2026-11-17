@@ -94,6 +94,7 @@ function envDefaults(role: string): RolePrivileges {
  * -1 (unlimited) always wins over any finite value.
  */
 function mergeMax(values: number[]): number {
+  if (values.length === 0) return 0;
   if (values.includes(-1)) return -1;
   return Math.max(...values);
 }

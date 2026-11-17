@@ -73,6 +73,10 @@ describe('readFeedbackConfig', () => {
   test('bounds the daily volume from env', () => {
     expect(readFeedbackConfig({ FEEDBACK_MAX_PER_DAY: '5' } as NodeJS.ProcessEnv).maxSentimentPerDay).toBe(5);
     expect(readFeedbackConfig({ FEEDBACK_MAX_PER_DAY: '0' } as NodeJS.ProcessEnv).maxSentimentPerDay).toBe(1);
+    // `FEEDBACK_MAX_PER_DAY=` is present-but-empty: Number('') is 0, a safe
+    // integer, so it used to cap the log at one event per day.
+    expect(readFeedbackConfig({ FEEDBACK_MAX_PER_DAY: '' } as NodeJS.ProcessEnv).maxSentimentPerDay).toBe(2_000);
+    expect(readFeedbackConfig({ FEEDBACK_MAX_PER_DAY: 'nope' } as NodeJS.ProcessEnv).maxSentimentPerDay).toBe(2_000);
   });
 });
 
@@ -195,27 +199,38 @@ describe('recordReactionFeedback', () => {
     expect(typeof event.at).toBe('string');
   });
 
-  test('writes nothing when logging is disabled', () => {
+  // `enabled` is the *eval log* switch. The Prometheus counter is the primary
+  // signal and used to be gated on the same flag, so turning the log off to stop
+  // disk growth silently flatlined elastrax_feedback_total.
+  test('still records metrics when the eval log is disabled', () => {
     noteBotMessageSent('whatsapp', 'msg-1');
+    const before = baselineMetrics();
     const outcome = recordReactionFeedback({
       platform: 'whatsapp', chatRoomId: 'r', messageId: 'msg-1',
       reaction: '\u{1F44D}', config: { ...config, enabled: false },
     });
-    expect(outcome.recorded).toBe(false);
+    expect(outcome.recorded).toBe(true);
     expect(existsSync(LOG_PATH)).toBe(false);
+    expect(baselineMetrics().positive).toBe(before.positive + 1);
   });
 
-  test('enforces the daily volume ceiling', () => {
+  // The ceiling bounds the *log file*, not the metric. A reaction past the
+  // ceiling is still a quality signal.
+  test('enforces the daily log ceiling without dropping the metric', () => {
     noteBotMessageSent('whatsapp', 'msg-1');
+    const before = baselineMetrics();
     const tiny = { ...config, maxSentimentPerDay: 1 };
-    expect(recordReactionFeedback({
+    recordReactionFeedback({
       platform: 'whatsapp', chatRoomId: 'r', messageId: 'msg-1', reaction: '\u{1F44D}', config: tiny,
-    }).recorded).toBe(true);
+    });
     const second = recordReactionFeedback({
       platform: 'whatsapp', chatRoomId: 'r', messageId: 'msg-1', reaction: '\u{1F44D}', config: tiny,
     });
-    expect(second.recorded).toBe(false);
-    if (!second.recorded) expect(second.reason).toContain('limit');
+    expect(second.recorded).toBe(true);
+    expect(existsSync(LOG_PATH)).toBe(true);
+    const lines = readFileSync(LOG_PATH, 'utf-8').trim().split('\n').filter(Boolean);
+    expect(lines).toHaveLength(1);
+    expect(baselineMetrics().positive).toBe(before.positive + 2);
   });
 });
 

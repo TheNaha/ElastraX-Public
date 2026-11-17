@@ -103,7 +103,10 @@ export function chunkText(text: string, target = CHUNK_TARGET_CHARS, overlap = C
   for (const paragraph of paragraphs) {
     if (paragraph.length > target) {
       flush();
-      for (let offset = 0; offset < paragraph.length; offset += target - overlap) {
+      // `target - overlap` is the step. With `overlap >= target` it is zero or
+      // negative, so the loop never advanced and grew `chunks` without bound.
+      const step = Math.max(1, target - overlap);
+      for (let offset = 0; offset < paragraph.length; offset += step) {
         const piece = paragraph.slice(offset, offset + target);
         if (piece.trim().length > 0) chunks.push(piece.trim());
         if (offset + target >= paragraph.length) break;

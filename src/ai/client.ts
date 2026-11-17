@@ -327,7 +327,10 @@ export class AIClient {
     if (responseId !== undefined && typeof responseId !== 'string') {
       throw new AIProtocolError('invalid_response', 'Chat completion response id must be a string.');
     }
-    const model = data.model === undefined ? this.modelName : data.model;
+    // Some gateways answer `"model": null`. That used to fail the whole reply
+    // (invalid_response) even though the content was fine; `created` right below
+    // already tolerates null.
+    const model = typeof data.model === 'string' && data.model.length > 0 ? data.model : this.modelName;
     if (typeof model !== 'string' || model.length === 0) {
       throw new AIProtocolError('invalid_response', 'Chat completion response model must be a non-empty string.');
     }

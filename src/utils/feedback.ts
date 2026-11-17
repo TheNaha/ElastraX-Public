@@ -52,10 +52,18 @@ export function readFeedbackConfig(env: NodeJS.ProcessEnv = process.env): Feedba
     // because a counter without the underlying cases is not actionable.
     enabled: !/^(0|false|no|off)$/i.test((env.FEEDBACK_LOG_ENABLED ?? '').trim()),
     logPath: resolve(env.FEEDBACK_LOG_PATH ?? 'data/feedback.jsonl'),
-    maxSentimentPerDay: Number.isSafeInteger(Number(env.FEEDBACK_MAX_PER_DAY))
-      ? Math.max(1, Number(env.FEEDBACK_MAX_PER_DAY))
-      : 2_000,
+    // A blank value must mean "unset", not zero: `Number('')` is 0, which is a
+    // safe integer, so `FEEDBACK_MAX_PER_DAY=` used to cap the log at one event
+    // per day instead of falling back to the default.
+    maxSentimentPerDay: readMaxPerDay(env.FEEDBACK_MAX_PER_DAY),
   };
+}
+
+function readMaxPerDay(raw: string | undefined): number {
+  const trimmed = raw?.trim() ?? '';
+  if (trimmed === '') return 2_000;
+  const value = Number(trimmed);
+  return Number.isSafeInteger(value) ? Math.max(1, value) : 2_000;
 }
 
 /**
@@ -160,7 +168,6 @@ export function recordReactionFeedback(input: {
   now?: Date;
 }): FeedbackOutcome {
   const config = input.config ?? readFeedbackConfig();
-  if (!config.enabled) return { recorded: false, reason: 'feedback logging disabled' };
 
   const sentiment = classifyReaction(input.reaction);
   if (sentiment === null) return { recorded: false, reason: 'reaction carries no verdict' };
@@ -170,28 +177,33 @@ export function recordReactionFeedback(input: {
   }
 
   const now = input.now ?? new Date();
+  const removed = input.removed === true;
+
+  // Metrics are always collected, and the day counter is a *log* volume guard.
+  // Gating both on `enabled` meant FEEDBACK_LOG_ENABLED=0 (set to stop the JSONL
+  // file growing) silently flatlined elastrax_feedback_total - the opposite of
+  // the documented behaviour.
+  healthMetrics.recordFeedback(sentiment, removed);
+
   const day = dateKey(now);
   for (const key of [...dayCounts.keys()]) {
     if (key !== day) dayCounts.delete(key);
   }
   const count = dayCounts.get(day) ?? 0;
-  if (count >= config.maxSentimentPerDay) {
-    return { recorded: false, reason: 'daily feedback log limit reached' };
+  if (config.enabled && count < config.maxSentimentPerDay) {
+    dayCounts.set(day, count + 1);
+    const event: FeedbackEvent = {
+      platform: input.platform,
+      chatRoomId: input.chatRoomId,
+      messageId: input.messageId ?? '',
+      reaction: input.reaction,
+      sentiment,
+      removed,
+      at: now.toISOString(),
+    };
+    writeEvalLog(event, config);
+    log.debug({ sentiment, platform: input.platform, removed }, 'Recorded reaction feedback');
   }
-  dayCounts.set(day, count + 1);
 
-  const event: FeedbackEvent = {
-    platform: input.platform,
-    chatRoomId: input.chatRoomId,
-    messageId: input.messageId ?? '',
-    reaction: input.reaction,
-    sentiment,
-    removed: input.removed === true,
-    at: now.toISOString(),
-  };
-
-  healthMetrics.recordFeedback(sentiment, event.removed);
-  writeEvalLog(event, config);
-  log.debug({ sentiment, platform: input.platform, removed: event.removed }, 'Recorded reaction feedback');
   return { recorded: true, sentiment };
 }
