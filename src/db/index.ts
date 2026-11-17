@@ -99,6 +99,12 @@ function startLeaseHeartbeat(handle: DatabaseHandle, lease: Lease, ttlMs: number
   // message was dropped. A thrown error is treated as transient and only a
   // sustained run of them closes the handle.
   let consecutiveFailures = 0;
+  // The threshold must outlast the lease TTL: the heartbeat runs every ttl/3, so
+  // a fixed count of 3 fired at ~ttl and closed the handle just as a transient
+  // stall was about to end. One extra interval gives the lease time to expire
+  // first.
+  const intervalMs = Math.max(1_000, Math.floor(ttlMs / 3));
+  const maxTransientFailures = Math.max(3, Math.ceil(ttlMs / intervalMs) + 1);
   const timer = setInterval(() => {
     let renewed: Lease | null;
     try {
@@ -106,7 +112,7 @@ function startLeaseHeartbeat(handle: DatabaseHandle, lease: Lease, ttlMs: number
     } catch (error) {
       consecutiveFailures += 1;
       logger.warn({ err: error, failures: consecutiveFailures }, '[db] Lease renewal failed; will retry');
-      if (consecutiveFailures < 3) return;
+      if (consecutiveFailures < maxTransientFailures) return;
       logger.error({ failures: consecutiveFailures }, '[db] Lease renewal kept failing; closing the database');
       closeDatabase(handle);
       return;
@@ -120,7 +126,7 @@ function startLeaseHeartbeat(handle: DatabaseHandle, lease: Lease, ttlMs: number
       return;
     }
     lease.expiresAt = renewed.expiresAt;
-  }, Math.max(1_000, Math.floor(ttlMs / 3)));
+  }, intervalMs);
   timer.unref?.();
   leaseTimers.set(handle.sqlite, timer);
 }
