@@ -23,7 +23,6 @@ import {
   readRequestBytesWithLimit,
   resolveRoomIds,
   safeSecretCompare,
-  sanitizeWebhookBody,
   truncateText,
   validateDestinationIds,
   validateReplayId,
@@ -45,7 +44,7 @@ const MAX_READINESS_CHECKS = 32;
 type ReplayContext = {
   key: string | null;
   eventId: string | null;
-  reservation: 'reserved' | 'duplicate' | 'capacity' | null;
+  reservation: 'reserved' | 'duplicate' | 'in_flight' | 'capacity' | null;
 };
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
@@ -206,7 +205,7 @@ export class WebhookServer {
     return { key, eventId: id, reservation };
   }
 
-  private replayCacheReservation(key: string, now: number): 'reserved' | 'duplicate' | 'capacity' {
+  private replayCacheReservation(key: string, now: number): 'reserved' | 'duplicate' | 'in_flight' | 'capacity' {
     if (!this.replayCache) throw new Error('Replay cache is not initialized');
     return this.replayCache.reserve(key, now);
   }
@@ -275,8 +274,17 @@ export class WebhookServer {
     );
     const delivered = job.destinations.length - failed.length;
 
-    if (failed.length > 0) {
+    // Partial delivery keeps the replay reservation: a retry would re-send to
+    // the destinations that already received the message (the duplicate the cache
+    // exists to prevent), and 207 is a success for senders that only retry on
+    // 5xx. Only a delivery where nothing was sent is retryable, so the key is
+    // released and the answer is a 5xx in that one case.
+    if (failed.length === job.destinations.length) {
       this.releaseReplay(replay);
+      return jsonResponse({ ok: false, delivered: 0, failed }, 502);
+    }
+    if (failed.length > 0) {
+      this.completeReplay(replay);
       return jsonResponse({ ok: false, delivered, failed }, 207);
     }
 
@@ -328,10 +336,16 @@ export class WebhookServer {
     const text = this.redactSecret(truncateText(formatted, config.maxTextLength), serviceSecret);
     const targets: WebhookDestination[] = [];
     const seen = new Set<string>();
+    let droppedTargets = 0;
     const addTarget = async (destination: WebhookDestination): Promise<void> => {
       if (seen.has(`${destination.chatRoomId}:${destination.platform ?? ''}`)) return;
       if (targets.length >= config.maxDestinations) {
-        throw new WebhookRequestError(400, 'Too many webhook destinations');
+        // The subscription fan-out is not caller-controlled, so exceeding the cap
+        // is a deployment with many rooms, not a bad request. Throwing here made
+        // the whole notification fail with nothing delivered; instead the extra
+        // rooms are skipped and the response reports how many.
+        droppedTargets++;
+        return;
       }
       validateDestinationIds([destination.chatRoomId], config.maxRoomIdLength);
       // Canonical room key per destination; a cross-platform mismatch is a 400.
@@ -368,6 +382,13 @@ export class WebhookServer {
       await addTarget({ chatRoomId: room.chatRoomId, platform: room.platform });
     }
 
+    if (droppedTargets > 0) {
+      log.warn(
+        { route, dropped: droppedTargets, maxDestinations: config.maxDestinations },
+        '[Webhook] Destination cap reached; extra subscribed rooms were skipped',
+      );
+    }
+
     if (targets.length === 0) {
       this.completeReplay(replay);
       return jsonResponse({ ok: true, delivered: 0, note: 'No subscribers' });
@@ -400,7 +421,9 @@ export class WebhookServer {
     const textBody = route === 'generic' ? asNonEmptyString(body.text) : null;
     const formatted = route === 'generic' && textBody
       ? textBody
-      : buildWebhookMessage(Object.fromEntries(req.headers.entries()), sanitizeWebhookBody(body));
+      // `buildWebhookMessage` sanitises the body itself; passing a sanitised copy
+      // made every GitHub/generic request deep-copy and walk the payload twice.
+      : buildWebhookMessage(Object.fromEntries(req.headers.entries()), body);
     const requestedPlatform = route === 'generic' ? asNonEmptyString(body.platform)?.toLowerCase() : null;
     // The allow-list used to be a hard-coded `!== 'discord' && !== 'whatsapp'`,
     // so a destination that explicitly named Telegram was rejected with a 400
@@ -472,7 +495,11 @@ export class WebhookServer {
     const authorization = req.headers.get('authorization');
     const bearer = authorization?.match(/^Bearer\s+([^\s]+)$/i)?.[1] ?? null;
     const headerToken = asNonEmptyString(req.headers.get('x-metrics-token'));
-    if (!safeSecretCompare(bearer ?? headerToken ?? '', token)) {
+    // Either credential is accepted, like every other auth path. Preferring the
+    // Bearer value meant a reverse proxy that injects its own Authorization
+    // header made the documented X-Metrics-Token fallback unreachable.
+    const credentials = [bearer, headerToken].filter((value): value is string => typeof value === 'string' && value.length > 0);
+    if (!credentials.some(value => safeSecretCompare(value, token))) {
       return jsonResponse({ error: 'Unauthorized' }, 401, { 'WWW-Authenticate': 'Bearer' });
     }
     return new Response(healthMetrics.getPrometheusMetrics(), {
@@ -551,6 +578,11 @@ export class WebhookServer {
 
     const replay = this.resolveReplayContext(req, route, this.now());
     if (replay.reservation === 'duplicate') return this.duplicateResponse();
+    if (replay.reservation === 'in_flight') {
+      // The same delivery id is being processed right now. A retryable answer is
+      // the honest one: the in-flight attempt may still fail and release the key.
+      return jsonResponse({ error: 'A request with this id is in progress' }, 503, { 'Retry-After': '1' });
+    }
     if (replay.reservation === 'capacity') {
       return jsonResponse({ error: 'Replay cache is at capacity' }, 503, { 'Retry-After': '1' });
     }

@@ -1,5 +1,5 @@
 import type { WebhookBody } from '../types';
-import { asNonEmptyString } from '../utils';
+import { asNonEmptyString, asScalarString } from '../utils';
 
 export function adaptSeerr(body: WebhookBody): string {
   const notifType = asNonEmptyString(body.notification_type) ?? 'UNKNOWN';
@@ -39,10 +39,10 @@ export function adaptJellyfin(body: WebhookBody): string | null {
   if (notifType === 'Unknown' || notifType === 'UNKNOWN') return null;
   const name = asNonEmptyString(body.Name) ?? 'Unknown';
   const overview = asNonEmptyString(body.Overview) ?? '';
-  const year = asNonEmptyString(body.Year) ?? '';
+  const year = asScalarString(body.Year) ?? '';
   const seriesName = asNonEmptyString(body.SeriesName);
-  const seasonNum = asNonEmptyString(body.SeasonNumber00);
-  const episodeNum = asNonEmptyString(body.EpisodeNumber00);
+  const seasonNum = asScalarString(body.SeasonNumber00);
+  const episodeNum = asScalarString(body.EpisodeNumber00);
   const username = asNonEmptyString(body.NotificationUsername) ?? '';
   const deviceName = asNonEmptyString(body.DeviceName) ?? '';
 

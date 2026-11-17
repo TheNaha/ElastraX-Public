@@ -111,7 +111,12 @@ export class HealthMonitor {
   private schedule(name: string, check: HealthCheck): void {
     const run = () => {
       if (this.inFlight.has(name)) return;
-      const promise = check()
+      // `Promise.resolve().then(check)` catches a *synchronous* throw too. Calling
+      // `check()` directly let one escape `run()`; from `setInterval` that is an
+      // uncaught exception, so a broken health check would kill the process
+      // instead of being recorded as unhealthy.
+      const promise = Promise.resolve()
+        .then(() => check())
         .catch((error: unknown) => {
           log.warn({ check: name, err: getErrorMessage(error) }, 'Health check failed');
         })

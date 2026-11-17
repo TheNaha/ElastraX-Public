@@ -42,6 +42,7 @@ import {
   type ActionResult,
 } from './data';
 import { logger } from '../utils/logger';
+import { getErrorMessage } from '../utils/errorUtils';
 import { readRequestBytesWithLimit, WebhookRequestError } from '../webhooks/utils';
 
 const log = logger.child({ module: 'AdminRoutes' });
@@ -284,32 +285,50 @@ function handleRead(path: string, url: URL): Response {
   }
 }
 
+const ADMIN_ACTIONS = new Set([
+  'api/action/reload-registry',
+  'api/action/retry-outbox',
+  'api/action/delete-knowledge',
+  'api/action/retention-report',
+]);
+
 async function handleAction(req: Request, path: string, url: URL): Promise<Response> {
+  // Resolve the action before reading the body: an unknown path is a 404
+  // regardless of how malformed the payload is.
+  if (!ADMIN_ACTIONS.has(path)) return json({ error: 'Not Found' }, 404);
+
   const body = await readJsonObjectBody(req, ADMIN_ACTION_MAX_BODY_BYTES);
   if (!body.ok) return json({ error: body.error }, body.status);
   const params = body.value;
 
-  let result: ActionResult;
-  switch (path) {
-    case 'api/action/reload-registry':
-      result = await actionReloadRegistry();
-      break;
-    case 'api/action/retry-outbox':
-      result = await actionRetryOutbox(String(params.id ?? url.searchParams.get('id') ?? ''));
-      break;
-    case 'api/action/delete-knowledge':
-      result = await actionDeleteKnowledge(
-        String(params.roomKey ?? ''),
-        typeof params.documentId === 'string' ? params.documentId : undefined,
-      );
-      break;
-    case 'api/action/retention-report':
-      result = actionRetentionReport();
-      break;
-    default:
-      return json({ error: 'Not Found' }, 404);
+  try {
+    let result: ActionResult;
+    switch (path) {
+      case 'api/action/reload-registry':
+        result = await actionReloadRegistry();
+        break;
+      case 'api/action/retry-outbox':
+        result = await actionRetryOutbox(String(params.id ?? url.searchParams.get('id') ?? ''));
+        break;
+      case 'api/action/delete-knowledge':
+        result = await actionDeleteKnowledge(
+          String(params.roomKey ?? ''),
+          typeof params.documentId === 'string' ? params.documentId : undefined,
+        );
+        break;
+      case 'api/action/retention-report':
+      default:
+        result = actionRetentionReport();
+        break;
+    }
+    return json(result, result.ok ? 200 : 400);
+  } catch (error) {
+    // `actionDeleteKnowledge` throws for a malformed document id, and a database
+    // failure can escape any action. Without this boundary the handler answered a
+    // bare 500 instead of the `{ok:false, message}` shape the UI understands.
+    log.warn({ err: error, path }, '[Admin] Action failed');
+    return json({ ok: false, message: getErrorMessage(error) }, 400);
   }
-  return json(result, result.ok ? 200 : 400);
 }
 
 function asset(contentType: string, body: string): Response {
@@ -606,9 +625,12 @@ const VIEWS = {
         stat('Negative', num(d.negative), null),
         stat('Ratio', d.ratio === null ? '—' : pct(d.ratio), 'positive share'),
         stat('Malformed lines', num(d.malformedLines), 'in the eval log')),
+      d.truncated
+        ? card('Note', el('p', { class: 'muted' }, 'Only the last 1 MiB of the feedback log was read; older reactions are not shown.'))
+        : null,
       card('Recent reactions', table(['When', 'Platform', 'Room', 'Sentiment', 'Reaction', 'Retracted'],
         d.entries.map(e => [String(e.at).slice(0, 19).replace('T', ' '), e.platform, e.chatRoomId, e.sentiment, e.reaction, e.removed ? 'yes' : '']))),
-    ];
+    ].filter(Boolean);
   },
 
   async config() {

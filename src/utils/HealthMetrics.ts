@@ -86,6 +86,17 @@ export interface MetricsSnapshot {
   services: Record<string, { status: 'healthy' | 'unhealthy'; lastChecked: number; error?: string }>;
 }
 
+/**
+ * Escape a Prometheus label value.
+ *
+ * Names written into labels (provider, tool, model, service) originate in env
+ * values and tool registration. An unescaped quote or backslash produced a
+ * malformed exposition line, and one bad line makes the whole scrape fail.
+ */
+function escapeLabelValue(value: string): string {
+  return String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+}
+
 export class HealthMetricsCollector {
   private messagesReceived = 0;
   private messagesProcessed = 0;
@@ -322,6 +333,7 @@ export class HealthMetricsCollector {
   }
 
   /** Get Prometheus-compatible text exposition format. */
+
   getPrometheusMetrics(): string {
     const m = this.getMetrics();
     const lines: string[] = [];
@@ -360,8 +372,8 @@ export class HealthMetricsCollector {
     lines.push('# TYPE elastrax_provider_requests_total counter');
     for (const name in m.providers) {
       const stats = m.providers[name]!;
-      lines.push(`elastrax_provider_requests_total{provider="${name}",status="success"} ${stats.success}`);
-      lines.push(`elastrax_provider_requests_total{provider="${name}",status="failure"} ${stats.failures}`);
+      lines.push(`elastrax_provider_requests_total{provider="${escapeLabelValue(name)}",status="success"} ${stats.success}`);
+      lines.push(`elastrax_provider_requests_total{provider="${escapeLabelValue(name)}",status="failure"} ${stats.failures}`);
     }
 
     lines.push('# HELP elastrax_queue_rooms Active room queues');
@@ -380,32 +392,32 @@ export class HealthMetricsCollector {
     lines.push('# TYPE elastrax_tool_invocations_total counter');
     for (const name in m.tools) {
       const stats = m.tools[name]!;
-      lines.push(`elastrax_tool_invocations_total{tool="${name}"} ${stats.invocations}`);
+      lines.push(`elastrax_tool_invocations_total{tool="${escapeLabelValue(name)}"} ${stats.invocations}`);
     }
 
     lines.push('# HELP elastrax_tool_errors_total Tool execution errors');
     lines.push('# TYPE elastrax_tool_errors_total counter');
     for (const name in m.tools) {
       const stats = m.tools[name]!;
-      lines.push(`elastrax_tool_errors_total{tool="${name}"} ${stats.errors}`);
+      lines.push(`elastrax_tool_errors_total{tool="${escapeLabelValue(name)}"} ${stats.errors}`);
     }
 
     lines.push('# HELP elastrax_tool_duration_ms Tool execution duration percentiles');
     lines.push('# TYPE elastrax_tool_duration_ms gauge');
     for (const name in m.tools) {
       const stats = m.tools[name]!;
-      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.5"} ${stats.durationP50}`);
-      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.95"} ${stats.durationP95}`);
-      lines.push(`elastrax_tool_duration_ms{tool="${name}",quantile="0.99"} ${stats.durationP99}`);
+      lines.push(`elastrax_tool_duration_ms{tool="${escapeLabelValue(name)}",quantile="0.5"} ${stats.durationP50}`);
+      lines.push(`elastrax_tool_duration_ms{tool="${escapeLabelValue(name)}",quantile="0.95"} ${stats.durationP95}`);
+      lines.push(`elastrax_tool_duration_ms{tool="${escapeLabelValue(name)}",quantile="0.99"} ${stats.durationP99}`);
     }
 
     lines.push('# HELP elastrax_tokens_total Token usage by model and type');
     lines.push('# TYPE elastrax_tokens_total counter');
     for (const model in m.tokens) {
       const stats = m.tokens[model]!;
-      lines.push(`elastrax_tokens_total{model="${model}",type="prompt"} ${stats.prompt}`);
-      lines.push(`elastrax_tokens_total{model="${model}",type="completion"} ${stats.completion}`);
-      lines.push(`elastrax_tokens_total{model="${model}",type="total"} ${stats.total}`);
+      lines.push(`elastrax_tokens_total{model="${escapeLabelValue(model)}",type="prompt"} ${stats.prompt}`);
+      lines.push(`elastrax_tokens_total{model="${escapeLabelValue(model)}",type="completion"} ${stats.completion}`);
+      lines.push(`elastrax_tokens_total{model="${escapeLabelValue(model)}",type="total"} ${stats.total}`);
     }
 
     lines.push('# HELP elastrax_message_duration_ms Message processing duration percentiles');
@@ -423,7 +435,7 @@ export class HealthMetricsCollector {
     lines.push('# HELP elastrax_service_health Service health status (1=healthy, 0=unhealthy)');
     lines.push('# TYPE elastrax_service_health gauge');
     for (const [service, data] of Object.entries(m.services)) {
-      lines.push(`elastrax_service_health{service="${service}"} ${data.status === 'healthy' ? 1 : 0}`);
+      lines.push(`elastrax_service_health{service="${escapeLabelValue(service)}"} ${data.status === 'healthy' ? 1 : 0}`);
     }
 
     return lines.join('\n') + '\n';

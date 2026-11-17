@@ -35,6 +35,22 @@ export function asNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+/**
+ * String form of a scalar webhook field.
+ *
+ * Several plugins (notably Jellyfin's) serialise numeric fields such as `Year`
+ * and `SeasonNumber00` as JSON numbers; reading them through
+ * {@link asNonEmptyString} silently dropped every one of them.
+ */
+export function asScalarString(value: unknown): string | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
 export function toStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     const result: string[] = [];
@@ -288,21 +304,26 @@ export class WebhookRateLimiter {
     this.prune(now);
     const uniqueKeys = [...new Set(keys)];
 
-    // Only an *unseen* key can be refused for capacity. Refusing a request
-    // because some other, already-tracked key would have to be added let a single
-    // authenticated client lock every other source out: `x-webhook-source` is
-    // caller-supplied, so varying it on each request exhausted `maxSources` and
-    // then every legitimate sender's request was rejected with a retry hint for a
-    // bucket that was not itself full. A known key is always rate-limited on its
-    // own tokens.
+    // A request is refused for capacity only when it is *entirely* unknown and
+    // the map is full. Refusing because a sibling key would have to be added let
+    // an unseen peer address (a NAT rebind, a proxy hop change, `unknown`) lock a
+    // long-lived sender out even though its own bucket was full — the inverse of
+    // the invariant this guard is meant to protect. Keys that cannot be tracked
+    // without exceeding the cap are simply not stored: the request is decided by
+    // the keys that are known, and the map never grows past `maxSources`.
     const unseen = uniqueKeys.filter(key => !this.buckets.has(key));
-    if (unseen.length > 0 && this.buckets.size + unseen.length > this.maxSources) {
-      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(this.windowMs / 1000)) };
+    const hasCapacity = this.buckets.size + unseen.length <= this.maxSources;
+    if (!hasCapacity && unseen.length === uniqueKeys.length) {
+      // Nothing is tracked, so nothing becomes eligible until `prune` can drop an
+      // entry — which happens after two windows, not one.
+      return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((this.windowMs * 2) / 1000)) };
     }
 
     let retryAfterMs = 0;
     for (const key of uniqueKeys) {
-      const bucket = this.buckets.get(key) ?? { tokens: this.maxRequests, updatedAt: now };
+      const existing = this.buckets.get(key);
+      if (!existing && !hasCapacity) continue;
+      const bucket = existing ?? { tokens: this.maxRequests, updatedAt: now };
       const elapsed = Math.max(0, now - bucket.updatedAt);
       const tokens = Math.min(this.maxRequests, bucket.tokens + (elapsed * this.maxRequests) / this.windowMs);
       if (tokens < 1) {
@@ -316,8 +337,8 @@ export class WebhookRateLimiter {
     }
 
     for (const key of uniqueKeys) {
-      const bucket = this.buckets.get(key)!;
-      bucket.tokens -= 1;
+      const bucket = this.buckets.get(key);
+      if (bucket) bucket.tokens -= 1;
     }
     return { allowed: true, retryAfterSeconds: 0 };
   }
@@ -329,12 +350,18 @@ export class WebhookRateLimiter {
     }
   }
 
+  /** Number of tracked buckets. Bounded by `maxSources`. */
+  get size(): number {
+    return this.buckets.size;
+  }
+
   clear(): void {
     this.buckets.clear();
   }
 }
 
-export type ReplayReservation = 'reserved' | 'duplicate' | 'capacity';
+/** `in_flight` = the same id is being processed right now, not already delivered. */
+export type ReplayReservation = 'reserved' | 'duplicate' | 'in_flight' | 'capacity';
 
 export class WebhookReplayCache {
   private readonly completed = new Map<string, number>();
@@ -350,7 +377,10 @@ export class WebhookReplayCache {
     const completedAt = this.completed.get(key);
     if (completedAt !== undefined && completedAt > now) return 'duplicate';
     if (completedAt !== undefined) this.completed.delete(key);
-    if (this.pending.has(key)) return 'duplicate';
+    // A pending key is *in progress*, not delivered. Reporting it as a duplicate
+    // acked the retry with `ok`; if the first request then failed and released
+    // its reservation, the sender never retried and the event was lost.
+    if (this.pending.has(key)) return 'in_flight';
     if (this.completed.size + this.pending.size >= this.maxEntries) return 'capacity';
     this.pending.add(key);
     return 'reserved';

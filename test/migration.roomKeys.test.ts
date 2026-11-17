@@ -25,7 +25,6 @@ import { ROOT_DIR } from '../src/core/constants';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const MIGRATIONS_DIR = join(ROOT_DIR, 'drizzle/migrations');
-const ROOM_KEY_MIGRATION_WHEN = 25;
 
 const temporaryDirectories: string[] = [];
 
@@ -49,10 +48,10 @@ function createPreRoomKeyDatabase(): LegacyFixture {
   mkdirSync(metaDirectory);
 
   const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8'));
-  const entries = (journal.entries as Array<{ tag: string }>).filter(
-    entry =>
-      entry.tag !== '0022_room_keys' && entry.tag !== '0023_add_user_identities_pk' && entry.tag !== '0024_drop_scheduled_deliveries',
-  );
+  // Everything before the room-key migration. Slicing (rather than listing the
+  // tags to exclude) keeps this fixture valid as later migrations are added.
+  const roomKeyIndex = (journal.entries as Array<{ tag: string }>).findIndex(entry => entry.tag === '0022_room_keys');
+  const entries = roomKeyIndex >= 0 ? (journal.entries as Array<{ tag: string }>).slice(0, roomKeyIndex) : journal.entries;
   writeFileSync(join(metaDirectory, '_journal.json'), JSON.stringify({ ...journal, entries }));
   for (const entry of entries) {
     cpSync(join(MIGRATIONS_DIR, `${entry.tag}.sql`), join(directory, `${entry.tag}.sql`));
@@ -106,15 +105,15 @@ function roomKeyOf(sqlite: Database, sql: string): string | null {
 }
 
 describe('migration 0022 canonical room identity', () => {
-  test('is the newest journal entry and is applied last', () => {
+  test('journal entries are contiguous and the room-key migration appears once', () => {
     const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as {
       entries: Array<{ tag: string; when: number }>;
     };
-    const last = journal.entries.at(-1)!;
-    expect(last.tag).toBe('0024_drop_scheduled_deliveries');
-    expect(last.when).toBe(ROOM_KEY_MIGRATION_WHEN);
     expect(journal.entries.filter(entry => entry.tag === '0022_room_keys')).toHaveLength(1);
-    expect(new Set(journal.entries.map(entry => entry.when)).size).toBe(journal.entries.length);
+    // `src/db/migrations.ts` validates the journal with sequential integers, and
+    // a gap or duplicate silently strands applied rows. Asserting the sequence
+    // instead of a hard-coded last tag keeps this test true after each migration.
+    expect(journal.entries.map(entry => entry.when)).toEqual(journal.entries.map((_, index) => index + 1));
   });
 
   test('extends the drizzle snapshot chain', () => {
@@ -133,7 +132,7 @@ describe('migration 0022 canonical room identity', () => {
     try {
       expect(
         inspectMigrationState(legacy.sqlite, MIGRATIONS_DIR).pending.map(entry => entry.tag),
-      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk', '0024_drop_scheduled_deliveries']);
+      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk', '0024_drop_scheduled_deliveries', '0025_reminder_anchor_day']);
       seedPreRoomKeyRows(legacy.sqlite);
       expect(columnNames(legacy.sqlite, 'chat_rooms')).not.toContain('room_key');
 
@@ -458,7 +457,10 @@ describe('migration 0022 canonical room identity', () => {
     const database: TempDatabase = createTempDatabase();
     try {
       validateSchemaContract(database.sqlite);
-      expect(inspectMigrationState(database.sqlite, MIGRATIONS_DIR).applied).toHaveLength(ROOM_KEY_MIGRATION_WHEN);
+      const journal = JSON.parse(readFileSync(join(MIGRATIONS_DIR, 'meta/_journal.json'), 'utf8')) as {
+        entries: unknown[];
+      };
+      expect(inspectMigrationState(database.sqlite, MIGRATIONS_DIR).applied).toHaveLength(journal.entries.length);
       const stats = getRoomKeyStats(database.sqlite);
       expect(stats.roomKeys).toBe(0);
       expect(stats.conflicts).toBe(0);

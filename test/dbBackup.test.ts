@@ -57,7 +57,7 @@ describe('backupDatabase', () => {
 
     const manifest = JSON.parse(readFileSync(result.manifestPath!, 'utf8'));
     expect(manifest.formatVersion).toBe(1);
-    expect(manifest.database.migrationCount).toBe(25);
+    expect(manifest.database.migrationCount).toBeGreaterThanOrEqual(25);
     expect(manifest.snapshot.sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const destination = join(TMP, 'restored-new.db');
@@ -66,7 +66,9 @@ describe('backupDatabase', () => {
       manifestPath: result.manifestPath,
       destination,
       requireCurrentSchema: true,
-      expectedSchemaVersion: 25,
+      // The schema version is the last journal `when`, which every migration
+      // increments; assert against the manifest rather than a baked-in number.
+      expectedSchemaVersion: manifest.database.schemaVersion,
     });
     expect(restored.ok).toBe(true);
     expect(readdirSync(TMP).some(name => name.includes('.tmp'))).toBe(false);

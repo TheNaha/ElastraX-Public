@@ -192,6 +192,22 @@ export class AdminAuth {
   }
 }
 
+/**
+ * Hostname from a `Host`/`host:port` value.
+ *
+ * IPv6 authorities are bracketed (`[::1]:3500`); `URL` parses both forms and
+ * strips the port, while a bare `split(':')` mangles the v6 case.
+ */
+function hostnameOf(value: string | null | undefined): string | null {
+  const raw = value?.trim();
+  if (!raw) return null;
+  try {
+    return new URL(`http://${raw}`).hostname.replace(/^\[|\]$/g, '');
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a `Host` value names the local machine. */
 export function isLoopbackHost(host: string): boolean {
   const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '');
@@ -219,7 +235,10 @@ export function shouldUseSecureCookie(
   const forwarded = req.headers.get('x-forwarded-proto')?.split(',')[0]?.trim().toLowerCase();
   if (forwarded === 'https') return true;
   if (url.protocol === 'https:') return true;
-  const host = (req.headers.get('host') ?? url.host).split(':')[0] ?? '';
+  // Parse the Host header instead of splitting on ':': for `[::1]:3500` the split
+  // produced "[" and the loopback exception never applied, so the dashboard
+  // issued a Secure cookie over plain HTTP and the browser dropped it.
+  const host = hostnameOf(req.headers.get('host')) ?? hostnameOf(url.host) ?? '';
   return !isLoopbackHost(host);
 }
 
@@ -248,6 +267,11 @@ export class LoginThrottle {
         const oldest = this.buckets.keys().next();
         if (!oldest.done) this.buckets.delete(oldest.value);
       }
+      // Delete first: `Map.set` on an existing key keeps its original insertion
+      // position, so a re-armed bucket did not move to the tail and insertion
+      // order stopped tracking recency. A currently limited IP could then be the
+      // "oldest" entry and be evicted with a fresh budget.
+      this.buckets.delete(ip);
       this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs });
       return true;
     }

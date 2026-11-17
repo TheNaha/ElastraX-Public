@@ -291,6 +291,35 @@ describe('admin mutations', () => {
     expect(response.status).toBe(200);
   });
 
+  test('an action that throws answers the ActionResult shape, not a bare 500', async () => {
+    const handler = handlerWith(SECRET);
+    const { cookie, csrf } = await signIn(handler);
+    // `actionDeleteKnowledge` deliberately throws for a malformed document id.
+    const response = await call(handler, 'api/action/delete-knowledge', {
+      method: 'POST',
+      headers: { cookie, [ADMIN_CSRF_HEADER]: csrf, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomKey: 'room:whatsapp:r1', documentId: 'not a document id!' }),
+    });
+    expect(response.status).toBe(400);
+    const payload = await response.json() as { ok: boolean; message: string };
+    expect(payload.ok).toBe(false);
+    // The exact reason depends on what the room contains; what matters is that the
+    // actionable message reaches the client instead of a bare "Internal server error".
+    expect(payload.message.length).toBeGreaterThan(0);
+    expect(payload.message).not.toContain('Internal server error');
+  });
+
+  test('an unknown action is a 404 even with a malformed body', async () => {
+    const handler = handlerWith(SECRET);
+    const { cookie, csrf } = await signIn(handler);
+    const response = await call(handler, 'api/action/does-not-exist', {
+      method: 'POST',
+      headers: { cookie, [ADMIN_CSRF_HEADER]: csrf, 'Content-Type': 'application/json' },
+      body: '{not json',
+    });
+    expect(response.status).toBe(404);
+  });
+
   test('a CSRF token from another session is rejected', async () => {
     const handler = handlerWith(SECRET);
     const first = await signIn(handler);
@@ -432,6 +461,26 @@ describe('admin hardening', () => {
     expect(throttle.size).toBeLessThanOrEqual(10_000);
     // The most recent IP is still tracked, so a live client keeps its history.
     expect(throttle.attempt('10.255.255.255', now)).toBe(true);
+  });
+
+  test('treats an IPv6 loopback host as local for the cookie flag', () => {
+    const { shouldUseSecureCookie } = adminAuth;
+    const request = new Request('http://[::1]:3500/admin');
+    const url = new URL('http://[::1]:3500/admin');
+    // Plain HTTP on loopback: a Secure cookie would be dropped by the browser and
+    // the dashboard would loop between login and 401.
+    expect(shouldUseSecureCookie(request, url, true)).toBe(false);
+    expect(shouldUseSecureCookie(
+      new Request('http://[::1]:3500/admin', { headers: { host: '[::1]:3500' } }),
+      url,
+      true,
+    )).toBe(false);
+    // A forwarded https proto still wins.
+    expect(shouldUseSecureCookie(
+      new Request('http://bot:3500/admin', { headers: { 'x-forwarded-proto': 'https' } }),
+      new URL('http://bot:3500/admin'),
+      true,
+    )).toBe(true);
   });
 
   test('reports a truncated feedback tail instead of silently narrowing it', () => {

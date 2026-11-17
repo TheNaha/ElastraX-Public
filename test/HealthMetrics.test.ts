@@ -128,6 +128,16 @@ describe('HealthMetrics', () => {
     expect(text).toContain('# TYPE');
   });
 
+  test('escapes quotes and backslashes in label values', () => {
+    healthMetrics.recordTokenUsage('model"with\\quote', 1, 1, 2);
+    const text = healthMetrics.getPrometheusMetrics();
+    // An unescaped quote here would terminate the label and make the whole
+    // scrape invalid.
+    expect(text).toContain('model="model\\"with\\\\quote"');
+    const badLine = text.split('\n').find(line => line.includes('elastrax_tokens_total{model="model"'));
+    expect(badLine).toBeUndefined();
+  });
+
   test('registerQueueStats integrates queue data into metrics', () => {
     healthMetrics.registerQueueStats(() => ({
       totalRooms: 5,

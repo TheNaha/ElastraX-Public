@@ -486,12 +486,6 @@ export class AuthService {
 
     const { db, rolePrivileges } = this.deps;
     logger.info({ role, field, value }, '[AuthService] setPrivilegeOverride — updating DB');
-    // Upsert into role_privileges
-    const existing = await db
-      .select()
-      .from(rolePrivileges)
-      .where(eq(rolePrivileges.role, role))
-      .limit(1);
 
     const colMap: Record<PrivilegeField, string> = {
       maxMessagesPerWindow: 'maxMessagesPerWindow',
@@ -502,11 +496,14 @@ export class AuthService {
 
     const setData: Record<string, number | null> = { [colMap[field]]: value };
 
-    if (existing.length > 0) {
-      await db.update(rolePrivileges).set(setData).where(eq(rolePrivileges.role, role));
-    } else {
-      await db.insert(rolePrivileges).values({ role, ...setData });
-    }
+    // One upsert, not select-then-insert: `role_privileges.role` is the primary
+    // key, and the `await` between the read and the write let two concurrent
+    // privilege commands for the same role both see "no row" and make the second
+    // insert fail on the constraint (the failure `setRole` was already fixed for).
+    await db
+      .insert(rolePrivileges)
+      .values({ role, ...setData })
+      .onConflictDoUpdate({ target: rolePrivileges.role, set: setData });
 
     // Invalidate cache
     this.invalidateRoleOverrides(role);

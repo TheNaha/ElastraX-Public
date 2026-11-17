@@ -441,6 +441,30 @@ const CONFIG_ALLOWLIST = [
 /** Anything whose name looks like a secret is reported as set/unset, never by value. */
 const SECRET_PATTERN = /(secret|token|password|api[-_]?key|credential|private)/i;
 
+/**
+ * Strip credentials that can hide inside a URL-shaped value.
+ *
+ * Redaction is otherwise keyed on the *variable name*, so an allowlisted URL such
+ * as `AI_API_BASE_URL` was printed verbatim even when it carried
+ * `https://user:key@host/v1` or `?api_key=…`.
+ */
+function redactUrlCredentials(value: string): string {
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return value;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password) {
+      url.username = '';
+      url.password = '';
+    }
+    for (const key of [...url.searchParams.keys()]) {
+      if (SECRET_PATTERN.test(key)) url.searchParams.set(key, '[redacted]');
+    }
+    return url.toString();
+  } catch {
+    return value;
+  }
+}
+
 export function configInventory(env: NodeJS.ProcessEnv = process.env): { keys: Array<{ name: string; value: string; secret: boolean }>; missing: string[] } {
   const keys = CONFIG_ALLOWLIST.map(name => {
     const raw = env[name];
@@ -449,7 +473,7 @@ export function configInventory(env: NodeJS.ProcessEnv = process.env): { keys: A
     let value: string;
     if (!set) value = '(unset)';
     else if (secret) value = 'set';
-    else value = clip(raw, 120);
+    else value = clip(redactUrlCredentials(raw ?? ''), 120);
     return { name, value, secret };
   }).sort((a, b) => a.name.localeCompare(b.name));
   const missing = CONFIG_ALLOWLIST.filter(name => (env[name] ?? '').trim().length === 0);
