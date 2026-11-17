@@ -6,7 +6,17 @@ import type { MessageContext } from '../core/MessageContext';
 import { remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 import { safeErrorMessage } from '../utils/errorUtils';
 
-const LEASE_MS = 120_000;
+/**
+ * How long a claimed inbox row is invisible to another worker.
+ *
+ * Nothing renews it between `claim()` and `complete()`, and a turn is bounded
+ * only by its tool iterations (each with its own provider timeout), so a 120 s
+ * lease let the hourly recovery scan return a *live* worker's row to `received`
+ * while it was still running: its completion was rejected and a duplicate
+ * provider delivery re-ran the whole turn. The recovery scan runs hourly, so a
+ * longer lease costs no recovery latency.
+ */
+const LEASE_MS = 10 * 60_000;
 const MAX_ATTEMPTS = 5;
 
 export type InboxAdmission = {
