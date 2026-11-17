@@ -301,7 +301,6 @@ export class WebhookRateLimiter {
   ) {}
 
   consume(keys: string[], now: number): RateLimitResult {
-    this.prune(now);
     const uniqueKeys = [...new Set(keys)];
 
     // A request is refused for capacity only when it is *entirely* unknown and
@@ -312,7 +311,16 @@ export class WebhookRateLimiter {
     // without exceeding the cap are simply not stored: the request is decided by
     // the keys that are known, and the map never grows past `maxSources`.
     const unseen = uniqueKeys.filter(key => !this.buckets.has(key));
-    const hasCapacity = this.buckets.size + unseen.length <= this.maxSources;
+    let hasCapacity = this.buckets.size + unseen.length <= this.maxSources;
+    if (!hasCapacity) {
+      // Reclaim expired buckets *before* refusing. Pruning used to be gated on
+      // `size >= maxSources`, so a map that sat one below the cap (99/100) never
+      // pruned again and refused every brand-new sender forever — a permanent
+      // lockout, not a rate limit. Pruning is O(map) and only runs when the
+      // request actually needs room, which is rare.
+      this.prune(now);
+      hasCapacity = this.buckets.size + unseen.length <= this.maxSources;
+    }
     if (!hasCapacity && unseen.length === uniqueKeys.length) {
       // Nothing is tracked, so nothing becomes eligible until `prune` can drop an
       // entry — which happens after two windows, not one.
@@ -343,8 +351,8 @@ export class WebhookRateLimiter {
     return { allowed: true, retryAfterSeconds: 0 };
   }
 
+  /** Drop buckets whose window has long expired. Callers decide when to pay for the scan. */
   private prune(now: number): void {
-    if (this.buckets.size < this.maxSources) return;
     for (const [key, bucket] of this.buckets) {
       if (now - bucket.updatedAt >= this.windowMs * 2) this.buckets.delete(key);
     }

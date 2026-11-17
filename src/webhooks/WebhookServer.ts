@@ -6,6 +6,7 @@ import { NotificationSubscriptionService } from '../utils/NotificationSubscripti
 import { withCancellableTimeout, withTimeout } from '../utils/withTimeout.js';
 import { APP_RELEASE_TAG, APP_VERSION } from '../config/version';
 import { parseWebhookConfig, type WebhookConfig, type SecretCompatibilityWindow } from './config';
+import { getErrorMessage } from '../utils/errorUtils';
 import type {
   SendFn,
   WebhookBody,
@@ -355,6 +356,8 @@ export class WebhookServer {
     const targets: WebhookDestination[] = [];
     const seen = new Set<string>();
     let droppedTargets = 0;
+    /** First per-target resolution failure, re-raised only when nothing resolved. */
+    let resolutionFailure: string | null = null;
     const addTarget = async (destination: WebhookDestination): Promise<void> => {
       if (seen.has(`${destination.chatRoomId}:${destination.platform ?? ''}`)) return;
       if (targets.length >= config.maxDestinations) {
@@ -365,9 +368,24 @@ export class WebhookServer {
         droppedTargets++;
         return;
       }
-      validateDestinationIds([destination.chatRoomId], config.maxRoomIdLength);
-      // Canonical room key per destination; a cross-platform mismatch is a 400.
-      const resolved = await resolveSubscriptionDestination(destination.chatRoomId, destination.platform);
+      // Resolution failures are permanent (an unknown platform, a room
+      // re-registered on another platform, a legacy id). They must not fail the
+      // whole notification: subscription rows come from the database, not from
+      // the caller, so one stale row used to return 400 for *every* subscribed
+      // room and the sender retried a request that could never succeed.
+      let resolved: WebhookDestination;
+      try {
+        validateDestinationIds([destination.chatRoomId], config.maxRoomIdLength);
+        resolved = await resolveSubscriptionDestination(destination.chatRoomId, destination.platform);
+      } catch (error) {
+        droppedTargets++;
+        resolutionFailure ??= getErrorMessage(error);
+        log.warn(
+          { err: getErrorMessage(error), chatRoomId: destination.chatRoomId, platform: destination.platform ?? null },
+          '[Webhook] Skipping an unresolvable notification target',
+        );
+        return;
+      }
       // Two aliases of one room collapse onto the same canonical key.
       const key = `${resolved.roomKey || resolved.chatRoomId}:${resolved.platform ?? ''}`;
       if (seen.has(key)) return;
@@ -409,6 +427,12 @@ export class WebhookServer {
 
     if (targets.length === 0) {
       this.completeReplay(replay);
+      if (resolutionFailure) {
+        // Every candidate was dropped and at least one failed to resolve: report
+        // the original reason instead of a misleading "No subscribers", which
+        // the sender would read as a successful delivery to nobody.
+        throw new WebhookRequestError(400, resolutionFailure);
+      }
       return jsonResponse({ ok: true, delivered: 0, note: 'No subscribers' });
     }
 
