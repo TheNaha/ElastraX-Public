@@ -1,36 +1,5 @@
 ARG BUN_IMAGE=oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
 
-FROM ${BUN_IMAGE} AS fetch
-ARG TARGETARCH
-ARG YTDLP_VERSION=2026.08.19
-ARG FFMPEG_RELEASE=autobuild-2026-10-26-14-25
-ARG FFMPEG_BUILD=8.1.3-24-g92611900bb
-ARG FFMPEG_SHA256_AMD64=d113aa5b57ab0dcfee171d835240ce3ea5db826a0ee80ed7528c8d26a61e87a4
-ARG FFMPEG_SHA256_ARM64=a51b192690f082d51c495e7241bd1013f86e4a7dfc5ed89a5766a5e46112addf
-RUN set -eux; \
-    export DEBIAN_FRONTEND=noninteractive; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates curl xz-utils; \
-    rm -rf /var/lib/apt/lists/*; \
-    ARCH="${TARGETARCH:-$(dpkg --print-architecture)}"; \
-    case "$ARCH" in \
-      amd64) FFMPEG_ARCH="linux64";; \
-      arm64) FFMPEG_ARCH="linuxarm64";; \
-      *) echo "Unsupported architecture: $ARCH"; exit 1;; \
-    esac; \
-    FFMPEG_FILE="ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1.tar.xz"; \
-    if [ "$ARCH" = amd64 ]; then FFMPEG_SHA256="$FFMPEG_SHA256_AMD64"; else FFMPEG_SHA256="$FFMPEG_SHA256_ARM64"; fi; \
-    FFMPEG_URL="https://github.com/BtbN/FFmpeg-Builds/releases/download/${FFMPEG_RELEASE}/${FFMPEG_FILE}"; \
-    curl -fsSL --proto '=https' --tlsv1.2 --retry 5 --retry-delay 2 --retry-connrefused "$FFMPEG_URL" -o /tmp/ffmpeg.tar.xz; \
-    printf '%s  %s\n' "$FFMPEG_SHA256" /tmp/ffmpeg.tar.xz | sha256sum -c -; \
-    mkdir -p /tmp/ffmpeg; \
-    tar -xJf /tmp/ffmpeg.tar.xz --strip-components=1 -C /tmp/ffmpeg \
-      "ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1/bin/ffmpeg" \
-      "ffmpeg-n${FFMPEG_BUILD}-${FFMPEG_ARCH}-gpl-8.1/bin/ffprobe"; \
-    install -m 0755 /tmp/ffmpeg/bin/ffmpeg /usr/local/bin/ffmpeg; \
-    install -m 0755 /tmp/ffmpeg/bin/ffprobe /usr/local/bin/ffprobe; \
-    rm -rf /tmp/ffmpeg.tar.xz /tmp/ffmpeg
-
 FROM ${BUN_IMAGE} AS install
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml ./
@@ -45,18 +14,22 @@ RUN set -eu; \
 
 FROM ${BUN_IMAGE} AS release
 ARG YTDLP_VERSION=2026.08.19
+# ffmpeg/ffprobe come from Debian's signed archive. They used to be copied from
+# a pinned BtbN static build, but that project deletes old `autobuild-*`
+# releases: the pinned URL started returning 404 and the image could no longer
+# be built. The distro package is architecture-aware, signature-verified and
+# carries every encoder this app uses (libx264, aac, libvpx-vp9, libwebp,
+# libmp3lame, libopus).
 RUN set -eux; \
     export DEBIAN_FRONTEND=noninteractive; \
     apt-get update; \
-    apt-get install -y --no-install-recommends ca-certificates python3 python3-pip zlib1g; \
+    apt-get install -y --no-install-recommends ca-certificates ffmpeg python3 python3-pip zlib1g; \
     rm -rf /var/lib/apt/lists/*; \
     update-ca-certificates; \
     pip3 install --no-cache-dir --break-system-packages "yt-dlp==${YTDLP_VERSION}"; \
     mkdir -p /app/data; \
     chown -R bun:bun /app/data
 WORKDIR /app
-COPY --from=fetch /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg
-COPY --from=fetch /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 COPY --from=install --chown=bun:bun /app/node_modules node_modules
 COPY --chown=bun:bun package.json bun.lock bunfig.toml drizzle.config.ts ./
 COPY --chown=bun:bun src ./src
