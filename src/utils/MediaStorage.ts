@@ -22,6 +22,7 @@ import {
   MediaLimitError,
   reconcileMediaQuota,
   invalidateMediaDirCache,
+  noteMediaSaved,
 } from './mediaShared';
 
 let clearStaleMediaReferencesCallback: ((paths: string[]) => Promise<number>) | null = null;
@@ -69,6 +70,7 @@ export async function saveMediaBuffer(
       const quota = await reconcileMediaQuota(buffer.length, tempPath);
       await clearDeletedMediaReferences(quota.deleted);
       await mediaStorageDeps.rename(tempPath, finalPath);
+      noteMediaSaved(buffer.length);
       await restrictMediaPermissions(finalPath);
       return { path: finalPath, mime, sizeBytes: buffer.length, detectedMime: typeInfo?.mime };
     });
@@ -143,6 +145,7 @@ export async function saveMediaStream(
       const quota = await reconcileMediaQuota(bytesWritten, tempPath);
       await clearDeletedMediaReferences(quota.deleted);
       await mediaStorageDeps.rename(tempPath!, finalPath);
+      noteMediaSaved(bytesWritten);
     });
     await restrictMediaPermissions(finalPath);
     return {

@@ -27,9 +27,11 @@ export function levenshtein(a: string, b: string): number {
   const aLen = a.length;
   const bLen = b.length;
 
-  // Use a typed array for faster memory access and reduced GC overhead
-  // Uint16Array is sufficient since string lengths won't exceed 65535 in typical chat use-cases
-  const row = new Uint16Array(aLen + 1);
+  // Use a typed array for faster memory access and reduced GC overhead.
+  // Uint32Array, not Uint16: a cell is an edit distance, and the Uint16 variant
+  // silently wrapped mod 65536 for inputs whose distance exceeded that (two
+  // ~70k-character strings), returning a wrong distance.
+  const row = new Uint32Array(aLen + 1);
 
   // Initialize the first row
   for (let i = 0; i <= aLen; i++) {

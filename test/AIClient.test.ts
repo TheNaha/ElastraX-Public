@@ -78,6 +78,25 @@ describe("AIClient", () => {
     }
   });
 
+  test("accepts a loopback base URL, as validateEnv and the docs allow", async () => {
+    // docs/configuration.md allows plain http on loopback (a local model server)
+    // and validateEnv accepts it without an API key, but the client's own URL
+    // guard rejected every loopback/private host, so such a deployment failed on
+    // every request.
+    const originalFetch = global.fetch;
+    const client = new AIClient({ baseUrl: "http://127.0.0.1:11434/v1", apiKey: "local" });
+    global.fetch = mock(async () => new Response(JSON.stringify({
+      choices: [{ message: { role: "assistant", content: "local answer" } }],
+      usage: {},
+    }), { status: 200, headers: { "Content-Type": "application/json" } })) as unknown as typeof global.fetch;
+    try {
+      const message = await client.chatCompletion([], []);
+      expect(message.content).toBe("local answer");
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   test("chatCompletion should make a fetch request if configured", async () => {
     const originalFetch = global.fetch;
     const client = new AIClient({ baseUrl: "https://api.example.com/v1", apiKey: "test" });

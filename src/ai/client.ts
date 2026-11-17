@@ -55,35 +55,14 @@ function isValidUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    // Block SSRF: disallow private/internal addresses and loopback hosts.
-    // This protects against cloud metadata endpoints (169.254.169.254),
-    // localhost, and RFC 1918 private ranges.
-    const host = (parsed.hostname || '').toLowerCase();
-    if (host === 'localhost' || host === '::1' || host === '0.0.0.0' || host === '[::]') return false;
-    // IPv4 private ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
-    // Loopback: 127.0.0.0/8
-    // Link-local: 169.254.0.0/16
-    const ipv4Match = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
-    if (ipv4Match) {
-      const octets = ipv4Match.slice(1).map(Number);
-      const [a, b] = octets;
-      if (a === 127) return false; // loopback
-      if (a === 10) return false; // 10.0.0.0/8
-      if (a === 172 && b >= 16 && b <= 31) return false; // 172.16.0.0/12
-      if (a === 192 && b === 168) return false; // 192.168.0.0/16
-      if (a === 169 && b === 254) return false; // 169.254.0.0/16 (link-local/metadata)
-      if (a === 0) return false; // 0.0.0.0/8
-      if (a === 100 && b >= 64 && b <= 127) return false; // 100.64.0.0/10 (carrier-grade NAT)
-      if (a === 192 && b === 0 && octets[2] === 0) return false; // 192.0.0.0/24
-      if (a === 192 && b === 0 && octets[2] === 2) return false; // 192.0.2.0/24 (TEST-NET)
-      if (a === 198 && b === 51) return false; // 198.51.0.0/18 (benchmark)
-    }
-    // IPv6 loopback and link-local
-    if (ipv4Match === null && host.startsWith('[') && host.endsWith(']')) {
-      const inner = host.slice(1, -1);
-      if (inner === '::1') return false;
-      if (inner.startsWith('::ffff:')) return false; // IPv4-mapped
-    }
+    if (parsed.username || parsed.password) return false;
+    // The base URL is operator configuration, validated by `validateEnv`
+    // (scheme, no credentials, plain http only on loopback). It is not
+    // user-controlled, so the classic SSRF model does not apply — and rejecting
+    // loopback/RFC1918 hosts here broke exactly the local model server the
+    // documented configuration supports (`http://127.0.0.1:11434/v1`). Only the
+    // cloud metadata address stays blocked, as defence in depth.
+    if ((parsed.hostname || '').toLowerCase() === '169.254.169.254') return false;
     return true;
   } catch {
     return false;

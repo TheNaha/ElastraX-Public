@@ -25,6 +25,31 @@ export function invalidateMediaDirCache(): void {
   mediaDirCache = null;
 }
 
+/**
+ * Account for a file that was just saved.
+ *
+ * `reconcileMediaQuota` deliberately excludes the file being saved (its temp
+ * path) from the totals it records, and nothing used to add it back. Within the
+ * 60 s TTL every later save then checked `cache + thisFile` only, so a burst
+ * could overshoot the byte/file quota by the whole burst. The caller must invoke
+ * this inside the same serialised slot as the rename, after it succeeds.
+ */
+export function noteMediaSaved(sizeBytes: number, files = 1): void {
+  const cache = mediaDirCache;
+  if (!cache) return;
+  if (Date.now() - cache.at >= MEDIA_DIR_CACHE_TTL_MS) {
+    mediaDirCache = null;
+    return;
+  }
+  // `at` stays the time of the last real scan: the totals are still trustworthy
+  // only for that window.
+  mediaDirCache = {
+    totalBytes: cache.totalBytes + Math.max(0, Math.trunc(sizeBytes)),
+    fileCount: cache.fileCount + Math.max(0, Math.trunc(files)),
+    at: cache.at,
+  };
+}
+
 export interface SavedMedia {
   path: string;
   mime: string;

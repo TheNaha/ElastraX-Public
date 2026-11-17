@@ -87,3 +87,20 @@ describe('MediaStorage', () => {
     }
   });
 });
+
+describe('media quota cache accounting', () => {
+  test('counts a saved file in later fast-path quota checks', async () => {
+    // reconcileMediaQuota records totals that exclude the file being saved, and
+    // nothing added it back, so every save inside the 60 s TTL checked
+    // `cache + thisFile` and a burst could overshoot the quota.
+    const { invalidateMediaDirCache, noteMediaSaved } = await import('../src/utils/mediaShared');
+    invalidateMediaDirCache();
+    const before = await reconcileMediaQuota(100, '/tmp/media-temp-a');
+    noteMediaSaved(100);
+    const after = await reconcileMediaQuota(50, '/tmp/media-temp-b');
+    // Delta, not absolute: the shared test media dir may already hold files.
+    expect(after.bytes - before.bytes).toBe(150);
+    expect(after.files - before.files).toBe(2);
+    invalidateMediaDirCache();
+  });
+});

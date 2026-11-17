@@ -25,7 +25,9 @@ const log = logger.child({ module: 'Feedback' });
 export type FeedbackSentiment = 'positive' | 'negative';
 
 /** Reaction glyphs that carry a clear verdict. Everything else is ignored. */
-const POSITIVE = new Set(['\u{1F44D}', '\u2764\uFE0F', '\u2764', '\u{1F60D}', '\u{1F44C}', '\u{1F550}']);
+// NOTE: \u{1F550} (🕐) was in this set by mistake — a copy error, not a verdict
+// glyph — so every clock reaction was recorded as positive feedback.
+const POSITIVE = new Set(['\u{1F44D}', '\u2764\uFE0F', '\u2764', '\u{1F60D}', '\u{1F44C}']);
 const NEGATIVE = new Set(['\u{1F44E}', '\u{1F621}', '\u{1F614}', '\u{1F612}', '\u26A0']);
 
 /** How many sent-message ids to remember for attribution. */

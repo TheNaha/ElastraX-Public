@@ -107,6 +107,8 @@ export abstract class BaseHttpClient {
         redirect: 'error',
       });
     } catch (error) {
+      clearTimeout(timeout);
+      options.signal?.removeEventListener('abort', onAbort);
       if (error instanceof HttpClientError) throw error;
       if (timedOut) {
         throw new HttpClientError(service, method, path, 'TIMEOUT', `${service} request timed out after ${timeoutMs}ms.`, { retryable: true, cause: error });
@@ -115,39 +117,45 @@ export abstract class BaseHttpClient {
         retryable: true,
         cause: error,
       });
+    }
+
+    // The timeout and the caller-abort listener must stay armed until the body
+    // has been consumed. They used to be cleared in a `finally` around `fetch`,
+    // so an upstream that sent headers and then stalled the body hung the
+    // request forever with nothing able to cancel it.
+    try {
+      if (!response.ok) {
+        const text = await readResponseText(response, this.maxResponseBytes, service, method, path).catch(() => '');
+        const detail = sanitizeResponseText(text);
+        this.log.error({ status: response.status, path }, 'API error');
+        throw new HttpClientError(
+          service,
+          method,
+          path,
+          'HTTP_ERROR',
+          `${service} API ${method} ${path} failed: ${response.status}${detail ? ` ${detail}` : ''}`,
+          { status: response.status, retryable: response.status === 429 || response.status >= 500 },
+        );
+      }
+      if (response.status === 204 || response.status === 205) return undefined as T;
+      const binary = this.binaryPaths.get(`${method} ${path}`);
+      if (binary) {
+        try {
+          return await readBinaryResponse(response, binary.maxBytes, service, method, path) as T;
+        } catch (error) {
+          if (error instanceof HttpClientError) throw error;
+          throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned an unreadable binary body: ${safeErrorMessage(error)}`, { cause: error });
+        }
+      }
+      try {
+        return await readJsonResponse<T>(response, this.maxResponseBytes, service, method, path);
+      } catch (error) {
+        if (error instanceof HttpClientError) throw error;
+        throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned invalid JSON: ${safeErrorMessage(error)}`, { cause: error });
+      }
     } finally {
       clearTimeout(timeout);
       options.signal?.removeEventListener('abort', onAbort);
-    }
-
-    if (!response.ok) {
-      const text = await readResponseText(response, this.maxResponseBytes, service, method, path).catch(() => '');
-      const detail = sanitizeResponseText(text);
-      this.log.error({ status: response.status, path }, 'API error');
-      throw new HttpClientError(
-        service,
-        method,
-        path,
-        'HTTP_ERROR',
-        `${service} API ${method} ${path} failed: ${response.status}${detail ? ` ${detail}` : ''}`,
-        { status: response.status, retryable: response.status === 429 || response.status >= 500 },
-      );
-    }
-    if (response.status === 204 || response.status === 205) return undefined as T;
-    const binary = this.binaryPaths.get(`${method} ${path}`);
-    if (binary) {
-      try {
-        return await readBinaryResponse(response, binary.maxBytes, service, method, path) as T;
-      } catch (error) {
-        if (error instanceof HttpClientError) throw error;
-        throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned an unreadable binary body: ${safeErrorMessage(error)}`, { cause: error });
-      }
-    }
-    try {
-      return await readJsonResponse<T>(response, this.maxResponseBytes, service, method, path);
-    } catch (error) {
-      if (error instanceof HttpClientError) throw error;
-      throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned invalid JSON: ${safeErrorMessage(error)}`, { cause: error });
     }
   }
 

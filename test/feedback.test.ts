@@ -52,8 +52,8 @@ describe('classifyReaction', () => {
 
   test('ignores ambiguous and decorative glyphs', () => {
     // A fire emoji is engagement, not a verdict; recording it would dilute the
-    // ratio with noise.
-    for (const glyph of ['\u{1F525}', '\u{1F389}', 'eyes', '', '  ']) {
+    // ratio with noise. 🕐 (U+1F550) was in the positive set by a copy error.
+    for (const glyph of ['\u{1F525}', '\u{1F389}', '\u{1F550}', 'eyes', '', '  ']) {
       expect(classifyReaction(glyph)).toBeNull();
     }
   });
