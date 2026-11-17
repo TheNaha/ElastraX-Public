@@ -121,7 +121,17 @@ export class ConversationSummaryService {
   async summarize(request: ConversationSummaryRequest): Promise<ConversationSummaryRun> {
     const keepCount = validateKeepCount(request.keepCount);
     const minBatch = Math.max(1, Math.floor(Number.isFinite(request.minBatch) ? request.minBatch! : DEFAULT_MIN_BATCH));
-    const previous = await this.store.load(request.scope);
+    // A failed *read* must degrade to "no previous summary", exactly like a
+    // failed write degrades to truncation below. It used to be awaited outside
+    // every guard, so one transient `app_kv` error propagated out of
+    // `summarize()` and the agent answered "internal error" to every message in
+    // a summarizing room instead of simply re-sending the active window.
+    let previous: SummaryWatermark | null = null;
+    try {
+      previous = await this.store.load(request.scope);
+    } catch (error) {
+      logger.warn({ err: error, scope: request.scope }, '[Summarizer] Failed to load the previous summary; continuing without it');
+    }
     const entries = entriesAfterWatermark(request.entries, previous);
     let activeEntries = entries.slice(-keepCount);
     let summarizedEntries = entries.slice(0, Math.max(0, entries.length - keepCount));

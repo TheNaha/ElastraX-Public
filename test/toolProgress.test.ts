@@ -154,6 +154,20 @@ describe('ToolProgressTracker', () => {
     expect(editedMessages[2]).toBe('✅ [1/2] Step 1\n✅ [2/2] Step 2');
   });
 
+  test('does not adopt a message key once it has been disabled', async () => {
+    // A tracker whose send failed can no longer edit anything. Reporting a
+    // successful adoption made the caller skip the finalising edit, leaving the
+    // streamed bubble frozen on its cursor.
+    const ctx = {
+      chatId: 'test-chat',
+      sendMessage: mock(async () => { throw new Error('send failed'); }),
+      editMessage: mock(async () => {}),
+    };
+    const tracker = new ToolProgressTracker(ctx);
+    await tracker.startStep('Step');
+    expect(tracker.adoptMessageKey({ id: 'streamed' })).toBe(false);
+  });
+
   test('degrades gracefully when provider throws during editMessage', async () => {
     let warningLogged = false;
     const ctx = {

@@ -159,6 +159,10 @@ export class ToolProgressTracker {
    * finalised by its sender.
    */
   adoptMessageKey(key: unknown): boolean {
+    // A disabled tracker cannot edit the message it would adopt, so claiming it
+    // meant the caller (which skips the finalising edit when adoption succeeds)
+    // left the bubble frozen on its streaming cursor forever.
+    if (this.disabled) return false;
     if (key === null || key === undefined || this.statusMessageKey !== null) return false;
     this.statusMessageKey = key;
     return true;

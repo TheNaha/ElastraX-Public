@@ -177,6 +177,29 @@ describe('summarization batching', () => {
     expect(run.activeHistory).toHaveLength(keepCount);
   });
 
+  test('a failing summary store load does not abort the turn', async () => {
+    // The previous summary is an optimisation, not a prerequisite. A transient
+    // app_kv read error used to propagate out of summarize() and turn every
+    // message in the room into "internal error".
+    const store: SummaryStore = {
+      load: async () => { throw new Error('app_kv unavailable'); },
+      save: async () => {},
+      delete: async () => {},
+    };
+    const service = new ConversationSummaryService(store);
+    const entries: SummaryEntry[] = Array.from({ length: keepCount + 2 }, (_, index) => ({
+      id: String(index + 1),
+      message: { role: 'user', content: `m${index}` },
+    }));
+    const callLLM = mock(async (): Promise<string> => 'summary');
+
+    const run = await service.summarize({ scope: 'room:load-fail', entries, keepCount, minBatch, callLLM });
+
+    expect(callLLM).not.toHaveBeenCalled();
+    expect(run.activeHistory).toHaveLength(entries.length);
+    expect(run.summary).toBe('');
+  });
+
   test('entries below the threshold are carried forward, not dropped', async () => {
     const service = rollingWindowService();
     const callLLM = mock(async (): Promise<string> => 'summary');
