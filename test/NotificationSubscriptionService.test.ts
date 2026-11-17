@@ -13,11 +13,12 @@ function createWhereResult<T>(result: T) {
   };
 }
 
-function createFakeDb(selectResults: unknown[]) {
+function createFakeDb(selectResults: unknown[], options: { uniqueOnInsert?: number } = {}) {
   const queue = [...selectResults];
   const inserts: unknown[] = [];
   const updates: unknown[] = [];
   const deletes: unknown[] = [];
+  let insertCount = 0;
 
   const db = {
     select: mock(() => ({
@@ -26,7 +27,13 @@ function createFakeDb(selectResults: unknown[]) {
       })),
     })),
     insert: mock(() => ({
+      // `uniqueOnInsert` simulates the real unique index rejecting a duplicate:
+      // the service must then fall through to the update path.
       values: mock(async (value: unknown) => {
+        insertCount += 1;
+        if (options.uniqueOnInsert === insertCount) {
+          throw new Error('UNIQUE constraint failed: notification_subscriptions.user_id, notification_subscriptions.chat_room_id');
+        }
         inserts.push(value);
       }),
     })),
@@ -68,7 +75,7 @@ describe('NotificationSubscriptionService', () => {
   });
 
   test('subscribe inserts new rows and updates existing rows', async () => {
-    const fake = createFakeDb([[], [{ id: 5 }]]);
+    const fake = createFakeDb([[], [{ id: 5 }]], { uniqueOnInsert: 2 });
     NotificationSubscriptionService.setDepsForTesting({
       db: fake.db as any,
       notificationSubscriptions: subscriptionsTable,

@@ -6,6 +6,7 @@
 import { db } from '../db';
 import { serviceBindings } from '../db/schema';
 import { eq, and } from 'drizzle-orm';
+import { isUniqueConstraintError } from './errorUtils';
 import { logger } from './logger';
 
 const log = logger.child({ module: 'ServiceBindingService' });
@@ -35,18 +36,19 @@ export class ServiceBindingService {
     const { db, serviceBindings } = this.deps;
     const existing = await this.getBinding(opts.userId, opts.platform, opts.serviceType);
 
+    const update = {
+      externalUserId: opts.externalUserId,
+      externalUsername: opts.externalUsername,
+      externalEmail: opts.externalEmail ?? null,
+      metadata: opts.metadata ?? existing?.metadata ?? null,
+    };
+
     if (existing) {
-      await db
-        .update(serviceBindings)
-        .set({
-          externalUserId: opts.externalUserId,
-          externalUsername: opts.externalUsername,
-          externalEmail: opts.externalEmail ?? null,
-          metadata: opts.metadata ?? existing.metadata,
-        })
-        .where(eq(serviceBindings.id, existing.id));
+      await db.update(serviceBindings).set(update).where(eq(serviceBindings.id, existing.id));
       log.info({ userId: opts.userId, serviceType: opts.serviceType }, 'Updated service binding');
-    } else {
+      return;
+    }
+    try {
       await db.insert(serviceBindings).values({
         userId: opts.userId,
         platform: opts.platform,
@@ -58,6 +60,18 @@ export class ServiceBindingService {
         created_at: new Date(),
       });
       log.info({ userId: opts.userId, serviceType: opts.serviceType }, 'Created service binding');
+    } catch (error) {
+      // `service_bindings_user_service_idx` is unique on (userId, platform,
+      // serviceType). Two concurrent binds (a double-tapped command, two
+      // devices, two workers) used to make the loser's INSERT fail with a
+      // UNIQUE constraint instead of updating the row it had just read.
+      if (!isUniqueConstraintError(error)) throw error;
+      await db.update(serviceBindings).set(update).where(and(
+        eq(serviceBindings.userId, opts.userId),
+        eq(serviceBindings.platform, opts.platform),
+        eq(serviceBindings.serviceType, opts.serviceType),
+      ));
+      log.info({ userId: opts.userId, serviceType: opts.serviceType }, 'Updated service binding after a concurrent create');
     }
   }
 

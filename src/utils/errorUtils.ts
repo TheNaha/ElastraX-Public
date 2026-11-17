@@ -47,3 +47,13 @@ export function getErrorMessage(error: unknown, fallback: string = 'Unknown erro
 
   return fallback;
 }
+
+/**
+ * True when a SQLite error is a UNIQUE / PRIMARY KEY constraint violation.
+ *
+ * Callers use it to recover from a lost read-then-insert race: the row now
+ * exists, so the insert can be retried as an update instead of surfacing a 500.
+ */
+export function isUniqueConstraintError(error: unknown): boolean {
+  return /unique constraint|primary key|constraint failed/i.test(getErrorMessage(error));
+}

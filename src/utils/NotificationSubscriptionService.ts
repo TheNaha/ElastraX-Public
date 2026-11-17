@@ -1,6 +1,7 @@
 import { db } from '../db';
 import { notificationSubscriptions } from '../db/schema';
 import { eq, and, or, type SQL } from 'drizzle-orm';
+import { isUniqueConstraintError } from './errorUtils';
 import { logger } from './logger';
 import { ServiceBindingService } from './ServiceBindingService';
 import {
@@ -183,21 +184,16 @@ export class NotificationSubscriptionService {
     const roomRef = normalizeRoomRef(opts.platform, opts.roomKey ?? opts.chatRoomId);
     const roomColumns = subRoomColumns(notificationSubscriptions);
     const roomCondition = roomIdentityCondition(roomColumns, subIdentity(roomRef));
-    const existing = await db.select().from(notificationSubscriptions).where(and(
-      eq(notificationSubscriptions.userId, opts.userId),
-      eq(notificationSubscriptions.platform, opts.platform),
-      eq(notificationSubscriptions.serviceType, serviceType),
-      roomCondition,
-    )).limit(1);
     const normalizedTypes = normalizeNotifyTypes(opts.notifyTypes);
     const notifyTypesJson = normalizedTypes ? JSON.stringify(normalizedTypes) : null;
-    if (existing.length > 0) {
-      // Dual write: adopt the canonical key on a row the migration has not
-      // backfilled yet so the next lookup resolves through room_key.
-      const backfill = roomKeyBackfill(existing[0].roomKey, roomRef.roomKey);
-      await db.update(notificationSubscriptions).set({ notifyTypes: notifyTypesJson, ...backfill }).where(eq(notificationSubscriptions.id, existing[0].id));
-      log.info({ userId: opts.userId, chatRoomId: roomRef.chatRoomId, roomKey: roomRef.roomKey, serviceType }, 'Updated notification subscription');
-    } else {
+
+    // Insert first, then update whatever is there. The table has two unique
+    // indexes ((userId, platform, serviceType, chatRoomId) and the same tuple on
+    // roomKey), so a read-then-insert let a concurrent subscriber lose with a
+    // UNIQUE constraint. Treating that as "someone else created it" and updating
+    // afterwards is race-free, and the update is idempotent.
+    let created = false;
+    try {
       await db.insert(notificationSubscriptions).values({
         userId: opts.userId,
         platform: opts.platform,
@@ -207,8 +203,30 @@ export class NotificationSubscriptionService {
         notifyTypes: notifyTypesJson,
         created_at: new Date(),
       });
-      log.info({ userId: opts.userId, chatRoomId: roomRef.chatRoomId, roomKey: roomRef.roomKey, serviceType }, 'Created notification subscription');
+      created = true;
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) throw error;
     }
+
+    const rows = await db.select({ id: notificationSubscriptions.id, roomKey: notificationSubscriptions.roomKey })
+      .from(notificationSubscriptions)
+      .where(and(
+        eq(notificationSubscriptions.userId, opts.userId),
+        eq(notificationSubscriptions.platform, opts.platform),
+        eq(notificationSubscriptions.serviceType, serviceType),
+        roomCondition,
+      ))
+      .limit(1);
+    if (rows[0]) {
+      // Dual write: adopt the canonical key on a row the migration has not
+      // backfilled yet so the next lookup resolves through room_key.
+      const backfill = roomKeyBackfill(rows[0].roomKey, roomRef.roomKey);
+      await db.update(notificationSubscriptions).set({ notifyTypes: notifyTypesJson, ...backfill }).where(eq(notificationSubscriptions.id, rows[0].id));
+    }
+    log.info(
+      { userId: opts.userId, chatRoomId: roomRef.chatRoomId, roomKey: roomRef.roomKey, serviceType },
+      created ? 'Created notification subscription' : 'Updated notification subscription',
+    );
   }
 
   static async unsubscribe(userId: string, platform: string, serviceType: string, chatRoomId: string, access?: { currentRoomId?: string; currentRoomKey?: string; isOwner?: boolean; roomVerified?: boolean; requireOwner?: boolean }): Promise<boolean> {
