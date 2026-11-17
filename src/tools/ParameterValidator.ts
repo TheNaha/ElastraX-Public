@@ -161,6 +161,7 @@ const ACTION_ARGUMENTS: Record<string, Record<string, readonly string[]>> = {
     setpriv: ['role', 'field', 'value'],
     resetpriv: ['role'],
   },
+  knowledge: { index: ['title'], search: ['query'], list: [], remove: ['document_id'] },
   pdf_tool: {
     split: ['start_page', 'end_page'],
     remove_pages: ['pages'],
@@ -288,7 +289,7 @@ function defaultNoArgAliases(toolName: string): string[] {
     owner_admin: ['leave', 'botleave'],
     media_account: ['connect', 'disconnect', 'notify'],
     media_library: ['library', 'watching'],
-    media_search: ['find'],
+    media_search: ['find', 'search-media'],
     role: [],
   };
   return values[toolName] ?? [];
@@ -306,7 +307,7 @@ function commandAction(toolName: string, command: string): string | undefined {
     // the three documented slash routes to the tool's primary action were dead.
     media_request: { request: 'request', 'request-media': 'request', status: 'status', 'my-requests': 'my-requests' },
     reminder: { remind: 'set', reminder: 'set' },
-    memory: { remember: 'store', forget: 'forget', recall: 'retrieve' },
+    memory: { mem: 'store', remember: 'store', forget: 'forget', recall: 'retrieve' },
     role: { role: 'check', roles: 'check', permission: 'check', perm: 'check' },
     groupadmin: { mute: 'mute', unmute: 'unmute', grouplink: 'link', kick: 'remove', add: 'add', remove: 'remove', promote: 'promote', demote: 'demote' },
     owner_admin: { leave: 'leave', botleave: 'leave' },
