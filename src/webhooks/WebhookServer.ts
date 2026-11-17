@@ -279,7 +279,7 @@ export class WebhookServer {
     // exists to prevent), and 207 is a success for senders that only retry on
     // 5xx. Only a delivery where nothing was sent is retryable, so the key is
     // released and the answer is a 5xx in that one case.
-    if (failed.length === job.destinations.length) {
+    if (job.destinations.length > 0 && failed.length === job.destinations.length) {
       this.releaseReplay(replay);
       return jsonResponse({ ok: false, delivered: 0, failed }, 502);
     }
@@ -343,7 +343,7 @@ export class WebhookServer {
         // The subscription fan-out is not caller-controlled, so exceeding the cap
         // is a deployment with many rooms, not a bad request. Throwing here made
         // the whole notification fail with nothing delivered; instead the extra
-        // rooms are skipped and the response reports how many.
+        // rooms are skipped and the count is logged.
         droppedTargets++;
         return;
       }
