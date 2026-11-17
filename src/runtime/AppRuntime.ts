@@ -150,14 +150,21 @@ export function redactSecrets(input: string): string {
 /** Field separator for hashed composite keys, matching `OutboxService.idempotencyKey`. */
 const FIELD_SEPARATOR = '\u0000';
 
+/**
+ * Monotonic per-process counter, so two fires in the same millisecond still get
+ * distinct ids (`Date.now()` alone has millisecond resolution).
+ */
+let scheduledTaskSequence = 0;
+
 function scheduledTaskMessageId(request: {
   platform: string;
   roomKey: string;
   instruction: string;
   firedAt: number;
 }): string {
+  scheduledTaskSequence += 1;
   const digest = createHash('sha256')
-    .update(`${request.platform}${FIELD_SEPARATOR}${request.roomKey}${FIELD_SEPARATOR}${request.instruction}${FIELD_SEPARATOR}${request.firedAt}`)
+    .update(`${request.platform}${FIELD_SEPARATOR}${request.roomKey}${FIELD_SEPARATOR}${request.instruction}${FIELD_SEPARATOR}${request.firedAt}${FIELD_SEPARATOR}${scheduledTaskSequence}`)
     .digest('hex')
     .slice(0, 24);
   return `scheduled-${digest}`;
