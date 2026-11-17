@@ -207,7 +207,10 @@ describe('DiscordProvider', () => {
 
   test('chunks Unicode text without splitting surrogate pairs', () => {
     const chunks = chunkDiscordText('😀'.repeat(2200), 2000);
-    expect(chunks).toHaveLength(2);
+    // 2200 emoji is 4400 UTF-16 units, so a 2000-unit limit needs three chunks.
+    // Counting code points accepted 2000 emoji (4000 units) and Discord rejected it.
+    expect(chunks.every(chunk => chunk.length <= 2000)).toBe(true);
+    expect(chunks.join('')).toBe('😀'.repeat(2200));
     expect([...chunks[0]!].every(character => character === '😀')).toBe(true);
   });
 

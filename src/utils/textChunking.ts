@@ -14,11 +14,14 @@
  *                  within the trailing half of the limit (Discord, Telegram).
  *
  * Measures:
- *  - 'codepoints': `limit` counts Unicode code points (discord.js counts these).
- *  - 'utf16'     : `limit` counts UTF-16 code units, which is what the Telegram
- *                  Bot API enforces (its entity offsets are UTF-16 too). A chunk
- *                  of 4096 emoji is 8192 units and is rejected, so Telegram
- *                  chunking has to use this measure.
+ *  - 'codepoints': `limit` counts Unicode code points.
+ *  - 'utf16'     : `limit` counts UTF-16 code units. Telegram's Bot API enforces
+ *                  this (its entity offsets are UTF-16 too), and so does Discord:
+ *                  its docs say "2000 characters" while the Rust `twilight`
+ *                  client documents UTF-16 units. Counting UTF-16 is never
+ *                  smaller than counting code points, so it is safe under either
+ *                  reading - a chunk that fits is accepted, and a chunk that
+ *                  would be rejected is split earlier.
  *
  * Empty input always returns `['']` so callers can safely index `chunks[0]`.
  * Chunking is lossless: `chunks.join('')` always reconstructs the input, and a
@@ -127,9 +130,16 @@ export function chunkTextFixed(text: string, limit = 65_536): string[] {
   return chunkTextSmart(text, { mode: 'fixed', limit });
 }
 
-/** Discord: boundary-aware 2000-char split. Lossless. */
+/**
+ * Discord: boundary-aware 2000-unit split. Lossless.
+ *
+ * Measured in UTF-16 units: Discord's own docs say "characters" but its clients
+ * count UTF-16, and a UTF-16 count is never smaller than a code-point count, so
+ * this is safe either way. A 1500-emoji message is 1500 code points and 3000
+ * UTF-16 units; the code-point count accepted it and Discord rejected it.
+ */
 export function chunkTextDiscord(text: string, limit = 2000): string[] {
-  return chunkTextSmart(text, { mode: 'boundary', limit });
+  return chunkTextSmart(text, { mode: 'boundary', limit, measure: 'utf16' });
 }
 
 /**

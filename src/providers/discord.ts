@@ -20,7 +20,7 @@ import { logger } from '../utils/logger';
 import { safeErrorMessage, stripControlChars, toError } from '../utils/errorUtils.js';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
-import { chunkTextDiscord } from '../utils/textChunking';
+import { chunkTextDiscord, splitTextAtUtf16Limit } from '../utils/textChunking';
 
 export const DISCORD_TEXT_LIMIT = 2000;
 
@@ -667,8 +667,9 @@ function discordAllowedMentions(users?: string[]): MessageMentionOptions {
 }
 
 function truncateDiscordText(text: string): string {
-  const characters = Array.from(text);
-  return characters.length <= DISCORD_TEXT_LIMIT ? text : characters.slice(0, DISCORD_TEXT_LIMIT).join('');
+  // Discord counts UTF-16 code units (see chunkTextDiscord), so the head of an
+  // edit must be measured the same way and never split a surrogate pair.
+  return splitTextAtUtf16Limit(text, DISCORD_TEXT_LIMIT).head;
 }
 
 function validateDiscordMediaUrl(rawUrl: string): void {
