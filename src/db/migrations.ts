@@ -432,6 +432,25 @@ export function validateSchemaContract(sqlite: Database): void {
   }
 }
 
+/**
+ * The stored fingerprint row, or null when the database has never been stamped.
+ *
+ * The migration count is as important as the fingerprint itself: it tells a
+ * stale record (a crash between `migrate()` and `recordSchemaFingerprint()`)
+ * apart from a schema that changed with no migration at all.
+ */
+export function readStoredSchemaMeta(
+  sqlite: Database,
+): { fingerprint: string; migrationCount: number } | null {
+  if (!tableExists(sqlite, 'db_schema_meta')) return null;
+  const row = sqlite
+    .query<{ fingerprint: string; migration_count: number }, []>(
+      'SELECT fingerprint, migration_count FROM db_schema_meta WHERE id = 1',
+    )
+    .get();
+  return row ? { fingerprint: row.fingerprint, migrationCount: Number(row.migration_count) } : null;
+}
+
 export function verifyStoredSchemaFingerprint(sqlite: Database): string | null {
   if (!tableExists(sqlite, 'db_schema_meta')) return null;
   const row = sqlite

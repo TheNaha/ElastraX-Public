@@ -1,4 +1,8 @@
 import { expect, test, describe } from 'bun:test';
+import { rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { Database } from 'bun:sqlite';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { chatRooms } from '../src/db/schema';
@@ -145,6 +149,39 @@ describe('Schema Compatibility', () => {
       expect(() => verifyStoredSchemaFingerprint(handle.sqlite)).toThrow('fingerprint mismatch');
     } finally {
       handle.close();
+    }
+  });
+
+  // A crash between drizzle's commit and recordSchemaFingerprint() used to brick
+  // every later boot: the migrations were already recorded as applied, so no
+  // pending migration re-ran and the fingerprint check threw forever.
+  test('recovers from a fingerprint written before the migration was recorded', async () => {
+    const path = join(tmpdir(), `elastra-fingerprint-${randomUUID()}.db`);
+    const first = createDatabase({ path });
+    try {
+      await ensureDatabaseSchema({ database: first, leaseName: null });
+      const row = first.sqlite
+        .query<{ fingerprint: string; migration_count: number }, []>(
+          'SELECT fingerprint, migration_count FROM db_schema_meta WHERE id = 1',
+        )
+        .get()!;
+      expect(row.migration_count).toBeGreaterThan(0);
+      first.sqlite
+        .query<never, [string, number]>(
+          'UPDATE db_schema_meta SET fingerprint = ?, migration_count = ? WHERE id = 1',
+        )
+        .run('0'.repeat(64), row.migration_count - 1);
+    } finally {
+      first.close();
+    }
+
+    const second = createDatabase({ path });
+    try {
+      await ensureDatabaseSchema({ database: second, leaseName: null });
+      expect(verifyStoredSchemaFingerprint(second.sqlite)).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      second.close();
+      for (const suffix of ['', '-wal', '-shm']) rmSync(`${path}${suffix}`, { force: true });
     }
   });
 

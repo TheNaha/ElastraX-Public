@@ -9,11 +9,12 @@ import * as schema from './schema.js';
 import {
   assertDatabaseIntegrity,
   getMigrationsFolder,
+  fingerprintSchema,
   inspectMigrationState,
   readMigrationJournal,
+  readStoredSchemaMeta,
   recordSchemaFingerprint,
   validateSchemaContract,
-  verifyStoredSchemaFingerprint,
 } from './migrations.js';
 import {
   acquireDatabaseLease,
@@ -258,11 +259,43 @@ function migrateHandle(
     }
 
     try {
-      if (isDatabaseLeaseActive(sqlite, RUNTIME_LEASE)) {
+      // The runtime lease only matters to a caller that is taking one. Tests and
+      // `scripts/dbBackup.ts` pass `leaseName: null` explicitly, and a live bot
+      // made even a read-only preflight fail on that check.
+      if (leaseName !== null && isDatabaseLeaseActive(sqlite, RUNTIME_LEASE)) {
         throw new Error(`Database lease ${RUNTIME_LEASE} is held by another process`);
       }
       const before = inspectMigrationState(sqlite, migrationsFolder);
-      verifyStoredSchemaFingerprint(sqlite);
+      // The fingerprint is a *cache* of the schema, not the schema itself. A
+      // crash between drizzle's commit and recordSchemaFingerprint() left the
+      // new schema stored under the old fingerprint; because the migrations were
+      // already recorded as applied, every later boot found no pending
+      // migrations and threw "fingerprint mismatch" forever - bricked, with
+      // manual SQL as the only recovery. The stored migration count tells the
+      // two cases apart: behind the journal means the crash window (re-record),
+      // level with it means the schema changed with no migration (refuse).
+      const stored = readStoredSchemaMeta(sqlite);
+      if (stored) {
+        const current = fingerprintSchema(sqlite);
+        if (current !== stored.fingerprint) {
+          if (stored.migrationCount >= before.applied.length) {
+            throw new Error(
+              `Database schema fingerprint mismatch: expected ${stored.fingerprint}, received ${current}. ` +
+                'The schema changed without a matching migration; restore a backup or add the migration.',
+            );
+          }
+          logger.warn(
+            {
+              path: handle.path,
+              stored: stored.fingerprint,
+              current,
+              storedMigrations: stored.migrationCount,
+              appliedMigrations: before.applied.length,
+            },
+            '[DB] Stored schema fingerprint was stale (migration was applied but not recorded); re-recording',
+          );
+        }
+      }
       if (before.pending.length > 0) {
         assertDatabaseIntegrity(sqlite);
         migrate(handle.db, { migrationsFolder });
