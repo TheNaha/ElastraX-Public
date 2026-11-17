@@ -314,19 +314,6 @@ function commandAction(toolName: string, command: string): string | undefined {
   return actions[toolName]?.[command];
 }
 
-function defaultInferredAction(toolName: string, command: string | undefined): string | undefined {
-  if (!command) return undefined;
-  const key = command.toLowerCase();
-  const values: Record<string, Record<string, string>> = {
-    groupadmin: { mute: 'mute', unmute: 'unmute', grouplink: 'link', add: 'add', kick: 'remove', remove: 'remove', promote: 'promote', demote: 'demote' },
-    owner_admin: { leave: 'leave', botleave: 'leave' },
-    media_account: { connect: 'connect', disconnect: 'disconnect', notify: 'notify' },
-    media_library: { library: 'latest', watching: 'latest' },
-    media_search: { find: 'trending' },
-  };
-  return values[toolName]?.[key];
-}
-
 export function parseCommandString(commandString: string): string[] {
   if (!commandString) return [];
   const result: string[] = [];
@@ -437,7 +424,7 @@ export class ParameterValidator {
     if (!argsStr.trim() && !normalizedCommand && keys[0] === 'action' && def.required?.includes('action') && getNoArgAliases(tool).size > 0) return {};
 
     const tokens = parseCommandString(argsStr);
-    const inferred = commandAction(tool.name, normalizedCommand) ?? defaultInferredAction(tool.name, normalizedCommand);
+    const inferred = commandAction(tool.name, normalizedCommand);
     const actionProperty = keys.length > 0 ? properties[keys[0]] : undefined;
     const actionValues = actionProperty?.enum?.map((value) => String(value).toLowerCase()) ?? [];
     let effectiveInferred = inferred;
