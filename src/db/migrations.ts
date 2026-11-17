@@ -165,7 +165,7 @@ export const REQUIRED_INDEXES = [
 
 const REQUIRED_COLUMNS: Record<string, string[]> = {
   messages: ['platform', 'provider_message_id', 'room_key'],
-  reminders: ['claimed_at', 'language', 'remind_at', 'room_key', 'sender_id'],
+  reminders: ['anchor_day', 'claimed_at', 'language', 'remind_at', 'room_key', 'sender_id'],
   user_identities: ['canonical_id', 'lid', 'platform', 'pn'],
   user_roles: ['platform', 'scope', 'scope_room_key', 'user_id'],
   chat_rooms: ['room_key'],
