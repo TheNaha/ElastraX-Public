@@ -62,7 +62,17 @@ export class MessageQueue {
     this.concurrency = Math.max(1, Math.floor(concurrency));
     this.idleTimeoutMs = Math.max(1_000, idleTimeoutMs);
     this.perRoomLimit = Math.max(1, options.perRoomLimit ?? 50);
-    this.globalLimit = Math.max(this.perRoomLimit, options.globalLimit ?? 500);
+    const configuredGlobalLimit = options.globalLimit ?? 500;
+    this.globalLimit = Math.max(this.perRoomLimit, configuredGlobalLimit);
+    if (configuredGlobalLimit < this.perRoomLimit) {
+      // A global backlog cap below the per-room cap cannot be honoured (a single
+      // room may queue up to `perRoomLimit`); say so instead of silently raising
+      // the operator's value.
+      logger.warn(
+        { configuredGlobalLimit, usingGlobalLimit: this.globalLimit, perRoomLimit: this.perRoomLimit },
+        '[MessageQueue] MESSAGE_QUEUE_GLOBAL_LIMIT is below the per-room limit; raising it',
+      );
+    }
     this.maxRunning = Math.max(1, Math.floor(options.maxRunning ?? 8));
     this.maxAgeMs = Math.max(10_000, options.maxAgeMs ?? 5 * 60_000);
     this.shutdownGraceMs = Math.max(1_000, options.shutdownGraceMs ?? 15_000);
