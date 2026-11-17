@@ -3,6 +3,7 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
+import { stat } from 'node:fs/promises';
 import { resolveTargetMedia, loadMediaBytes } from '../utils/mediaResolve';
 import {
   ingestRoomDocument,
@@ -132,6 +133,17 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
       beforeDownload: () => ctx.react?.('⏳'),
     });
     if (!media) return t(ctx.language, canDownload ? 'kb.download_failed' : 'kb.download_not_supported');
+
+    // Check the size before buffering: provider media is allowed up to 200 MB,
+    // so reading first meant the whole file was resident before the 6 MB guard
+    // ran. The guard must bound what the process allocates (PDFTool does the
+    // same).
+    if (media.path) {
+      const info = await stat(media.path).catch(() => null);
+      if (info && info.size > MAX_INDEX_BYTES) {
+        return t(ctx.language, 'kb.too_large', { mb: Math.round(MAX_INDEX_BYTES / (1024 * 1024)) });
+      }
+    }
 
     const buffer = await loadMediaBytes(media);
     if (buffer.byteLength === 0) return t(ctx.language, 'kb.empty_document');

@@ -147,7 +147,16 @@ export class PDFTool extends BaseTool<PDFArgs> {
       return t(lang, 'pdf.error', { msg: getErrorMessage(error) });
     }
 
-    const media = await resolveTargetMedia(ctx);
+    let media: Awaited<ReturnType<typeof resolveTargetMedia>>;
+    try {
+      // `resolveTargetMedia` awaits `ctx.mediaReady`, which rejects when the
+      // provider download failed. Outside the guard that rejection escaped
+      // `execute` instead of becoming a localized error like every other action.
+      media = await resolveTargetMedia(ctx);
+    } catch (error: unknown) {
+      log.error({ err: error, action, chatId: ctx.chatId }, 'PDF media resolution failed');
+      return t(lang, 'pdf.error', { msg: getErrorMessage(error) });
+    }
     if (!media?.path) return t(lang, 'pdf.no_file');
     if (!isPdf(media.mime, media.path)) return t(lang, 'pdf.not_pdf');
 
