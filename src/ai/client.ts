@@ -60,8 +60,9 @@ function isValidUrl(url: string): boolean {
     // (scheme, no credentials, plain http only on loopback). It is not
     // user-controlled, so the classic SSRF model does not apply — and rejecting
     // loopback/RFC1918 hosts here broke exactly the local model server the
-    // documented configuration supports (`http://127.0.0.1:11434/v1`). Only the
-    // cloud metadata address stays blocked, as defence in depth.
+    // documented configuration supports (`http://127.0.0.1:11434/v1`). The
+    // metadata-address check below is a courtesy, not a security boundary: it is
+    // trivially avoidable by name or by an alternate IP form.
     if ((parsed.hostname || '').toLowerCase() === '169.254.169.254') return false;
     return true;
   } catch {
