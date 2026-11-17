@@ -136,7 +136,10 @@ describe('Mock isolation regression', () => {
 
     expect(downloadResult).toContain('Download complete');
     expect(converted.toString()).toBe('webp-bytes');
-    expect(downloadSpawn).toHaveBeenCalledTimes(1);
+    // DownloadTool spawns yt-dlp and then ffprobe (the phone-compatibility
+    // probe); both must go through its own spawn seam.
+    expect(downloadSpawn).toHaveBeenCalledTimes(2);
+    expect(downloadSpawn.mock.calls.map(call => call[0])).toEqual(['yt-dlp', 'ffprobe']);
     expect(ffmpegSpawn).toHaveBeenCalledTimes(1);
   });
 

@@ -11,8 +11,14 @@ import { getErrorMessage } from '../utils/errorUtils';
 import { getDownloadMaxMb, getYtDlpPath } from '../config/runtime';
 import { AuthService } from '../utils/AuthService';
 import { HARD_MEDIA_MAX_BYTES, MIB } from '../providers/media';
-import { runBoundedProcess, type BoundedProcessOptions } from '../providers/process';
+import { runBoundedProcess, type BoundedProcessOptions, type BoundedProcessResult } from '../providers/process';
 import { SsrfSafeProxy, validateSsrfUrl, type SafeNetworkTarget } from '../providers/ssrf';
+import {
+  needsPhoneTranscode,
+  parseVideoProbe,
+  phoneTranscodeArgs,
+  type ProbedVideo,
+} from '../utils/videoCompat';
 
 const log = logger.child({ module: 'DownloadTool' });
 
@@ -62,6 +68,11 @@ function validateFps(fps: string | undefined): string | undefined {
 /**
  * Build a yt-dlp format selector string that constrains resolution and FPS.
  * Falls back to the default best-quality selector when constraints are invalid.
+ *
+ * H.264 (`avc1`) is preferred over the better-scoring AV1/VP9 streams YouTube
+ * also serves in an MP4 container: those play in desktop/web WhatsApp but the
+ * phone players reject them. The post-download guard in `downloadViaYtDlp`
+ * still transcodes whatever the selector falls back to.
  */
 function buildVideoFormatSelector(resolution: string | undefined, fps: string | undefined): string {
   const res = validateResolution(resolution);
@@ -76,8 +87,12 @@ function buildVideoFormatSelector(resolution: string | undefined, fps: string | 
   let fpsFilter = '';
   if (maxFps) fpsFilter = `[fps<=${maxFps}]`;
   const constraint = heightFilter + fpsFilter;
-  if (!constraint) return 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best';
-  return `bestvideo[ext=mp4]${constraint}+bestaudio[ext=m4a]/best${constraint}[ext=mp4]/best`;
+  return [
+    `bv*[vcodec^=avc1][ext=mp4]${constraint}+ba[acodec^=mp4a]`,
+    `bv*[vcodec^=avc1]${constraint}+ba`,
+    `best${constraint}[ext=mp4]`,
+    `best${constraint}`,
+  ].join('/');
 }
 
 const AUDIO_FORMATS = new Set<DownloadFormat>(['mp3', 'aac', 'm4a', 'ogg', 'opus']);
@@ -117,7 +132,7 @@ export const downloadToolDeps = {
   crypto,
   validateUrl: validateSsrfUrl,
   createProxy: () => new SsrfSafeProxy(),
-  runProcess: undefined as undefined | ((options: BoundedProcessOptions) => Promise<void>),
+  runProcess: undefined as undefined | ((options: BoundedProcessOptions) => Promise<BoundedProcessResult | void>),
 };
 
 export function redactUrl(rawUrl: string): string {
@@ -131,6 +146,103 @@ export function redactUrl(rawUrl: string): string {
   } catch {
     return '[invalid-url]';
   }
+}
+
+type ProcessRunner = (options: BoundedProcessOptions) => Promise<BoundedProcessResult | void>;
+
+const FFPROBE_COMMAND = 'ffprobe';
+const FFMPEG_COMMAND = 'ffmpeg';
+const PROBE_TIMEOUT_MS = 30_000;
+
+/** Read the video/audio stream facts with ffprobe. `null` when it cannot be read. */
+async function probeVideoFile(
+  inputPath: string,
+  run: ProcessRunner,
+  signal?: AbortSignal,
+): Promise<ProbedVideo | null> {
+  const result = await run({
+    command: FFPROBE_COMMAND,
+    args: ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', inputPath],
+    cwd: downloadToolDeps.path.dirname(inputPath),
+    kind: 'ffprobe',
+    timeoutMs: PROBE_TIMEOUT_MS,
+    signal,
+    stdoutLimitBytes: 256 * 1024,
+    stderrLimitBytes: 64 * 1024,
+    spawn: downloadToolDeps.spawn,
+  });
+  const stdout = result?.stdout;
+  if (!stdout) return null;
+  return parseVideoProbe(Buffer.from(stdout).toString('utf8'));
+}
+
+/**
+ * Re-encode a video into the shape WhatsApp's phone players accept.
+ *
+ * Runs as a separate ffmpeg pass rather than through `yt-dlp --recode-video`
+ * because that flag only converts when the *container* differs: an AV1 stream
+ * merged into an `.mp4` is already "mp4" and is therefore left untouched.
+ */
+async function transcodeForPhone(
+  inputPath: string,
+  info: ProbedVideo,
+  run: ProcessRunner,
+  options: { signal?: AbortSignal; timeoutMs: number },
+): Promise<string> {
+  const outputPath = `${inputPath.replace(/\.[a-zA-Z0-9]+$/, '')}.phone.mp4`;
+  await run({
+    command: FFMPEG_COMMAND,
+    args: [
+      '-nostdin', '-hide_banner', '-loglevel', 'error', '-y',
+      '-i', inputPath,
+      ...phoneTranscodeArgs(info),
+      outputPath,
+    ],
+    cwd: downloadToolDeps.path.dirname(inputPath),
+    kind: 'ffmpeg',
+    timeoutMs: options.timeoutMs,
+    signal: options.signal,
+    stdoutLimitBytes: 64 * 1024,
+    stderrLimitBytes: 64 * 1024,
+    env: { TMPDIR: downloadToolDeps.path.dirname(inputPath) },
+    spawn: downloadToolDeps.spawn,
+  });
+  return outputPath;
+}
+
+/**
+ * Make a downloaded video playable by WhatsApp on a phone.
+ *
+ * Returns the input path unchanged when it is already compatible or when it
+ * cannot be probed. A transcode failure propagates: sending a file known to be
+ * rejected is the bug being fixed, so the caller must surface it.
+ */
+export async function normalizeVideoForWhatsApp(
+  inputPath: string,
+  options: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string> {
+  const run: ProcessRunner = downloadToolDeps.runProcess ?? (runOptions => runBoundedProcess(runOptions));
+  let probed: ProbedVideo | null;
+  try {
+    probed = await probeVideoFile(inputPath, run, options.signal);
+  } catch (error) {
+    // Do not break a deployment that simply lacks ffprobe: ffmpeg itself is
+    // already required by `--recode-video`. The file is sent unchanged.
+    log.warn({ err: error }, 'Could not probe the downloaded video; sending it unchanged');
+    return inputPath;
+  }
+  if (!probed || !needsPhoneTranscode(probed)) return inputPath;
+  log.info(
+    {
+      vcodec: probed.vcodec, acodec: probed.acodec, pixFmt: probed.pixFmt,
+      width: probed.width, height: probed.height,
+    },
+    'Transcoding download to a WhatsApp-phone-compatible MP4',
+  );
+  return transcodeForPhone(inputPath, probed, run, {
+    signal: options.signal,
+    timeoutMs: options.timeoutMs ?? 300_000,
+  });
 }
 
 export async function downloadViaYtDlp(
@@ -224,7 +336,27 @@ export async function downloadViaYtDlp(
     const info = await downloadToolDeps.fs.stat(outputPath);
     if (!info.isFile()) throw new Error('Downloader output is not a regular file.');
     if (info.size > effectiveBytes) throw new Error(`Download exceeds the ${Math.floor(effectiveBytes / MIB)} MB limit.`);
-    const buffer = await downloadToolDeps.fs.readFile(outputPath);
+
+    // A YouTube MP4 is often AV1/VP9 inside the container (desktop WhatsApp
+    // plays it, phones reject it), and `--recode-video mp4` does not touch a
+    // file whose container is already MP4. Probe and, when needed, transcode to
+    // H.264/AAC/yuv420p, capped at 1080p.
+    let finalPath = outputPath;
+    if (format === 'mp4') {
+      finalPath = await normalizeVideoForWhatsApp(outputPath, {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs ?? 300_000,
+      });
+      if (finalPath !== outputPath) {
+        const transcoded = await downloadToolDeps.fs.stat(finalPath);
+        if (!transcoded.isFile()) throw new Error('Transcoded output is not a regular file.');
+        if (transcoded.size > effectiveBytes) {
+          throw new Error(`Download exceeds the ${Math.floor(effectiveBytes / MIB)} MB limit after transcoding.`);
+        }
+      }
+    }
+
+    const buffer = await downloadToolDeps.fs.readFile(finalPath);
     if (buffer.length > effectiveBytes) throw new Error(`Download exceeds the ${Math.floor(effectiveBytes / MIB)} MB limit.`);
     return buffer;
   } finally {
@@ -235,7 +367,7 @@ export async function downloadViaYtDlp(
 
 export class DownloadTool extends BaseTool<DownloadArgs> {
   readonly name = 'download_media';
-  readonly description = 'Download audio/video from a public HTTP(S) URL (YouTube, TikTok, Instagram, etc). Default: mp4 for video, mp3 for audio.';
+  readonly description = 'Download audio/video from a public HTTP(S) URL (YouTube, TikTok, Instagram, etc). Default: mp4 for video, mp3 for audio. MP4 video is converted to the H.264/AAC 1080p profile WhatsApp phones can play.';
   readonly aliases = ['download', 'dl'];
   readonly category = 'media';
   readonly permissions = 'user';

@@ -6,7 +6,7 @@ import {
   redactUrl,
 } from '../src/tools/DownloadTool';
 import { HARD_MEDIA_MAX_BYTES, MIB } from '../src/providers/media';
-import type { BoundedProcessOptions } from '../src/providers/process';
+import type { BoundedProcessOptions, BoundedProcessResult } from '../src/providers/process';
 import type { MessageContext } from '../src/core/MessageContext';
 import type { SafeNetworkTarget } from '../src/providers/ssrf';
 
@@ -31,7 +31,7 @@ const mocks = {
   validate: mock(async () => safeTarget),
   proxyStart: mock(async function (this: { url: string }) { return this; }),
   proxyClose: mock(async () => {}),
-  runProcess: mock(async (_options: BoundedProcessOptions) => undefined),
+  runProcess: mock(async (_options: BoundedProcessOptions): Promise<BoundedProcessResult | void> => undefined),
 };
 
 const proxy = {
@@ -114,6 +114,73 @@ describe('DownloadTool security', () => {
     const options = mocks.runProcess.mock.calls[0]![0];
     expect(options.args).toContain(`${HARD_MEDIA_MAX_BYTES / MIB}m`);
     expect(options.watchDirectory).toEqual({ path: expect.any(String), maxBytes: HARD_MEDIA_MAX_BYTES });
+  });
+
+  test('prefers H.264/AAC streams so phones can play the result', async () => {
+    await downloadViaYtDlp('https://example.com/video', 'mp4', 50, { max_resolution: '1080p' });
+    const options = mocks.runProcess.mock.calls[0]![0];
+    const selector = options.args[options.args.indexOf('-f') + 1]!;
+    // AV1/VP9 in an MP4 container plays on desktop WhatsApp and is rejected by
+    // the phone players, so the selector asks for avc1 first.
+    expect(selector.indexOf('vcodec^=avc1')).toBeLessThan(selector.indexOf('[height<=1080]'));
+    expect(selector).toContain('acodec^=mp4a');
+  });
+
+  test('transcodes an AV1 download to a phone-playable H.264 MP4', async () => {
+    mocks.runProcess.mockImplementation(async (options: BoundedProcessOptions) => {
+      if (options.kind !== 'ffprobe') return undefined;
+      return {
+        stdout: Buffer.from(JSON.stringify({
+          streams: [
+            { codec_type: 'video', codec_name: 'av1', pix_fmt: 'yuv420p', width: 3840, height: 2160 },
+            { codec_type: 'audio', codec_name: 'opus' },
+          ],
+          format: { format_name: 'mov,mp4,m4a,3gp,3g2,mj2' },
+        })),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        signal: null,
+        stderrTruncated: false,
+      };
+    });
+
+    await downloadViaYtDlp('https://example.com/video', 'mp4', 50);
+
+    const calls = mocks.runProcess.mock.calls.map(call => call[0]);
+    const ffmpegCall = calls.find(call => call.kind === 'ffmpeg');
+    expect(ffmpegCall).toBeDefined();
+    expect(ffmpegCall!.args).toContain('libx264');
+    expect(ffmpegCall!.args).toContain('yuv420p');
+    expect(ffmpegCall!.args.slice(ffmpegCall!.args.indexOf('-vf') + 1, ffmpegCall!.args.indexOf('-vf') + 2)).toEqual(['scale=1920:-2']);
+    expect(ffmpegCall!.args).toContain('+faststart');
+    expect(ffmpegCall!.args).toContain('aac');
+    // The mixed AV1/Opus source is transcoded, so the transcoded sibling is what
+    // gets read and sent.
+    expect(mocks.readFile).toHaveBeenCalledWith(expect.stringContaining('.phone.mp4'));
+  });
+
+  test('does not re-encode a download that is already phone-compatible', async () => {
+    mocks.runProcess.mockImplementation(async (options: BoundedProcessOptions) => {
+      if (options.kind !== 'ffprobe') return undefined;
+      return {
+        stdout: Buffer.from(JSON.stringify({
+          streams: [
+            { codec_type: 'video', codec_name: 'h264', pix_fmt: 'yuv420p', width: 1280, height: 720 },
+            { codec_type: 'audio', codec_name: 'aac' },
+          ],
+          format: { format_name: 'mov,mp4,m4a,3gp,3g2,mj2' },
+        })),
+        stderr: Buffer.alloc(0),
+        code: 0,
+        signal: null,
+        stderrTruncated: false,
+      };
+    });
+
+    await downloadViaYtDlp('https://example.com/video', 'mp4', 50);
+    const kinds = mocks.runProcess.mock.calls.map(call => call[0].kind);
+    expect(kinds).toEqual(['yt-dlp', 'ffprobe']);
+    expect(mocks.readFile).toHaveBeenCalledWith(expect.not.stringContaining('.phone.mp4'));
   });
 
   test('rejects understated or oversized output before reading it', async () => {
