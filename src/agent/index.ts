@@ -286,8 +286,8 @@ async function executeRequestedToolCalls(
     /**
      * Role/context used for per-action authorization. The slash path has always
      * applied `COMMAND_POLICIES`; the model path previously validated arguments
-     * only, so a table entry such as `language.set: admin` protected nothing
-     * when the model (not the user) chose the action.
+     * only, so a table entry such as `role.grant: admin` protected nothing when
+     * the model (not the user) chose the action.
      */
     accessContext: { roles: string[]; isGroup: boolean; isOwner: boolean; platform: string; userId: string };
   },
