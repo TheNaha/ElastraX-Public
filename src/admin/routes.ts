@@ -450,6 +450,9 @@ const el = (tag, attrs, ...kids) => {
 
 const num = n => (typeof n === 'number' ? n.toLocaleString() : (n ?? '—'));
 const pct = n => (typeof n === 'number' ? (n * 100).toFixed(1) + '%' : '—');
+// The stranded table lists received + processing + failed; the headline stat
+// used to read only 'received', so a mailbox full of failed rows reported 0.
+const strandedInbox = states => (states.received || 0) + (states.processing || 0) + (states.failed || 0);
 
 async function api(path, options) {
   const opts = Object.assign({ credentials: 'same-origin' }, options || {});
@@ -458,7 +461,12 @@ async function api(path, options) {
     if (opts.body) opts.headers['Content-Type'] = 'application/json';
   }
   const res = await fetch('/admin/' + path, opts);
-  if (res.status === 401) { location.href = '/admin/login'; throw new Error('unauthorized'); }
+  if (res.status === 401) {
+    // login answers a wrong token with 401 + {error}; redirecting there was a
+    // reload of the page the operator is already on, which destroyed the
+    // message before it could be shown.
+    if (String(path).indexOf('api/login') !== 0) { location.href = '/admin/login'; throw new Error('unauthorized'); }
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
   return body;
@@ -581,7 +589,7 @@ const VIEWS = {
     return [
       el('div', { class: 'grid' },
         Object.entries(states).map(([k, v]) => stat(k, num(v), null)),
-        stat('Inbox stranded', num((d.inbox.byState || {}).received || 0), 'no recovery scan exists')),
+        stat('Inbox stranded', num(strandedInboxCount(d.inbox.byState || {})), 'no recovery scan exists')),
       card('Outbox — failed and dead-lettered', table(['ID', 'Platform', 'Room', 'State', 'Tries', 'Error', 'Body', ''],
         d.outbox.rows.map(r => [String(r.id), r.platform || '—', r.chatRoomId, r.state, num(r.attempts),
           r.lastError || '—', r.text || '—',
