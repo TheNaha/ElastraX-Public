@@ -10,6 +10,8 @@ const log = logger.child({ module: 'SSRF' });
 const BLOCKED_HOST_SUFFIXES = ['.localhost', '.local', '.internal', '.intranet', '.lan', '.home', '.arpa'];
 const ALLOWED_PORTS = new Set([80, 443]);
 const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+/** Upper bound on a CONNECT tunnel handshake, so a blackholed host cannot pin sockets. */
+const CONNECT_TIMEOUT_MS = 15_000;
 
 export class SsrfPolicyError extends Error {
   readonly code = 'SSRF_BLOCKED';
@@ -169,14 +171,24 @@ export class SsrfSafeProxy {
       family: target.family,
     }, upstreamResponse => {
       if (upstreamResponse.socket) this.trackSocket(upstreamResponse.socket);
+      upstreamResponse.on('error', () => response.destroy());
       response.writeHead(upstreamResponse.statusCode ?? 502, upstreamResponse.statusMessage, upstreamResponse.headers);
       upstreamResponse.pipe(response);
     });
     upstream.on('socket', socket => this.trackSocket(socket));
     upstream.on('error', () => {
+      if (response.writableEnded || response.destroyed) return;
       if (!response.headersSent) response.writeHead(502, { 'Content-Type': 'text/plain' });
       response.end('Upstream connection failed');
     });
+    // When the proxied client goes away (yt-dlp cancels, the caller times out)
+    // nothing used to stop the upstream body from being piped into a destroyed
+    // ServerResponse, which can emit an unhandled 'error' during the download.
+    const tearDownUpstream = () => {
+      if (!upstream.destroyed) upstream.destroy();
+    };
+    response.on('close', tearDownUpstream);
+    response.on('error', tearDownUpstream);
     request.pipe(upstream);
   }
 
@@ -196,13 +208,24 @@ export class SsrfSafeProxy {
     const upstreamSocket = net.connect({ host: target.address, port: target.port });
     this.trackSocket(upstreamSocket);
     this.trackSocket(clientSocket);
+    // A host that blackholes the SYN used to leave both sockets open until the
+    // caller's own timeout, and the client saw a bare reset instead of a status.
+    const connectTimer = setTimeout(() => {
+      if (upstreamSocket.connecting) {
+        clientSocket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
+        upstreamSocket.destroy();
+      }
+    }, CONNECT_TIMEOUT_MS);
+    connectTimer.unref?.();
     upstreamSocket.once('connect', () => {
+      clearTimeout(connectTimer);
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       if (head.length > 0) upstreamSocket.write(head);
       upstreamSocket.pipe(clientSocket);
       clientSocket.pipe(upstreamSocket);
     });
     const close = () => {
+      clearTimeout(connectTimer);
       upstreamSocket.destroy();
       clientSocket.destroy();
       this.sockets.delete(upstreamSocket);

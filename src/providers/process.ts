@@ -241,10 +241,16 @@ async function runWithPermit(options: BoundedProcessOptions): Promise<BoundedPro
     });
 
     child.on('error', (error) => {
-      spawnError = error;
       if (!child.pid) {
+        spawnError = error;
         rejectOnce(new ProcessExecutionError('PROCESS_SPAWN_FAILED', `Failed to start ${options.command}: ${error.message}`, { cause: error }));
+        return;
       }
+      // The process really started. A later 'error' (a failed kill, a stdio
+      // problem) was recorded as `spawnError` and the `close` handler preferred
+      // it over `code === 0`, so a successful run was reported as a spawn
+      // failure and its stdout discarded.
+      log.debug({ err: error, command: options.command }, 'Process emitted an error after start');
     });
 
     child.on('close', (code, signal) => {
