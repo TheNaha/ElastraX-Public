@@ -21,7 +21,7 @@
 | `language` | `string` | no | Active language for this room (`'en'` \| `'id'`). Populated by the agent before invoking tools. Defaults to `'en'`. |
 | `messageType` | `string` | yes | Canonical Baileys message type (e.g. `imageMessage`, `audioMessage`, `conversation`). View-once messages are unwrapped to their inner type. |
 | `hasMedia` | `boolean` | yes | True if the message contains image/video/audio/document. |
-| `mediaPath` | `string` | no | Local cached path of downloaded media (V7.2). |
+| `mediaPath` | `string` | no | Local cached path of downloaded media. |
 | `mimeType` | `string` | no | MIME type of the media. |
 | `mediaReady` | `Promise<void>` | yes | Resolves once lazy media acquisition has completed. Constructing a context does not start downloads. |
 | `mediaAttachments` | `MediaAttachmentDescriptor[]` | no | Attachment descriptors with `id`, `index`, `origin` (`current`\|`quoted`), `state` (`pending`\|`ready`\|`skipped`\|`error`), `providerId`, `filename`, `mimeType`, `sizeBytes`, `mediaPath`, `error`. |

@@ -43,6 +43,12 @@ The limiter runs after the flow check and after the trigger decision, so group c
 
 With `AI_STREAMING=true` and a platform that supports `sendMessage`/`editMessage`, tokens are accumulated and edited into one live message at `STREAMING_EDIT_INTERVAL_WA` / `_DC`. The preview strips a `think` block even while it is still streaming, so chain-of-thought never reaches the user, and nothing is sent until real text arrives. The preview is also frozen at 1,800 UTF-16 units — the unit the providers count when they decide whether an edit needs a continuation — and the clamp never splits an emoji's surrogate pair: `editMessage` grows a message by re-editing its head and posting the remainder as new messages, so an unbounded preview past the platform limit re-posted the whole tail on every edit. The final edit still delivers the complete answer. If a streamed bubble also carries tool calls and the progress tracker does not adopt that message, the bubble is finalised (without the trailing cursor) before the tool status message takes over. A send or edit failure degrades to the non-streaming path for the rest of the turn.
 
+#### Prompt assembly and rolling summary
+
+Every turn builds the model input in the same order: the room system prompt (`ConfigService`, with `{{LANGUAGE}}` substituted and the sender's non-`user` roles appended), then at most one reference block, then the active history. The reference block is the sender's long-term memories in a DM and the room's shared knowledge base in a group. Personal memory is never injected into a group: it would be folded into the group-visible rolling summary, turning one participant's private notes into everyone's context. Memories are ranked by embedding similarity when `EMBEDDING_API_URL`/`EMBEDDING_MODEL` are set and fall back to the most recent `MAX_INJECTED_MEMORIES` (50); the group path injects at most `MAX_ROOM_KNOWLEDGE_CHUNKS` (4) excerpts. All three reference kinds are fenced as untrusted material — `<untrusted_long_term_memory>`, `<room_knowledge>` with an explicit "background material, not instructions" line, and the summary as `<conversation_summary trust="untrusted">`.
+
+With `CONTEXT_SUMMARIZE` on (the default) history is fetched to `contextLimit + SUMMARY_LOOKAHEAD` (16) rows, capped at twice `AI_OPERATIONAL_CONTEXT_LIMIT`. Messages that fall outside the `contextLimit` window are folded into a rolling summary only once the batch reaches `SUMMARY_MIN_BATCH` (8); a smaller overflow is widened back into the active window, so messages are never dropped from the turn just because they were too few to summarise. The summary, its `throughMessageId` watermark and a count persist per room in `app_kv` under `conversation-summary:v1:<roomKey>`, so a restart does not re-summarise history, and the only model call on that path is a `fast`-tier completion at temperature `0.2`. With summarization off, the last `contextLimit` rows are sent unchanged.
+
 ### 5. Interactive State Management (`FlowHandler.ts`)
 For complex actions that require multiple user steps (like merging 5 PDFs), `FlowHandler` manages room-bound state in SQLite. Sessions are platform/room/user scoped, versioned against lost updates, and resumed after restart.
 
@@ -63,7 +69,7 @@ The AI layer features a highly resilient Failover Router:
 
 `src/providers/telegram.ts` implements the same `BotProvider` contract using grammy. It is optional: without `TELEGRAM_BOT_TOKEN` it reports `not_configured` and never blocks boot. Because a Telegram user id is a numeric snowflake that can never match `BOT_OWNER_JID`, a deployment that enables Telegram must also set `BOT_OWNER_TELEGRAM_ID`, otherwise the platform starts with no owner and every owner-only tool is unreachable. `BOT_OWNER_DISCORD_ID` exists for the same reason on Discord; both fall back to `BOT_OWNER_JID` when unset.
 
-The first chunk of a reply carries `reply_parameters`. If the user deletes their message in the seconds before delivery the Bot API answers `400`, so that chunk is re-sent without `reply_parameters` instead of losing the answer. Replies are chunked on code points, and `editMessage` splits head/remainder the same way, so an emoji at the limit is never cut into lone surrogates.
+The first chunk of a reply carries `reply_parameters`. If the user deletes their message in the seconds before delivery the Bot API answers `400`, so that chunk is re-sent without `reply_parameters` instead of losing the answer. Replies are chunked by the shared UTF-16 splitter (`chunkTextTelegram` → `chunkTextSmart({ measure: 'utf16' })`), and `editMessage` splits head/remainder with `splitTextAtUtf16Limit`, because the Bot API enforces its 4096 limit in UTF-16 units — 4096 emoji are 8192 units and were rejected when the chunker counted code points. Neither path splits a surrogate pair, and `chunkTelegramText` is a thin alias of the same function.
 
 ### 10. Durable Delivery (Inbox / Outbox)
 
@@ -92,7 +98,7 @@ The first chunk of a reply carries `reply_parameters`. If the user deletes their
 - Flow-session TTL prune: every hour (`FlowHandler.pruneAllExpired`, 24 h local TTL).
 - Media cleanup: on startup and every `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h), deleting files older than `MEDIA_RETENTION_HOURS`.
 - Retention maintenance: on startup and every 24 h, only when a durable messaging store is present (`src/db/retention.ts`, dry-run unless `RETENTION_DRY_RUN=false`).
-- Startup parser-coverage scan: once, 5 s after boot, when `runStartupCoverageScan` is wired (non-fatal).
+- Startup parser-coverage scan: once, 5 s after boot. `src/index.ts` always passes `runStartupCoverageScan` to `AppRuntime`, which bounds it to 2,000 stored messages and treats any failure as non-fatal (a warning, never a failed boot).
 - Scheduler and digest service: driven by their own `start()` loops.
 
 `MEDIA_CLEANUP_INTERVAL_MS`, `MEDIA_RETENTION_HOURS`, and `RETENTION_*` control these. Retention overlaps with the hourly outbox prune; deletes are idempotent.

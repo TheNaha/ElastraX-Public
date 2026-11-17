@@ -141,4 +141,29 @@ A rejected enqueue returns `503`; the server never fabricates durability or fall
 
 Set `METRICS_AUTH_TOKEN` to enable `/metrics`. Without it the route is hidden with `404`. With it, send `Authorization: Bearer <token>` or `X-Metrics-Token`. Query-string metrics authentication is not supported.
 
+### Exported metrics
+
+`/metrics` renders Prometheus text (`text/plain; version=0.0.4`) from `HealthMetrics.getPrometheusMetrics` (`src/utils/HealthMetrics.ts`). Series are emitted only for keys that have been recorded, so a fresh process may export fewer lines than this table lists.
+
+| Family | Type | Labels | Meaning |
+|---|---|---|---|
+| `elastrax_uptime_seconds` | gauge | — | Process uptime. |
+| `elastrax_messages_total` | counter | `status` (`received`, `processed`, `error`) | Inbound messages by outcome. |
+| `elastrax_message_duration_ms` | gauge | `quantile` (`0.5`, `0.95`, `0.99`) | Message-processing latency. |
+| `elastrax_llm_requests_total` | counter | — | LLM requests issued. |
+| `elastrax_llm_failures_total` | counter | — | Failed LLM requests. |
+| `elastrax_llm_latency_ms` | gauge | `quantile` | LLM latency. |
+| `elastrax_tokens_total` | counter | `model`, `type` (`prompt`, `completion`, `total`) | Token usage. |
+| `elastrax_provider_requests_total` | counter | `provider`, `status` (`success`, `failure`) | AI-provider (LLM) request outcomes, broken down by configured provider name. |
+| `elastrax_tool_invocations_total` | counter | `tool` | Tool invocations. |
+| `elastrax_tool_errors_total` | counter | `tool` | Tool failures. |
+| `elastrax_tool_duration_ms` | gauge | `tool`, `quantile` | Tool latency. |
+| `elastrax_queue_rooms` | gauge | — | Rooms with a message-queue entry. |
+| `elastrax_queue_pending` | gauge | — | Pending queue tasks. |
+| `elastrax_queue_running` | gauge | — | Running queue tasks. |
+| `elastrax_feedback_total` | counter | `sentiment` (`positive`, `negative`) | Reaction feedback on bot replies. |
+| `elastrax_feedback_retracted_total` | counter | — | Feedback reactions withdrawn. |
+| `elastrax_process_memory_bytes` | gauge | `type` (`rss`, `heapTotal`, `heapUsed`) | Process memory. |
+| `elastrax_service_health` | gauge | `service` | Health-monitor result; `1` healthy, `0` unhealthy. |
+
 Native startup binds `127.0.0.1` by default. See [Deployment](./deployment.md) for the loopback Compose binding and reverse-proxy example.

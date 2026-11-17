@@ -17,7 +17,7 @@ All eleven propose the same change to `src/webhooks/utils.ts`: hash both operand
 Why this group is separated from the rest:
 
 - **It touches HMAC webhook verification.** A mistake here either breaks every webhook delivery or weakens authentication. It must be reviewed by a human with the current file open, not merged because CI is red.
-- **The pattern is not yet on `main`.** Committed `main` still performs a length comparison with `timingSafeEqual(expectedBytes, expectedBytes)` on mismatch. The eleven PRs are therefore *not* superseded in content — they are duplicates of one another.
+- **The pattern is now on `main`.** `safeSecretCompare` (`src/webhooks/utils.ts`) hashes both operands with SHA-256 into fixed 32-byte digests and compares them with `timingSafeEqual`, which is the change this group proposed. The eleven PRs are therefore duplicates of one another *and* superseded in content.
 - **They are stale.** They were generated against older revisions of `src/webhooks/utils.ts`, which is under active change. A clean application cannot be assumed.
 - **None of them adds a regression test.** A correct adoption needs a test that a wrong-length secret and a wrong-content secret are both rejected, and that the comparison path is exercised.
 

@@ -56,8 +56,8 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 | **Language** | `/language` | Switches reply language (`en`/`id`) per chat. |
 | **Delete Message** | `/del` | Deletes a quoted bot message (WhatsApp) or the quoted message (Discord). |
 | **Menfess** | `/menfess` | Anonymous confession relay to configured target chats. |
-| **Game Search** | — | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
-| **Software Search** | — | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
+| **Game Search** | `/searchgame`, `/findgame` | Searches trusted repack sites for PC games. Opt-in: registered only when `ENABLE_GAME_SEARCH` is set. |
+| **Software Search** | `/searchsoftware`, `/findsoftware` | Searches trusted sites for desktop software. Opt-in: registered only when `ENABLE_SOFTWARE_SEARCH` is set. |
 | **Reload Plugins** | `/reload` | Owner-only: reloads the tool registry and re-evaluates plugin files from `src/plugins/` so edited code takes effect (opt-in: requires `ENABLE_PLUGIN_RELOAD=true` and `PLUGIN_ALLOWED_PERMISSIONS` including `owner`). |
 | **Owner Admin** | `/owner`, `/broadcast`, `/leave`, `/botleave`, `/pinout` | Owner-only: broadcast to all chats, leave a group, `system_info` (memory/uptime/room count), and `pinout` (log inventory under `LOG_ROOT`). |
 

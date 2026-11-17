@@ -16,6 +16,7 @@ ElastraX runs several long-lived services and timers inside the single bot proce
 | MediaService | `src/utils/MediaService.ts` | Jellyfin client for media rollups and watch links. |
 | NotificationSubscriptionService | `src/utils/NotificationSubscriptionService.ts` | Room-level notification subscriptions (seerr/jellyfin, notify types). |
 | ConfigService | `src/utils/ConfigService.ts` | Per-room resolved config: system prompt, context limit, temperature, allow tools, auto-reply-all, summarize, long-term memory. |
+| ConversationSummarizer | `src/utils/ConversationSummarizer.ts` (persisted via `src/ai/summaryStore.ts`) | Rolls history past the context window into a per-room summary so it need not be re-sent; watermark lives in `app_kv`, and an overflow below the batch threshold is widened back into the active window instead of dropped. |
 | AuthService | `src/utils/AuthService.ts` | Role and privilege resolution for senders; merges DB roles with role defaults. |
 | IdentityService | `src/utils/IdentityService.ts` | Canonical user identity: LID/pn alias resolution and merge of a legacy identity into the canonical one. |
 | ServiceBindingService | `src/utils/ServiceBindingService.ts` | CRUD for external account bindings (Jellyfin, Seerr) used by the binding-gated media tools. |
@@ -49,7 +50,7 @@ ElastraX runs several long-lived services and timers inside the single bot proce
 | Flow-session TTL prune | 1 h | `FlowHandler.pruneAllExpired` (24 h local TTL) |
 | Media cleanup | startup + `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h) | `MediaCleanup.pruneOldFiles` deletes files older than `MEDIA_RETENTION_HOURS` |
 | Retention maintenance | startup + 24 h (durable store only) | `runRetentionMaintenance` (dry-run unless `RETENTION_DRY_RUN=false`) |
-| Startup coverage scan | once, 5 s after boot | `runStartupCoverageScan` (non-fatal; only wired when `runStartupCoverageScan` is passed) |
+| Startup coverage scan | once, 5 s after boot | `runStartupCoverageScan` over at most 2 000 stored messages; wired by the default bootstrap and non-fatal on error |
 | Scheduler | 30 s | `Scheduler.processReminders` |
 | Digest service | 60 s | `DigestService.processDue` |
 | Health monitor | 60 s | `HealthMonitor` pings |
@@ -82,7 +83,7 @@ A reminder whose text starts with `/task ` is executed as an agent turn in its r
 - **At-most-once claim, with a safe stale window.** The stale-claim window is `max(2 min, SCHEDULED_TASKS_TIMEOUT_MS)`. A tick that overlaps a still-running scheduled task (which may legitimately run for up to 15 min) therefore cannot steal the claim and send a duplicate.
 - **Send failure.** Retries use attempt-aware exponential backoff (30 s base, exponent capped at 7) and stop after `MAX_DELIVERY_ATTEMPTS = 5`, which retires the reminder with an error log. The retry is paced through `claimed_at`, not `remindAt`.
 - **Deferral (no sender for the platform).** When a provider is in degraded mode or absent, delivery cannot even be attempted. This is tracked in a separate counter with `MAX_DEFER_ATTEMPTS = 24` and a backoff capped at 1 h. A recurring reminder is **never** retired by this path; its next occurrence is the retry.
-- **Recurring schedules keep their anchor.** On failure and deferral, `remindAt` is left alone for recurring rows, so a transient error cannot re-base a 09:00 daily reminder to the retry time. Monthly cadence is anchored to `created_at`'s day-of-month, so a 31st-of-month reminder does not drift to the 28th.
+- **Recurring schedules keep their anchor.** On failure and deferral, `remindAt` is left alone for recurring rows, so a transient error cannot re-base a 09:00 daily reminder to the retry time. The monthly cadence is anchored to `reminders.anchor_day`, captured from the first fire date when the reminder is created, because `remind_at` afterwards holds the *clamped* date (Jan 31 → Feb 28) and `created_at` is unrelated to it. A 31st-of-month reminder therefore fires on the 28th/30th only in a shorter month and returns to the 31st. Rows written before the column existed fall back to `created_at`'s day-of-month.
 - **Permanent failures retire immediately.** A `room_key`/`chat_room_id` mismatch or an unparsable recurrence retires the row on first sight instead of retrying forever.
 - In-memory attempt counters are cleared when the row succeeds or is deleted.
 
