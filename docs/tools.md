@@ -98,6 +98,11 @@ Mutating (non-`read`) tools and their overrides (`src/tools/registry.ts`, `MUTAB
 
 All other built-in tools default to `read` mutability unless their own `metadata.access.mutability` overrides it.
 
+### Downloaded video compatibility
+
+`download_media` (and `/download`) prefers H.264/AAC streams and, after the download, probes the file with `ffprobe`. Any MP4 that is not already H.264 + `yuv420p` + AAC with even dimensions and a longest edge of at most 1920 (AV1/VP9 in an MP4 container is common on YouTube) is transcoded with `ffmpeg` to that profile before it is sent. WhatsApp's desktop and web clients play AV1/VP9, but the phone players reject those files with "something is wrong with the video file". The `yt-dlp --recode-video mp4` flag is not enough on its own: it only converts when the *container* differs, so an AV1 stream inside an MP4 is left untouched.
+
+
 ### Opt-in tools
 
 | Tool | Flag | Registered when |
