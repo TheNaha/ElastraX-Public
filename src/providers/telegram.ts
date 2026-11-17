@@ -109,7 +109,8 @@ type MessageCarrier = {
   contact?: unknown;
 };
 
-function messageTypeOf(ctx: MessageCarrier): string {
+function messageTypeOf(ctx: MessageCarrier | null | undefined): string {
+  if (!ctx) return 'unknown';
   if (ctx.photo) return 'imageMessage';
   if (ctx.video) return 'videoMessage';
   if (ctx.voice || ctx.audio) return 'audioMessage';
@@ -120,7 +121,8 @@ function messageTypeOf(ctx: MessageCarrier): string {
   return ctx.text ? 'conversation' : 'unknown';
 }
 
-function mediaOf(ctx: MessageCarrier): { fileId: string; mime?: string; size?: number; name?: string } | null {
+function mediaOf(ctx: MessageCarrier | null | undefined): { fileId: string; mime?: string; size?: number; name?: string } | null {
+  if (!ctx) return null;
   if (ctx.photo?.length) {
     // Telegram sends every photo in several sizes; the last is the largest.
     const largest = ctx.photo[ctx.photo.length - 1]!;
@@ -475,7 +477,11 @@ export class TelegramProvider implements BotProvider {
   /** Download a Telegram file to a stored media path. */
   private async downloadToStorage(ctx: GrammyContext): Promise<{ mediaPath: string; mime: string } | null> {
     const bot = this.requireBot('downloadMedia');
-    const media = mediaOf(ctx);
+    // Read the message itself, not the Context: grammy exposes `photo`/`video`/
+    // `document`/… as getters on `Context.prototype`, and a spread or a direct
+    // property read on the Context yields `undefined`. Reading `ctx.msg` is what
+    // made every Telegram attachment invisible (hasMedia=false, no download).
+    const media = mediaOf(ctx.msg as unknown as MessageCarrier | undefined);
     if (!media) return null;
     if (media.size && media.size > MAX_MEDIA_BYTES) {
       throw new ProviderOperationError('telegram', 'downloadMedia', `Attachment exceeds ${MAX_MEDIA_BYTES} bytes.`, undefined, 'UNSUPPORTED');
@@ -516,7 +522,10 @@ export class TelegramProvider implements BotProvider {
     if (chatId === undefined || !msg) return null;
 
     const isGroup = isGroupChat(ctx);
-    const media = mediaOf(ctx as unknown as MessageCarrier);
+    // `msg`, not `ctx`: the media fields live on the message object. grammy's
+    // `Context` does not proxy them, so reading them off the Context produced
+    // `null` for every attachment and every quoted message.
+    const media = mediaOf(msg as unknown as MessageCarrier);
     // Text that also carries media keeps the caption as the text; the media is
     // surfaced separately so the agent can see both.
     const text = msg.text ?? msg.caption ?? '';
@@ -644,7 +653,7 @@ export class TelegramProvider implements BotProvider {
       senderName: senderDisplayName(ctx),
       text,
       mentionedIds,
-      messageType: messageTypeOf(ctx),
+      messageType: messageTypeOf(msg as unknown as MessageCarrier),
       isGroup,
       isBotMentioned,
       hasMedia: Boolean(media),
@@ -818,7 +827,22 @@ export class TelegramProvider implements BotProvider {
   private buildQuoted(ctx: GrammyContext): MessageContext['quoted'] {
     const replyTo = ctx.msg?.reply_to_message;
     if (!replyTo) return undefined;
-    const carrier = { ...ctx, msg: replyTo } as unknown as MessageCarrier;
+    // Spread would copy only grammy Context's own properties (`update`, `api`,
+    // `me`) and silently drop every media getter, so the quoted message always
+    // looked like plain text. Build the carrier from the replied-to message.
+    const carrier: MessageCarrier = {
+      msg: replyTo,
+      text: replyTo.text,
+      caption: replyTo.caption,
+      photo: replyTo.photo,
+      video: replyTo.video,
+      voice: replyTo.voice,
+      audio: replyTo.audio,
+      document: replyTo.document,
+      sticker: replyTo.sticker,
+      location: replyTo.location,
+      contact: replyTo.contact,
+    };
     const media = mediaOf(carrier);
     const body = replyTo.text ?? replyTo.caption ?? '';
     return {

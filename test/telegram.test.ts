@@ -14,6 +14,7 @@ import { describe, test, expect, beforeEach, afterAll } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 
 const { AuthService } = await import('../src/utils/AuthService');
+const { Context: GrammyContext } = await import('grammy');
 const { chunkTelegramText, TELEGRAM_TEXT_LIMIT } = await import('../src/providers/telegramText');
 const { TelegramProvider, telegramProviderDeps } = await import('../src/providers/telegram');
 
@@ -338,6 +339,128 @@ describe('TelegramProvider lifecycle', () => {
     expect(continuations[0]!.startsWith('\u2026 ')).toBe(true);
     expect(`${edits[0]}${continuations[0]!.replace(/^\u2026 /, '')}`).toBe(longText);
     await provider.stop();
+  });
+
+  // These two drive the handler with a real `grammy` `Context`, not a plain
+  // object. The media fields (`photo`, `video`, `document`, …) are getters on
+  // `Context.prototype`, so a plain-object stand-in silently hides the class of
+  // bug where the provider reads them off the Context instead of the message:
+  // every Telegram attachment then reports `hasMedia: false` and no tool can
+  // reach it.
+  describe('real grammy Context', () => {
+    function makeContext(update: Record<string, unknown>): InstanceType<typeof GrammyContext> {
+      return new GrammyContext(
+        update as never,
+        { callApi: async () => ({}) } as never,
+        { id: 777, is_bot: true, first_name: 'ElastraX', username: 'elastrax_bot' } as never,
+      );
+    }
+
+    function stubBot(): void {
+      telegramProviderDeps.createBot = () => ({
+        on: () => undefined,
+        api: {
+          getFile: async () => ({ file_path: 'photos/file_0.jpg' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+    }
+
+    test('a photo message is reported as media', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      stubBot();
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'photos/file_0.jpg' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(makeContext({
+        update_id: 1,
+        message: {
+          message_id: 42,
+          date: 1000,
+          chat: { id: 12345, type: 'private' },
+          from: { id: 67890, first_name: 'TestUser', is_bot: false },
+          photo: [{ file_id: 'p1', file_size: 1234, width: 800, height: 600 }],
+          entities: [],
+        },
+      }));
+
+      expect(received).not.toBeNull();
+      expect(received!.hasMedia).toBe(true);
+      expect(received!.messageType).toBe('imageMessage');
+      expect(received!.mediaAttachments).toHaveLength(1);
+      expect(received!.mediaAttachments?.[0]?.providerId).toBe('p1');
+      await provider.stop();
+    });
+
+    test('a quoted photo is reported as media on the quoted message', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      stubBot();
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'photos/file_0.jpg' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(makeContext({
+        update_id: 2,
+        message: {
+          message_id: 43,
+          date: 1000,
+          chat: { id: 12345, type: 'private' },
+          from: { id: 67890, first_name: 'TestUser', is_bot: false },
+          text: 'look at this',
+          reply_to_message: {
+            message_id: 41,
+            date: 900,
+            chat: { id: 12345, type: 'private' },
+            from: { id: 67890, first_name: 'TestUser', is_bot: false },
+            photo: [{ file_id: 'q1', file_size: 99, width: 80, height: 60 }],
+          },
+          entities: [],
+        },
+      }));
+
+      expect(received).not.toBeNull();
+      expect(received!.quoted?.hasMedia).toBe(true);
+      expect(received!.quoted?.messageType).toBe('imageMessage');
+      expect(received!.quoted?.stanzaId).toBe('41');
+      await provider.stop();
+    });
   });
 });
 
