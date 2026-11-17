@@ -242,6 +242,13 @@ export class TelegramProvider implements BotProvider {
       this.bot = bot;
       this.attachHandlers(bot, generation);
 
+      // grammy's default error handler logs, stops the bot and *re-throws*, so a
+      // single middleware exception tore down the poller and forced a reconnect.
+      // A handler error is worth a log line, not a reconnect.
+      bot.catch(error => {
+        log.error({ err: error }, '[Telegram] Middleware threw; the poller continues');
+      });
+
       // Resolve only after authentication, so the runtime never admits a
       // provider that cannot deliver.
       let resolveReady: () => void;
@@ -278,6 +285,10 @@ export class TelegramProvider implements BotProvider {
       this.bootReject = rejectReady!;
 
       void bot.start({
+        // Telegram's default allowed_updates *excludes* message_reaction, so
+        // `bot.on('message_reaction', …)` below never fired: the whole reaction
+        // diff was unreachable in production.
+        allowed_updates: ['message', 'message_reaction'],
         onStart: async info => {
           if (!this.isCurrent(bot, generation)) return;
           this.botUserId = String(info.id);

@@ -115,6 +115,28 @@ describe('AI response contracts', () => {
     expect(accumulator.finish()[0]?.function.arguments).toBe('{"q":"wifi"}');
   });
 
+  // Some OpenAI-compatible servers repeat the *whole* function name in every
+  // delta instead of fragmenting it. Concatenating produced
+  // "get_weatherget_weather", so the lookup failed and tool calling was dead.
+  test('a server that repeats the function name each delta yields one name', () => {
+    const accumulator = new StreamingToolCallAccumulator();
+    accumulator.consume({ index: 0, id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '' } });
+    accumulator.consume({ index: 0, function: { name: 'get_weather', arguments: '{"q"' } });
+    accumulator.consume({ index: 0, function: { name: 'get_weather', arguments: ':1}' } });
+    const calls = accumulator.finish();
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.function.name).toBe('get_weather');
+    expect(calls[0]?.function.arguments).toBe('{"q":1}');
+  });
+
+  // The normal fragmented stream must still concatenate.
+  test('a fragmented function name is still concatenated', () => {
+    const accumulator = new StreamingToolCallAccumulator();
+    accumulator.consume({ index: 0, id: 'call_1', type: 'function', function: { name: 'get_', arguments: '' } });
+    accumulator.consume({ index: 0, function: { name: 'weather', arguments: '{}' } });
+    expect(accumulator.finish()[0]?.function.name).toBe('get_weather');
+  });
+
   test('rejects an empty stream', async () => {
     assignFetch(async () => new Response(': keepalive\n\n', { status: 200 }));
     const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'key' });

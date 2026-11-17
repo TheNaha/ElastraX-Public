@@ -133,6 +133,7 @@ describe('TelegramProvider lifecycle', () => {
       on: () => undefined,
       api: {} as never,
       stop: () => undefined,
+      catch: () => undefined,
       start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
         // Long polling blocks until the test releases it, then grammy would
         // report the authenticated bot through onStart.
@@ -184,6 +185,7 @@ describe('TelegramProvider lifecycle', () => {
         },
       } as never,
       stop: () => undefined,
+      catch: () => undefined,
       start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
         await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
       },
@@ -253,6 +255,7 @@ describe('TelegramProvider lifecycle', () => {
         },
       } as never,
       stop: () => undefined,
+      catch: () => undefined,
       start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
         await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
       },
@@ -304,6 +307,7 @@ describe('TelegramProvider lifecycle', () => {
         },
       } as never,
       stop: () => undefined,
+      catch: () => undefined,
       start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
         await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
       },
@@ -364,6 +368,7 @@ describe('TelegramProvider lifecycle', () => {
           sendMessage: async () => ({ message_id: 1 }),
         } as never,
         stop: () => undefined,
+        catch: () => undefined,
         start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
           await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
         },
@@ -383,6 +388,7 @@ describe('TelegramProvider lifecycle', () => {
           sendMessage: async () => ({ message_id: 1 }),
         } as never,
         stop: () => undefined,
+        catch: () => undefined,
         start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
           await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
         },
@@ -413,6 +419,29 @@ describe('TelegramProvider lifecycle', () => {
       await provider.stop();
     });
 
+    test('start() asks Telegram for message_reaction updates', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      let startOptions: { allowed_updates?: string[] } | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: () => undefined,
+        api: {} as never,
+        stop: () => undefined,
+        catch: () => undefined,
+        start: async (options?: { allowed_updates?: string[]; onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          startOptions = options;
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      await provider.start();
+      // Telegram excludes message_reaction from the default allowed_updates, so
+      // the reaction handler is unreachable without this.
+      expect(startOptions?.allowed_updates).toContain('message_reaction');
+      expect(startOptions?.allowed_updates).toContain('message');
+      await provider.stop();
+    });
+
     test('a quoted photo is reported as media on the quoted message', async () => {
       process.env.TELEGRAM_BOT_TOKEN = 'test-token';
       stubBot();
@@ -426,6 +455,7 @@ describe('TelegramProvider lifecycle', () => {
           sendMessage: async () => ({ message_id: 1 }),
         } as never,
         stop: () => undefined,
+        catch: () => undefined,
         start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
           await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
         },

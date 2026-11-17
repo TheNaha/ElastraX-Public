@@ -34,7 +34,20 @@ export class StreamingToolCallAccumulator {
       }
       existing.id = fragment.id;
     }
-    if (fragment.function?.name) existing.function.name += fragment.function.name;
+    if (fragment.function?.name) {
+      // OpenAI-compatible servers fragment the name across deltas ("get_" then
+      // "weather"), but some repeat the *whole* name in every delta. Blind
+      // concatenation turned the latter into "get_weatherget_weather", so the
+      // tool lookup failed and tool calling was dead on that backend. Accept a
+      // repeat that extends what we already have; otherwise treat it as the
+      // next fragment.
+      const incoming = fragment.function.name;
+      if (!existing.function.name || !incoming.startsWith(existing.function.name)) {
+        existing.function.name += incoming;
+      } else {
+        existing.function.name = incoming;
+      }
+    }
     if (fragment.function?.arguments) existing.function.arguments += fragment.function.arguments;
     return { ...existing, function: { ...existing.function } };
   }
