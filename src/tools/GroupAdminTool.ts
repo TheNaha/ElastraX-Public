@@ -39,11 +39,15 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
   override readonly commandGrammar: ToolCommandGrammar = {
     discriminator: 'action',
     variants: [
-      { value: 'add', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'remove', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'kick', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'promote', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'demote', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      // `user` is optional: `resolveTargetUser` falls back to the quoted
+      // message, and `execute` answers `group.invalid_phone` when nothing
+      // resolves. Marking it required made the documented "reply to a member"
+      // route unreachable - the parser rejected /kick before the tool ran.
+      { value: 'add', arguments: [{ name: 'user', kind: 'string' }] },
+      { value: 'remove', arguments: [{ name: 'user', kind: 'string' }] },
+      { value: 'kick', arguments: [{ name: 'user', kind: 'string' }] },
+      { value: 'promote', arguments: [{ name: 'user', kind: 'string' }] },
+      { value: 'demote', arguments: [{ name: 'user', kind: 'string' }] },
       // Group-wide, not per-member: WhatsApp/Telegram group settings have no
       // per-member mute, and `execute` sets the announcement flag. The `user`
       // argument used to be required here and then ignored, so `/mute @bob`

@@ -125,7 +125,11 @@ export function initialReservation(contentLength: number | null | undefined, max
   if (contentLength !== undefined && contentLength !== null && Number.isFinite(contentLength) && contentLength > 0) {
     return Math.min(Math.ceil(contentLength), maxBytes);
   }
-  return maxBytes;
+  // Unknown length (a chunked response, which many CDNs send): reserve a small
+  // amount and let `MediaStorage.saveMediaStream` take more as bytes actually
+  // arrive. Reserving the full cap meant a single chunked download held the
+  // whole 200 MiB budget and starved every other media download.
+  return Math.min(maxBytes, 1024 * 1024);
 }
 
 export function normalizeFallbackMime(mimeType?: string): string {

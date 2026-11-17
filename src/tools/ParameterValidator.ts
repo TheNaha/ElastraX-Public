@@ -125,7 +125,9 @@ const ACTION_REQUIREMENTS: Record<string, Record<string, readonly string[]>> = {
   memory: { store: ['content'], forget: ['id'] },
   pdf_tool: { split: ['start_page', 'end_page'], remove_pages: ['pages'], rotate: ['degrees'] },
   menfess: {},
-  groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: [], unmute: [], promote: ['user'], demote: ['user'] },
+  // groupadmin has no required fields: the participant actions accept the
+  // quoted message when `user` is omitted, and the tool answers
+  // `group.invalid_phone` when neither is present.
   knowledge: { search: ['query'] },
 };
 
