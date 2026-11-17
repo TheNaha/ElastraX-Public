@@ -3,6 +3,7 @@ import * as schema from '../src/db/schema';
 import { eq } from 'drizzle-orm';
 import { db } from '../src/db';
 import { OutboxService } from '../src/messaging/OutboxService';
+import { outboxKeyParts } from '../src/agent';
 import { InboxService } from '../src/messaging/InboxService';
 
 const { messageOutbox, messageInbox } = schema;
@@ -43,11 +44,36 @@ describe('OutboxService.prune', () => {
     }).run();
 
     const pruned = OutboxService.prune(100_000);
-    expect(pruned).toBe(2);
+    // `failed` rows are still claimable (claim() has no age predicate), so only
+    // the dead-letter row is terminal. Pruning `failed` here silently dropped a
+    // queued reply whenever its platform was not operational for the window.
+    expect(pruned).toBe(1);
 
     const remaining = db.select().from(messageOutbox).all().map(r => r.id);
-    expect(remaining).toEqual(expect.arrayContaining(['recent-dead-letter', 'old-sent']));
-    expect(remaining).not.toEqual(expect.arrayContaining(['old-dead-letter', 'old-failed']));
+    expect(remaining).toEqual(expect.arrayContaining(['recent-dead-letter', 'old-sent', 'old-failed']));
+    expect(remaining).not.toEqual(expect.arrayContaining(['old-dead-letter']));
+  });
+
+  // Provider message ids are only unique within a chat (a Telegram message_id is
+  // a per-chat counter). The agent's outbox key used to omit the room, so two
+  // chats that both received message 100 hashed to one row; the conflict clause
+  // then repointed it at the second chat and both replies went to dead_letter.
+  test('the same provider message id in two rooms keeps two rows', () => {
+    const first = OutboxService.enqueueDirectText('telegram', 'chat-a', 'answer A', ['100', 'user', 'chat-a']);
+    const second = OutboxService.enqueueDirectText('telegram', 'chat-b', 'answer B', ['100', 'user', 'chat-b']);
+
+    expect(second).not.toBe(first);
+    const rows = db.select().from(messageOutbox).all();
+    expect(rows).toHaveLength(2);
+    const byChat = new Map(rows.map(row => [row.chatRoomId, row]));
+    expect(byChat.get('chat-a')?.payload).toContain('answer A');
+    expect(byChat.get('chat-b')?.payload).toContain('answer B');
+  });
+
+  test('the agent key includes the room', () => {
+    expect(outboxKeyParts('100', 'user', 'chat-a')).not.toEqual(outboxKeyParts('100', 'user', 'chat-b'));
+    // A provider that supplied no usable id still gets a distinct row per reply.
+    expect(outboxKeyParts('unknown', 'assistant', 'chat-a')).not.toEqual(outboxKeyParts('unknown', 'assistant', 'chat-a'));
   });
 
   test('does nothing when there are no terminal rows', async () => {

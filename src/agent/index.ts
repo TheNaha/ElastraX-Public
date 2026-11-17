@@ -168,8 +168,15 @@ const DIRECT_SEND_TIMEOUT_MS = Math.max(1_000, DIRECT_SEND_GRACE_MS - 10_000);
  * left to retry). `InboxService.eventKeyFor` already randomises this case; the
  * outbox now agrees with it.
  */
-function outboxKeyParts(messageId: string | undefined, source: string): string[] {
-  return isUsableProviderMessageId(messageId) ? [messageId, source] : [`local:${randomUUID()}`, source];
+export function outboxKeyParts(messageId: string | undefined, source: string, chatRoomId: string): string[] {
+  // The room is part of the key because provider message ids are only unique
+  // *within* a room: a Telegram `message_id` is a per-chat counter, so two chats
+  // that both received message 100 hashed to the same outbox row. The conflict
+  // clause then repointed one room's row at the other's chat id, delivery
+  // refused it, and *both* replies went to dead_letter.
+  return isUsableProviderMessageId(messageId)
+    ? [messageId, source, chatRoomId]
+    : [`local:${randomUUID()}`, source, chatRoomId];
 }
 
 /**
@@ -213,7 +220,7 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
     ctx.platform,
     ctx.chatId,
     text,
-    outboxKeyParts(ctx.messageId, source),
+    outboxKeyParts(ctx.messageId, source, ctx.chatId),
     { mentions },
   );
   try {
@@ -1489,7 +1496,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     });
 
     const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
-    const keyParts = outboxKeyParts(ctx.messageId, 'assistant');
+    const keyParts = outboxKeyParts(ctx.messageId, 'assistant', ctx.chatId);
     if (replyAlreadyDelivered) {
       OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
     } else {

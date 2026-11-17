@@ -108,6 +108,7 @@ export class OutboxService {
             available_at, created_at, updated_at)
          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)
          ON CONFLICT(platform, idempotency_key) DO UPDATE SET
+           chat_room_id = excluded.chat_room_id,
            room_key = excluded.room_key,
            payload = excluded.payload,
            available_at = MAX(message_outbox.available_at, excluded.available_at),
@@ -320,15 +321,34 @@ export class OutboxService {
 
   static markSent(id: string, owner: string, providerMessageId: string | null = null): boolean {
     const now = Date.now() + CLOCK_SKEW_BUFFER_MS;
-    const result = sqlite
-      .query<never, [string | null, number, number, string, string]>(
-        `UPDATE message_outbox
-         SET state = 'sent', provider_message_id = ?, sent_at = ?, lease_owner = NULL,
-             lease_expires_at = NULL, last_error = NULL, updated_at = ?
-         WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
-      )
-      .run(providerMessageId, now, now, id, owner);
-    return Number(result.changes) === 1;
+    try {
+      const result = sqlite
+        .query<never, [string | null, number, number, string, string]>(
+          `UPDATE message_outbox
+           SET state = 'sent', provider_message_id = ?, sent_at = ?, lease_owner = NULL,
+               lease_expires_at = NULL, last_error = NULL, updated_at = ?
+           WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
+        )
+        .run(providerMessageId, now, now, id, owner);
+      return Number(result.changes) === 1;
+    } catch (error) {
+      // `message_outbox_platform_provider_unique_idx` rejects a provider id that
+      // another row already recorded for the same chat. The message *was*
+      // delivered, so the old behaviour (throw -> the caller calls fail() ->
+      // retry) sent it again, up to MAX_ATTEMPTS. Record the delivery without
+      // the colliding id instead.
+      const message = safeErrorMessage(error, 500);
+      if (!/unique|constraint/i.test(message)) throw error;
+      const fallback = sqlite
+        .query<never, [number, number, string, string]>(
+          `UPDATE message_outbox
+           SET state = 'sent', provider_message_id = NULL, sent_at = ?, lease_owner = NULL,
+               lease_expires_at = NULL, last_error = NULL, updated_at = ?
+           WHERE id = ? AND state = 'leased' AND lease_owner = ?`,
+        )
+        .run(now, now, id, owner);
+      return Number(fallback.changes) === 1;
+    }
   }
 
   static fail(id: string, owner: string, error: unknown): 'retry' | 'dead_letter' | 'not_owned' {
@@ -368,18 +388,18 @@ export class OutboxService {
   /**
    * Prune terminal outbox rows older than `olderThanMs`.
    *
-   * `failed` rows are included because `claim()` retries them within seconds
-   * (`exponentialBackoff` starts at 5 s and `MAX_ATTEMPTS` is 5), so a `failed`
-   * row older than any sane window is one nothing will ever claim again. Window
-   * length is a retention decision that still disagrees with
-   * `src/db/retention.ts` — see IG-12 in the 2026-11-16 audit.
+   * Only `dead_letter` rows are pruned. `claim()` still takes `failed` rows
+   * (`attempt_count < MAX_ATTEMPTS`, no age predicate), so a `failed` row is
+   * live work: it stops being claimed only while its platform is not
+   * operational, and deleting it then silently discards a queued reply. Long-
+   * term non-terminal rows are reclaimed by `src/db/retention.ts` instead.
    */
   static prune(olderThanMs: number): number {
     const cutoff = Date.now() - olderThanMs;
     const result = sqlite
       .query<never, [number]>(
         `DELETE FROM message_outbox
-         WHERE state IN ('failed', 'dead_letter')
+         WHERE state = 'dead_letter'
            AND COALESCE(sent_at, updated_at) < ?`,
       )
       .run(cutoff);
