@@ -125,7 +125,7 @@ const ACTION_REQUIREMENTS: Record<string, Record<string, readonly string[]>> = {
   memory: { store: ['content'], forget: ['id'] },
   pdf_tool: { split: ['start_page', 'end_page'], remove_pages: ['pages'], rotate: ['degrees'] },
   menfess: {},
-  groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: ['user'], unmute: ['user'], promote: ['user'], demote: ['user'] },
+  groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: [], unmute: [], promote: ['user'], demote: ['user'] },
   knowledge: { search: ['query'] },
 };
 
@@ -149,7 +149,7 @@ const ACTION_ARGUMENTS: Record<string, Record<string, readonly string[]>> = {
   },
   media_library: { search: ['query'], link: ['item_id'], info: ['item_id'] },
   memory: { consent: ['scope'], revoke: [], store: ['content', 'scope', 'consent'], retrieve: ['scope'], forget: ['id'] },
-  groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: ['user'], unmute: ['user'], promote: ['user'], demote: ['user'] },
+  groupadmin: { add: ['user'], remove: ['user'], kick: ['user'], mute: [], unmute: [], promote: ['user'], demote: ['user'] },
   owner_admin: { broadcast: ['message'], leave: [], system_info: [], pinout: [] },
   reminder: { list: [], cancel: ['number'] },
   role: {

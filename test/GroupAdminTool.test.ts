@@ -1,5 +1,6 @@
 import { expect, test, describe, mock } from 'bun:test';
 import { GroupAdminTool } from '../src/tools/GroupAdminTool';
+import { parseExplicitCommand } from '../src/tools/ParameterValidator';
 import { MessageContext } from '../src/core/MessageContext';
 
 describe('GroupAdminTool', () => {
@@ -83,6 +84,14 @@ describe('GroupAdminTool', () => {
 
       expect(ctx.setGroupSettings).toHaveBeenCalledWith('group-id', 'not_announcement');
       expect(result).toBe('✅ Group has been unmuted (everyone).');
+    });
+
+    test('parses /mute without a target and rejects one', () => {
+      // The grammar required `user` for mute while `execute` ignored it, so
+      // `/mute @bob` parsed and then muted the whole group.
+      const tool = new GroupAdminTool();
+      expect(parseExplicitCommand(tool, '', 'mute')).toEqual({ action: 'mute', __command: 'mute' });
+      expect(() => parseExplicitCommand(tool, '@bob', 'mute')).toThrow(/Unexpected argument/);
     });
 
     test('should fail if user phone number is invalid', async () => {

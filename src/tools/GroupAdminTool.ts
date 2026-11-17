@@ -44,8 +44,12 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
       { value: 'kick', arguments: [{ name: 'user', kind: 'string', required: true }] },
       { value: 'promote', arguments: [{ name: 'user', kind: 'string', required: true }] },
       { value: 'demote', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'mute', arguments: [{ name: 'user', kind: 'string', required: true }] },
-      { value: 'unmute', arguments: [{ name: 'user', kind: 'string', required: true }] },
+      // Group-wide, not per-member: WhatsApp/Telegram group settings have no
+      // per-member mute, and `execute` sets the announcement flag. The `user`
+      // argument used to be required here and then ignored, so `/mute @bob`
+      // silently muted the whole group.
+      { value: 'mute', arguments: [] },
+      { value: 'unmute', arguments: [] },
       { value: 'link', arguments: [] },
     ],
   };
