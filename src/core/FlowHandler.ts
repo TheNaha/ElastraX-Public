@@ -41,6 +41,11 @@ export type FlowProcessor = (ctx: MessageContext, activeFlowData: FlowSession, f
 
 type SessionLock = Promise<void>;
 
+/** Consecutive failures of one flow step before its session is released. */
+const MAX_STEP_FAILURES = 3;
+/** Upper bound on failure counters, so abandoned sessions cannot grow the map. */
+const MAX_TRACKED_STEP_FAILURES = 5_000;
+
 export class FlowVersionConflictError extends Error {
   readonly expected: number | undefined;
   readonly actual: number | undefined;
@@ -62,12 +67,15 @@ export class FlowHandler {
   private static sessionCreationTime = new Map<string, number>();
   private static sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
   private static lockContext = new AsyncLocalStorage<Set<string>>();
+  /** Consecutive processor failures per (session, flow, step). */
+  private static stepFailures = new Map<string, number>();
 
   static resetForTesting(): void {
     this.dbLoaded = false;
     this.initPromise = null;
     this.memorySessions.clear();
     this.sessionCreationTime.clear();
+    this.stepFailures.clear();
     this.locks.clear();
     if (this.sessionCleanupTimer !== null) {
       clearInterval(this.sessionCleanupTimer);
@@ -417,11 +425,14 @@ export class FlowHandler {
    * delete failure should not mask the caller's success.
    */
   private static safeDeleteSession(key: string, reason: string): void {
-    try {
-      void db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
-    } catch (error: unknown) {
-      logger.warn({ err: error, key }, `[FlowHandler] ${reason}`);
-    }
+    // `run()` returns a thenable; a rejection escapes a synchronous try/catch and
+    // becomes an unhandled rejection (fatal under Bun). `writeSession` in this
+    // file already handles its promise this way.
+    void Promise.resolve()
+      .then(() => db.delete(flowSessions).where(eq(flowSessions.id, key)).run())
+      .catch((error: unknown) => {
+        logger.warn({ err: error, key }, `[FlowHandler] ${reason}`);
+      });
   }
 
   static clearSession(
@@ -474,13 +485,32 @@ export class FlowHandler {
         await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');
         return true;
       }
+      const failureKey = `${key}:${flowId}:${flow.step}`;
       try {
         await flowProcessor(ctx, flow, flowId);
+        // A step that got past the failure is not failing any more.
+        this.stepFailures.delete(failureKey);
         return true;
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'unknown error');
         logger.error({ err: error, flow: flow.flow }, `[FlowHandler] Error in flow: ${flow.flow}`);
         await ctx.reply(t(ctx.language, 'flow.error', { msg: message }) || `An error occurred processing your flow step:\n${message}`);
+        // A step that keeps throwing used to swallow every later message into the
+        // same failure until the TTL expired, leaving `/cancel` as the only way
+        // out. The first failure still keeps the session so a transient error can
+        // be retried, but a step that fails repeatedly releases it.
+        const failures = (this.stepFailures.get(failureKey) ?? 0) + 1;
+        if (failures >= MAX_STEP_FAILURES) {
+          this.stepFailures.delete(failureKey);
+          try {
+            await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+          } catch (clearError: unknown) {
+            logger.warn({ err: clearError, flow: flow.flow }, '[FlowHandler] Failed to clear a repeatedly failing flow');
+          }
+        } else {
+          if (this.stepFailures.size >= MAX_TRACKED_STEP_FAILURES) this.stepFailures.clear();
+          this.stepFailures.set(failureKey, failures);
+        }
         return true;
       }
     });

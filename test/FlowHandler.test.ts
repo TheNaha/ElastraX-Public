@@ -217,6 +217,25 @@ describe('FlowHandler', () => {
       expect(mockClearSession).not.toHaveBeenCalled();
     });
 
+    test('releases a session whose step keeps throwing', async () => {
+      const processor = mock(async () => { throw new Error('media rejected'); });
+      FlowHandler.register('stuckFlow', processor);
+
+      mockGetActiveFlow.mockReturnValue({
+        flowId: 'stuckFlow',
+        flow: { flow: 'stuckFlow', step: 'collect', data: {} },
+      });
+
+      const ctx = createMockCtx({ text: 'next file' });
+      // The first two failures keep the session so a transient error can be
+      // retried; a step that never recovers must not swallow every later message.
+      await FlowHandler.handle(ctx);
+      await FlowHandler.handle(ctx);
+      expect(mockClearSession).not.toHaveBeenCalled();
+      await FlowHandler.handle(ctx);
+      expect(mockClearSession).toHaveBeenCalledTimes(1);
+    });
+
     test('should return true if no processor is registered for the active flow', async () => {
       mockGetActiveFlow.mockReturnValue({
         flowId: 'unknownFlow',

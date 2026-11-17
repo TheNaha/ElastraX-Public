@@ -4,7 +4,7 @@ import { FlowHandler, type FlowProcessor } from '../core/FlowHandler';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { resolveTargetMedia } from '../utils/mediaResolve';
 import { extractPdfText, PdfTextExtractionUnavailableError } from '../utils/pdfText';
@@ -117,10 +117,6 @@ export class PDFTool extends BaseTool<PDFArgs> {
     };
   }
 
-  private isPdf(mime: string, path: string): boolean {
-    return mime.includes('pdf') || path.toLowerCase().endsWith('.pdf');
-  }
-
   private async sendPdf(
     ctx: MessageContext,
     bytes: Uint8Array,
@@ -153,11 +149,19 @@ export class PDFTool extends BaseTool<PDFArgs> {
 
     const media = await resolveTargetMedia(ctx);
     if (!media?.path) return t(lang, 'pdf.no_file');
-    if (!this.isPdf(media.mime, media.path)) return t(lang, 'pdf.not_pdf');
+    if (!isPdf(media.mime, media.path)) return t(lang, 'pdf.not_pdf');
 
     try {
       const { PDFDocument, StandardFonts, degrees: degreesOf, rgb } = await import('pdf-lib');
 
+      // Check the size before buffering: provider media is allowed up to 200 MB,
+      // so reading first meant the whole file was already resident when the guard
+      // ran. The guard must bound what the process allocates, not only what
+      // pdf-lib parses.
+      const statInfo = await stat(media.path).catch(() => null);
+      if (statInfo && statInfo.size > MAX_PDF_BYTES) {
+        return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' });
+      }
       const pdfBytes = await readFile(media.path);
       if (pdfBytes.byteLength > MAX_PDF_BYTES) {
         return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' });
@@ -390,6 +394,8 @@ export class PDFTool extends BaseTool<PDFArgs> {
       const merged = await PDFDocument.create();
       if (filePaths.length > MAX_COLLECT_FILES) return t(lang, 'pdf.error', { msg: 'Too many files selected.' });
       for (const fp of filePaths) {
+        const info = await stat(fp).catch(() => null);
+        if (info && info.size > MAX_PDF_BYTES) throw new Error('One or more files is not a valid PDF within the size limit.');
         const bytes = await readFile(fp);
         if (bytes.byteLength > MAX_PDF_BYTES || !hasPdfSignature(bytes)) throw new Error('One or more files is not a valid PDF within the size limit.');
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
@@ -412,10 +418,9 @@ export class PDFTool extends BaseTool<PDFArgs> {
     if (!ctx.sendMedia) return t(lang, 'pdf.not_supported');
     const media = await resolveTargetMedia(ctx);
 
-    const isImage = !!media && media.path !== undefined &&
-      (/image\/(jpeg|jpg|png)/i.test(media.mime) || /\.(jpe?g|png)$/i.test(media.path));
+    const isImageInput = !!media && media.path !== undefined && isImage(media.mime, media.path);
 
-    if (isImage && media?.path) {
+    if (isImageInput && media?.path) {
       // Single image → instant convert
       return this.doImgToPdf(ctx, lang, [media.path]);
     }
