@@ -144,6 +144,9 @@ export abstract class BaseHttpClient {
           return await readBinaryResponse(response, binary.maxBytes, service, method, path) as T;
         } catch (error) {
           if (error instanceof HttpClientError) throw error;
+          if (timedOut) {
+            throw new HttpClientError(service, method, path, 'TIMEOUT', `${service} response body timed out after ${timeoutMs}ms.`, { retryable: true, cause: error });
+          }
           throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned an unreadable binary body: ${safeErrorMessage(error)}`, { cause: error });
         }
       }
@@ -151,6 +154,9 @@ export abstract class BaseHttpClient {
         return await readJsonResponse<T>(response, this.maxResponseBytes, service, method, path);
       } catch (error) {
         if (error instanceof HttpClientError) throw error;
+        if (timedOut) {
+          throw new HttpClientError(service, method, path, 'TIMEOUT', `${service} response body timed out after ${timeoutMs}ms.`, { retryable: true, cause: error });
+        }
         throw new HttpClientError(service, method, path, 'INVALID_RESPONSE', `${service} returned invalid JSON: ${safeErrorMessage(error)}`, { cause: error });
       }
     } finally {
