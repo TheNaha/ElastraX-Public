@@ -135,11 +135,17 @@ export function redactSecrets(input: string): string {
 }
 
 /**
- * Stable, non-placeholder id for a synthetic scheduled run.
+ * Stable, non-placeholder id for one synthetic scheduled run.
  *
  * The message-id dedupe index deliberately excludes placeholder ids, and an
  * empty or `'unknown'` id made every stored run look like the *current* message,
  * which re-embedded up to `INLINE_MEDIA_MAX_BYTES` of history per turn.
+ *
+ * `firedAt` is part of the digest on purpose. It used to hash only
+ * platform/room/instruction, so the second fire of the same `/task …` reminder
+ * produced the same id, collided with the first run's stored `messages` row and
+ * was dropped by the agent's duplicate guard — the room got exactly one reply
+ * and then silence for the life of the retention window.
  */
 /** Field separator for hashed composite keys, matching `OutboxService.idempotencyKey`. */
 const FIELD_SEPARATOR = '\u0000';
@@ -148,10 +154,10 @@ function scheduledTaskMessageId(request: {
   platform: string;
   roomKey: string;
   instruction: string;
-  receivedAt?: number;
+  firedAt: number;
 }): string {
   const digest = createHash('sha256')
-    .update(`${request.platform}${FIELD_SEPARATOR}${request.roomKey}${FIELD_SEPARATOR}${request.instruction}`)
+    .update(`${request.platform}${FIELD_SEPARATOR}${request.roomKey}${FIELD_SEPARATOR}${request.instruction}${FIELD_SEPARATOR}${request.firedAt}`)
     .digest('hex')
     .slice(0, 24);
   return `scheduled-${digest}`;
@@ -811,11 +817,14 @@ export class AppRuntime {
       signal: request.signal,
       isBotMentioned: true,
       reply: sendText,
-      sendMessage: sendText,
-      messageId: scheduledTaskMessageId(request),
-      // Presence and streaming have no meaning without an inbound message.
+      messageId: scheduledTaskMessageId({ ...request, firedAt: Date.now() }),
+      // Presence, streaming and progress have no meaning without an inbound
+      // message. Both hooks are left absent rather than stubbed: a stub that
+      // returns `undefined` still passed the agent's streaming capability check
+      // and every "edit" was a no-op, so the run sent truncated previews ending
+      // in a cursor and then recorded the real answer as already delivered.
+      // Absent hooks make the agent take the plain `reply` path.
       sendTyping: async () => {},
-      editMessage: async () => {},
       react: async () => {},
       // Nothing to download, and nothing to hand a tool to write to.
       downloadMedia: async () => null,

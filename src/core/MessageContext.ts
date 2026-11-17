@@ -205,16 +205,19 @@ export interface MessageContext {
   /**
    * Send a text message and return a key/handle that can be used with `editMessage`.
    * Used for streaming responses — send an initial message, then edit it as chunks arrive.
+   * Optional: a synthetic context (a scheduled run, a test double) may have no
+   * editable message surface at all, and every caller already treats it as a
+   * capability (`typeof ctx.sendMessage === 'function'`).
    * @param options  Optional {@link ReplyOptions} — e.g. `{ mentions: ['628xxx@s.whatsapp.net'] }`
    */
-  sendMessage(text: string, options?: ReplyOptions): Promise<unknown>;
+  sendMessage?(text: string, options?: ReplyOptions): Promise<unknown>;
   sendToChat?(chatId: string, text: string, options?: ReplyOptions): Promise<unknown>;
 
   /**
    * Edit a previously sent message by its key/handle.
    * The key is obtained from `sendMessage()`. Used for streaming response updates.
    */
-  editMessage(key: unknown, text: string): Promise<void>;
+  editMessage?(key: unknown, text: string): Promise<void>;
 
   /**
    * React to the message with an emoji (if supported by platform)

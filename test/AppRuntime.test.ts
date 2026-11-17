@@ -333,6 +333,68 @@ describe('AppRuntime', () => {
     expect(enqueued).toBe(false);
   });
 
+  test('a scheduled run has a per-fire message id and no streaming surface', async () => {
+    const originalEnabled = process.env.SCHEDULED_TASKS_ENABLED;
+    const originalRooms = process.env.SCHEDULED_TASKS_ALLOWED_ROOMS;
+    const roomKey = canonicalRoomKey('whatsapp', 'wa-scheduled-room');
+    process.env.SCHEDULED_TASKS_ENABLED = 'true';
+    process.env.SCHEDULED_TASKS_ALLOWED_ROOMS = roomKey;
+
+    const provider = createProvider('whatsapp');
+    const messageQueue = { enqueue: mock(() => {}), stop: mock(() => {}) };
+    const webhookServer = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    let runner: ((request: Record<string, unknown>) => Promise<void>) | null = null;
+    const scheduler = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      registerTaskRunner: mock((fn: typeof runner) => { runner = fn; }),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const captured: MessageContext[] = [];
+    const handleIncoming = mock(async (ctx: MessageContext) => { captured.push(ctx); });
+
+    try {
+      const runtime = new AppRuntime({
+        providers: [provider],
+        messageQueue,
+        webhookServer,
+        scheduler,
+        handleIncomingMessage: handleIncoming,
+      });
+      await runtime.start();
+
+      const request = {
+        platform: 'whatsapp',
+        remoteRoomId: 'wa-scheduled-room',
+        roomKey,
+        language: 'en',
+        instruction: 'summarise today',
+      };
+      // Two fires of the same recurrence must be two distinct events: a
+      // content-derived id collided with the first run's stored message row and
+      // the agent dropped the second run as a duplicate provider event.
+      await runner!(request);
+      await runner!(request);
+      await runtime.stop();
+
+      expect(captured).toHaveLength(2);
+      expect(captured[0]!.messageId).not.toBe(captured[1]!.messageId);
+      // No stubbed sendMessage/editMessage: with streaming enabled a stub sent
+      // previews and then recorded the real answer as delivered without sending it.
+      expect(captured[0]!.sendMessage).toBeUndefined();
+      expect(captured[0]!.editMessage).toBeUndefined();
+    } finally {
+      if (originalEnabled === undefined) delete process.env.SCHEDULED_TASKS_ENABLED;
+      else process.env.SCHEDULED_TASKS_ENABLED = originalEnabled;
+      if (originalRooms === undefined) delete process.env.SCHEDULED_TASKS_ALLOWED_ROOMS;
+      else process.env.SCHEDULED_TASKS_ALLOWED_ROOMS = originalRooms;
+    }
+  });
+
   test('resolveMediaCleanupIntervalMs keeps safe defaults', () => {
     expect(resolveMediaCleanupIntervalMs(undefined)).toBe(6 * 60 * 60 * 1000);
     expect(resolveMediaCleanupIntervalMs('invalid')).toBe(6 * 60 * 60 * 1000);
