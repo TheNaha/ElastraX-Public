@@ -3,6 +3,7 @@ import { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
 import { timeoutSignal } from '../utils/withTimeout';
+import { readResponseTextBounded } from '../utils/httpBody';
 import { validateSsrfUrl } from '../providers/ssrf';
 import { redactUrl } from './DownloadTool';
 
@@ -75,7 +76,9 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
 
       const response = await fetch(`https://r.jina.ai/${url.toString()}`, { headers, signal });
       if (!response.ok) return `Error fetching URL: HTTP ${response.status}`;
-      const text = await response.text();
+      // Bounded read: response.text() buffers the whole body before the 25k
+      // character cap below can run, so a huge page was fully allocated first.
+      const text = await readResponseTextBounded(response, 4 * 1024 * 1024, 'Scraped page');
       
       // Cap at 25,000 chars to avoid LLM context explosion
       if (text.length > 25000) {

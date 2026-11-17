@@ -8,6 +8,7 @@
 
 import { logger } from '../utils/logger';
 import { timeoutSignal } from '../utils/withTimeout';
+import { readResponseTextBounded } from '../utils/httpBody';
 
 const log = logger.child({ module: 'searchUtils' });
 
@@ -89,7 +90,11 @@ export async function searchSearXng(
     if (res && res.ok) {
       anyOk = true;
       try {
-        const data = (await res.json()) as { results?: SearXngRawResult[] };
+        // Bounded: res.json() buffers the whole body, so a captive portal or a
+        // misconfigured instance could return an arbitrarily large error page -
+        // twice, since both queries are read.
+        const body = await readResponseTextBounded(res, 2 * 1024 * 1024, 'SearXNG response');
+        const data = JSON.parse(body) as { results?: SearXngRawResult[] };
         if (data.results) all.push(...data.results);
       } catch (err) {
         log.warn({ err }, 'Failed to parse SearXNG JSON response');
