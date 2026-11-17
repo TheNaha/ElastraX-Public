@@ -210,8 +210,10 @@ export class SsrfSafeProxy {
     this.trackSocket(clientSocket);
     // A host that blackholes the SYN used to leave both sockets open until the
     // caller's own timeout, and the client saw a bare reset instead of a status.
+    let responded = false;
     const connectTimer = setTimeout(() => {
       if (upstreamSocket.connecting) {
+        responded = true;
         clientSocket.end('HTTP/1.1 504 Gateway Timeout\r\nConnection: close\r\n\r\n');
         upstreamSocket.destroy();
       }
@@ -227,7 +229,10 @@ export class SsrfSafeProxy {
     const close = () => {
       clearTimeout(connectTimer);
       upstreamSocket.destroy();
-      clientSocket.destroy();
+      // Once the 504 has been queued, destroying the client socket immediately
+      // drops it before the status flushes — the same bare reset this timeout
+      // exists to avoid. `end()` above closes it once the write drains.
+      if (!responded) clientSocket.destroy();
       this.sockets.delete(upstreamSocket);
       this.sockets.delete(clientSocket);
     };
