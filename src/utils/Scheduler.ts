@@ -172,8 +172,8 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
 }
 
 /**
- * Next occurrence for a fixed calendar cadence, rebuilt from local wall-clock
- * components.
+ * Advance `from` by `days` whole calendar days until the result is strictly in
+ * the future, rebuilding the date from local wall-clock components.
  *
  * `hourly`/`daily`/`weekly` used to add a constant millisecond count
  * (`24h`, `7d`). A fixed ms offset is not a calendar day: across a DST boundary
@@ -184,12 +184,31 @@ function nextMonthly(lastFire: Date, anchorDay: number, now: number): Date | nul
  *
  * The local date is advanced by whole days, then the *original* local clock time
  * is re-applied, so the wall-clock time is preserved across a DST shift.
+ *
+ * The step is capped at {@link MAX_CATCHUP_STEPS} periods, but the cap must not
+ * be able to hand back a date that is still in the past: `processReminders`
+ * only checks for `null`, so a stale date would be written back and the
+ * reminder would fire again on the very next tick. When the cap is hit the
+ * remaining whole periods are added in one step instead.
  */
-function nextCalendarOccurrence(lastFire: Date, days: number, now: number): Date {
-  const next = dateFromComponents(lastFire, { date: lastFire.getDate() + days });
-  // Re-apply the wall clock: `Date(y, m, d, h)` already resolves to the local
-  // time on that date, which is what keeps 09:00 at 09:00 across a DST change.
-  return next.getTime() > now ? next : dateFromComponents(next, { date: next.getDate() + days });
+function advanceCalendarDays(from: Date, days: number, now: number): Date {
+  let next = addCalendarDays(from, days);
+  let guard = 0;
+  while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
+    next = addCalendarDays(next, days);
+    guard += 1;
+  }
+  if (next.getTime() <= now) {
+    // More than MAX_CATCHUP_STEPS periods late (a long outage, or a database
+    // restored from an old backup). Compare whole UTC calendar days so the
+    // result does not depend on the local offset.
+    const nowDate = new Date(now);
+    const fromDay = Date.UTC(from.getFullYear(), from.getMonth(), from.getDate());
+    const nowDay = Date.UTC(nowDate.getFullYear(), nowDate.getMonth(), nowDate.getDate());
+    const periods = Math.max(1, Math.floor((nowDay - fromDay) / 86_400_000 / days) + 1);
+    next = addCalendarDays(from, periods * days);
+  }
+  return next;
 }
 
 function addCalendarDays(from: Date, days: number): Date {
@@ -200,34 +219,20 @@ export function computeNextOccurrence(
   lastFire: Date,
   recurrence: string,
   anchorDay: number = lastFire.getDate(),
+  /** Injectable clock; defaults to now. Tests pass a fixed instant so a DST
+   *  boundary can be crossed deterministically. */
+  now: number = Date.now(),
 ): Date | null {
   const lower = recurrence.toLowerCase().trim();
-  const now = Date.now();
 
   if (lower === 'monthly') {
     return nextMonthly(lastFire, anchorDay, now);
   }
 
-  // Calendar cadences keep their local wall-clock time across DST.
-  if (lower === 'daily') {
-    let next = nextCalendarOccurrence(lastFire, 1, now);
-    // Catch up if the bot was down for several days, without a loop per day.
-    let guard = 0;
-    while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
-      next = addCalendarDays(next, 1);
-      guard += 1;
-    }
-    return next;
-  }
-  if (lower === 'weekly') {
-    let next = nextCalendarOccurrence(lastFire, 7, now);
-    let guard = 0;
-    while (next.getTime() <= now && guard < MAX_CATCHUP_STEPS) {
-      next = addCalendarDays(next, 7);
-      guard += 1;
-    }
-    return next;
-  }
+  // Calendar cadences keep their local wall-clock time across DST, and never
+  // return a date that is still in the past.
+  if (lower === 'daily') return advanceCalendarDays(lastFire, 1, now);
+  if (lower === 'weekly') return advanceCalendarDays(lastFire, 7, now);
 
   let intervalMs: number;
   if (lower === 'hourly') intervalMs = 3_600_000;
@@ -237,6 +242,10 @@ export function computeNextOccurrence(
     const amount = Number(match[1]);
     if (!Number.isFinite(amount) || amount <= 0) return null;
     const unit = match[2]![0];
+    // A whole number of days is a calendar cadence: `every 1 day` at 09:00 must
+    // still fire at 09:00 after a DST change, exactly like `daily`. A fractional
+    // day has no calendar meaning, so it keeps the fixed-millisecond behaviour.
+    if (unit === 'd' && Number.isInteger(amount)) return advanceCalendarDays(lastFire, amount, now);
     intervalMs = amount * (unit === 'm' ? 60_000 : unit === 'h' ? 3_600_000 : 86_400_000);
   }
 

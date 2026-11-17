@@ -108,6 +108,44 @@ describe('Scheduler', () => {
     expect(next!.getTime()).toBeGreaterThan(base.getTime());
   });
 
+  // `every N days` used to add a fixed millisecond count while `daily`/`weekly`
+  // rebuilt the date from local components, so a DST change moved `every 1 day`
+  // by an hour permanently. Both cadences must agree.
+  test('every N days keeps the local wall-clock time like daily', () => {
+    // Pinned to a DST-observing zone so the regression is caught everywhere,
+    // not only on a machine that happens to live in one.
+    const previousTz = process.env.TZ;
+    process.env.TZ = 'Europe/Berlin';
+    try {
+      // A January base and a July "now": the catch-up crosses the March
+      // transition, so a fixed-millisecond step lands at 10:30 local while the
+      // calendar step stays at 09:30.
+      const base = new Date(2026, 0, 1, 9, 30, 0, 0); // 09:30 CET
+      const now = new Date(2026, 6, 1, 12, 0, 0, 0).getTime(); // July, CEST
+      const daily = computeNextOccurrence(base, 'daily', base.getDate(), now)!;
+      const every = computeNextOccurrence(base, 'every 1 day', base.getDate(), now)!;
+      expect(every.getTime()).toBe(daily.getTime());
+      expect(daily.getHours()).toBe(9);
+      expect(daily.getMinutes()).toBe(30);
+      expect(daily.getTime()).toBeGreaterThan(now);
+    } finally {
+      if (previousTz === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTz;
+    }
+  });
+
+  // The catch-up loop is capped at MAX_CATCHUP_STEPS periods. A reminder left
+  // unfired for longer than that used to return a date that was still in the
+  // past, so processReminders wrote it back and fired again on the next tick.
+  test('a reminder far behind the catch-up cap still lands in the future', () => {
+    const base = new Date(2024, 0, 1, 9, 0, 0, 0);
+    for (const recurrence of ['daily', 'weekly', 'every 3 days']) {
+      const next = computeNextOccurrence(base, recurrence);
+      expect(next).not.toBeNull();
+      expect(next!.getTime()).toBeGreaterThan(Date.now());
+    }
+  });
+
   test('processReminders picks up due reminders', async () => {
     let senderCalled = false;
     Scheduler.registerSender('whatsapp', async () => {
