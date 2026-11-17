@@ -4,6 +4,8 @@ import { getErrorMessage } from './errorUtils';
 
 const log = logger.child({ module: 'EmbeddingService' });
 const CACHE_MAX_ENTRIES = 500;
+/** How long a failed embedding request suppresses further attempts. */
+const EMBEDDING_FAILURE_COOLDOWN_MS = 30_000;
 const CACHE_TTL_MS = 10 * 60_000;
 const SPACE_PREFIX = 'embedding-space:v1:';
 
@@ -84,6 +86,8 @@ function readDimension(raw: string | undefined): number | undefined {
 
 export class EmbeddingService {
   private static cache = new Map<string, CacheEntry>();
+  /** Wall-clock time before which `tryEmbed` returns null without a request. */
+  private static failureCooldownUntil = 0;
   private static inFlight = new Map<string, Promise<Float32Array[]>>();
   private static knownDimensions = new Map<string, number>();
 
@@ -282,10 +286,17 @@ export class EmbeddingService {
   }
 
   static async tryEmbed(text: string): Promise<Float32Array | null> {
+    // Recycling the breaker while the provider is down. `tryEmbed` is awaited
+    // inline on the inbound path (memory ranking, room-knowledge retrieval), so
+    // without this every message paid the full request timeout while the API was
+    // unavailable. A short cooldown degrades to keyword/recency at zero cost.
+    if (Date.now() < this.failureCooldownUntil) return null;
     try {
       const [vector] = await this.embed([text]);
+      this.failureCooldownUntil = 0;
       return vector && vector.length > 0 ? vector : null;
     } catch (error: unknown) {
+      this.failureCooldownUntil = Date.now() + EMBEDDING_FAILURE_COOLDOWN_MS;
       log.warn({ err: getErrorMessage(error) }, '[EmbeddingService] Embed failed — semantic features degrade to recency');
       return null;
     }
@@ -295,5 +306,6 @@ export class EmbeddingService {
     this.cache.clear();
     this.inFlight.clear();
     this.knownDimensions.clear();
+    this.failureCooldownUntil = 0;
   }
 }

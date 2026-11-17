@@ -101,6 +101,34 @@ describe('EmbeddingService', () => {
     expect(Array.from(secondVectors[0]!)).toEqual([1, 0]);
   });
 
+  test('a failed request suppresses further attempts for a cooldown window', async () => {
+    let calls = 0;
+    let behaviour: () => Promise<Response> = async () => {
+      throw new Error('embedding API down');
+    };
+    global.fetch = (async () => {
+      calls += 1;
+      return behaviour();
+    }) as unknown as typeof fetch;
+
+    expect(await EmbeddingService.tryEmbed('first')).toBeNull();
+    // The inbound path awaits this inline: without the breaker every message paid
+    // the full request timeout while the provider was down.
+    expect(await EmbeddingService.tryEmbed('second')).toBeNull();
+    expect(calls).toBe(1);
+
+    // A success after the cooldown clears it.
+    behaviour = async () => response([{ index: 0, embedding: [1, 0] }]);
+    const realNow = Date.now;
+    Date.now = () => realNow() + 31_000;
+    try {
+      const vector = await EmbeddingService.tryEmbed('third');
+      expect(vector ? Array.from(vector) : null).toEqual([1, 0]);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
   test('encodes model, endpoint, and dimension into a parseable space id', () => {
     const first = createEmbeddingSpaceId('model-a', 'https://one.example/v1', 3);
     expect(parseEmbeddingSpaceId(first)).toMatchObject({ model: 'model-a', dimension: 3 });
