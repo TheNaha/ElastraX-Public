@@ -154,9 +154,12 @@ function readCompatibilityWindow(
   const enabledKey = `${prefix}_SECRET_COMPAT_ENABLED`;
   const untilKey = `${prefix}_SECRET_COMPAT_UNTIL`;
   const enabled = readBoolean(env, enabledKey, false);
-  const rawUntil = env[untilKey];
-  const expiresAt = rawUntil === undefined ? null : parseAbsoluteRfc3339(rawUntil);
-  if (rawUntil !== undefined && expiresAt === null) {
+  // `KEY=` in a `.env` is present-but-empty; treat it as unset, like every other
+  // reader in this file. Throwing here killed startup for a cleared line even
+  // when the compat path was disabled.
+  const rawUntil = (env[untilKey] ?? '').trim();
+  const expiresAt = rawUntil === '' ? null : parseAbsoluteRfc3339(rawUntil);
+  if (rawUntil !== '' && expiresAt === null) {
     throw new Error(`${untilKey} must be an absolute RFC3339 timestamp with a timezone`);
   }
 

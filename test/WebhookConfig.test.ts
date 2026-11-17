@@ -32,6 +32,17 @@ describe('parseWebhookConfig', () => {
     expect(() => parseWebhookConfig({ METRICS_AUTH_TOKEN: ` ${SECRET}` })).toThrow('METRICS_AUTH_TOKEN');
   });
 
+  test('treats a blank compatibility deadline as unset', () => {
+    // `.env` ships keys as `KEY=`, and an operator clearing the line used to
+    // abort startup with a malformed-timestamp error even with the compat path
+    // disabled.
+    const config = parseWebhookConfig({
+      WEBHOOK_BODY_SECRET_COMPAT_ENABLED: 'false',
+      WEBHOOK_BODY_SECRET_COMPAT_UNTIL: '',
+    });
+    expect(config.bodySecretCompatibility).toEqual({ enabled: false, expiresAt: null });
+  });
+
   test('requires enabled compatibility to have a future absolute deadline', () => {
     const now = Date.parse('2026-09-25T00:00:00Z');
     expect(() => parseWebhookConfig({
