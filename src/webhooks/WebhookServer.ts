@@ -296,12 +296,25 @@ export class WebhookServer {
     userIds: Array<{ userId: string; platform: string }>,
     serviceType: 'seerr' | 'jellyfin',
     addTarget: (destination: WebhookDestination) => Promise<void>,
+    eventType?: string,
   ): Promise<void> {
     const config = this.requireConfig();
+    if (userIds.length > config.maxDestinations) {
+      // The room-level cap logs when it drops targets; this binding-level cut
+      // used to be silent, so a subscriber past the cap simply stopped hearing
+      // from the bot with no signal anywhere.
+      log.warn(
+        { bindings: userIds.length, maxDestinations: config.maxDestinations, serviceType },
+        '[Webhook] Binding fan-out cap reached; extra bindings were skipped',
+      );
+    }
     const bounded = userIds.slice(0, config.maxDestinations);
     const roomGroups = await Promise.all(
       bounded.map(binding =>
-        NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType),
+        // The event type must reach the subscription filter: without it
+        // `matchesEvent` returns true and a digest-only or narrowed
+        // subscription received every Seerr/Jellyfin event.
+        NotificationSubscriptionService.getNotificationRooms(binding.userId, binding.platform, serviceType, eventType),
       ),
     );
 
@@ -334,6 +347,11 @@ export class WebhookServer {
     }
     const serviceSecret = route === 'seerr' ? config.seerrSecret : config.jellyfinSecret;
     const text = this.redactSecret(truncateText(formatted, config.maxTextLength), serviceSecret);
+    // The subscription's `notifyTypes` filter is keyed on the event name the
+    // service sent, exactly as `adaptSeerr`/`adaptJellyfin` read it.
+    const eventType = route === 'seerr'
+      ? asNonEmptyString(body.notification_type) ?? undefined
+      : asNonEmptyString(body.NotificationType) ?? undefined;
     const targets: WebhookDestination[] = [];
     const seen = new Set<string>();
     let droppedTargets = 0;
@@ -367,7 +385,7 @@ export class WebhookServer {
         username ? ServiceBindingService.findByExternalUsername('seerr', username) : Promise.resolve([]),
         email ? ServiceBindingService.findByExternalEmail('seerr', email) : Promise.resolve([]),
       ]);
-      await this.addMediaTargets(mergeBindings(usernameBindings, emailBindings), serviceType, addTarget);
+      await this.addMediaTargets(mergeBindings(usernameBindings, emailBindings), serviceType, addTarget, eventType);
     } else {
       const userId = asNonEmptyString(body.UserId);
       const username = asNonEmptyString(body.NotificationUsername);
@@ -375,10 +393,10 @@ export class WebhookServer {
         userId ? ServiceBindingService.findByExternalUser('jellyfin', userId) : Promise.resolve([]),
         username ? ServiceBindingService.findByExternalUsername('jellyfin', username) : Promise.resolve([]),
       ]);
-      await this.addMediaTargets(mergeBindings(userBindings, usernameBindings), serviceType, addTarget);
+      await this.addMediaTargets(mergeBindings(userBindings, usernameBindings), serviceType, addTarget, eventType);
     }
 
-    for (const room of await NotificationSubscriptionService.getAdminNotificationRooms(serviceType)) {
+    for (const room of await NotificationSubscriptionService.getAdminNotificationRooms(serviceType, eventType)) {
       await addTarget({ chatRoomId: room.chatRoomId, platform: room.platform });
     }
 

@@ -76,6 +76,10 @@ describe('WebhookServer media routing', () => {
         expect(usernameSpy).toHaveBeenCalled();
         expect(emailSpy).toHaveBeenCalled();
         expect(roomsSpy).toHaveBeenCalledTimes(1);
+        // The event name must reach the subscription filter, or `matchesEvent`
+        // returns true for every narrowed subscription.
+        expect(roomsSpy).toHaveBeenCalledWith('user-1', 'discord', 'seerr', 'MEDIA_APPROVED');
+        expect(adminSpy).toHaveBeenCalledWith('seerr', 'MEDIA_APPROVED');
         // Senders are invoked as (chatId, text, signal) so delivery can be
         // cancelled when the webhook request is aborted.
         expect(sendDiscord).toHaveBeenCalledWith(
