@@ -61,7 +61,7 @@ import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { ConfigService } from '../utils/ConfigService';
-import { getModelRouter } from '../utils/ModelRouter';
+import { getModelRouter, stripToolProtocol } from '../utils/ModelRouter';
 import { rankMemoriesForInjection } from '../utils/semanticMemory';
 import { RateLimiter } from '../utils/RateLimiter';
 import { AuthService } from '../utils/AuthService';
@@ -1219,6 +1219,8 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     });
     const editInterval = platform === 'whatsapp' ? streamingConfig.waEditIntervalMs : streamingConfig.dcEditIntervalMs;
     let preferredTier: ModelTier | undefined;
+    /** Last non-empty assistant text seen, used if the final round produces nothing. */
+    let lastAssistantText = '';
     const progressTracker = new ToolProgressTracker(ctx, (err, phase) => {
       log.warn({ err: getErrorMessage(err), chatId, phase }, '[Agent] Tool progress update failed');
     });
@@ -1230,6 +1232,10 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       // answer was replaced by "An internal error occurred".
       const forceTextOnly = iteration >= maxToolIterations;
       const iterationTools = forceTextOnly ? undefined : availableTools;
+      // Some OpenAI-compatible servers reject a history that contains tool
+      // results when the request omits the tool definitions, so the forced round
+      // sends the history with the tool protocol flattened to plain text.
+      const iterationMessages = forceTextOnly ? stripToolProtocol(messagesForAI) : messagesForAI;
       try {
         // Show typing indicator before each LLM call
         await ctx.sendTyping?.().catch(err => log.warn({ err, chatId, iteration }, '[Agent] Typing indicator failed'));
@@ -1253,7 +1259,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
           const streamTools = iterationTools;
           for await (const chunk of modelRouter.chatCompletionStream(
-            messagesForAI,
+            iterationMessages,
             streamTools,
             config.temperature,
             config.maxTokens,
@@ -1335,6 +1341,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               content: accumulated || '',
               tool_calls: toolCalls,
             });
+            if (accumulated.trim()) lastAssistantText = stripThinkTags(accumulated);
 
             // Execute tools
             const execution = await executeRequestedToolCalls(toolCalls, {
@@ -1359,7 +1366,9 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
           // Stream produced only text — we are done
           isDone = true;
-          finalAiResponseText = stripThinkTags(accumulated) || internalErrorText;
+          finalAiResponseText = stripThinkTags(accumulated)
+            || (forceTextOnly ? lastAssistantText : '')
+            || internalErrorText;
 
           // Final edit to remove cursor indicator
           if (sentKey && finalAiResponseText !== internalErrorText && !streamingFailed) {
@@ -1388,8 +1397,14 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
         // ── Non-streaming (original) path ───────────────────────────────────
         const aiMsgObj: ChatCompletionMessage = await modelRouter.chatCompletion(
-          messagesForAI, iterationTools, config.temperature, config.maxTokens, preferredTier,
+          iterationMessages, iterationTools, config.temperature, config.maxTokens, preferredTier,
         );
+
+        // Remember any usable text from this step: if the final, forced round
+        // returns no content (some models still emit a tool call), this is a
+        // better answer than the internal-error text.
+        const stepText = extractAssistantText(aiMsgObj);
+        if (stepText) lastAssistantText = stepText;
 
         if (verboseAiLogs) {
           log.info({
@@ -1430,7 +1445,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         } else {
           // Standard text response (terminal state)
           isDone = true;
-          finalAiResponseText = extractAssistantText(aiMsgObj);
+          finalAiResponseText = extractAssistantText(aiMsgObj) || (forceTextOnly ? lastAssistantText : '');
           if (!finalAiResponseText) {
             finalAiResponseText = internalErrorText;
             log.warn({
@@ -1458,7 +1473,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         platform,
         maxToolIterations,
       }, '[Agent] Aborted inference loop after reaching max tool iterations');
-      finalAiResponseText = internalErrorText;
+      finalAiResponseText = lastAssistantText || internalErrorText;
     }
 
     // 4. Save Final AI Response

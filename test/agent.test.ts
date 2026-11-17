@@ -679,8 +679,11 @@ describe('handleIncomingMessage', () => {
       expect(callCount).toBe(2);
       expectReply(ctx.reply, 'Answer after the budget ran out.');
       // The extra round must not offer tools again, or the model could loop.
-      const finalRequest = JSON.parse(bodies[1]!) as { tools?: unknown[] };
+      const finalRequest = JSON.parse(bodies[1]!) as { tools?: unknown[]; messages: Array<{ role: string }> };
       expect(finalRequest.tools).toBeUndefined();
+      // And the history must carry no tool protocol: some OpenAI-compatible
+      // servers reject tool messages when the request omits tool definitions.
+      expect(finalRequest.messages.some(message => message.role === 'tool')).toBe(false);
     });
 
     test('reports an unknown tool name to the model instead of crashing', async () => {

@@ -184,7 +184,16 @@ export function sanitizeMessagesForProvider(
   });
 }
 
-function removeToolProtocol(messages: AIChatMessage[]): AIChatMessage[] {
+/**
+ * Rewrite a conversation so it carries no tool protocol.
+ *
+ * A provider that does not support tool calling rejects `tool` messages and
+ * assistant `tool_calls` outright, so they are flattened into plain text. The
+ * agent also uses this for its final, text-only round: some OpenAI-compatible
+ * servers reject a history that contains tool results when the request omits the
+ * tool definitions.
+ */
+export function stripToolProtocol(messages: AIChatMessage[]): AIChatMessage[] {
   return messages.flatMap(message => {
     if (message.role === 'tool') {
       const content = typeof message.content === 'string'
@@ -214,7 +223,7 @@ export function adaptChatRequest(
 ): AdaptedChatRequest {
   const sanitized = sanitizeMessagesForProvider(messages, provider);
   const adapted: AdaptedChatRequest = {
-    messages: provider.supportsTools ? sanitized : removeToolProtocol(sanitized),
+    messages: provider.supportsTools ? sanitized : stripToolProtocol(sanitized),
   };
   if (tools && tools.length > 0 && provider.supportsTools) adapted.tools = tools;
   return adapted;
