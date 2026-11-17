@@ -125,7 +125,16 @@ export abstract class BaseHttpClient {
     // request forever with nothing able to cancel it.
     try {
       if (!response.ok) {
-        const text = await readResponseText(response, this.maxResponseBytes, service, method, path).catch(() => '');
+        let text = '';
+        try {
+          text = await readResponseText(response, this.maxResponseBytes, service, method, path);
+        } catch (error) {
+          // A body read that hit the timeout is a timeout, not an HTTP error
+          // with an empty detail.
+          if (timedOut) {
+            throw new HttpClientError(service, method, path, 'TIMEOUT', `${service} response body timed out after ${timeoutMs}ms.`, { retryable: true, cause: error });
+          }
+        }
         const detail = sanitizeResponseText(text);
         this.log.error({ status: response.status, path }, 'API error');
         throw new HttpClientError(
