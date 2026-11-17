@@ -589,7 +589,7 @@ const VIEWS = {
     return [
       el('div', { class: 'grid' },
         Object.entries(states).map(([k, v]) => stat(k, num(v), null)),
-        stat('Inbox stranded', num(strandedInboxCount(d.inbox.byState || {})), 'no recovery scan exists')),
+        stat('Inbox stranded', num(strandedInbox(d.inbox.byState || {})), 'no recovery scan exists')),
       card('Outbox — failed and dead-lettered', table(['ID', 'Platform', 'Room', 'State', 'Tries', 'Error', 'Body', ''],
         d.outbox.rows.map(r => [String(r.id), r.platform || '—', r.chatRoomId, r.state, num(r.attempts),
           r.lastError || '—', r.text || '—',
@@ -723,4 +723,4 @@ const APP_SHELL_HTML = `<!doctype html>
 <script src="/admin/app.js"></script>
 </body></html>`;
 
-export { APP_SHELL_HTML };
+export { APP_SHELL_HTML, APP_JS };

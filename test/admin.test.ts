@@ -17,6 +17,7 @@ import * as pathModule from 'node:path';
 import * as osModule from 'node:os';
 
 const { createAdminHandler } = await import('../src/admin/routes');
+const { APP_JS } = await import('../src/admin/routes');
 const {
   AdminAuth,
   LoginThrottle,
@@ -506,7 +507,8 @@ describe('admin hardening', () => {
     expect(plain.value).toBe('https://seerr.example/');
   });
 
-  test('reports a truncated feedback tail instead of silently narrowing it', () => {    const { mkdtempSync, writeFileSync } = fsModule;
+  test('reports a truncated feedback tail instead of silently narrowing it', () => {
+    const { mkdtempSync, writeFileSync } = fsModule;
     const { join } = pathModule;
     const { tmpdir } = osModule;
     const dir = mkdtempSync(join(tmpdir(), 'feedback-tail-'));
@@ -606,5 +608,69 @@ describe('admin room inventory', () => {
     const inventory = roomInventory();
     const room = inventory.rooms.find(entry => entry.roomKey === roomKey);
     expect(room?.knowledgeDocuments).toBe(2);
+  });
+});
+
+describe('admin app bundle', () => {
+  class StubNode {
+    nodeType = 'element';
+    className = '';
+    textContent = '';
+    readonly attrs: Record<string, string> = {};
+    readonly children: unknown[] = [];
+    setAttribute(name: string, value: string): void {
+      this.attrs[name] = value;
+    }
+    addEventListener(): void {}
+    append(...kids: unknown[]): void {
+      this.children.push(...kids);
+    }
+  }
+
+  test('every embedded view renders against a minimal DOM', async () => {
+    // APP_JS is a plain string, so tsc and eslint never see it. A helper that
+    // is called but never declared (the bug this guards against) would only
+    // fail at runtime, in the operator's browser, on one tab.
+    const responses: Record<string, unknown> = {
+      'api/overview': {
+        uptimeSeconds: 60, version: 'v1', services: {},
+        messages: { received: 0, errors: 0 }, llm: { durationP95: 0, requests: 0 },
+        tokens: { total: 0, models: [] }, queue: { totalPending: 0, totalRunning: 0 },
+        feedback: { positive: 0, negative: 0 },
+      },
+      'api/tools': { catalogSize: 0, alwaysLoaded: [], plugins: [], tools: [] },
+      'api/rooms': { total: 0, keyStats: {}, rooms: [] },
+      'api/delivery': { outbox: { byState: {}, rows: [] }, inbox: { byState: {}, stranded: [] } },
+      'api/reminders': { pending: 0, rows: [], flows: { total: 0, oldest: null } },
+      'api/roomkeys': { total: 0, rows: [] },
+      'api/feedback': { positive: 0, negative: 0, ratio: null, entries: [], truncated: false },
+      'api/config': { missing: [], keys: [] },
+    };
+    const documentStub = {
+      createElement: () => new StubNode(),
+      createTextNode: (text: string) => ({ text }),
+      addEventListener: () => {},
+      getElementById: () => new StubNode(),
+      querySelectorAll: () => [],
+    };
+    const fetchStub = async (path: string) => ({
+      ok: true,
+      status: 200,
+      json: async () => responses[String(path).replace('/admin/', '')] ?? {},
+    });
+    const factory = new Function(
+      'document', 'fetch', 'Node', 'location', 'window', 'setTimeout', 'clearTimeout', 'confirm', 'console',
+      `${APP_JS}\nreturn VIEWS;`,
+    );
+    const views = factory(
+      documentStub, fetchStub, StubNode, { href: '' }, {}, () => 0, () => {}, () => true, console,
+    ) as Record<string, () => Promise<unknown[]>>;
+
+    const names = Object.keys(views);
+    expect(names.length).toBeGreaterThanOrEqual(8);
+    for (const name of names) {
+      const nodes = await views[name]!();
+      expect(Array.isArray(nodes)).toBe(true);
+    }
   });
 });
