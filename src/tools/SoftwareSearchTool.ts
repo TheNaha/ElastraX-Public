@@ -44,7 +44,11 @@ export class SoftwareSearchTool extends SearxSearchToolBase {
   }
 
   protected override formatResults(lang: string, results: SearXngRawResult[], query: string): string {
-    return super.formatResults(lang, results.filter((result) => result.url ? isTrustedSoftwareUrl(result.url) : false), query);
+    const trusted = results.filter((result) => result.url ? isTrustedSoftwareUrl(result.url) : false);
+    // See GameSearchTool: the base class checks for zero results before this
+    // filter, so an all-untrusted set must fall back to the no-results message.
+    if (trusted.length === 0) return this.noResultsMessage(lang, query);
+    return super.formatResults(lang, trusted, query);
   }
 
   protected override resultsHeader(lang: string, query: string): string {

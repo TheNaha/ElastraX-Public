@@ -228,7 +228,10 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
     try {
       const entries = await fsPromises.readdir(logPath, { withFileTypes: true });
       const logFiles = entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith('.log'))
+        // Rotated shards (`app.log.1`, `app.log.2`, …) count too: the filter
+        // used to require a plain `.log` suffix and then test for `.log.N`,
+        // which could never match, so rotations were invisible.
+        .filter((entry) => entry.isFile() && /\.log(\.\d+)?$/.test(entry.name))
         .sort((_a: Dirent<string>, _b: Dirent<string>) => _b.name.localeCompare(_a.name));
 
       for (const file of logFiles) {

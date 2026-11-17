@@ -44,7 +44,12 @@ export class GameSearchTool extends SearxSearchToolBase {
   }
 
   protected override formatResults(lang: string, results: SearXngRawResult[], query: string): string {
-    return super.formatResults(lang, results.filter((result) => result.url ? isTrustedGameUrl(result.url) : false), query);
+    const trusted = results.filter((result) => result.url ? isTrustedGameUrl(result.url) : false);
+    // The base class only checks for zero results *before* this filter, so an
+    // all-untrusted set rendered the header with no items instead of the
+    // no-results message.
+    if (trusted.length === 0) return this.noResultsMessage(lang, query);
+    return super.formatResults(lang, trusted, query);
   }
 
   protected override resultsHeader(lang: string, query: string): string {
