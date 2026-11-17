@@ -29,6 +29,7 @@ import {
   validateReplayId,
   validateSource,
   verifyGitHubSignature,
+  webhookRateLimitKeys,
   WebhookRateLimiter,
   WebhookReplayCache,
   WebhookRequestError,
@@ -610,10 +611,7 @@ export class WebhookServer {
     if (!this.rateLimiter) {
       return jsonResponse({ error: 'Webhook server is not ready' }, 503);
     }
-    const rate = this.rateLimiter.consume([
-      `source:${route}:${source}`,
-      `ip:${ip}`,
-    ], this.now());
+    const rate = this.rateLimiter.consume(webhookRateLimitKeys(route, source, ip), this.now());
     if (!rate.allowed) {
       return jsonResponse({ error: 'Rate limit exceeded' }, 429, {
         'Retry-After': String(rate.retryAfterSeconds),

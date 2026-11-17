@@ -1,4 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
+import { isLoopbackHost } from '../utils/netAddress';
 import type { WebhookBody } from './types';
 
 export class WebhookRequestError extends Error {
@@ -290,6 +291,22 @@ export type RateLimitResult = {
   allowed: boolean;
   retryAfterSeconds: number;
 };
+
+/**
+ * Rate-limit keys for one webhook request.
+ *
+ * The `ip:` key is only useful when the peer address identifies a sender.
+ * Behind the documented reverse proxy `requestIP` is always the proxy's own
+ * address, so keying on it made every sender share a single bucket and capped
+ * total webhook throughput at `maxRequests` per window regardless of source. A
+ * loopback peer carries no per-sender information, so it is omitted; the
+ * `source:` key still limits each sender on its own.
+ */
+export function webhookRateLimitKeys(route: string, source: string, ip: string): string[] {
+  const keys = [`source:${route}:${source}`];
+  if (!isLoopbackHost(ip)) keys.push(`ip:${ip}`);
+  return keys;
+}
 
 export class WebhookRateLimiter {
   private readonly buckets = new Map<string, RateBucket>();

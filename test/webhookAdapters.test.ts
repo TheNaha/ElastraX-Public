@@ -6,8 +6,33 @@
  * string-only reader.
  */
 import { describe, test, expect } from 'bun:test';
-import { WebhookRateLimiter, WebhookReplayCache } from '../src/webhooks/utils';
+import { WebhookRateLimiter, WebhookReplayCache, webhookRateLimitKeys } from '../src/webhooks/utils';
 import { adaptJellyfin, buildWebhookMessage } from '../src/webhooks/adapters';
+
+describe('webhookRateLimitKeys', () => {
+  test('omits the ip key for a loopback peer', () => {
+    // Behind the documented reverse proxy requestIP is always 127.0.0.1, so an
+    // ip key would put every sender in one shared bucket.
+    expect(webhookRateLimitKeys('jellyfin', 'ci', '127.0.0.1')).toEqual(['source:jellyfin:ci']);
+    expect(webhookRateLimitKeys('jellyfin', 'ci', '::1')).toEqual(['source:jellyfin:ci']);
+  });
+
+  test('keeps the ip key for a real remote peer', () => {
+    expect(webhookRateLimitKeys('github', 'ci', '203.0.113.7')).toEqual(['source:github:ci', 'ip:203.0.113.7']);
+  });
+
+  test('two senders behind the same proxy are limited independently', () => {
+    const limiter = new WebhookRateLimiter(2, 60_000, 10);
+    const now = 1_000_000;
+    const first = webhookRateLimitKeys('seerr', 'seerr-main', '127.0.0.1');
+    const second = webhookRateLimitKeys('seerr', 'seerr-other', '127.0.0.1');
+    expect(limiter.consume(first, now).allowed).toBe(true);
+    expect(limiter.consume(first, now + 1).allowed).toBe(true);
+    // The first source is now exhausted, but the second has its own bucket.
+    expect(limiter.consume(first, now + 2).allowed).toBe(false);
+    expect(limiter.consume(second, now + 3).allowed).toBe(true);
+  });
+});
 
 describe('WebhookRateLimiter capacity', () => {
   test('a known key is never refused because its sibling key is unseen', () => {
