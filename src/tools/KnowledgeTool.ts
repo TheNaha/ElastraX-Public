@@ -3,8 +3,8 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { getErrorMessage } from '../utils/errorUtils';
-import { stat } from 'node:fs/promises';
 import { resolveTargetMedia, loadMediaBytes } from '../utils/mediaResolve';
+import { mediaStorageDeps } from '../utils/mediaShared';
 import {
   ingestRoomDocument,
   listRoomDocuments,
@@ -139,7 +139,7 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
     // ran. The guard must bound what the process allocates (PDFTool does the
     // same).
     if (media.path) {
-      const info = await stat(media.path).catch(() => null);
+      const info = await mediaStorageDeps.stat(media.path).catch(() => null);
       if (info && info.size > MAX_INDEX_BYTES) {
         return t(ctx.language, 'kb.too_large', { mb: Math.round(MAX_INDEX_BYTES / (1024 * 1024)) });
       }
