@@ -345,3 +345,24 @@ references, and re-check `shuttingDown` after each await).
 | D-17 | Deleting `AI_MAX_PARALLEL_TOOLS` (env-var contract) or parallelising tools |
 | D-07 | Delete the dead foreign-room branch or implement membership checks |
 | O-03 | Redefining `AI_TIMEOUT_MS` as an idle timeout for streams |
+
+---
+
+## Implemented 2026-11-18 (safe batch)
+
+Branch `maint/2026-11-18-pass5-followups`, from `df382d4`.
+
+| Item | What changed |
+|---|---|
+| D-03b | **Approach revised by measurement.** Keeping the `CASE` and adding `messages(created_at)` / `reminders(created_at)` is both safer (mixed-unit rows still handled) and faster than comparing native units: 1M rows / 500k eligible went from 22.5 s to **1.6 s**, versus 15.1 s for native units without an index. Migration `0026_retention_indexes` (journal `when=27`, seq idx 5); the plan is pinned by a test. |
+| D-04 | Telegram media download is lazy; a size-skipped attachment is not fetched. |
+| D-05 | Discord forward fetches attachments one at a time (peak one buffer, not ten). |
+| D-11 | `tools/access.ts` holds the single predicate; MenuTool, FindToolsTool and `getAuthorizedTool` all apply it; `ctx.hasBinding` publishes the agent's lookup. |
+| D-12c | `TranslateTool.query` is capped at 4000 characters. |
+| D-14 | `clearUserIdentities` is platform-scoped and deletes the canonical row. |
+| D-15 | Signal handlers are installed before the first await; the database is closed only after schema work finishes. |
+| D-16 | `/ready` reports a throwing probe via `allSettled`; CSRF is verified once per request (`verifyCsrfFor`). |
+| D-18 | `messages.upsert` prepares at most four entries at a time. |
+| O-02 | `registry.mutability.test.ts` fails if any read tool declares `cost > 1`; the two inert declarations were removed. |
+
+Not done (still open, as listed above): D-02, D-06, D-07, D-08, D-09, D-10, D-12a, D-13, D-17, O-03, O-04.
