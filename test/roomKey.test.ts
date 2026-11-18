@@ -61,6 +61,13 @@ describe('canonical room key format', () => {
     // A raw provider chat id is not a key: it has no platform segment.
     expect(parseRoomKey('1234567890')).toBeNull();
     expect(parseRoomKey('628123@s.whatsapp.net')).toBeNull();
+    // A WhatsApp device JID legitimately contains ':'. It must be read as a raw
+    // id, not as the legacy `<platform>:<id>` form with platform "628123456789".
+    expect(parseRoomKey('628123456789:12@s.whatsapp.net')).toBeNull();
+    // The legacy form still parses when the leading segment is a real platform,
+    // and a canonical key keeps an unknown platform for authorization to reject.
+    expect(parseRoomKey('whatsapp:abc')).toEqual({ platform: 'whatsapp', remoteRoomId: 'abc' });
+    expect(parseRoomKey('room:matrix:abc')).toEqual({ platform: 'matrix', remoteRoomId: 'abc' });
   });
 
   test('strips only its own platform prefix and tolerates the pre-migration form', () => {

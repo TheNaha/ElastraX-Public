@@ -25,7 +25,7 @@ import {
   resolveRoomKeySync,
   toRoomKey,
 } from '../src/db/rooms';
-import { roomKeyForContext } from '../src/messaging/roomKeys';
+import { roomKeyForContext, remoteRoomIdFromRoomKey } from '../src/messaging/roomKeys';
 import { createTempDatabase, type TempDatabase } from './helpers/database';
 
 const WA_ROOM = '6281234567890@s.whatsapp.net';
@@ -98,6 +98,16 @@ describe('room key format', () => {
     expect(isCanonicalRoomKey('whatsapp', WA_ROOM, toRoomKey('whatsapp', WA_ROOM))).toBe(true);
     expect(isCanonicalRoomKey('whatsapp', WA_ROOM, toRoomKey('discord', WA_ROOM))).toBe(false);
     expect(isCanonicalRoomKey('whatsapp', WA_ROOM, null)).toBe(false);
+  });
+
+  test('a raw device JID with a colon is delivered as a room id, not a foreign key', () => {
+    // `628123456789:12@s.whatsapp.net` used to parse as platform 628123456789,
+    // so remoteRoomIdFromRoomKey returned null and the scheduler retired the
+    // reminder as "permanent data corruption".
+    const deviceJid = '628123456789:12@s.whatsapp.net';
+    expect(remoteRoomIdFromRoomKey('whatsapp', deviceJid)).toBe(deviceJid);
+    expect(remoteRoomIdFromRoomKey('whatsapp', 'room:discord:abc')).toBeNull();
+    expect(remoteRoomIdFromRoomKey('whatsapp', 'whatsapp:abc')).toBe('abc');
   });
 });
 

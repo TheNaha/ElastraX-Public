@@ -19,8 +19,11 @@
  * It deliberately has **no imports**. `src/agent/roomKey.ts` must not pull the
  * database handle into the module graph of every tool (test files that inject a
  * partial `../src/db` double would break), and a leaf module satisfies that
- * without duplicating the format.
+ * without duplicating the format. Its one import, `core/platforms`, is itself a
+ * leaf (the platform allow-list, no I/O), so the property still holds.
  */
+
+import { normalizePlatform } from './platforms';
 
 /** Separator between the key's segments. */
 export const ROOM_KEY_SEPARATOR = ':';
@@ -79,7 +82,8 @@ export function parseRoomReference(value: string | null | undefined): RoomKeyPar
   if (typeof value !== 'string') return null;
   const raw = value.trim();
   if (raw.length === 0) return null;
-  const body = raw.startsWith(ROOM_KEY_FULL_PREFIX)
+  const canonical = raw.startsWith(ROOM_KEY_FULL_PREFIX);
+  const body = canonical
     ? raw.slice(ROOM_KEY_FULL_PREFIX.length)
     : raw;
   const separator = body.indexOf(ROOM_KEY_SEPARATOR);
@@ -87,6 +91,11 @@ export function parseRoomReference(value: string | null | undefined): RoomKeyPar
   const platform = body.slice(0, separator);
   const remoteRoomId = body.slice(separator + 1);
   if (platform.length === 0 || remoteRoomId.length === 0) return null;
+  // The legacy `<platform>:<id>` form is only a key when the leading segment is
+  // actually a platform. A raw WhatsApp device JID is `628123:12@s.whatsapp.net`
+  // and would otherwise parse as platform `628123`, so `remoteRoomIdFromRoomKey`
+  // returned null and the scheduler retired a valid reminder as "corrupt".
+  if (!canonical && normalizePlatform(platform) === null) return null;
   return { platform, remoteRoomId };
 }
 
