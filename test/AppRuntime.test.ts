@@ -140,7 +140,7 @@ describe('AppRuntime', () => {
     // raw provider room id for provider I/O.
     const roomKey = canonicalRoomKey('whatsapp', `room-1-${runToken}`);
     expect(enqueue).toHaveBeenCalledTimes(1);
-    expect(enqueue).toHaveBeenCalledWith(roomKey, expect.any(Function));
+    expect(enqueue).toHaveBeenCalledWith(roomKey, expect.any(Function), expect.objectContaining({ silent: expect.any(Boolean) }));
     expect(handleIncoming).toHaveBeenCalledWith(ctx);
     expect(handleIncoming.mock.calls[0]?.[0]?.roomKey).toBe(roomKey);
     expect(handleIncoming.mock.calls[0]?.[0]?.chatId).toBe(`room-1-${runToken}`);

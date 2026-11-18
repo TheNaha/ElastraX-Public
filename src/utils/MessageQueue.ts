@@ -80,9 +80,16 @@ export class MessageQueue {
     this.pruneTimer.unref?.();
   }
 
-  enqueue(roomId: string, task: Task): boolean {
+  /**
+   * @param options.silent - do not count or log a rejection. The runtime's
+   *   backpressure loop retries `enqueue` up to 80 times for one message; counting
+   *   each attempt inflated `droppedTasks` by 80 and emitted 80 warnings for a
+   *   single drop, corrupting the metric that distinguishes a real drop from
+   *   backpressure. The caller logs and counts once when it gives up.
+   */
+  enqueue(roomId: string, task: Task, options: { silent?: boolean } = {}): boolean {
     if (this.stopped) {
-      this.droppedTasks++;
+      if (!options.silent) this.droppedTasks++;
       return false;
     }
 
@@ -94,11 +101,13 @@ export class MessageQueue {
 
     this.dropStale(queue);
     if (queue.tasks.length >= this.perRoomLimit || this.getPendingCount() >= this.globalLimit) {
-      this.droppedTasks++;
-      logger.warn(
-        { roomId, perRoomPending: queue.tasks.length, globalPending: this.getPendingCount() },
-        '[MessageQueue] Admission rejected',
-      );
+      if (!options.silent) {
+        this.droppedTasks++;
+        logger.warn(
+          { roomId, perRoomPending: queue.tasks.length, globalPending: this.getPendingCount() },
+          '[MessageQueue] Admission rejected',
+        );
+      }
       return false;
     }
 
@@ -215,10 +224,6 @@ export class MessageQueue {
       droppedTasks: this.droppedTasks,
       stopped: this.stopped,
     };
-  }
-
-  isStopped(): boolean {
-    return this.stopped;
   }
 
   stop(): void {

@@ -63,7 +63,7 @@ type SenderRegistry = {
 };
 
 type QueueController = {
-  enqueue(roomId: string, task: (signal?: AbortSignal) => Promise<void>): unknown;
+  enqueue(roomId: string, task: (signal?: AbortSignal) => Promise<void>, options?: { silent?: boolean }): unknown;
   stop(): void;
   closeAndDrain?(graceMs?: number): Promise<void>;
   getStats?(): Partial<MessageQueueStats>;
@@ -360,7 +360,11 @@ export class AppRuntime {
 
       let accepted = false;
       for (let attempt = 0; attempt < 80; attempt++) {
-        accepted = this.messageQueue.enqueue(roomKey, task) !== false;
+        // Silent on every retry but the last: this loop may try 80 times for one
+        // message, and counting each rejection inflated `droppedTasks` by 80 and
+        // logged 80 warnings for a single drop. The final attempt counts and logs
+        // exactly once (and still wins if a slot freed up).
+        accepted = this.messageQueue.enqueue(roomKey, task, { silent: attempt < 79 }) !== false;
         if (accepted) break;
         await new Promise(resolve => setTimeout(resolve, 25));
       }
