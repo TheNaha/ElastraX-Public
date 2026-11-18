@@ -544,7 +544,8 @@ describe('TelegramProvider lifecycle', () => {
         },
       }));
 
-      const raw = received?.quoted?.rawMessage as { key?: { fromMe?: boolean; message_id?: number } } | undefined;
+      const quoted = (received as MessageContext | null)?.quoted;
+      const raw = quoted?.rawMessage as { key?: { fromMe?: boolean; message_id?: number } } | undefined;
       expect(raw?.key?.fromMe).toBe(true);
       expect(raw?.key?.message_id).toBe(40);
       await provider.stop();
