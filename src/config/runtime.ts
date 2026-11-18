@@ -134,6 +134,10 @@ export function getStreamingConfig(env: RuntimeEnv = process.env) {
     enabled: readBooleanEnv(env.AI_STREAMING, false),
     waEditIntervalMs: readIntegerEnv(env.STREAMING_EDIT_INTERVAL_WA, 1500, { min: 100, max: 30_000 }),
     dcEditIntervalMs: readIntegerEnv(env.STREAMING_EDIT_INTERVAL_DC, 500, { min: 100, max: 30_000 }),
+    // Telegram's Bot API tolerates roughly one message edit per chat per second,
+    // so it cannot share Discord's 500 ms cadence: a 429 mid-stream aborts the
+    // preview and costs the user a second full-length reply.
+    tgEditIntervalMs: readIntegerEnv(env.STREAMING_EDIT_INTERVAL_TG, 1500, { min: 100, max: 30_000 }),
   };
 }
 

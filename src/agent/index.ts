@@ -214,8 +214,8 @@ function clampStreamPreview(text: string): string {
  * halves the 1 s outbox poller could claim the row mid-send and deliver the same
  * text a second time — the window was the whole provider round trip.
  */
-async function deliverDurableText(ctx: MessageContext, text: string, source: string, mentions?: string[]): Promise<void> {
-  if (!text.trim()) return;
+async function deliverDurableText(ctx: MessageContext, text: string, source: string, mentions?: string[]): Promise<boolean> {
+  if (!text.trim()) return false;
   const deliveryId = OutboxService.enqueueDirectText(
     ctx.platform,
     ctx.chatId,
@@ -240,8 +240,12 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
       // race the direct-send grace window exists to bound.
       log.warn({ deliveryId, source }, 'Direct send raced the outbox poller; delivery row was already claimed');
     }
+    return true;
   } catch (error) {
     log.warn({ err: error, deliveryId, source }, 'Immediate delivery failed; outbox will retry');
+    // The row is durable and the poller will deliver it, so the user will still
+    // receive the text — but not yet.
+    return true;
   }
 }
 
@@ -355,18 +359,31 @@ async function executeRequestedToolCalls(
   // self-imposed, not a system failure, so an exceeded claim is reported back to
   // the model as a tool result rather than thrown out of this function.
   let budgetError: string | null = null;
+  let executableReady = readyCount;
   if (readyCount > 0) {
+    const remaining = Math.max(0, options.turnBudget.snapshot().remainingToolCalls);
+    executableReady = Math.min(readyCount, remaining);
     try {
       options.turnBudget.claimToolCalls(readyCount);
     } catch (error) {
       if (!(error instanceof TurnBudgetExceededError)) throw error;
       budgetError = getErrorMessage(error);
-      log.warn({ chatId: options.chatId, requested: toolCalls.length, ready: readyCount }, 'Tool-call budget exhausted');
+      // All-or-nothing claiming threw the whole batch away even when part of it
+      // would still fit: with 2 calls left, a round of 3 executed none and every
+      // result said "limit exceeded", so the model made no progress and the two
+      // remaining iterations re-requested the same work. Run what fits and
+      // report the limit only for the remainder.
+      if (executableReady > 0) options.turnBudget.claimToolCalls(executableReady);
+      log.warn(
+        { chatId: options.chatId, requested: toolCalls.length, ready: readyCount, granted: executableReady },
+        'Tool-call budget partially exhausted',
+      );
     }
   }
 
   const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
   let preferredTier = options.preferredTier;
+  let readySeen = 0;
 
   for (const item of prepared) {
     if (item.kind === 'error') {
@@ -378,12 +395,13 @@ async function executeRequestedToolCalls(
       });
       continue;
     }
-    if (budgetError) {
+    readySeen += 1;
+    if (readySeen > executableReady) {
       toolResults.push({
         role: 'tool',
         tool_call_id: item.toolCall.id,
         name: item.toolName,
-        content: `Error: ${budgetError}`,
+        content: `Error: ${budgetError ?? 'Tool-call limit exceeded.'}`,
       });
       continue;
     }
@@ -822,6 +840,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
   const chatType = isGroup ? 'Group' : 'Private';
   log.info({ chatType, chatId, platform, hasMedia: ctx.hasMedia, textLength: userContent.length }, 'Incoming message received');
 
+  // Whether this turn already put an answer in front of the user. The AI-phase
+  // `catch` below runs for failures after the answer (a database write, the
+  // history read): sending "An internal error occurred" on top of a delivered
+  // answer confused the user and contradicted the reply they just read.
+  let deliveredUserVisible = false;
+
   try {
     // Room is already fetched above; derive the language label for the system prompt.
     const langFull = room.language === 'id' ? 'Indonesian (Bahasa Indonesia)' : 'English';
@@ -1120,7 +1144,11 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         minBatch: SUMMARY_MIN_BATCH,
         callLLM: async summaryMessages => {
           const response = await modelRouter.chatCompletion(summaryMessages, undefined, 0.2, undefined, 'fast');
-          return typeof response.content === 'string' ? response.content : '';
+          // Share the agent's extractor: some providers return an array of text
+          // parts, a `refusal`, or `output_text` instead of a string `content`,
+          // and returning `''` for those made the summarizer throw "empty
+          // summary" on every turn — one wasted model call per inbound message.
+          return extractAssistantText(response);
         },
       });
       const summaryContext: AIChatMessage[] = summaryRun.summary
@@ -1238,7 +1266,14 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       maxToolResultBytes: turnBudgetConfig.maxToolResultBytes,
       maxTotalToolResultBytes: turnBudgetConfig.maxToolResultBytesTotal,
     });
-    const editInterval = platform === 'whatsapp' ? streamingConfig.waEditIntervalMs : streamingConfig.dcEditIntervalMs;
+    // Per-platform edit cadence. Keying Telegram to Discord's 500 ms sent
+    // ~2 edits/s against a Bot API that allows about one, so a rate-limited
+    // edit mid-stream fell back to a second full-length reply.
+    const editInterval = platform === 'whatsapp'
+      ? streamingConfig.waEditIntervalMs
+      : platform === 'telegram'
+        ? streamingConfig.tgEditIntervalMs
+        : streamingConfig.dcEditIntervalMs;
     let preferredTier: ModelTier | undefined;
     /** Last non-empty assistant text seen, used if the final round produces nothing. */
     let lastAssistantText = '';
@@ -1542,28 +1577,13 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     const keyParts = outboxKeyParts(ctx.messageId, 'assistant', ctx.chatId);
     if (replyAlreadyDelivered) {
       OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
+      deliveredUserVisible = true;
     } else {
-      const deliveryId = OutboxService.enqueueDirectText(
-        platform,
-        chatId,
-        finalAiResponseText,
-        keyParts,
-      );
-      try {
-        const result = await withCancellableTimeout(
-          signal => ctx.reply(finalAiResponseText, { signal }),
-          DIRECT_SEND_TIMEOUT_MS,
-          'direct reply',
-          ctx.signal,
-        );
-        const providerMessageId = typeof result === 'string' ? result : null;
-        const recorded = OutboxService.markEnqueuedSent(deliveryId, providerMessageId);
-        if (!recorded) {
-          log.warn({ deliveryId, chatId }, 'Final reply raced the outbox poller; delivery row was already claimed');
-        }
-      } catch (error) {
-        log.warn({ err: error, deliveryId }, 'Immediate delivery failed; outbox will retry');
-      }
+      // One durable direct-send path for both this reply and the slash/command
+      // replies: the two copies here had drifted (this one lost the empty-text
+      // guard, so a whitespace-only answer was enqueued and delivered as a blank
+      // message).
+      deliveredUserVisible = await deliverDurableText(ctx, finalAiResponseText, 'assistant');
     }
     await ctx.react?.('✅').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed'));
     healthMetrics.recordMessageProcessed();
@@ -1591,6 +1611,13 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
   } catch (error) {
     log.error(error, 'Error handling message');
     healthMetrics.recordMessageError();
+    if (deliveredUserVisible) {
+      // The user already has this turn's answer. A second "internal error" reply
+      // reads as a contradiction, and rethrowing would let the durable inbox
+      // retry the same turn and send the answer twice.
+      log.warn({ chatId, platform }, 'Turn failed after the reply was delivered; suppressing the error reply');
+      return;
+    }
     await ctx.react?.('❌').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed')); // show error
     await deliverDurableText(ctx, t(ctx.language, 'agent.internal_error'), 'agent:fatal');
   }

@@ -67,6 +67,7 @@ Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE
 | `AI_STREAMING` | boolean | `false` | no | Enable real-time streaming updates using message editing. |
 | `STREAMING_EDIT_INTERVAL_WA` | integer | `1500` | no | Milliseconds between WhatsApp edits (prevents rate limits). Range 100–30,000. |
 | `STREAMING_EDIT_INTERVAL_DC` | integer | `500` | no | Milliseconds between Discord edits. Range 100–30,000. |
+| `STREAMING_EDIT_INTERVAL_TG` | integer | `1500` | no | Milliseconds between Telegram edits. The Bot API allows roughly one per chat per second. Range 100–30,000. |
 | `TOOL_LOADING_MODE` | string | `search` | no | `search` = essential + triggered tools only; `all` = legacy, all permitted tools in every request. |
 | `TOOL_MUTATION_COST_LIMIT` | integer | `100` | no | Max cost a single user may spend on mutating tools per 60 s window. Range 1–1,000. |
 | `AI_TEMPERATURE` | float | `0.7` | no | Default sampling temperature, 0.0–2.0. Overridable per-chat via `/config`. |
