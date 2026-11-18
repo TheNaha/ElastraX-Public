@@ -11,7 +11,16 @@
  * single source of truth.
  */
 
-/** True for plain objects only (excludes arrays). */
+/**
+ * True for plain objects only.
+ *
+ * Excludes arrays and every non-plain object (`Date`, `Buffer`/`Uint8Array`,
+ * `Map`, class instances, …). The previous check only excluded arrays and null,
+ * so a `Buffer` counted as plain and `stripBlobs` exploded it into an
+ * index-keyed object — corrupting a live provider proto before it was persisted.
+ */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
