@@ -42,7 +42,7 @@ Used when `AI_PROVIDERS` is set to a comma-separated list (e.g. `modal,gemini`).
 | `AI_<NAME>_SUPPORTS_TOOLS` | boolean | `true` | no | Advertise tool/function calling. |
 | `AI_<NAME>_STREAM_USAGE` | boolean | `true` | no | Request usage in streaming responses. |
 | `AI_<NAME>_SUPPORTS_PARALLEL_TOOLS` | boolean | unset | no | Advertise parallel tool calls. Unset leaves the client default. |
-| `AI_<NAME>_MAX_TOKENS_PARAM` | string | `max_tokens` | no | Request field used for the token cap. Anything other than `max_completion_tokens` resolves to `max_tokens`. |
+| `AI_<NAME>_MAX_TOKENS_PARAM` | string | `max_tokens` | no | Request field used for the token cap. Must be `max_tokens` or `max_completion_tokens`; any other value fails startup. |
 | `AI_<NAME>_MAX_OUTPUT_TOKENS` | integer | `AI_MAX_TOKENS` | no | Per-provider output cap. Overrides the global request `maxTokens`. |
 
 Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE`, `AI_SUPPORTS_VIDEO`, `AI_SUPPORTS_AUDIO`, `AI_SUPPORTS_TOOLS`, `AI_STREAM_USAGE`, `AI_SUPPORTS_PARALLEL_TOOLS`, `AI_MAX_TOKENS_PARAM`, `AI_MAX_OUTPUT_TOKENS`.

@@ -141,8 +141,14 @@ export function validateEnv(env: Env = process.env): void {
       if (tier && tier !== 'standard' && tier !== 'fast' && tier !== 'powerful') {
         errors.push(`AI_${upper}_TIER must be standard, fast, or powerful`);
       }
-      for (const flag of ['SUPPORTS_IMAGE', 'SUPPORTS_VIDEO', 'SUPPORTS_AUDIO', 'SUPPORTS_TOOLS', 'STREAM_USAGE']) {
+      for (const flag of ['SUPPORTS_IMAGE', 'SUPPORTS_VIDEO', 'SUPPORTS_AUDIO', 'SUPPORTS_TOOLS', 'SUPPORTS_PARALLEL_TOOLS', 'STREAM_USAGE']) {
         validateBoolean(env[`AI_${upper}_${flag}`], `AI_${upper}_${flag}`, errors);
+      }
+      // ModelRouter reads this per-provider override before the global one, so a
+      // bad value must fail startup like its global counterpart.
+      const providerTokenParam = env[`AI_${upper}_MAX_TOKENS_PARAM`]?.trim();
+      if (providerTokenParam && providerTokenParam !== 'max_tokens' && providerTokenParam !== 'max_completion_tokens') {
+        errors.push(`AI_${upper}_MAX_TOKENS_PARAM must be max_tokens or max_completion_tokens`);
       }
     }
   }
