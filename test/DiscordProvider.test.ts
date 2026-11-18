@@ -328,6 +328,31 @@ describe('DiscordProvider', () => {
     expect(mediaPayload.allowedMentions).toEqual({ parse: [] });
   });
 
+  test('a sticker-only message is reported as media', async () => {
+    const provider = new DiscordProvider();
+    (provider as unknown as { client: unknown }).client = asDiscordClient(createFakeClient());
+    // Discord delivers a sticker through `message.stickers`, never through
+    // `attachments`, and the message has empty content. It used to look like a
+    // text-less, media-less turn and the agent dropped it silently.
+    const ctx = await (provider as unknown as { createContext(message: unknown): Promise<MessageContext> }).createContext({
+      id: 'msg-sticker',
+      author: { id: 'user-1', username: 'alice', bot: false },
+      channelId: 'dm-1',
+      content: '',
+      attachments: new Map(),
+      stickers: new Map([['st-1', { id: 'st-1', name: 'wave', format: 1, url: 'https://cdn.discordapp.com/stickers/st-1.png' }]]),
+      mentions: { users: new Map() },
+      reference: null,
+      channel: { isDMBased: () => true, messages: { fetch: mock(async () => null) } },
+      guild: null,
+      reply: mock(async () => ({})),
+    });
+
+    expect(ctx.hasMedia).toBe(true);
+    expect(ctx.messageType).toBe('imageMessage');
+    expect(ctx.mediaAttachments?.[0]?.providerId).toBe('st-1');
+  });
+
   test('includes a playable duration description for voice attachments', async () => {
     const reply = mock(async (_payload: unknown) => ({}));
     const provider = new DiscordProvider();

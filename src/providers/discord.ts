@@ -327,7 +327,7 @@ export class DiscordProvider implements BotProvider {
     const isGroup = !msg.channel.isDMBased();
     const mentionedIds = Array.from(msg.mentions.users.keys());
     const isBotMentioned = !!client.user?.id && msg.mentions.users.has(client.user.id);
-    const currentSources = attachmentSources(msg, 'current', msg.id);
+    const currentSources = [...attachmentSources(msg, 'current', msg.id), ...stickerSources(msg, 'current', msg.id)];
     const hasMedia = currentSources.length > 0;
 
     let quoted: MessageContext['quoted'];
@@ -336,7 +336,7 @@ export class DiscordProvider implements BotProvider {
       try {
         const fetched = await msg.channel.messages.fetch(msg.reference.messageId);
         if (fetched) {
-          quotedSources = attachmentSources(fetched, 'quoted', fetched.id);
+          quotedSources = [...attachmentSources(fetched, 'quoted', fetched.id), ...stickerSources(fetched, 'quoted', fetched.id)];
           const isFromBot = fetched.author.id === client.user?.id;
           quoted = {
             messageType: descriptorMessageType(quotedSources, fetched.content ? 'conversation' : 'unknown'),
@@ -692,6 +692,47 @@ function descriptorMessageType(sources: AttachmentSource[], fallback: string): s
   if (mime.startsWith('video/')) return 'videoMessage';
   if (mime.startsWith('audio/')) return 'audioMessage';
   return sources.length > 0 ? 'documentMessage' : fallback;
+}
+
+/**
+ * Treat a message's stickers as attachments.
+ *
+ * Discord delivers a sticker as `message.stickers`, never as
+ * `message.attachments`, and a sticker-only message has empty `content`. Without
+ * this a sticker message looked text-less and media-less and the agent dropped
+ * the turn silently, while Telegram and WhatsApp both surface stickers as media.
+ * Lottie stickers (format 3) are JSON animation manifests that no media tool can
+ * consume, so they are recorded as `skipped` rather than downloaded.
+ */
+function stickerSources(message: DiscordMessage, origin: 'current' | 'quoted', providerParentId: string): AttachmentSource[] {
+  const stickers = message.stickers;
+  if (!stickers || stickers.size === 0) return [];
+  return Array.from(stickers.values()).map((sticker, index) => {
+    const extension = sticker.format === 2 ? 'apng' : sticker.format === 4 ? 'gif' : sticker.format === 3 ? 'json' : 'png';
+    const mimeType = sticker.format === 2
+      ? 'image/apng'
+      : sticker.format === 4
+        ? 'image/gif'
+        : sticker.format === 3
+          ? 'application/json'
+          : 'image/png';
+    const filename = `sticker-${sticker.id}.${extension}`;
+    const lottie = sticker.format === 3;
+    const descriptor: MediaAttachmentDescriptor = {
+      id: `${origin}:${providerParentId}:sticker:${sticker.id}`,
+      index,
+      origin,
+      providerId: sticker.id,
+      filename,
+      mimeType,
+      state: lottie ? 'skipped' : 'pending',
+      ...(lottie ? { error: 'Discord Lottie sticker cannot be downloaded as media.' } : {}),
+    };
+    // `size` is left non-numeric: the CDN response carries the real length, and
+    // a synthetic 0 would be passed to the download as a known empty body.
+    const attachment = { id: sticker.id, url: sticker.url, size: Number.NaN, name: filename, contentType: mimeType } as DiscordAttachment;
+    return { descriptor, attachment };
+  });
 }
 
 function discordAllowedMentions(users?: string[]): MessageMentionOptions {
