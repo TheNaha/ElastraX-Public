@@ -27,6 +27,8 @@ export async function resolveSenderHasBinding(
 ): Promise<boolean> {
   if (!senderId || !platform) return false;
   try {
+    // Media tools are gated on either media service. A new service type that
+    // also gates tools must be added here or its bound users will look unbound.
     const [binding, seerr] = await Promise.all([
       ServiceBindingService.getBinding(senderId, platform, 'jellyfin'),
       ServiceBindingService.getBinding(senderId, platform, 'seerr'),

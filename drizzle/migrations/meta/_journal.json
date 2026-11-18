@@ -144,7 +144,6 @@
       "breakpoints": true
     },
     {
-      "idx": 5,
       "version": "6",
       "when": 27,
       "tag": "0026_retention_indexes",

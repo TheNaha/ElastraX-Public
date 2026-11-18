@@ -387,7 +387,7 @@ describe('applyRetentionPolicy', () => {
 });
 
 describe('retention index usage', () => {
-  test('the age predicate reads the narrow created_at index, not the table', () => {
+  test('the age predicate scans the created_at index instead of the table', () => {
     // Retention deletes by age alone, which no room-leading composite index can
     // serve. Without a standalone index the plan was `SCAN messages`, re-reading
     // the whole table once per 500-row batch (measured: 22.5s for a 500k-row

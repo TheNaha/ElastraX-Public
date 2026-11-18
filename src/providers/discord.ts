@@ -539,11 +539,13 @@ export class DiscordProvider implements BotProvider {
             }
             return;
           }
-          // Fetched sequentially, not with Promise.all: Discord allows 10
+          // Fetched one at a time, not with Promise.all: Discord allows 10
           // attachments per message and each is buffered whole (HARD_MEDIA_MAX_BYTES
-          // is 200 MiB), so parallel fetching could hold 2 GiB live and peak near
-          // 4 GiB during the multipart encoding. One at a time keeps the peak at
-          // one attachment. (A budgeted stream-to-path would be better still.)
+          // is 200 MiB), so parallel fetching can hold 2 GiB live and peak near
+          // 4 GiB during the multipart encoding. Sequential fetching keeps one
+          // fetch in flight, though the finished buffers still accumulate in
+          // `files` until the single send (a budgeted stream-to-path would drop
+          // even that).
           const files: AttachmentBuilder[] = [];
           for (const attachment of msg.attachments.values()) {
             // Same guards the download path applies: the attachment URL is
