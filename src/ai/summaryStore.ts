@@ -21,6 +21,7 @@ function isWatermark(value: unknown, scope: string): value is SummaryWatermark {
   return row.version === 1
     && row.scope === scope
     && typeof row.throughMessageId === 'string'
+    && row.throughMessageId.trim().length > 0
     && Number.isInteger(row.summarizedMessages)
     && (row.summarizedMessages as number) >= 0
     && typeof row.summary === 'string'

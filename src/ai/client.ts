@@ -250,7 +250,11 @@ export class AIClient {
     });
 
     if (!response.ok) {
-      const rawErrText = await response.text().catch(() => '<unreadable>');
+      // Bounded like the success path: a gateway or proxy that streams a huge
+      // error page must not be buffered whole. Diagnostic text is truncated to
+      // 500 chars below, so a 64 KiB ceiling loses nothing useful.
+      const rawErrText = await readResponseTextBounded(response, 64 * 1024, 'LLM error body')
+        .catch(() => '<unreadable>');
       const errText = rawErrText.length > 500 ? `${rawErrText.slice(0, 500)}…(truncated)` : rawErrText;
       const elapsed = opts.startTime === undefined ? undefined : Date.now() - opts.startTime;
       log.error({ status: response.status, errText, elapsed }, opts.errorLabel);
