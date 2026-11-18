@@ -305,10 +305,6 @@ export class Scheduler {
     this.taskRunner = fn;
   }
 
-  static hasTaskRunner(): boolean {
-    return this.taskRunner !== null;
-  }
-
   /**
    * Drop the in-memory delivery-retry counter for a reminder that no longer
    * exists. `processReminders` only clears entries on success or retirement, so
@@ -447,38 +443,48 @@ export class Scheduler {
             );
           }
 
-          if (reminder.recurrence) {
-            // Anchor the monthly cadence to the day the user actually chose.
-            // `anchor_day` is written when the reminder is created; it cannot be
-            // derived later, because `remind_at` holds the *clamped* date of the
-            // previous fire (Jan 31 -> Feb 28) and `created_at` is unrelated to
-            // the fire date (a reminder set on the 28th for Dec 1 drifted to the
-            // 28th of every month). Rows created before the column existed fall
-            // back to the previous behaviour.
-            const anchorDay = reminder.anchorDay
-              ?? reminder.created_at?.getDate()
-              ?? reminder.remindAt.getDate();
-            const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
-            if (!nextFire) {
+          // Bookkeeping runs in its own try: a failed state write *after* a
+          // successful send is not a delivery failure. Letting it reach the outer
+          // catch re-armed the reminder and delivered the same message twice.
+          try {
+            if (reminder.recurrence) {
+              // Anchor the monthly cadence to the day the user actually chose.
+              // `anchor_day` is written when the reminder is created; it cannot be
+              // derived later, because `remind_at` holds the *clamped* date of the
+              // previous fire (Jan 31 -> Feb 28) and `created_at` is unrelated to
+              // the fire date (a reminder set on the 28th for Dec 1 drifted to the
+              // 28th of every month). Rows created before the column existed fall
+              // back to the previous behaviour.
+              const anchorDay = reminder.anchorDay
+                ?? reminder.created_at?.getDate()
+                ?? reminder.remindAt.getDate();
+              const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
+              if (!nextFire) {
+                db.update(reminders)
+                  .set({ isSent: true, claimedAt: null })
+                  .where(eq(reminders.id, reminder.id))
+                  .run();
+                logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
+                clearAttempts(reminder.id);
+                continue;
+              }
+              db.update(reminders)
+                .set({ remindAt: nextFire, claimedAt: null })
+                .where(eq(reminders.id, reminder.id))
+                .run();
+              clearAttempts(reminder.id);
+            } else {
               db.update(reminders)
                 .set({ isSent: true, claimedAt: null })
                 .where(eq(reminders.id, reminder.id))
                 .run();
-              logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
               clearAttempts(reminder.id);
-              continue;
             }
-            db.update(reminders)
-              .set({ remindAt: nextFire, claimedAt: null })
-              .where(eq(reminders.id, reminder.id))
-              .run();
-            clearAttempts(reminder.id);
-          } else {
-            db.update(reminders)
-              .set({ isSent: true, claimedAt: null })
-              .where(eq(reminders.id, reminder.id))
-              .run();
-            clearAttempts(reminder.id);
+          } catch (stateError: unknown) {
+            logger.error(
+              { err: stateError, id: reminder.id },
+              'Reminder was delivered but its delivery state could not be recorded',
+            );
           }
         } catch (err) {
           const attempt = (retryAttempts.get(reminder.id) ?? 0) + 1;
@@ -541,7 +547,10 @@ export class Scheduler {
   private static retireClaim(id: number): void {
     clearAttempts(id);
     db.update(reminders)
-      .set({ isSent: true, claimedAt: null })
+      // `recurrence` is cleared as well: a retired recurring reminder is a
+      // terminal one-shot, and retention only prunes `is_sent = 1 AND
+      // recurrence IS NULL`, so leaving it set made the row immortal.
+      .set({ isSent: true, claimedAt: null, recurrence: null })
       .where(and(eq(reminders.id, id), eq(reminders.isSent, false)))
       .run();
   }
