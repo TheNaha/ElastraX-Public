@@ -468,7 +468,12 @@ async function api(path, options) {
     if (String(path).indexOf('api/login') !== 0) { location.href = '/admin/login'; throw new Error('unauthorized'); }
   }
   const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error || ('HTTP ' + res.status));
+  // Action failures answer { ok: false, message } (the ActionResult shape),
+  // while request-level failures use { error }. Reading only error made every
+  // rejected action toast a bare "HTTP 400" and threw away the operator-facing
+  // reason ("Row 5 is pending; only failed or dead-lettered rows can be retried.",
+  // "No outbox row with id 9.", ...).
+  if (!res.ok) throw new Error(body.error || body.message || ('HTTP ' + res.status));
   return body;
 }
 
