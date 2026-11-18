@@ -87,11 +87,14 @@ export class MediaSearchTool extends BaseTool {
               description: 'Filter by media type. Default: all.',
             },
             media_id: {
-              type: 'number',
+              type: 'integer',
+              minimum: 1,
               description: 'TMDB ID for the recommend action.',
             },
             page: {
-              type: 'number',
+              type: 'integer',
+              minimum: 1,
+              maximum: 500,
               description: 'Page number for paginated results. Default: 1.',
             },
           },
@@ -110,7 +113,11 @@ export class MediaSearchTool extends BaseTool {
     }
 
     const action = args.action || 'search';
-    const page = args.page ?? 1;
+    // The schema constrains the model's input, but the slash path and a provider
+    // that ignores `minimum` can still deliver a negative, fractional or huge
+    // page straight to Seerr. Clamp to the range the schema advertises.
+    const rawPage = Number(args.page);
+    const page = Number.isFinite(rawPage) ? Math.min(500, Math.max(1, Math.floor(rawPage))) : 1;
     const mediaType = args.media_type ?? 'all';
 
     log.debug({ action, query: args.query, mediaType, page }, 'MediaSearch action');
