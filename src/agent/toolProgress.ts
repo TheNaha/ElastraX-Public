@@ -186,11 +186,17 @@ export class ToolProgressTracker {
     // preview avoids. The cap matches Discord's smallest platform limit.
     const text = lines.join('\n');
     if (text.length <= MAX_PROGRESS_CHARS) return text;
-    const dropped = lines.length - 1;
     let end = MAX_PROGRESS_CHARS - 20;
     const last = text.charCodeAt(end - 1);
     if (last >= 0xd800 && last <= 0xdbff) end -= 1;
-    return `${text.slice(0, end)}…\n(+${dropped} more step${dropped === 1 ? '' : 's'})`;
+    const kept = text.slice(0, end);
+    // Count the lines actually hidden. The previous `lines.length - 1` assumed
+    // the cap keeps exactly one line, so "(+N more steps)" overstated the
+    // remainder for every ordinary multi-line status.
+    const shownLines = kept.split('\n').length;
+    const dropped = lines.length - shownLines;
+    const footer = dropped > 0 ? `\n(+${dropped} more step${dropped === 1 ? '' : 's'})` : '';
+    return `${kept}…${footer}`;
   }
 
   async startStep(description: string): Promise<number> {

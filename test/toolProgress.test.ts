@@ -220,5 +220,9 @@ describe('ToolProgressTracker render bound', () => {
     expect(rendered.length).toBeLessThanOrEqual(1_803);
     expect(rendered).toContain('more steps');
     expect(sent[0]!.length).toBeLessThanOrEqual(1_803);
+    // The footer must report the lines actually hidden, not `total - 1`.
+    const dropped = Number(rendered.match(/\(\+(\d+) more steps?\)/)?.[1]);
+    const shownLines = rendered.split('\n').length - 1;
+    expect(shownLines + dropped).toBe(60);
   });
 });
