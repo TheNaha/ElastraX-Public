@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { MessageContext } from '../src/core/MessageContext';
 import { GameSearchTool, GAME_TRUSTED_HOSTS, isTrustedGameUrl } from '../src/tools/GameSearchTool';
+import { t } from '../src/utils/i18n';
 
 const originalGameSearch = process.env.ENABLE_GAME_SEARCH;
 const originalSearxngUrl = process.env.SEARXNG_URL;
@@ -59,6 +60,27 @@ describe('GameSearchTool', () => {
   test('isTrustedGameUrl should reject untrusted hostnames', () => {
     expect(isTrustedGameUrl('https://example.com')).toBe(false);
     expect(isTrustedGameUrl('https://google.com')).toBe(false);
+  });
+
+  test('base result labels use a host-boundary trust check, not a substring', () => {
+    const tool = new GameSearchTool();
+    // The shipped subclasses pre-filter to trusted URLs, so call the base
+    // implementation directly with a mixed set to pin the labelling rule.
+    const base = Object.getPrototypeOf(GameSearchTool.prototype) as {
+      formatResults: (
+        lang: string,
+        results: Array<{ title: string; url: string; content: string }>,
+        query: string,
+      ) => string;
+    };
+    const rendered = base.formatResults.call(tool, 'en', [
+      { title: 'Real', url: 'https://fitgirl-repacks.site/pack', content: '' },
+      { title: 'Suffix', url: 'https://fitgirl-repacks.site.evil.test/pack', content: '' },
+      { title: 'Query', url: 'https://nottrusted.example/?u=fitgirl-repacks.site', content: '' },
+    ], 'pack');
+    const countLabel = (label: string): number => rendered.split(label).length - 1;
+    expect(countLabel(t('en', 'search.trusted'))).toBe(1);
+    expect(countLabel(t('en', 'search.untrusted'))).toBe(2);
   });
 
   test('execute returns disabled message when opt-in flag is missing', async () => {

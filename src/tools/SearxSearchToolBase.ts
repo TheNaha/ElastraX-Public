@@ -7,7 +7,7 @@
  * formatting hooks that genuinely differ.
  */
 
-import { BaseTool, type ToolArgs, type ToolDefinition } from './BaseTool';
+import { BaseTool, isExactTrustedHostname, type ToolArgs, type ToolDefinition } from './BaseTool';
 import type { MessageContext } from '../core/MessageContext';
 import { logger } from '../utils/logger';
 import { searchSearXng, type SearXngRawResult } from './searchUtils';
@@ -90,7 +90,10 @@ export abstract class SearxSearchToolBase extends BaseTool<SearchToolArgs> {
   protected formatResults(lang: string, results: SearXngRawResult[], query: string): string {
     const textResults = results.map((item, idx) => {
       const itemUrl = item.url || '';
-      const isTrusted = this.trustedSites.some((site) => itemUrl.includes(site));
+      // Host-boundary, case-insensitive match, the same rule the `site:` filter
+      // uses. A substring match labelled `https://nottrusted.com` (or
+      // `...?u=trusted.com`) as TRUSTED, which the model and user read as vetted.
+      const isTrusted = isExactTrustedHostname(itemUrl, this.trustedSites);
       const status = isTrusted ? t(lang, 'search.trusted') : t(lang, 'search.untrusted');
       return ` • *[${idx + 1}] ${status} ${item.title || t(lang, 'search.unknown')}*\n   *URL:* ${itemUrl}\n   *Info:* ${item.content || item.snippet || ''}`;
     }).join('\n\n');
