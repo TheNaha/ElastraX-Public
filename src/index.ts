@@ -31,22 +31,16 @@ function forceExit(code: number): void {
 export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<BootstrapHandle> {
   validateEnv(env);
 
-  const database = await import('./db') as typeof import('./db') & {
-    closeDatabase?: () => void | Promise<void>;
-  };
-  await database.ensureDatabaseSchema();
-
-  const [{ FlowHandler }, { AppRuntime }, { runStartupCoverageScan }] = await Promise.all([
-    import('./core/FlowHandler'),
-    import('./runtime/AppRuntime'),
-    import('./runtime/startupDiagnostics'),
-  ]);
-  await FlowHandler.initialize();
-
-  let runtime: InstanceType<typeof AppRuntime> | undefined;
+  // Signal handlers are installed *before* the first await. They used to be
+  // registered only after `ensureDatabaseSchema()` and `FlowHandler.initialize()`
+  // had finished, so a SIGTERM during a long migration took the default
+  // disposition: the process died with no `runtime.stop()`, no
+  // `closeDatabase()`, no lease release and no `forceExit` for children.
+  let database: (typeof import('./db') & { closeDatabase?: () => void | Promise<void> }) | undefined;
+  let databaseReady = false;
+  let runtime: InstanceType<typeof import('./runtime/AppRuntime').AppRuntime> | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let shuttingDown = false;
-
 
   const shutdown = (reason = 'shutdown'): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;
@@ -59,10 +53,15 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
       } catch (err) {
         log.error({ err, reason }, 'Runtime shutdown failed');
       }
-      try {
-        await database.closeDatabase?.();
-      } catch (err) {
-        log.error({ err, reason }, 'Database shutdown failed');
+      // Only close a database whose schema work has finished: closing it while
+      // `ensureDatabaseSchema` is mid-migration would abort that work under it.
+      // The process exits right after a startup signal anyway.
+      if (databaseReady) {
+        try {
+          await database?.closeDatabase?.();
+        } catch (err) {
+          log.error({ err, reason }, 'Database shutdown failed');
+        }
       }
     })();
     return shutdownPromise;
@@ -99,6 +98,19 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
   process.on('unhandledRejection', onFatalError);
 
   try {
+    database = await import('./db') as typeof import('./db') & {
+      closeDatabase?: () => void | Promise<void>;
+    };
+    await database.ensureDatabaseSchema();
+    databaseReady = true;
+
+    const [{ FlowHandler }, { AppRuntime }, { runStartupCoverageScan }] = await Promise.all([
+      import('./core/FlowHandler'),
+      import('./runtime/AppRuntime'),
+      import('./runtime/startupDiagnostics'),
+    ]);
+    await FlowHandler.initialize();
+
     // `AppRuntimeDeps.runStartupCoverageScan` is optional and nothing passed it,
     // so the parser-coverage startup diagnostic the module documents was never
     // armed in production — only `test/AppRuntime.test.ts` and
@@ -113,7 +125,7 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
   } catch (error) {
     removeSignalHandlers();
     await runtime?.stop().catch((err) => { log.warn({ err }, 'Runtime stop failed during bootstrap error handling'); });
-    await database.closeDatabase?.();
+    await database?.closeDatabase?.();
     throw error;
   }
 
