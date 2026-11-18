@@ -5,6 +5,7 @@
  */
 
 import type { MessageContext } from '../core/MessageContext';
+import { ServiceBindingService } from './ServiceBindingService';
 
 /** True when a stored binding belongs to a different platform than the message. */
 export function bindingPlatformMismatch(
@@ -12,6 +13,28 @@ export function bindingPlatformMismatch(
   platform: string,
 ): boolean {
   return !!binding?.platform && binding.platform !== platform;
+}
+
+/**
+ * Whether the sender has a linked media-service account.
+ *
+ * A failure to read the binding table is treated as "no binding" so a database
+ * problem hides the media tools rather than exposing them.
+ */
+export async function resolveSenderHasBinding(
+  senderId: string | undefined,
+  platform: string | undefined,
+): Promise<boolean> {
+  if (!senderId || !platform) return false;
+  try {
+    const [binding, seerr] = await Promise.all([
+      ServiceBindingService.getBinding(senderId, platform, 'jellyfin'),
+      ServiceBindingService.getBinding(senderId, platform, 'seerr'),
+    ]);
+    return Boolean(binding || seerr);
+  } catch {
+    return false;
+  }
 }
 
 /** True when `ctx` is allowed to perform `required`. Falls back to allow when

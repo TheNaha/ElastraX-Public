@@ -13,6 +13,7 @@ import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '.
 import { MessageContext } from '../core/MessageContext';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { isToolAccessible } from './access';
+import { resolveSenderHasBinding } from '../utils/toolAccess';
 
 interface FindToolsArgs extends ToolArgs {
   query: string;
@@ -70,12 +71,15 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
 
     const candidates = searchIndex.search(query, 1000);
     const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
+    const hasBinding = ctx.hasBinding ?? (candidates.some(candidate => candidate.tool.requiresBinding)
+      ? await resolveSenderHasBinding(ctx.senderId, ctx.platform)
+      : undefined);
     const accessContext = {
       roles,
       isGroup: ctx.isGroup,
       isOwner: roles.includes('owner'),
       platform: ctx.platform,
-      hasBinding: ctx.hasBinding,
+      hasBinding,
     };
     const results = [];
     for (const candidate of candidates) {

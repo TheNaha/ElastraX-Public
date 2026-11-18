@@ -19,6 +19,7 @@ import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 import { isToolAccessible } from './access';
+import { resolveSenderHasBinding } from '../utils/toolAccess';
 
 const log = logger.child({ module: 'MenuTool' });
 
@@ -72,14 +73,21 @@ export class MenuTool extends BaseTool<MenuArgs> {
     // omitted `requiresBinding`, so an unbound user was shown media tools the
     // agent then refused to call.
     const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
+    const listedTools = this.getTools();
+    // `/menu` runs on the slash path, which resolves tools before the agent
+    // computes the binding flag, so fall back to a lookup when the context does
+    // not carry one. Only paid when a listed tool is binding-gated.
+    const hasBinding = ctx.hasBinding ?? (listedTools.some(tool => tool.requiresBinding)
+      ? await resolveSenderHasBinding(ctx.senderId, ctx.platform)
+      : undefined);
     const accessContext = {
       roles,
       isGroup: ctx.isGroup,
       isOwner: roles.includes('owner'),
       platform: ctx.platform,
-      hasBinding: ctx.hasBinding,
+      hasBinding,
     };
-    const tools = this.getTools().filter((tool) => isToolAccessible(tool, accessContext));
+    const tools = listedTools.filter((tool) => isToolAccessible(tool, accessContext));
 
     log.debug({ command_name: command_name || null, chatId: ctx.chatId }, 'Menu requested');
 

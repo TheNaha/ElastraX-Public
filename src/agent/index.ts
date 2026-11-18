@@ -51,12 +51,12 @@ import {
   secureDefinition,
   validateAndAuthorizeInvocation,
 } from '../tools';
-import { ServiceBindingService } from '../utils/ServiceBindingService';
 
 const log = logger.child({ module: 'Agent' });
 import { FlowHandler } from '../core/FlowHandler';
 import { MAX_INJECTED_MEMORIES, MAX_ROOM_KNOWLEDGE_CHUNKS, UNLIMITED, BOT_NAME } from '../core/constants';
 import { t } from '../utils/i18n';
+import { resolveSenderHasBinding } from '../utils/toolAccess';
 import { levenshtein } from '../utils/similarity';
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -111,25 +111,6 @@ function getAllowedTools(
     isOwner: roles.includes('owner'),
     ...(hasBinding === undefined ? {} : { hasBinding }),
   });
-}
-
-/**
- * Whether the sender has a linked media-service account.
- *
- * A failure to read the binding table is treated as "no binding" so a
- * database problem hides the media tools rather than exposing them.
- */
-async function resolveSenderHasBinding(senderId: string, platform: string): Promise<boolean> {
-  try {
-    const [binding, seerr] = await Promise.all([
-      ServiceBindingService.getBinding(senderId, platform, 'jellyfin'),
-      ServiceBindingService.getBinding(senderId, platform, 'seerr'),
-    ]);
-    return Boolean(binding || seerr);
-  } catch (error) {
-    log.debug({ err: error, senderId }, 'Binding lookup failed; treating sender as unbound');
-    return false;
-  }
 }
 
 function resolveToolResultText(result: ToolResult): string {

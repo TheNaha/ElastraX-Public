@@ -123,6 +123,31 @@ describe('MenuTool', () => {
     expect(result).toContain('/admin_tool2');
   });
 
+  test('hides binding-gated tools from an unbound sender', async () => {
+    class MockBoundTool extends BaseTool {
+      name = 'bound_tool';
+      description = 'Needs a linked account';
+      aliases = [];
+      category = 'media';
+      permissions = 'user' as const;
+      override readonly requiresBinding = true;
+      get definition(): ToolDefinition {
+        return {
+          type: 'function',
+          function: { name: this.name, description: this.description, parameters: { type: 'object', properties: {}, required: [] } },
+        };
+      }
+      async execute() { return 'bound'; }
+    }
+
+    const menuTool = new MenuTool(() => [new MockBoundTool()]);
+    const unbound = await menuTool.execute({}, { senderName: 'User', hasBinding: false } as MessageContext);
+    expect(unbound).not.toContain('/bound_tool');
+
+    const bound = await menuTool.execute({}, { senderName: 'User', hasBinding: true } as MessageContext);
+    expect(bound).toContain('/bound_tool');
+  });
+
   test('should suggest nearest command if tool not found', async () => {
     const mockTools = [new MockTool()];
     const menuTool = new MenuTool(() => mockTools);
