@@ -27,6 +27,16 @@ describe('MediaLibraryTool', () => {
   afterEach(() => {
     MediaService.createJellyfinClient = originalCreateJellyfinClient;
     MediaService.bindingService = originalBindingService;
+    delete process.env.JELLYFIN_PUBLIC_LIBRARY;
+    delete process.env.MEDIA_PUBLIC_LIBRARY;
+    delete process.env.ENABLE_MEDIA_LIBRARY;
+    delete process.env.JELLYFIN_PUBLIC_MODE;
+  });
+
+  test('public-library mode drops the binding requirement', () => {
+    expect(new MediaLibraryTool().requiresBinding).toBe(true);
+    process.env.JELLYFIN_PUBLIC_LIBRARY = 'true';
+    expect(new MediaLibraryTool().requiresBinding).toBe(false);
   });
 
   test('returns a configuration message when Jellyfin is unavailable', async () => {

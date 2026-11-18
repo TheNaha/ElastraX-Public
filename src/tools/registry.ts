@@ -173,6 +173,9 @@ export const MUTABILITY_OVERRIDES: Record<string, ToolMetadata['access']['mutabi
   menfess: 'external-mutation',
   pdf_tool: 'local-write',
   speak: 'external-mutation',
+  // Sends a sticker (an external mutation) and runs a conversion, so it needs
+  // the same admission, cost and scheduled-run deny-list treatment as `speak`.
+  sticker: 'external-mutation',
 };
 
 function hasRequiredRole(roles: readonly string[] | undefined, required: string): boolean {
@@ -403,6 +406,11 @@ export function getAuthorizedTool(command: string, ctx: MessageContext): Promise
       if (tool.metadata.command.groupOnlyAliases.includes(normalized) && !ctx.isGroup) return undefined;
     }
     if (COMMAND_GROUP_ONLY[tool.name]?.includes(normalized) && !ctx.isGroup) return undefined;
+    // Unattended runs (scheduled agent tasks) deny mutating tools by name. The
+    // model path honoured this when building `allowedToolNames`, but the slash
+    // path did not, so `/reminder …` or `/memory store …` inside a scheduled
+    // instruction executed a tool the run meant to forbid.
+    if (ctx.deniedToolNames?.includes(tool.name)) return undefined;
     if (!(await hasPermission(ctx, tool.permissions))) return undefined;
     return tool;
   })();

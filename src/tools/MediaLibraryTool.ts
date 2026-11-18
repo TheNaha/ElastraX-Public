@@ -70,7 +70,14 @@ export class MediaLibraryTool extends BaseTool {
   readonly category = 'media';
   readonly permissions = 'user';
   override readonly mutability = 'read';
-  override readonly requiresBinding: boolean = true;
+  /**
+   * A bound media account is normally required. Public-library mode
+   * (`JELLYFIN_PUBLIC_LIBRARY` and friends) exists precisely to let unbound
+   * users browse, and `/library` already honoured it — but the static `true`
+   * made `isToolAccessible` drop the tool for an unbound sender, so the model
+   * could never call the documented public mode.
+   */
+  override readonly requiresBinding: boolean;
   override readonly commandGrammar: ToolCommandGrammar = {
     discriminator: 'action',
     variants: [
@@ -86,6 +93,11 @@ export class MediaLibraryTool extends BaseTool {
     ],
   };
   override readonly noArgAliases = ['library', 'watching'];
+
+  constructor() {
+    super();
+    this.requiresBinding = !isPublicLibraryEnabled();
+  }
 
   get definition(): ToolDefinition {
     return {

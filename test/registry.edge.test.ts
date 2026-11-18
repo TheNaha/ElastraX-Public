@@ -1,5 +1,16 @@
 import { expect, test, describe } from 'bun:test';
-import { getToolByAliasOrName, getToolByName, getToolDefinitions, tools } from '../src/tools';
+import { getAuthorizedTool, getToolByAliasOrName, getToolByName, getToolDefinitions, tools } from '../src/tools';
+import type { MessageContext } from '../src/core/MessageContext';
+
+function stubContext(overrides: Partial<MessageContext> = {}): MessageContext {
+  return {
+    platform: 'whatsapp',
+    chatId: 'chat-1',
+    senderId: 'user-1',
+    isGroup: false,
+    ...overrides,
+  } as unknown as MessageContext;
+}
 
 describe('Tool Registry – edge cases', () => {
   test('getToolByAliasOrName should find a tool by its canonical name', () => {
@@ -64,5 +75,11 @@ describe('Tool Registry – edge cases', () => {
   test('getToolByName should find the groupadmin tool', () => {
     const tool = getToolByName('groupadmin');
     expect(tool).toBeDefined();
+  });
+
+  test('getAuthorizedTool refuses a tool the run denied by name', async () => {
+    // The slash path must honour `deniedToolNames` just like the model path does.
+    expect(await getAuthorizedTool('reminder', stubContext())).toBeDefined();
+    expect(await getAuthorizedTool('reminder', stubContext({ deniedToolNames: ['reminder'] }))).toBeUndefined();
   });
 });
