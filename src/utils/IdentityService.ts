@@ -396,12 +396,24 @@ export const IdentityService = {
 
   async clearUserIdentities(userId: string, platform?: string): Promise<void> {
     const identity = await this.getIdentity(userId, platform);
+    const resolvedPlatform = platform ?? identity?.platform;
     if (identity && deps.identityAliases) {
       await deps.db.delete(deps.identityAliases).where(eq(deps.identityAliases.canonicalId, identity.canonicalId)).run();
     }
-    await deps.db.delete(deps.userIdentities).where(or(
+    // Scope to the platform like every sibling method does: an unscoped delete
+    // removed a same-id row on another platform, and the canonical row that was
+    // just resolved was left orphaned (with dangling aliases and role refs).
+    const idPredicate = or(
       eq(deps.userIdentities.lid, userId),
       eq(deps.userIdentities.pn, userId),
-    )).run();
+    );
+    await deps.db.delete(deps.userIdentities)
+      .where(resolvedPlatform ? and(eq(deps.userIdentities.platform, resolvedPlatform), idPredicate) : idPredicate)
+      .run();
+    if (identity && deps.canonicalIdentities) {
+      await deps.db.delete(deps.canonicalIdentities)
+        .where(eq(deps.canonicalIdentities.id, identity.canonicalId))
+        .run();
+    }
   },
 };
