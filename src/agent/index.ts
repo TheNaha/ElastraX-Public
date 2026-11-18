@@ -1579,8 +1579,15 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
     const keyParts = outboxKeyParts(ctx.messageId, 'assistant', ctx.chatId);
     if (replyAlreadyDelivered) {
-      OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
+      // Set before the bookkeeping write: `recordTextDelivered` is a raw INSERT
+      // and may throw, and at this point the user already has the answer, so the
+      // catch below must not append a contradicted "internal error" reply.
       deliveredUserVisible = true;
+      try {
+        OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
+      } catch (error) {
+        log.warn({ err: error, chatId }, 'Delivered reply could not be recorded in the outbox');
+      }
     } else {
       // One durable direct-send path for both this reply and the slash/command
       // replies: the two copies here had drifted (this one lost the empty-text
