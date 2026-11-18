@@ -350,7 +350,6 @@ async function executeRequestedToolCalls(
   }
 
   const readyCount = prepared.filter(p => p.kind === 'ready').length;
-  options.progressTracker?.addPlannedSteps(readyCount);
 
   // Charge only the calls that will actually run. Claiming `toolCalls.length`
   // before validation meant eight unknown/unauthorized/malformed calls in one
@@ -384,6 +383,10 @@ async function executeRequestedToolCalls(
   const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
   let preferredTier = options.preferredTier;
   let readySeen = 0;
+  // Announce only the calls that will run: a budget-denied call is reported to
+  // the model, but a progress footer that planned it would show a step that
+  // never starts.
+  options.progressTracker?.addPlannedSteps(executableReady);
 
   for (const item of prepared) {
     if (item.kind === 'error') {
