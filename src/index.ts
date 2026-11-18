@@ -92,10 +92,13 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
     process.off('unhandledRejection', onFatalError);
   };
 
+  // Signals only, and only they need to be live this early: the point is a
+  // graceful exit during a long migration. The fatal-error handlers stay where
+  // they were (just before the runtime starts), because making every stray
+  // rejection fatal during library import would turn a benign warning into a
+  // boot crash-loop.
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
-  process.on('uncaughtException', onFatalError);
-  process.on('unhandledRejection', onFatalError);
 
   try {
     database = await import('./db') as typeof import('./db') & {
@@ -110,6 +113,18 @@ export async function bootstrap(env: NodeJS.ProcessEnv = process.env): Promise<B
       import('./runtime/startupDiagnostics'),
     ]);
     await FlowHandler.initialize();
+
+    // Registered here rather than at the top: see the note where the signal
+    // handlers are installed.
+    process.on('uncaughtException', onFatalError);
+    process.on('unhandledRejection', onFatalError);
+
+    if (shuttingDown) {
+      // A signal landed after the schema work finished, so shutdown has already
+      // closed the database and the process is exiting. Do not start providers
+      // against a closed handle.
+      throw new Error('Startup interrupted by shutdown signal');
+    }
 
     // `AppRuntimeDeps.runStartupCoverageScan` is optional and nothing passed it,
     // so the parser-coverage startup diagnostic the module documents was never
