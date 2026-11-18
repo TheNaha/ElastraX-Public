@@ -605,6 +605,20 @@ export class TelegramProvider implements BotProvider {
       selectedAttachmentId = id;
       return descriptor;
     };
+    // Reflect the download result on the descriptor, as WhatsApp and Discord do.
+    // It stayed 'pending' with no `mediaPath` forever; nothing consumes `state`
+    // today, but the three providers must agree on the contract.
+    if (attachments[0] && attachments[0].state === 'pending') {
+      void mediaReady.then(() => {
+        if (!attachments[0]) return;
+        if (mediaPath) {
+          attachments[0].mediaPath = mediaPath;
+          attachments[0].state = 'ready';
+        } else {
+          attachments[0].state = 'error';
+        }
+      });
+    }
 
     let rolesPromise: Promise<string[]> | null = null;
     const resolveRoles = (): Promise<string[]> => {
@@ -788,7 +802,11 @@ export class TelegramProvider implements BotProvider {
       forwardMessage: async (targetChatId: string, forwardText?: string) => {
         const activeBot = ensureCurrent();
         if (forwardText && forwardText.trim()) {
-          await activeBot.api.sendMessage(targetChatId, forwardText);
+          // Telegram rejects a message over 4096 UTF-16 units ("message is too
+          // long"), which failed the whole forward; chunk like sendMessage does.
+          for (const chunk of chunkTelegramText(forwardText)) {
+            await activeBot.api.sendMessage(targetChatId, chunk);
+          }
           return;
         }
         // Telegram copies the message natively, so links and formatting survive.
