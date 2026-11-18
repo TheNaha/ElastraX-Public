@@ -527,9 +527,11 @@ export class WhatsAppProvider implements BotProvider {
     const senderId = await resolveLid(rawSender);
     // Mirrors Baileys' own getKeyAuthor(): participantAlt holds the sender's
     // phone number in group stanzas, with the remaining key fields as fallbacks.
+    // For a DM, `senderPn` is the phone-number JID: a PN-addressed chat keeps it
+    // in `jid`, while an LID-addressed chat keeps it in `remoteJidAlt`.
     const senderPn = isGroup
       ? key.participantAlt || key.remoteJidAlt || key.participant || undefined
-      : (!senderId.includes('@lid') ? jid : key.remoteJidAlt);
+      : (jid.includes('@lid') ? key.remoteJidAlt : jid);
     this.ensureSocket(socket, generation, 'createContext');
 
     let quoted: MessageContext['quoted'];

@@ -233,6 +233,34 @@ describe('WhatsAppProvider', () => {
     expect(await createContext({ key: { remoteJid: 'abc@newsletter' }, message: {} })).toBeNull();
   });
 
+  test('reports the phone-number JID as senderPn for a PN-addressed DM', async () => {
+    const { sock } = createFakeSocket();
+
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    whatsAppProviderDeps.renderQr = mock(() => {});
+
+    const provider = new WhatsAppProvider();
+    await provider.start();
+
+    const ctx = await (provider as unknown as {
+      createContext: (message: unknown, generation?: number) => Promise<MessageContext | null>;
+    }).createContext({
+      key: {
+        id: 'pn-1',
+        remoteJid: '628999@s.whatsapp.net',
+        remoteJidAlt: 'peer@lid',
+        fromMe: false,
+      },
+      message: { conversation: 'hello' },
+    });
+
+    // The resolved sender identity is the LID, but senderPn must carry the PN.
+    expect(ctx?.senderId).toBe('peer@lid');
+    expect(ctx?.senderPn).toBe('628999@s.whatsapp.net');
+  });
+
   test('schedules reconnect on close and clears it on stop', async () => {
     const { sock, emit } = createFakeSocket();
 
