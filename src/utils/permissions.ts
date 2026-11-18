@@ -22,7 +22,12 @@
 
 import { logger } from './logger';
 import { AuthService } from './AuthService';
-import { jidUser as bareNumber } from './jid';
+// Bare-number matching must strip a WhatsApp device suffix: group metadata can
+// report `628123:12@s.whatsapp.net` while the sender arrives as
+// `628123@s.whatsapp.net`, and `jidUser` keeps the `:12`, so the native admin
+// match silently failed. `jidBareId` is the helper that documents exactly this
+// shape (and what RoleTool already uses for the same job).
+import { jidBareId as bareNumber } from './jid';
 
 interface WhatsAppGroupParticipant {
   id?: string;
@@ -58,9 +63,9 @@ function matchesParticipant(
 
   const participantBare = bareNumber(participant.id);
   const senderBare = bareNumber(senderId);
-  const pnBare = bareNumber(senderPn);
+  const pnBare = senderPn ? bareNumber(senderPn) : undefined;
 
-  return Boolean(participantBare && (participantBare === senderBare || participantBare === pnBare));
+  return Boolean(participantBare && (participantBare === senderBare || (pnBare !== undefined && participantBare === pnBare)));
 }
 
 async function resolvePlatformAdmin(
