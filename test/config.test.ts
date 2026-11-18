@@ -44,6 +44,24 @@ describe("Config Validation", () => {
     })).not.toThrow();
   });
 
+  test("rejects an invalid global AI capability flag at startup", () => {
+    // ModelRouter's envBoolean throws on anything but true/false, and it runs on
+    // the first chat call, so a typo used to break every message instead of
+    // failing startup once.
+    expect(() => validateEnv({
+      ...baseValidEnv,
+      AI_SUPPORTS_IMAGE: "yes",
+    })).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith('AI_SUPPORTS_IMAGE must be either "true" or "false"');
+  });
+
+  test("rejects an unsupported AI_MAX_TOKENS_PARAM", () => {
+    expect(() => validateEnv({
+      ...baseValidEnv,
+      AI_MAX_TOKENS_PARAM: "max_new_tokens",
+    })).toThrow("Environment validation failed");
+  });
+
   test("should throw if AI_MODEL_NAME is missing", () => {
     const invalidEnv = {
       AI_API_KEY: "secret-key",

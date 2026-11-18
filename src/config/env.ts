@@ -195,6 +195,27 @@ export function validateEnv(env: Env = process.env): void {
     validateBoolean(env[key], key, errors);
   }
 
+  // Capability flags are read in `ModelRouter.loadProviders()` through
+  // `envBoolean`, which *throws* on anything other than true/false. In
+  // single-provider mode that throw surfaced on the first chat call, so a typo
+  // like `AI_SUPPORTS_IMAGE=yes` broke every message instead of failing startup
+  // once with the aggregated error. `AI_SUPPORTS_VIDEO`/`AUDIO` are accepted for
+  // symmetry with the per-provider forms.
+  for (const key of [
+    'AI_SUPPORTS_IMAGE',
+    'AI_SUPPORTS_VIDEO',
+    'AI_SUPPORTS_AUDIO',
+    'AI_SUPPORTS_TOOLS',
+    'AI_SUPPORTS_PARALLEL_TOOLS',
+    'AI_STREAM_USAGE',
+  ]) {
+    validateBoolean(env[key], key, errors);
+  }
+  const maxTokensParam = env.AI_MAX_TOKENS_PARAM?.trim();
+  if (maxTokensParam && maxTokensParam !== 'max_tokens' && maxTokensParam !== 'max_completion_tokens') {
+    errors.push('AI_MAX_TOKENS_PARAM must be max_tokens or max_completion_tokens');
+  }
+
   validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
   validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors, { allowPlainHttp: true });
   validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors, { allowPlainHttp: true });
