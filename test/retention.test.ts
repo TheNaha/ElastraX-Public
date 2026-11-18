@@ -385,3 +385,23 @@ describe('applyRetentionPolicy', () => {
     expect(result.flowSessions).toBeGreaterThan(0);
   });
 });
+
+describe('retention index usage', () => {
+  test('the age predicate reads the narrow created_at index, not the table', () => {
+    // Retention deletes by age alone, which no room-leading composite index can
+    // serve. Without a standalone index the plan was `SCAN messages`, re-reading
+    // the whole table once per 500-row batch (measured: 22.5s for a 500k-row
+    // expiry at 1M rows, versus 1.6s through this covering index).
+    const plan = sqlite
+      .query<{ detail: string }, [number]>(
+        `EXPLAIN QUERY PLAN
+         SELECT rowid FROM messages
+         WHERE CASE WHEN created_at > 100000000000 THEN created_at ELSE created_at * 1000 END < ?
+         LIMIT 500`,
+      )
+      .all(NOW);
+    const details = plan.map(row => row.detail).join('\n');
+    expect(details).toContain('messages_created_at_idx');
+    expect(details).not.toMatch(/^SCAN messages$/m);
+  });
+});

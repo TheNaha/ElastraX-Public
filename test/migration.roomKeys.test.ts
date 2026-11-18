@@ -132,7 +132,7 @@ describe('migration 0022 canonical room identity', () => {
     try {
       expect(
         inspectMigrationState(legacy.sqlite, MIGRATIONS_DIR).pending.map(entry => entry.tag),
-      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk', '0024_drop_scheduled_deliveries', '0025_reminder_anchor_day']);
+      ).toEqual(['0022_room_keys', '0023_add_user_identities_pk', '0024_drop_scheduled_deliveries', '0025_reminder_anchor_day', '0026_retention_indexes']);
       seedPreRoomKeyRows(legacy.sqlite);
       expect(columnNames(legacy.sqlite, 'chat_rooms')).not.toContain('room_key');
 
