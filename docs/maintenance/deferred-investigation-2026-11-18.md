@@ -366,3 +366,24 @@ Branch `maint/2026-11-18-pass5-followups`, from `df382d4`.
 | O-02 | `registry.mutability.test.ts` fails if any read tool declares `cost > 1`; the two inert declarations were removed. |
 
 Not done (still open, as listed above): D-02, D-06, D-07, D-08, D-09, D-10, D-12a, D-13, D-17, O-03, O-04.
+
+### Review follow-ups (2026-11-18, second batch)
+
+An independent reviewer read the batch. Verdict: approve with nits; applied:
+
+1. `TranslateTool` caps the quoted-message fallback at the same 4000 characters,
+   not just `args.query`.
+2. `getAuthorizedTool` resolves the binding gate lazily, so it can actually fire
+   on the slash path (it previously read `ctx.hasBinding` before the agent sets it).
+3. `index.ts` keeps only SIGINT/SIGTERM early; the fatal-error handlers stay just
+   before the runtime starts, so a stray rejection during import cannot become a
+   boot crash-loop. A signal that closed the database before `AppRuntime` starts
+   now aborts startup instead of running providers against a closed handle.
+4. `messaging-history.set` uses the same concurrency bound as `messages.upsert`.
+5. The Discord forward comment now states that finished buffers still accumulate
+   until the single send; only the in-flight fetch count is bounded.
+6. Journal `0026` drops the non-canonical `idx`; the retention test title says
+   "scans the index" (it is a covering-index scan, not a range seek).
+
+Final numbers: **1800 pass / 0 fail** (1799 hermetic), lint/typecheck/`db:check`/
+drift green.
