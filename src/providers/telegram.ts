@@ -25,6 +25,7 @@ import {
   type Context as GrammyContext,
 } from 'grammy';
 import { BotProvider, type BotProviderStatus } from './BotProvider';
+import { createLazyPromise } from './media';
 import { MessageContext, type PlatformName, type ReplyOptions } from '../core/MessageContext';
 import type { MediaAttachmentDescriptor } from '../core/MessageContext';
 import { ProviderError, ProviderLifecycleError, ProviderOperationError } from './errors';
@@ -602,16 +603,6 @@ export class TelegramProvider implements BotProvider {
 
     let mediaPath: string | undefined;
     let mimeType: string | undefined;
-    const mediaReady = (async () => {
-      if (!media) return;
-      try {
-        const saved = await this.downloadToStorage(ctx);
-        mediaPath = saved?.mediaPath;
-        mimeType = saved?.mime;
-      } catch (error) {
-        log.debug({ err: error }, '[Telegram] Media download failed');
-      }
-    })();
 
     /**
      * Telegram carries at most one attachment per message, so the descriptor
@@ -636,26 +627,40 @@ export class TelegramProvider implements BotProvider {
             : {}),
         }]
       : [];
+
+    // Lazy, like WhatsApp and Discord: constructing a context must not start a
+    // download (`MessageContext` documents this and both other providers honour
+    // it). Telegram downloaded eagerly, so a turn the agent then dropped — rate
+    // limit, slash command, duplicate event — still paid the bytes and held one
+    // of the four global media slots and part of the 200 MiB budget. The
+    // descriptor reflection lives *inside* the operation because reading
+    // `.then` on a lazy promise starts it.
+    const mediaReady = createLazyPromise(async () => {
+      if (!media) return;
+      if (attachments[0]?.state === 'skipped') return;
+      try {
+        const saved = await this.downloadToStorage(ctx);
+        mediaPath = saved?.mediaPath;
+        mimeType = saved?.mime;
+        if (attachments[0]) {
+          if (mediaPath) {
+            attachments[0].mediaPath = mediaPath;
+            attachments[0].state = 'ready';
+          } else {
+            attachments[0].state = 'error';
+          }
+        }
+      } catch (error) {
+        log.debug({ err: error }, '[Telegram] Media download failed');
+        if (attachments[0]?.state === 'pending') attachments[0].state = 'error';
+      }
+    });
     const selectMediaAttachment = async (id: string): Promise<MediaAttachmentDescriptor> => {
       const descriptor = attachments.find(candidate => candidate.id === id);
       if (!descriptor) throw new ProviderOperationError('telegram', 'selectMediaAttachment', `Attachment not found: ${id}`, undefined, 'INVALID_TARGET');
       selectedAttachmentId = id;
       return descriptor;
     };
-    // Reflect the download result on the descriptor, as WhatsApp and Discord do.
-    // It stayed 'pending' with no `mediaPath` forever; nothing consumes `state`
-    // today, but the three providers must agree on the contract.
-    if (attachments[0] && attachments[0].state === 'pending') {
-      void mediaReady.then(() => {
-        if (!attachments[0]) return;
-        if (mediaPath) {
-          attachments[0].mediaPath = mediaPath;
-          attachments[0].state = 'ready';
-        } else {
-          attachments[0].state = 'error';
-        }
-      });
-    }
 
     let rolesPromise: Promise<string[]> | null = null;
     const resolveRoles = (): Promise<string[]> => {
