@@ -1191,6 +1191,9 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     const hasBinding = config.allowTools && hasBindingGatedTools()
       ? await resolveSenderHasBinding(ctx.senderId, platform)
       : undefined;
+    // Publish it for tools that build their own listings (menu, find_tools) so
+    // they apply the same binding gate the agent just applied.
+    if (hasBinding !== undefined) ctx.hasBinding = hasBinding;
     const allowedTools = config.allowTools ? getAllowedTools(userRoles, ctx.isGroup, platform, hasBinding) : [];
     const allowedToolNames = new Set(allowedTools.map((tool) => tool.name));
     // Scheduled runs set this so an unattended agent cannot take destructive or

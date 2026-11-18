@@ -25,7 +25,6 @@ export class SoftwareSearchTool extends SearxSearchToolBase {
   /** Governed by its own flag: enabling game search no longer enables this. */
   override readonly optInFlag = 'ENABLE_SOFTWARE_SEARCH';
   override readonly alwaysLoad = false;
-  override readonly cost = 2;
 
   protected override readonly queryParamDescription =
     'The name of the software to search for (e.g. "Photoshop", "Premiere Pro", "IDM").';

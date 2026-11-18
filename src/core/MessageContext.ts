@@ -112,6 +112,14 @@ export interface MessageContext {
   isBotMentioned: boolean;
 
   /**
+   * Whether the sender has a linked media-service account, resolved once per
+   * turn by the agent. Tools that list other tools read it directly instead of
+   * performing their own lookup. Undefined means "not resolved", which the
+   * access predicate treats as "do not hide" — the tool's own check still runs.
+   */
+  hasBinding?: boolean;
+
+  /**
    * Phone-number JID of the sender (e.g. `6281234567890@s.whatsapp.net`).
    * Present on WhatsApp when the senderId is a LID.
    * Used by AuthService to match `BOT_OWNER_JID` and DB role entries.

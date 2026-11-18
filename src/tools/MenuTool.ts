@@ -18,7 +18,7 @@ import { MessageContext } from '../core/MessageContext';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
-import { hasPermission } from '../utils/toolAccess';
+import { isToolAccessible } from './access';
 
 const log = logger.child({ module: 'MenuTool' });
 
@@ -68,12 +68,18 @@ export class MenuTool extends BaseTool<MenuArgs> {
   async execute(args: MenuArgs, ctx: MessageContext): Promise<string> {
     const { command_name } = args;
     const lang = ctx.language;
-    const tools = (await Promise.all(this.getTools().map(async (tool) => {
-      if (!tool.isEnabled() || (tool.groupOnly && !ctx.isGroup) || (tool.dmOnly && ctx.isGroup)) return null;
-      if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) return null;
-      if (!(await hasPermission(ctx, tool.permissions))) return null;
-      return tool;
-    }))).filter((tool): tool is BaseTool => tool !== null);
+    // One predicate for every visibility surface. The hand-rolled copy here
+    // omitted `requiresBinding`, so an unbound user was shown media tools the
+    // agent then refused to call.
+    const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
+    const accessContext = {
+      roles,
+      isGroup: ctx.isGroup,
+      isOwner: roles.includes('owner'),
+      platform: ctx.platform,
+      hasBinding: ctx.hasBinding,
+    };
+    const tools = this.getTools().filter((tool) => isToolAccessible(tool, accessContext));
 
     log.debug({ command_name: command_name || null, chatId: ctx.chatId }, 'Menu requested');
 

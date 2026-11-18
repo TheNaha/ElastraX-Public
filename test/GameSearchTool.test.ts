@@ -29,7 +29,9 @@ describe('GameSearchTool', () => {
     expect(tool.optIn).toBe(true);
     expect(tool.optInFlag).toBe('ENABLE_GAME_SEARCH');
     expect(tool.alwaysLoad).toBe(false);
-    expect(tool.cost).toBe(2);
+    // A read tool's cost is never charged, so declaring one is misleading;
+    // `registry.mutability.test.ts` enforces the invariant for every tool.
+    expect(tool.cost).toBe(1);
   });
 
   test('definition should match OpenAI schema', () => {

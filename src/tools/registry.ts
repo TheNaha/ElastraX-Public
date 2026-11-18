@@ -43,18 +43,12 @@ import { parseExplicitCommand, validateToolArguments, type ValidationResult } fr
 import type { ToolResult } from './BaseTool';
 import { roleSatisfies } from '../core/roleAccess';
 import { safeErrorMessage } from '../utils/errorUtils';
+import { isToolAccessible, isToolEnabled, type ToolAccessContext } from './access';
+
+export { isToolAccessible, isToolEnabled };
+export type { ToolAccessContext };
 
 const log = logger.child({ module: 'ToolRegistry' });
-
-export interface ToolAccessContext {
-  roles?: readonly string[];
-  isGroup?: boolean;
-  isOwner?: boolean;
-  platform?: string;
-  command?: string;
-  hasBinding?: boolean;
-  userId?: string;
-}
 
 export interface ToolCatalogEntry {
   tool: BaseTool;
@@ -96,10 +90,6 @@ function startRateWindowCleanup(): void {
 
 // Called on module load to start the periodic cleanup
 startRateWindowCleanup();
-
-function hasRole(roles: readonly string[] | undefined, required: string): boolean {
-  return roleSatisfies(roles, required);
-}
 
 export function getToolMutability(tool: BaseTool): ToolMetadata['access']['mutability'] {
   return MUTABILITY_OVERRIDES[tool.name] ?? tool.metadata.access.mutability;
@@ -234,26 +224,6 @@ export async function runMutatingTool<T>(tool: BaseTool, context: MessageContext
     release();
     if (mutationQueues.get(key) === queued) mutationQueues.delete(key);
   }
-}
-
-export function isToolEnabled(tool: BaseTool): boolean {
-  try {
-    return tool.isEnabled();
-  } catch (error: unknown) {
-    log.warn({ err: error, tool: tool.name }, 'Tool enablement check failed; disabling tool');
-    return false;
-  }
-}
-
-export function isToolAccessible(tool: BaseTool, context: ToolAccessContext = {}): boolean {
-  if (!isToolEnabled(tool)) return false;
-  if (tool.requiresBinding && context.hasBinding === false) return false;
-  const isGroup = context.isGroup === true;
-  if (context.platform && !tool.metadata.access.platforms.includes(context.platform)) return false;
-  if (tool.groupOnly && !isGroup) return false;
-  if (tool.dmOnly && isGroup) return false;
-  if (context.isOwner === true || context.roles?.includes('owner')) return true;
-  return hasRole(context.roles, tool.permissions);
 }
 
 export function isCommandAccessible(tool: BaseTool, command: string, context: ToolAccessContext = {}): boolean {
@@ -397,6 +367,11 @@ export function getAuthorizedTool(command: string, ctx: MessageContext): Promise
   return (async () => {
     const tool = getToolByAliasOrName(command);
     if (!tool) return undefined;
+    // The slash path checked platform, group/dm and roles but not the two gates
+    // every model-path tool call goes through. Today each affected tool also
+    // re-checks internally, so this closes a future hole rather than a live one.
+    if (!isToolEnabled(tool)) return undefined;
+    if (tool.requiresBinding && ctx.hasBinding === false) return undefined;
     if (tool.groupOnly && !ctx.isGroup) return undefined;
     if (tool.dmOnly && ctx.isGroup) return undefined;
     if (tool.metadata && ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) return undefined;

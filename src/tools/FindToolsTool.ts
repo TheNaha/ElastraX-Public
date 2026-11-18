@@ -12,7 +12,7 @@
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
-import { hasPermission } from '../utils/toolAccess';
+import { isToolAccessible } from './access';
 
 interface FindToolsArgs extends ToolArgs {
   query: string;
@@ -69,13 +69,20 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
     }
 
     const candidates = searchIndex.search(query, 1000);
+    const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
+    const accessContext = {
+      roles,
+      isGroup: ctx.isGroup,
+      isOwner: roles.includes('owner'),
+      platform: ctx.platform,
+      hasBinding: ctx.hasBinding,
+    };
     const results = [];
     for (const candidate of candidates) {
       const tool = candidate.tool;
-      if (tool.groupOnly && !ctx.isGroup) continue;
-      if (tool.dmOnly && ctx.isGroup) continue;
-      if (ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) continue;
-      if (!(await hasPermission(ctx, tool.permissions))) continue;
+      // Share the registry's predicate: this loop also used to advertise
+      // disabled tools and binding-gated tools the agent would refuse.
+      if (!isToolAccessible(tool, accessContext)) continue;
       results.push(candidate);
       if (results.length >= 7) break;
     }

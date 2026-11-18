@@ -198,3 +198,18 @@ describe('per-action authorization on the invocation path', () => {
     expect(result.valid).toBe(true);
   });
 });
+
+/**
+ * `checkToolAdmission` short-circuits every `read` tool with cost 0, so a read
+ * tool that declares `cost > 1` is declaring throttling that never happens —
+ * `game_search` and `software_search` did exactly that. Either the cost is real
+ * (the tool needs a mutating classification) or it should be removed.
+ */
+describe('read tools cannot declare an inert cost', () => {
+  test('no read-mutability tool declares cost above the default', () => {
+    const offenders = allTools()
+      .filter(tool => getToolMutability(tool) === 'read' && tool.cost > 1)
+      .map(tool => `${tool.name} (cost ${tool.cost})`);
+    expect(offenders).toEqual([]);
+  });
+});

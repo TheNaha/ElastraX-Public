@@ -91,6 +91,12 @@ export class TranslateTool extends BaseTool<TranslateArgs> {
           properties: {
             query: {
               type: 'string',
+              // A read-mutability tool is outside the mutation cost bucket, so
+              // this is the only bound on how much text one call can buy: an
+              // unbounded query (or a quoted message) became one unbounded paid
+              // LLM request per invocation. 4000 characters is far above a
+              // sentence and far below an abuse payload.
+              maxLength: 4000,
               description: 'The target language (optional) followed by text, OR just the text to translate.',
             },
           },

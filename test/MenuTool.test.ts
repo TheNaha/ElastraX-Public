@@ -109,7 +109,9 @@ describe('MenuTool', () => {
     const mockTools = [new MockAdminTool(), new MockAdminTool2()];
     const menuTool = new MenuTool(() => mockTools);
 
-    const ctx = { senderName: 'User' } as MessageContext;
+    // Admin tools are listed only to an admin; the point of this test is the
+    // category grouping, so give the caller the role the tools require.
+    const ctx = { senderName: 'User', resolveRoles: async () => ['admin'] } as unknown as MessageContext;
     const result = await menuTool.execute({}, ctx);
 
     // Should only have one ADMIN group

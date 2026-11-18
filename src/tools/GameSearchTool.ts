@@ -25,7 +25,6 @@ export class GameSearchTool extends SearxSearchToolBase {
   /** Governed by its own flag: enabling software search no longer enables this. */
   override readonly optInFlag = 'ENABLE_GAME_SEARCH';
   override readonly alwaysLoad = false;
-  override readonly cost = 2;
 
   protected override readonly queryParamDescription =
     'The name of the video game to search for (e.g. "Elden Ring", "Cyberpunk 2077").';
