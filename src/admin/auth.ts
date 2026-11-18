@@ -144,6 +144,17 @@ export class AdminAuth {
   verifyCsrf(cookieValue: string | null, presented: string | null, now = Date.now()): boolean {
     const session = this.verify(cookieValue, now);
     if (!session) return false;
+    return this.verifyCsrfFor(session, presented);
+  }
+
+  /**
+   * Same check against a session the caller already verified.
+   *
+   * `verifyCsrf` re-ran the whole cookie HMAC and session lookup on every
+   * mutating request, immediately after the route had done exactly that. The
+   * outcome is identical; the second lookup was pure duplication.
+   */
+  verifyCsrfFor(session: { csrf: string }, presented: string | null): boolean {
     if (!presented) return false;
     return safeEqual(session.csrf, presented);
   }

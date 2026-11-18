@@ -516,16 +516,24 @@ export class WebhookServer {
 
     try {
       const checks = [...this.readinessChecks].map(check => Promise.resolve().then(check));
-      const results = await withTimeout(
-        Promise.all(checks),
+      // Settled, not all: a probe that *throws* used to collapse the whole
+      // response to a bodiless `not_ready`, losing the one diagnostic this
+      // endpoint exists to give ("which dependency is down"). A rejection is now
+      // reported as `probeN: 'probe failed'` without leaking the error text.
+      const settled = await withTimeout(
+        Promise.allSettled(checks),
         config.readinessTimeoutMs,
         'webhook:readiness',
       );
-      const normalised = results.map(value => {
+      const normalised = settled.map((result, index) => {
+        if (result.status === 'rejected') {
+          return { ready: false, details: { [`probe${index + 1}`]: 'probe failed' } as Record<string, unknown> };
+        }
+        const value = result.value;
         if (typeof value === 'boolean') return { ready: value };
         if (value && typeof value === 'object') {
-          const result = value as { ready?: boolean; details?: Record<string, unknown> };
-          return { ...result, ready: result.ready !== false };
+          const payload = value as { ready?: boolean; details?: Record<string, unknown> };
+          return { ...payload, ready: payload.ready !== false };
         }
         // A probe that returns nothing (or a non-object) did not report a
         // failure, so it does not make readiness false.

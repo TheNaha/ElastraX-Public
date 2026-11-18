@@ -245,7 +245,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       // Mutating: same-origin plus a CSRF token bound to this session.
       if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
       const csrf = req.headers.get(ADMIN_CSRF_HEADER);
-      if (!auth.verifyCsrf(cookie, csrf, now())) return json({ error: 'Invalid CSRF token' }, 403);
+      if (!auth.verifyCsrfFor(session, csrf)) return json({ error: 'Invalid CSRF token' }, 403);
       return handleAction(req, path, url);
     }
 
