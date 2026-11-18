@@ -407,13 +407,30 @@ export class WebhookReplayCache {
     // acked the retry with `ok`; if the first request then failed and released
     // its reservation, the sender never retried and the event was lost.
     if (this.pending.has(key)) return 'in_flight';
-    if (this.completed.size + this.pending.size >= this.maxEntries) return 'capacity';
+    if (this.completed.size + this.pending.size >= this.maxEntries) {
+      // At capacity, forget the oldest *completed* id and keep accepting. The
+      // previous `return 'capacity'` turned the cap into a hard wall: finished
+      // ids live for the whole TTL (24 h by default) and nothing was ever
+      // evicted while unexpired, so once `WEBHOOK_REPLAY_MAX_ENTRIES` distinct
+      // ids had been seen every further webhook was refused with a 503 — a
+      // permanent intake outage for a sender that emits >10 000 events a day.
+      // A bounded cache's contract is exactly this: remembering an id is best
+      // effort, and forgetting the oldest merely risks re-delivering an event
+      // older than the window.
+      const oldest = this.completed.keys().next();
+      if (oldest.done) return 'capacity'; // every slot is an in-flight request
+      this.completed.delete(oldest.value);
+    }
     this.pending.add(key);
     return 'reserved';
   }
 
   complete(key: string, now: number): void {
     if (!this.pending.delete(key)) return;
+    // Delete-then-set so the Map's insertion order tracks completion order: the
+    // capacity eviction above drops the least recently completed id. A plain
+    // `set` on an existing key keeps its original position.
+    this.completed.delete(key);
     this.completed.set(key, now + this.ttlMs);
   }
 

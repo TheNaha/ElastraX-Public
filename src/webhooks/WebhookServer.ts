@@ -192,7 +192,7 @@ export class WebhookServer {
     return validateSource(candidate, maxLength);
   }
 
-  private resolveReplayContext(req: Request, route: WebhookRoute, now: number): ReplayContext {
+  private resolveReplayContext(req: Request, route: WebhookRoute, source: string, now: number): ReplayContext {
     const rawId = route === 'github'
       ? asNonEmptyString(req.headers.get('x-github-delivery'))
       : asNonEmptyString(req.headers.get('x-webhook-id'))
@@ -200,7 +200,13 @@ export class WebhookServer {
     if (!rawId) return { key: null, eventId: null, reservation: null };
 
     const id = validateReplayId(rawId);
-    const key = `${route}:${id}`;
+    // The source is part of the identity: `route` is `generic` for every sender
+    // on `/webhook`, so keying on route+id let one sender's `x-webhook-id: 1`
+    // answer another sender's event with `202 duplicate` and drop it. The
+    // durable layer already keys webhook events by route *and* source
+    // (`AppRuntime.enqueueWebhook`), and the rate limiter keys on the source
+    // too; the in-memory cache was the only layer that disagreed.
+    const key = `${route}:${source}:${id}`;
     const reservation = this.replayCache
       ? this.replayCacheReservation(key, now)
       : 'capacity';
@@ -269,11 +275,24 @@ export class WebhookServer {
         destination.platform,
       )),
     );
-    const failed = results.flatMap((result, index) =>
-      result.status === 'rejected'
-        ? [{ roomId: job.destinations[index]!.chatRoomId, error: 'Delivery failed' }]
-        : [],
-    );
+    const failed = results.flatMap((result, index) => {
+      if (result.status !== 'rejected') return [];
+      const destination = job.destinations[index];
+      // The HTTP body deliberately carries only "Delivery failed" (no internals),
+      // but nothing else recorded the reason, so a timed-out or aborted send left
+      // no server-side trace of which destination failed or why — including the
+      // actionable "No sender for room_id …" diagnostic raised by `send()`.
+      log.warn(
+        {
+          route: job.route,
+          roomId: destination?.chatRoomId,
+          platform: destination?.platform,
+          err: getErrorMessage(result.reason),
+        },
+        '[Webhook] Delivery failed',
+      );
+      return [{ roomId: destination!.chatRoomId, error: 'Delivery failed' }];
+    });
     const delivered = job.destinations.length - failed.length;
 
     // Partial delivery keeps the replay reservation: a retry would re-send to
@@ -618,7 +637,7 @@ export class WebhookServer {
       });
     }
 
-    const replay = this.resolveReplayContext(req, route, this.now());
+    const replay = this.resolveReplayContext(req, route, source, this.now());
     if (replay.reservation === 'duplicate') return this.duplicateResponse();
     if (replay.reservation === 'in_flight') {
       // The same delivery id is being processed right now. A retryable answer is

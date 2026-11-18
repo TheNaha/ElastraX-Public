@@ -94,6 +94,33 @@ describe('WebhookReplayCache', () => {
     cache.release('github:2');
     expect(cache.reserve('github:2', now + 1)).toBe('reserved');
   });
+
+  test('a full cache evicts the oldest completed id instead of refusing every event', () => {
+    // 24 h TTL and a small cap: the old code returned 'capacity' for every new
+    // id until the TTL expired, i.e. a permanent intake outage once the cap was
+    // reached. Eviction keeps the newest ids deduplicated and the intake open.
+    const cache = new WebhookReplayCache(24 * 60 * 60_000, 2);
+    const now = 1_000_000;
+    expect(cache.reserve('github:a', now)).toBe('reserved');
+    cache.complete('github:a', now);
+    expect(cache.reserve('github:b', now + 1)).toBe('reserved');
+    cache.complete('github:b', now + 1);
+
+    expect(cache.reserve('github:c', now + 2)).toBe('reserved');
+    cache.complete('github:c', now + 2);
+    // The newest ids are still deduplicated.
+    expect(cache.reserve('github:b', now + 3)).toBe('duplicate');
+    expect(cache.reserve('github:c', now + 4)).toBe('duplicate');
+  });
+
+  test('reports capacity only when every slot is an in-flight request', () => {
+    const cache = new WebhookReplayCache(60_000, 2);
+    const now = 1_000_000;
+    expect(cache.reserve('github:a', now)).toBe('reserved');
+    expect(cache.reserve('github:b', now)).toBe('reserved');
+    // Nothing completed, so there is no entry that could be evicted.
+    expect(cache.reserve('github:c', now)).toBe('capacity');
+  });
 });
 
 describe('webhook adapters', () => {
