@@ -424,7 +424,14 @@ export class WhatsAppProvider implements BotProvider {
     );
 
     socket.ev.on('messages.upsert', async event => {
-      if (!this.isCurrent(socket, generation) || event.type !== 'notify') return;
+      // `notify` is a live message; `append` is a *new, never-processed* message
+      // that was queued server-side while this socket was offline (Baileys emits
+      // `node.attrs.offline ? 'append' : 'notify'`), or a message re-emitted after
+      // a decrypt retry. Accepting only `notify` silently dropped everything that
+      // arrived during a reconnect, so the user got no reply at all. Duplicates
+      // are safe here: the context has a provider message id and the agent's
+      // message/inbox dedupe rejects a repeat.
+      if (!this.isCurrent(socket, generation) || (event.type !== 'notify' && event.type !== 'append')) return;
       await Promise.all(event.messages.map(async message => {
         if (!message.message || message.key.fromMe) return;
         if (isNonConversationalJid(message.key.remoteJid)) return;

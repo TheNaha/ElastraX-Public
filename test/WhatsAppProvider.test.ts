@@ -183,6 +183,42 @@ describe('WhatsAppProvider', () => {
     createContextSpy.mockRestore();
   });
 
+  test('processes offline-queued (append) messages instead of dropping them', async () => {
+    const { sock, emit } = createFakeSocket();
+
+    whatsAppProviderDeps.useAuthState = async () => createFakeAuthState();
+    whatsAppProviderDeps.fetchLatestVersion = async () => ({ version: [1, 2, 3], isLatest: true });
+    whatsAppProviderDeps.createSocket = () => asWhatsAppSocket(sock);
+    whatsAppProviderDeps.renderQr = mock(() => {});
+
+    const provider = new WhatsAppProvider();
+    const handler = mock(async () => {});
+    const ctx = { platform: 'whatsapp', chatId: 'chat-1' } as Pick<MessageContext, 'platform' | 'chatId'>;
+    const createContextSpy = spyOn(
+      provider as unknown as { createContext: (message: unknown) => Promise<unknown> },
+      'createContext',
+    ).mockResolvedValue(ctx);
+
+    provider.onMessage(handler);
+    await provider.start();
+    // Baileys uses `append` for every message that was queued while the socket
+    // was offline; only `notify` used to be accepted.
+    await emit('messages.upsert', {
+      type: 'append',
+      messages: [
+        {
+          key: { id: 'offline-1', remoteJid: 'chat-1', fromMe: false },
+          message: { conversation: 'sent while you were away' },
+        },
+      ],
+    });
+
+    expect(createContextSpy).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(ctx);
+
+    createContextSpy.mockRestore();
+  });
+
   test('ignores status broadcasts and newsletter posts instead of treating them as DMs', async () => {
     const { sock, emit } = createFakeSocket();
 
