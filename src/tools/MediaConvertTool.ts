@@ -123,6 +123,32 @@ function buildConvertArgs(
   return extraArgs;
 }
 
+/**
+ * Merge a format's base ffmpeg args with the quality overrides.
+ *
+ * ffmpeg honours only the *last* `-vf` for an output stream, so appending a
+ * second one silently dropped the format's own chain: `/convert gif
+ * resolution=720p` lost the `fps=10,scale=320:-1` palette chain entirely. The
+ * override filters are folded into the base chain (base first, override last so
+ * the user's scale/fps wins) so exactly one `-vf` reaches ffmpeg.
+ */
+function mergeFfmpegArgs(baseArgs: readonly string[], extraArgs: readonly string[]): string[] {
+  const extraFilterIndex = extraArgs.indexOf('-vf');
+  if (extraFilterIndex === -1) return [...baseArgs, ...extraArgs];
+  const baseFilterIndex = baseArgs.indexOf('-vf');
+  const extraFilter = extraArgs[extraFilterIndex + 1];
+  if (extraFilter === undefined) return [...baseArgs, ...extraArgs];
+  if (baseFilterIndex === -1 || baseFilterIndex + 1 >= baseArgs.length) {
+    return [...baseArgs, ...extraArgs];
+  }
+  const merged = [...baseArgs];
+  merged[baseFilterIndex + 1] = `${baseArgs[baseFilterIndex + 1]},${extraFilter}`;
+  return [
+    ...merged,
+    ...extraArgs.filter((_, index) => index !== extraFilterIndex && index !== extraFilterIndex + 1),
+  ];
+}
+
 export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
   readonly name = 'convert_media';
   readonly description = 'Convert attached/quoted media to a different format (audio, video, image).';
@@ -212,7 +238,7 @@ export class MediaConvertTool extends BaseTool<MediaConvertArgs> {
       const extIn = extensionFor(media.mime || 'video/mp4');
       const baseArgs = FORMAT_ARGS[targetFmt];
       const extraArgs = buildConvertArgs(targetFmt, args.resolution, args.fps, args.quality, args.preset);
-      const ffmpegArgs = [...baseArgs, ...extraArgs];
+      const ffmpegArgs = mergeFfmpegArgs(baseArgs, extraArgs);
 
       log.info({ from: extIn, to: targetFmt, resolution: args.resolution, fps: args.fps, quality: args.quality, preset: args.preset, inputSize: inputBuffer.length, chatId: ctx.chatId }, 'Media conversion started');
 

@@ -90,5 +90,30 @@ describe('MediaConvertTool', () => {
       existsSpy.mockRestore();
       readFileSpy.mockRestore();
     });
+
+    test('folds a resolution override into the format filter chain instead of adding a second -vf', async () => {
+      const tool = new MediaConvertTool();
+      const convertSpy = spyOn(FFmpegConverter, 'convert').mockResolvedValue(Buffer.from('converted'));
+      const existsSpy = spyOn(fs, 'existsSync').mockReturnValue(true);
+      const readFileSpy = spyOn(fsPromises, 'readFile').mockResolvedValue(Buffer.from('input-data') as any);
+      const ctx = createMockCtx({
+        sendMedia: mock(async () => {}),
+        mediaPath: '/tmp/test.mp4',
+        mimeType: 'video/mp4',
+      });
+
+      await tool.execute({ format: 'gif', resolution: '720p' }, ctx);
+
+      const args = convertSpy.mock.calls[0]![1] as string[];
+      // ffmpeg keeps only the last -vf; a second one dropped the gif palette chain.
+      expect(args.filter(arg => arg === '-vf')).toHaveLength(1);
+      const filterChain = args[args.indexOf('-vf') + 1]!;
+      expect(filterChain).toContain('fps=10');
+      expect(filterChain).toContain('scale=-2:720');
+
+      convertSpy.mockRestore();
+      existsSpy.mockRestore();
+      readFileSpy.mockRestore();
+    });
   });
 });
