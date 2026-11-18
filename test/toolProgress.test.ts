@@ -47,10 +47,10 @@ describe('toolProgress helpers', () => {
     });
 
     test('formats download, sticker, and media actions', () => {
-      expect(formatToolAction('download', 'utility', { url: 'https://youtube.com/watch?v=123', format: 'mp3' })).toBe('⬇️ Downloading MP3 media from youtube.com...');
-      expect(formatToolAction('make_sticker', 'media', {})).toBe('🎨 Creating sticker...');
-      expect(formatToolAction('media_convert', 'media', { format: 'webp' })).toBe('🔄 Converting media to WEBP...');
-      expect(formatToolAction('translate', 'utility', { target_language: 'Spanish' })).toBe('🌐 Translating to Spanish...');
+      expect(formatToolAction('download_media', 'utility', { url: 'https://youtube.com/watch?v=123', format: 'mp3' })).toBe('⬇️ Downloading MP3 media from youtube.com...');
+      expect(formatToolAction('sticker', 'media', {})).toBe('🎨 Creating sticker...');
+      expect(formatToolAction('convert_media', 'media', { format: 'webp' })).toBe('🔄 Converting media to WEBP...');
+      expect(formatToolAction('translate', 'utility', { query: 'Good morning' })).toBe('🌐 Translating "Good morning"...');
     });
 
     test('formats fallback actions based on category', () => {

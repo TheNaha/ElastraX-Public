@@ -64,32 +64,30 @@ export function formatToolAction(
       const q = typeof args.query === 'string' ? args.query.trim() : '';
       return q ? `💻 Searching software for "${sanitizeInlineText(q, 60)}"...` : '💻 Searching software...';
     }
-    case 'download': {
+    case 'download_media': {
       const fmt = typeof args.format === 'string' && args.format.trim()
         ? `${sanitizeInlineText(args.format, 10).toUpperCase()} `
         : '';
       const host = extractSafeHost(args.url);
       return `⬇️ Downloading ${fmt}media from ${host}...`;
     }
-    case 'make_sticker':
+    case 'sticker':
       return '🎨 Creating sticker...';
-    case 'media_convert': {
+    case 'convert_media': {
       const fmt = typeof args.format === 'string' && args.format.trim()
         ? ` to ${sanitizeInlineText(args.format, 10).toUpperCase()}`
         : '';
       return `🔄 Converting media${fmt}...`;
     }
     case 'translate': {
-      const lang = typeof args.target_language === 'string' && args.target_language.trim()
-        ? ` to ${sanitizeInlineText(args.target_language, 30)}`
-        : '';
-      return `🌐 Translating${lang}...`;
+      const q = typeof args.query === 'string' ? args.query.trim() : '';
+      return q ? `🌐 Translating "${sanitizeInlineText(q, 40)}"...` : '🌐 Translating...';
     }
     case 'speak':
       return '🔊 Generating voice note...';
     case 'transcribe_audio':
       return '🎙️ Transcribing audio...';
-    case 'pdf': {
+    case 'pdf_tool': {
       const action = typeof args.action === 'string' && args.action.trim()
         ? sanitizeInlineText(args.action.replace(/_/g, ' '), 30)
         : 'document';

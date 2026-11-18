@@ -15,7 +15,7 @@
  * Configurable keys:
  *  | Key            | Type    | Description                                               |
  *  |----------------|---------|-----------------------------------------------------------|
- *  | systemPrompt   | string  | Custom LLM system prompt (max 50,000 chars)               |
+ *  | systemPrompt   | string  | Custom LLM system prompt (max 20,000 chars)               |
  *  | contextLimit   | integer | Max messages in the context window (1–50)                 |
  *  | temperature    | float   | LLM sampling temperature (0.0–2.0)                        |
  *  | allowTools     | boolean | Enable/disable LLM function-calling for this room         |
