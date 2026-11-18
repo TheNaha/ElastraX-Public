@@ -14,9 +14,9 @@
  *    this a fresh Telegram deployment has no `owner` at all and every
  *    owner-only tool is unreachable.
  *  - Group administration is limited to what the Bot API actually offers:
- *    ban/unban for removal, restrict for muting, invite links and leaving.
- *    Telegram has no "add member" or "promote/demote" concept for bots, so those
- *    report UNSUPPORTED rather than pretending.
+ *    ban-then-unban for removal, invite links and leaving. Telegram has no
+ *    "add member", "promote/demote" or mute concept reachable through this
+ *    adapter, so those report UNSUPPORTED rather than pretending.
  */
 import {
   Bot,
@@ -106,6 +106,10 @@ type MessageCarrier = {
   audio?: MediaField;
   document?: MediaField;
   sticker?: StickerField;
+  /** A GIF/animation: MP4 under the hood, but a distinct Telegram field. */
+  animation?: MediaField;
+  /** A round "video message" (PTV). */
+  video_note?: MediaField;
   location?: unknown;
   contact?: unknown;
 };
@@ -113,7 +117,7 @@ type MessageCarrier = {
 function messageTypeOf(ctx: MessageCarrier | null | undefined): string {
   if (!ctx) return 'unknown';
   if (ctx.photo) return 'imageMessage';
-  if (ctx.video) return 'videoMessage';
+  if (ctx.video || ctx.animation || ctx.video_note) return 'videoMessage';
   if (ctx.voice || ctx.audio) return 'audioMessage';
   if (ctx.sticker) return 'stickerMessage';
   if (ctx.document) return 'documentMessage';
@@ -130,6 +134,12 @@ function mediaOf(ctx: MessageCarrier | null | undefined): { fileId: string; mime
     return { fileId: largest.file_id, size: largest.file_size };
   }
   if (ctx.video) return { fileId: ctx.video.file_id, mime: ctx.video.mime_type, size: ctx.video.file_size };
+  // Telegram models a GIF as `animation` (an MP4 with no audio) and a round
+  // video message as `video_note`. Neither was in this list, so `hasMedia` was
+  // false, `mediaAttachments` empty, and a caption-less GIF or round video was
+  // dropped silently by the agent while the same payload works on WhatsApp.
+  if (ctx.animation) return { fileId: ctx.animation.file_id, mime: ctx.animation.mime_type ?? 'video/mp4', size: ctx.animation.file_size, name: ctx.animation.file_name ?? undefined };
+  if (ctx.video_note) return { fileId: ctx.video_note.file_id, mime: 'video/mp4', size: ctx.video_note.file_size };
   if (ctx.voice) return { fileId: ctx.voice.file_id, mime: ctx.voice.mime_type, size: ctx.voice.file_size };
   if (ctx.audio) return { fileId: ctx.audio.file_id, mime: ctx.audio.mime_type, size: ctx.audio.file_size };
   if (ctx.document) return { fileId: ctx.document.file_id, mime: ctx.document.mime_type, size: ctx.document.file_size, name: ctx.document.file_name ?? undefined };
@@ -411,7 +421,14 @@ export class TelegramProvider implements BotProvider {
     // intentionally ignored here (see `BotProvider.sendMessage` IG-04 gap).
     void options;
     let last: unknown = null;
-    for (const chunk of chunkTelegramText(text)) {
+    const chunks = chunkTelegramText(text);
+    if (chunks.length === 0) {
+      // `chunkTextTelegram` returns no chunks for empty or whitespace-only text.
+      // Returning `null` let the outbox/scheduler record the row as delivered
+      // while nothing was sent; surface it so the caller decides.
+      throw new ProviderOperationError('telegram', 'sendMessage', 'Refusing to send an empty message.', undefined, 'UNSUPPORTED');
+    }
+    for (const chunk of chunks) {
       signal?.throwIfAborted();
       // No parse_mode: the agent's text is plain, and unescaped Markdown would
       // either be rejected or shown literally.
@@ -566,13 +583,21 @@ export class TelegramProvider implements BotProvider {
       .map((entity) => String((entity as { user: { id: number } }).user.id));
     const botId = this.botUserId;
     const isBotMentioned = Boolean(
-      (botId && text.includes(botId))
-      || (ctx.me?.username && text.includes(`@${ctx.me.username}`))
+      // `text_mention` entities are the one mention form Telegram resolves to a
+      // real account id, so a message that names the bot that way counts.
+      (botId && mentionedIds.includes(botId))
+      // Usernames are case-insensitive on Telegram; the previous comparison was
+      // not, so `@MyBot` missed a username of `mybot`.
+      || (ctx.me?.username && text.toLowerCase().includes(`@${ctx.me.username.toLowerCase()}`))
       // A leading slash is a command, not a mention. The previous heuristic
       // matched any `/word` anywhere in the text, so "and/or", "he/she" and
       // "input/output" in a group made the bot answer messages it was never
       // addressed in — burning an LLM turn on ordinary chatter.
       || (isGroup && /^\/[a-z_]+\b/.test(text.trim())),
+      // The bot's numeric id used to be matched as a substring of the text, so
+      // any group message containing those digits (order numbers, timestamps)
+      // was treated as a mention. A numeric id is not a mention form a user can
+      // type; `text_mention` above covers a real id mention.
     );
 
     let mediaPath: string | undefined;
@@ -837,18 +862,7 @@ export class TelegramProvider implements BotProvider {
       updateGroupParticipants: async (action: string, userIds: string[]) => {
         const activeBot = ensureCurrent();
         if (!isGroup) throw new ProviderOperationError('telegram', 'updateGroupParticipants', 'Not a group chat.', undefined, 'INVALID_TARGET');
-        for (const rawId of userIds) {
-          const userId = Number(rawId);
-          if (!Number.isSafeInteger(userId)) {
-            throw new ProviderOperationError('telegram', 'updateGroupParticipants', `"${rawId}" is not a Telegram user id.`, undefined, 'INVALID_TARGET');
-          }
-          if (action === 'remove') {
-            // Telegram separates removal from muting; ban-then-unban is the
-            // documented way to remove without blocking future re-joins.
-            await activeBot.api.banChatMember(chatId, userId);
-            await activeBot.api.unbanChatMember(chatId, userId).catch(() => undefined);
-            continue;
-          }
+        if (action !== 'remove') {
           // `kick`, `mute` and `unmute` are not part of the updateGroupParticipants
           // contract (`add|remove|promote|demote`); GroupAdminTool maps kick to
           // remove and routes mute/unmute through setGroupSettings. Handling them
@@ -856,6 +870,27 @@ export class TelegramProvider implements BotProvider {
           throw new ProviderOperationError(
             'telegram', 'updateGroupParticipants',
             `Telegram bots cannot perform "${action}".`, undefined, 'UNSUPPORTED',
+          );
+        }
+        // Remove every user the bot can, and report the failures together: a
+        // single `ban` rejection used to abort the loop and leave the rest of the
+        // list untouched, while the caller reported one opaque failure.
+        const results = await Promise.allSettled(userIds.map(async rawId => {
+          const userId = Number(rawId);
+          if (!Number.isSafeInteger(userId)) {
+            throw new ProviderOperationError('telegram', 'updateGroupParticipants', `"${rawId}" is not a Telegram user id.`, undefined, 'INVALID_TARGET');
+          }
+          // Telegram separates removal from muting; ban-then-unban is the
+          // documented way to remove without blocking future re-joins.
+          await activeBot.api.banChatMember(chatId, userId);
+          await activeBot.api.unbanChatMember(chatId, userId).catch(() => undefined);
+        }));
+        const failures = results.filter(result => result.status === 'rejected');
+        if (failures.length > 0) {
+          throw new ProviderOperationError(
+            'telegram', 'updateGroupParticipants',
+            `Failed to remove ${failures.length} of ${userIds.length} Telegram users.`,
+            new AggregateError(failures.map(failure => (failure as PromiseRejectedResult).reason)),
           );
         }
       },
@@ -878,6 +913,8 @@ export class TelegramProvider implements BotProvider {
       caption: replyTo.caption,
       photo: replyTo.photo,
       video: replyTo.video,
+      animation: replyTo.animation,
+      video_note: replyTo.video_note,
       voice: replyTo.voice,
       audio: replyTo.audio,
       document: replyTo.document,
@@ -887,6 +924,14 @@ export class TelegramProvider implements BotProvider {
     };
     const media = mediaOf(carrier);
     const body = replyTo.text ?? replyTo.caption ?? '';
+    // A Baileys-shaped `key` so the platform-neutral checks that already read
+    // `quoted.rawMessage.key` work on Telegram too: replying to the bot's own
+    // message must activate the agent in a group, and `/delete` must recognise
+    // the target as a bot message. Without it both were silently false.
+    const botId = this.botUserId;
+    const fromMe = Boolean(
+      botId && replyTo.from?.id !== undefined && String(replyTo.from.id) === String(botId),
+    );
     return {
       messageType: messageTypeOf(carrier),
       body,
@@ -894,7 +939,17 @@ export class TelegramProvider implements BotProvider {
       senderId: String(replyTo.from?.id ?? ''),
       hasMedia: Boolean(media),
       stanzaId: String(replyTo.message_id),
-      rawMessage: replyTo as unknown as RawProviderMessage,
+      rawMessage: {
+        ...(replyTo as unknown as Record<string, unknown>),
+        key: {
+          fromMe,
+          id: String(replyTo.message_id),
+          // The Bot API id, so a generic `deleteMessage(key)` resolves the
+          // *quoted* message rather than falling back to the current one.
+          message_id: replyTo.message_id,
+          ...(ctx.chat?.id !== undefined ? { remoteJid: String(ctx.chat.id) } : {}),
+        },
+      } as unknown as RawProviderMessage,
     };
   }
 }

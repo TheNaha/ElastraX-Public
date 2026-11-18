@@ -460,6 +460,96 @@ describe('TelegramProvider lifecycle', () => {
       await provider.stop();
     });
 
+    test('an animation (GIF) is reported as media', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      stubBot();
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'animations/file_0.mp4' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        catch: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(makeContext({
+        update_id: 1,
+        message: {
+          message_id: 44,
+          date: 1000,
+          chat: { id: 12345, type: 'private' },
+          from: { id: 67890, first_name: 'TestUser', is_bot: false },
+          animation: { file_id: 'anim-1', file_size: 4096, mime_type: 'video/mp4', width: 320, height: 240, duration: 2 },
+        },
+      }));
+
+      expect(received).not.toBeNull();
+      expect(received!.hasMedia).toBe(true);
+      expect(received!.messageType).toBe('videoMessage');
+      expect(received!.mediaAttachments?.[0]?.providerId).toBe('anim-1');
+      await provider.stop();
+    });
+
+    test('a group reply to the bot message carries a from-me key', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      stubBot();
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'photos/file_0.jpg' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        catch: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(makeContext({
+        update_id: 1,
+        message: {
+          message_id: 45,
+          date: 1000,
+          chat: { id: -100123, type: 'group' },
+          from: { id: 67890, first_name: 'TestUser', is_bot: false },
+          text: 'nice answer',
+          reply_to_message: {
+            message_id: 40,
+            date: 900,
+            chat: { id: -100123, type: 'group' },
+            from: { id: 777, first_name: 'ElastraX', is_bot: true },
+            text: 'the bot answer',
+          },
+        },
+      }));
+
+      const raw = received?.quoted?.rawMessage as { key?: { fromMe?: boolean; message_id?: number } } | undefined;
+      expect(raw?.key?.fromMe).toBe(true);
+      expect(raw?.key?.message_id).toBe(40);
+      await provider.stop();
+    });
+
     test('start() asks Telegram for message_reaction updates', async () => {
       process.env.TELEGRAM_BOT_TOKEN = 'test-token';
       let startOptions: { allowed_updates?: string[] } | undefined;
