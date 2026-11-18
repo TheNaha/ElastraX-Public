@@ -35,7 +35,7 @@ import { GameSearchTool } from './GameSearchTool';
 import { SoftwareSearchTool } from './SoftwareSearchTool';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { logger } from '../utils/logger';
-import { hasPermission } from '../utils/toolAccess';
+import { hasPermission, resolveSenderHasBinding } from '../utils/toolAccess';
 import { getToolTimeoutMs, readIntegerEnv } from '../config/runtime';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import type { MessageContext } from '../core/MessageContext';
@@ -371,7 +371,12 @@ export function getAuthorizedTool(command: string, ctx: MessageContext): Promise
     // every model-path tool call goes through. Today each affected tool also
     // re-checks internally, so this closes a future hole rather than a live one.
     if (!isToolEnabled(tool)) return undefined;
-    if (tool.requiresBinding && ctx.hasBinding === false) return undefined;
+    // The slash path runs before the agent computes `hasBinding`, so resolve it
+    // here when the matched tool is binding-gated (one lookup, only on a slash
+    // command for such a tool). The model path already publishes the flag.
+    if (tool.requiresBinding && !(ctx.hasBinding ?? await resolveSenderHasBinding(ctx.senderId, ctx.platform))) {
+      return undefined;
+    }
     if (tool.groupOnly && !ctx.isGroup) return undefined;
     if (tool.dmOnly && ctx.isGroup) return undefined;
     if (tool.metadata && ctx.platform && tool.metadata.access.platforms.length > 0 && !tool.metadata.access.platforms.includes(ctx.platform)) return undefined;

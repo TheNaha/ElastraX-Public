@@ -26,6 +26,9 @@ import { getErrorMessage } from '../utils/errorUtils';
 
 const log = logger.child({ module: 'TranslateTool' });
 
+/** Must match the `query` schema `maxLength`. */
+const TRANSLATE_MAX_CHARS = 4000;
+
 const LANGUAGE_MAP: Record<string, string> = {
   'en': 'English',
   'english': 'English',
@@ -138,6 +141,14 @@ export class TranslateTool extends BaseTool<TranslateArgs> {
 
     if (!sourceText.trim()) {
       return t(lang, 'translate.no_text');
+    }
+
+    // `maxLength` on the schema bounds `query`, but the quoted fallback above is
+    // the user's reply target and is not validated against it. Cap the resolved
+    // text here too: this is a read-mutability tool, so this call is outside the
+    // mutation cost bucket and the only bound on one paid request.
+    if (sourceText.length > TRANSLATE_MAX_CHARS) {
+      sourceText = sourceText.slice(0, TRANSLATE_MAX_CHARS);
     }
 
     try {
