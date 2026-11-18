@@ -130,7 +130,7 @@ describe('MenuTool', () => {
       aliases = [];
       category = 'media';
       permissions = 'user' as const;
-      override readonly requiresBinding = true;
+      override get requiresBinding(): boolean { return true; }
       get definition(): ToolDefinition {
         return {
           type: 'function',
