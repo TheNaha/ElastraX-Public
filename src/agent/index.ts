@@ -233,7 +233,13 @@ async function deliverDurableText(ctx: MessageContext, text: string, source: str
       'direct reply',
       ctx.signal,
     );
-    OutboxService.markEnqueuedSent(deliveryId, typeof result === 'string' ? result : null);
+    const recorded = OutboxService.markEnqueuedSent(deliveryId, typeof result === 'string' ? result : null);
+    if (!recorded) {
+      // `false` means the row was already `sent` (key collision) or `leased` by
+      // the poller, which is delivering the same text concurrently — the exact
+      // race the direct-send grace window exists to bound.
+      log.warn({ deliveryId, source }, 'Direct send raced the outbox poller; delivery row was already claimed');
+    }
   } catch (error) {
     log.warn({ err: error, deliveryId, source }, 'Immediate delivery failed; outbox will retry');
   }
@@ -1543,7 +1549,10 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           ctx.signal,
         );
         const providerMessageId = typeof result === 'string' ? result : null;
-        OutboxService.markEnqueuedSent(deliveryId, providerMessageId);
+        const recorded = OutboxService.markEnqueuedSent(deliveryId, providerMessageId);
+        if (!recorded) {
+          log.warn({ deliveryId, chatId }, 'Final reply raced the outbox poller; delivery row was already claimed');
+        }
       } catch (error) {
         log.warn({ err: error, deliveryId }, 'Immediate delivery failed; outbox will retry');
       }
