@@ -153,23 +153,27 @@ export const whatsAppProviderDeps = {
  */
 const UPSERT_CONCURRENCY = 4;
 
-async function forEachWithConcurrency<T>(
+async function mapWithConcurrency<T, R>(
   items: readonly T[],
   limit: number,
-  fn: (item: T) => Promise<void>,
-): Promise<void> {
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length);
   let next = 0;
+  // `fn` must handle its own errors: a throw ends that worker and leaves the
+  // rest of its share unprocessed. Both call sites guard their work.
   const workers = Array.from(
     { length: Math.min(Math.max(1, limit), items.length) },
     async () => {
       while (true) {
         const index = next++;
         if (index >= items.length) return;
-        await fn(items[index]!);
+        results[index] = await fn(items[index]!);
       }
     },
   );
   await Promise.all(workers);
+  return results;
 }
 
 export class WhatsAppProvider implements BotProvider {
@@ -463,7 +467,7 @@ export class WhatsAppProvider implements BotProvider {
       // are safe here: the context has a provider message id and the agent's
       // message/inbox dedupe rejects a repeat.
       if (!this.isCurrent(socket, generation) || (event.type !== 'notify' && event.type !== 'append')) return;
-      await forEachWithConcurrency(event.messages, UPSERT_CONCURRENCY, async message => {
+      await mapWithConcurrency(event.messages, UPSERT_CONCURRENCY, async message => {
         if (!message.message || message.key.fromMe) return;
         if (isNonConversationalJid(message.key.remoteJid)) return;
         if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
@@ -492,14 +496,16 @@ export class WhatsAppProvider implements BotProvider {
     socket.ev.on('messaging-history.set', async event => {
       if (!this.isCurrent(socket, generation)) return;
       logger.info(`[WhatsApp] Received history sync with ${event.messages.length} messages.`);
-      const contexts = (await Promise.all(event.messages.map(async message => {
+      // History sync arrives as one large batch too; share the upsert bound
+      // instead of starting every context build at once.
+      const contexts = (await mapWithConcurrency(event.messages, UPSERT_CONCURRENCY, async message => {
         if (!message.message || message.key.fromMe) return null;
         try {
           return await this.createContext(message, generation, true);
         } catch {
           return null;
         }
-      }))).filter((context): context is MessageContext => context !== null);
+      })).filter((context): context is MessageContext => context !== null);
       if (this.isCurrent(socket, generation)) {
         syncHistoricalDatabase(contexts).catch(error => logger.error({ err: error }, 'Background history sync failed'));
       }
