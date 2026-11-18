@@ -141,6 +141,37 @@ export const whatsAppProviderDeps = {
   },
 };
 
+/**
+ * How many `messages.upsert` entries are prepared at once.
+ *
+ * The handler used `Promise.all`, which was harmless for a live `notify` batch
+ * but not for an offline `append` batch: a reconnect can deliver a large
+ * backlog, and every entry does awaited socket work (LID/PN resolution, parse,
+ * read receipt) before the agent queue bounds anything. Media downloads stay
+ * lazy and agent turns stay capped by the message queue; this only bounds the
+ * preparation burst.
+ */
+const UPSERT_CONCURRENCY = 4;
+
+async function forEachWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from(
+    { length: Math.min(Math.max(1, limit), items.length) },
+    async () => {
+      while (true) {
+        const index = next++;
+        if (index >= items.length) return;
+        await fn(items[index]!);
+      }
+    },
+  );
+  await Promise.all(workers);
+}
+
 export class WhatsAppProvider implements BotProvider {
   readonly name = 'whatsapp' as const;
   private sock: BaileysSocket | null = null;
@@ -432,7 +463,7 @@ export class WhatsAppProvider implements BotProvider {
       // are safe here: the context has a provider message id and the agent's
       // message/inbox dedupe rejects a repeat.
       if (!this.isCurrent(socket, generation) || (event.type !== 'notify' && event.type !== 'append')) return;
-      await Promise.all(event.messages.map(async message => {
+      await forEachWithConcurrency(event.messages, UPSERT_CONCURRENCY, async message => {
         if (!message.message || message.key.fromMe) return;
         if (isNonConversationalJid(message.key.remoteJid)) return;
         if (!this.isCurrent(socket, generation) || !this.messageHandler) return;
@@ -455,7 +486,7 @@ export class WhatsAppProvider implements BotProvider {
             logger.error({ err: error, key: message.key }, '[WhatsApp] Error processing message');
           }
         }
-      }));
+      });
     });
 
     socket.ev.on('messaging-history.set', async event => {
