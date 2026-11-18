@@ -59,6 +59,11 @@ describe('provider media safety helpers', () => {
     expect(semaphore.activePermits).toBe(0);
   });
 
+  test('acquire rejects a permit count above capacity instead of hanging', async () => {
+    const semaphore = new CancellableSemaphore(2);
+    await expect(semaphore.acquire(3)).rejects.toThrow('exceeds capacity');
+  });
+
   test('SSRF validation rejects private, mixed, credential, and unusual-port targets', async () => {
     const publicLookup = async () => [{ address: '93.184.216.34', family: 4 }];
     await expect(validateSsrfUrlWithLookup('https://example.com/video', publicLookup)).resolves.toMatchObject({ address: '93.184.216.34', family: 4 });

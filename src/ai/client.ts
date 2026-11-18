@@ -15,7 +15,7 @@ import { AIProtocolError, AINoChoiceError } from './errors';
 import { SSEDecoder, type SSEDecoderOptions } from './sse';
 import { safeErrorMessage } from '../utils/errorUtils';
 import { timeoutSignal } from '../utils/withTimeout';
-import { readResponseTextBounded } from '../utils/httpBody';
+import { readResponseTextBounded, ResponseBodyTooLargeError } from '../utils/httpBody';
 import {
   isToolCall,
   normalizeTokenUsage,
@@ -308,7 +308,7 @@ export class AIClient {
     try {
       bodyText = await readResponseTextBounded(response, getAIRequestConfig().maxResponseBytes, 'LLM response');
     } catch (error: unknown) {
-      if (error instanceof Error && error.message.startsWith('LLM response exceeds')) {
+      if (error instanceof ResponseBodyTooLargeError) {
         throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
       }
       throw new AIProtocolError('invalid_response', 'Chat completion response body could not be read.', {

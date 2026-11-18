@@ -423,13 +423,13 @@ async function executeRequestedToolCalls(
         toolResultText = constrained.truncated
           ? `${constrained.value}\n\n[Tool output truncated to fit the per-turn result budget]`
           : constrained.value;
-      } catch (budgetError: unknown) {
-        if (!(budgetError instanceof TurnBudgetExceededError)) throw budgetError;
+      } catch (budgetFailure: unknown) {
+        if (!(budgetFailure instanceof TurnBudgetExceededError)) throw budgetFailure;
         // The tool itself succeeded; only the budget for returning its output is
         // gone. Reporting that as "Error executing tool" told the model the call
         // failed and threw away a successful result.
         log.warn({ toolName, chatId: options.chatId }, 'Tool result dropped: turn budget exhausted');
-        toolResultText = `Tool ${toolName} ran, but its output was not returned: ${getErrorMessage(budgetError)}`;
+        toolResultText = `Tool ${toolName} ran, but its output was not returned: ${getErrorMessage(budgetFailure)}`;
       }
       resultTier = tool.modelTier;
     } catch (err: unknown) {

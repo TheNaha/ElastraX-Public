@@ -173,7 +173,9 @@ export class MediaBindTool extends BaseTool {
   override readonly noArgAliases = ['connect', 'disconnect', 'notify'];
   override readonly dmOnlyAliases = ['connect'];
   override readonly mutability = 'external-mutation' as const;
-  override readonly requiresBinding: boolean = false;
+  override get requiresBinding(): boolean {
+    return false;
+  }
   override readonly commandGrammar: ToolCommandGrammar = {
     discriminator: 'action',
     variants: [

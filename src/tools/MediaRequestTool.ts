@@ -72,7 +72,9 @@ export class MediaRequestTool extends BaseTool {
   readonly aliases = ['request-media', 'request'];
   readonly category = 'media';
   readonly permissions = 'user';
-  override readonly requiresBinding: boolean = true;
+  override get requiresBinding(): boolean {
+    return true;
+  }
   override readonly mutability = 'external-mutation' as const;
   override readonly commandGrammar: ToolCommandGrammar = {
     discriminator: 'action',

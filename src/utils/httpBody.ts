@@ -14,6 +14,21 @@
 export const DEFAULT_MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 /**
+ * Thrown when a body passes the byte ceiling. A distinct type so callers can map
+ * it to their own diagnostic (e.g. `AIProtocolError('response_too_large')`)
+ * without matching on the message text.
+ */
+export class ResponseBodyTooLargeError extends Error {
+  readonly maxBytes: number;
+
+  constructor(label: string, maxBytes: number) {
+    super(`${label} exceeds ${maxBytes} bytes.`);
+    this.name = 'ResponseBodyTooLargeError';
+    this.maxBytes = maxBytes;
+  }
+}
+
+/**
  * Read `response` as UTF-8, refusing more than `maxBytes`.
  *
  * @param label - used in the error message, e.g. "SearXNG response".
@@ -26,7 +41,7 @@ export async function readResponseTextBounded(
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new Error('maxBytes must be a positive integer.');
   }
-  const tooLarge = (): Error => new Error(`${label} exceeds ${maxBytes} bytes.`);
+  const tooLarge = (): Error => new ResponseBodyTooLargeError(label, maxBytes);
 
   const declared = Number(response.headers.get('content-length'));
   if (Number.isFinite(declared) && declared > maxBytes) throw tooLarge();

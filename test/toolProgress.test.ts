@@ -224,5 +224,9 @@ describe('ToolProgressTracker render bound', () => {
     const dropped = Number(rendered.match(/\(\+(\d+) more steps?\)/)?.[1]);
     const shownLines = rendered.split('\n').length - 1;
     expect(shownLines + dropped).toBe(60);
+    // The old formula always reported `total - 1` (59); the real remainder is
+    // much smaller because the cap keeps dozens of lines.
+    expect(dropped).toBeGreaterThan(0);
+    expect(dropped).toBeLessThan(59);
   });
 });

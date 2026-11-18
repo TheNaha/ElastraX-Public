@@ -167,7 +167,15 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs> {
   readonly platforms: readonly string[] = SUPPORTED_PLATFORMS;
   readonly mutability: ToolMutability = 'read';
   readonly cost: number = 1;
-  readonly requiresBinding: boolean = false;
+  /**
+   * Whether the tool needs a caller binding to a media-service account.
+   *
+   * A getter, not a field, so a subclass can decide it per call (the public
+   * library mode flips it) and the visit gate and `execute` share one predicate.
+   */
+  get requiresBinding(): boolean {
+    return false;
+  }
   readonly roomBound: boolean = false;
   readonly commandGrammar?: ToolCommandGrammar;
   readonly noArgAliases: readonly string[] = [];

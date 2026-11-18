@@ -88,6 +88,8 @@ function senderHandle(ctx: GrammyContext): string {
 
 /** Map a Telegram message to the shared messageType vocabulary. */
 type MediaField = { file_id: string; mime_type?: string; file_size?: number; file_name?: string };
+/** Telegram stickers carry no `mime_type`; the class is expressed as flags. */
+type StickerField = MediaField & { is_animated?: boolean; is_video?: boolean };
 /** Structural view of a Telegram message: only the fields this provider reads. */
 type MessageLike = MessageCarrier & {
   message_id: number;
@@ -103,7 +105,7 @@ type MessageCarrier = {
   voice?: MediaField;
   audio?: MediaField;
   document?: MediaField;
-  sticker?: MediaField;
+  sticker?: StickerField;
   location?: unknown;
   contact?: unknown;
 };
@@ -133,8 +135,17 @@ function mediaOf(ctx: MessageCarrier | null | undefined): { fileId: string; mime
   if (ctx.document) return { fileId: ctx.document.file_id, mime: ctx.document.mime_type, size: ctx.document.file_size, name: ctx.document.file_name ?? undefined };
   // Stickers are media: on WhatsApp they arrive with `hasMedia` true. Omitting
   // them here made `hasMedia` false and `mediaAttachments` empty, and a sticker
-  // (which carries no text) was then dropped silently by the agent.
-  if (ctx.sticker) return { fileId: ctx.sticker.file_id, mime: ctx.sticker.mime_type ?? 'image/webp', size: ctx.sticker.file_size };
+  // (which carries no text) was then dropped silently by the agent. Telegram's
+  // `Sticker` has no `mime_type` — the class is expressed as flags — so derive
+  // it rather than labelling every sticker a webp image.
+  if (ctx.sticker) {
+    const mime = ctx.sticker.is_video
+      ? 'video/webm'
+      : ctx.sticker.is_animated
+        ? 'application/x-tgsticker'
+        : 'image/webp';
+    return { fileId: ctx.sticker.file_id, mime, size: ctx.sticker.file_size };
+  }
   return null;
 }
 
@@ -145,6 +156,7 @@ function defaultFilename(mime: string | undefined): string {
   if (mime?.includes('ogg')) return 'voice.ogg';
   if (mime?.includes('mp4')) return 'video.mp4';
   if (mime?.includes('webm')) return 'sticker.webm';
+  if (mime?.includes('tgsticker')) return 'sticker.tgs';
   if (mime?.includes('pdf')) return 'document.pdf';
   return 'file.bin';
 }
