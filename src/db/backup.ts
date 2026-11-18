@@ -96,11 +96,13 @@ function temporarySibling(path: string, suffix: string): string {
  */
 const ORPHAN_GRACE_MS = 60 * 60 * 1000;
 
-function removeFile(path: string): void {
+/** Remove `path`; returns whether it is gone. Never throws. */
+function removeFile(path: string): boolean {
   try {
     unlinkSync(path);
-  } catch (error) {
-    void error;
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -236,11 +238,16 @@ function pruneBackups(backupDir: string, keep: number, currentManifestPath: stri
     }
     const databasePath = join(backupDir, manifest.snapshot.file);
     try {
-      removeFile(databasePath);
-      unlinkSync(entry.manifestPath);
-      removed.push(databasePath);
+      // Only report a snapshot as pruned when both files are actually gone: a
+      // read-only or full backup volume made `unlink` fail silently, and the
+      // caller printed "Pruned: N" for space that was never reclaimed (and left
+      // the manifest deleted under a snapshot the next sweep must handle).
+      const removedDatabase = removeFile(databasePath);
+      const removedManifest = removeFile(entry.manifestPath);
+      if (removedDatabase && removedManifest) removed.push(databasePath);
+      else logger.warn({ manifestPath: entry.manifestPath, databasePath }, '[backup] Snapshot files could not be pruned');
     } catch (error) {
-      void error;
+      logger.warn({ err: error, manifestPath: entry.manifestPath }, '[backup] Prune failed');
     }
   }
 
@@ -269,10 +276,10 @@ function pruneBackups(backupDir: string, keep: number, currentManifestPath: stri
       const path = join(backupDir, name);
       try {
         if (Date.now() - statSync(path).mtimeMs < ORPHAN_GRACE_MS) continue;
-        removeFile(path);
-        removed.push(path);
+        if (removeFile(path)) removed.push(path);
+        else logger.warn({ path }, '[backup] Orphan snapshot could not be removed');
       } catch (error) {
-        void error;
+        logger.warn({ err: error, path }, '[backup] Orphan sweep skipped a file');
       }
     }
   }
