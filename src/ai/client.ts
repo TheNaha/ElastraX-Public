@@ -251,10 +251,10 @@ export class AIClient {
 
     if (!response.ok) {
       // Bounded like the success path: a gateway or proxy that streams a huge
-      // error page must not be buffered whole. Diagnostic text is truncated to
-      // 500 chars below, so a 64 KiB ceiling loses nothing useful.
+      // error page must not be buffered whole. An oversized body is reported as
+      // such rather than as "<unreadable>", so the log says why it is missing.
       const rawErrText = await readResponseTextBounded(response, 64 * 1024, 'LLM error body')
-        .catch(() => '<unreadable>');
+        .catch((error: unknown) => (error instanceof ResponseBodyTooLargeError ? '<error body exceeds 64 KiB>' : '<unreadable>'));
       const errText = rawErrText.length > 500 ? `${rawErrText.slice(0, 500)}…(truncated)` : rawErrText;
       const elapsed = opts.startTime === undefined ? undefined : Date.now() - opts.startTime;
       log.error({ status: response.status, errText, elapsed }, opts.errorLabel);

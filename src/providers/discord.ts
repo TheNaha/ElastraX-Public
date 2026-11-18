@@ -327,7 +327,8 @@ export class DiscordProvider implements BotProvider {
     const isGroup = !msg.channel.isDMBased();
     const mentionedIds = Array.from(msg.mentions.users.keys());
     const isBotMentioned = !!client.user?.id && msg.mentions.users.has(client.user.id);
-    const currentSources = [...attachmentSources(msg, 'current', msg.id), ...stickerSources(msg, 'current', msg.id)];
+    const currentAttachments = attachmentSources(msg, 'current', msg.id);
+    const currentSources = [...currentAttachments, ...stickerSources(msg, 'current', msg.id, currentAttachments.length)];
     const hasMedia = currentSources.length > 0;
 
     let quoted: MessageContext['quoted'];
@@ -336,7 +337,8 @@ export class DiscordProvider implements BotProvider {
       try {
         const fetched = await msg.channel.messages.fetch(msg.reference.messageId);
         if (fetched) {
-          quotedSources = [...attachmentSources(fetched, 'quoted', fetched.id), ...stickerSources(fetched, 'quoted', fetched.id)];
+          const quotedAttachments = attachmentSources(fetched, 'quoted', fetched.id);
+          quotedSources = [...quotedAttachments, ...stickerSources(fetched, 'quoted', fetched.id, quotedAttachments.length)];
           const isFromBot = fetched.author.id === client.user?.id;
           quoted = {
             messageType: descriptorMessageType(quotedSources, fetched.content ? 'conversation' : 'unknown'),
@@ -704,10 +706,16 @@ function descriptorMessageType(sources: AttachmentSource[], fallback: string): s
  * Lottie stickers (format 3) are JSON animation manifests that no media tool can
  * consume, so they are recorded as `skipped` rather than downloaded.
  */
-function stickerSources(message: DiscordMessage, origin: 'current' | 'quoted', providerParentId: string): AttachmentSource[] {
+function stickerSources(
+  message: DiscordMessage,
+  origin: 'current' | 'quoted',
+  providerParentId: string,
+  indexOffset = 0,
+): AttachmentSource[] {
   const stickers = message.stickers;
   if (!stickers || stickers.size === 0) return [];
-  return Array.from(stickers.values()).map((sticker, index) => {
+  return Array.from(stickers.values()).map((sticker, stickerIndex) => {
+    const index = indexOffset + stickerIndex;
     const extension = sticker.format === 2 ? 'apng' : sticker.format === 4 ? 'gif' : sticker.format === 3 ? 'json' : 'png';
     const mimeType = sticker.format === 2
       ? 'image/apng'
