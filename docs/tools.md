@@ -10,8 +10,8 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 |------|-------|-------------|
 | **Web Search** | `/search` | Queries SearXNG (`SEARXNG_URL`) to fetch live search engine results. |
 | **Web Scrape** | `/scrape` | Reads and extracts the full markdown text of any URL via Jina AI. URLs are SSRF-validated (internal, loopback, and metadata targets are rejected) and the logged URL is redacted. |
-| **Memory** | `/memory` | Manages persistent user facts (RAG). The LLM automatically curates this based on user interactions. |
-| **Knowledge** | `/kb` | Room shared document knowledge base: index, search, list, remove attached/quoted documents. Indexing and removing change shared room state, so they require the `admin` role; search and list are open to any member. Images and scanned PDFs are OCR'd with a vision-capable model when `KB_OCR_ENABLED` is set (default on). |
+| **Memory** | `/memory`, `/mem` | Manages private, consented long-term facts (RAG). Storage needs prior consent (`consent` action); `group` scope requires the `admin` role. Stored facts are inert data and are never treated as instructions. See [Architecture §8](./architecture.md#8-storage--long-term-memory). |
+| **Knowledge** | `/kb` | Room shared document knowledge base: index, search, list, remove attached/quoted documents (or remove one entry by `document_id`; omitting the id clears the room). Indexing and removing change shared room state, so they require the `admin` role; search and list are open to any member. Images and scanned PDFs are OCR'd with a vision-capable model when `KB_OCR_ENABLED` is set (default on). |
 | **Translate** | `/translate` | Translates text or quoted messages to specified languages. |
 | **PDF Toolkit** | `/pdf` | A massive suite of PDF operations: compress, merge, split, rotate, remove pages, watermark, and convert image-to-PDF. |
 | **Reminder** | `/remind` | Schedules cron-like or countdown reminders using a background task queue. |
@@ -69,6 +69,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 - Mutating tools pass an admission check: a per-user/per-tool cost budget over 60 s (`TOOL_MUTATION_COST_LIMIT`, default 100) and per-user serialization of mutating calls.
 - Plugin tools in `src/plugins/` are loaded only if they export a `pluginManifest` whose permissions cover every tool they export; otherwise the plugin is refused. `ENABLE_PLUGIN_RELOAD=true` plus `PLUGIN_ALLOWED_PERMISSIONS` (including `owner`) enables `/reload`, which re-evaluates edited plugin files.
 - Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.
+- Command arguments are positional, and any declared parameter can be set explicitly with `field=value` (for example `/convert mp3 resolution=720p fps=30`). Only properties the tool actually declares are treated as overrides; an unknown `name=value` stays an ordinary positional argument and fails loudly if nothing accepts it.
 - While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (⏳/✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. The rendered status is bounded to 1,800 UTF-16 units, because `editMessage` grows a message by re-editing its head and posting the remainder, so an unbounded status would duplicate its tail on every step. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
 
 ## Tool metadata reference

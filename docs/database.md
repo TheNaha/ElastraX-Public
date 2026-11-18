@@ -21,7 +21,7 @@ The default handle is a singleton exposed as `db` (Drizzle client) and `sqlite` 
 1. Ensures the lease table.
 2. Inspects the migration state from `drizzle/migrations/`.
 3. Acquires the migration lease (`elastrax:migration`); if another process holds it, startup fails.
-4. Verifies the stored schema fingerprint.
+4. Compares the stored schema fingerprint with the live schema. The fingerprint is a cache, so a stored migration count behind the journal means a crash happened between `migrate()` and the recording step: the fingerprint is re-recorded with a warning. A mismatch with an up-to-date count is a real schema change without a migration and aborts startup.
 5. Applies pending forward migrations with `drizzle migrate`.
 6. Validates the schema contract (`validateSchemaContract` in `src/db/migrations.ts`).
 7. Runs `afterMigrationCallbacks` to invalidate schema-aware caches. The only registered callback is the room-key schema catalog (`src/db/rooms.ts`), which memoises `sqlite_master` / `pragma_table_xinfo` probes per database handle so room-key resolution does not query the catalog on every inbound message.

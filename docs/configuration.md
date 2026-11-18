@@ -140,7 +140,7 @@ A permission check requires the **exact** role: `user` is implicit for everyone 
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `TRANSCRIBE_ENDPOINT` | URL | *(unset)* | no | External transcription service (Whisper API compatible). Leave unset to disable. |
+| `TRANSCRIBE_ENDPOINT` | URL | *(unset)* | no | External transcription service (Whisper API compatible). Leave unset to disable. Must be https unless it points at a loopback address: it carries an API key. |
 | `TRANSCRIBE_API_KEY` | string | *(unset)* | no | Bearer token for the transcription service. |
 | `TRANSCRIBE_TIMEOUT_MS` | integer | `45000` | no | Timeout for transcription requests in ms. Range 1,000–600,000. |
 | `TRANSCRIBE_MODE` | string | `multipart` | no | `multipart` (default) or `json`. |
@@ -149,7 +149,7 @@ A permission check requires the **exact** role: `user` is implicit for everyone 
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `SEARXNG_URL` | URL | *(unset)* | no | SearXNG instance URL used by the `web_search` tool. The tool stays registered when unset, but every call answers that web search is not configured. http allowed on loopback. (`.env.example` ships a placeholder URL.) |
+| `SEARXNG_URL` | URL | *(unset)* | no | SearXNG instance URL used by the `web_search` tool. The tool stays registered when unset, but every call answers that web search is not configured. Plain http is accepted on any host, because a self-hosted instance often has no TLS. (`.env.example` ships a placeholder URL.) |
 | `JINA_API_KEY` | string | *(unset)* | no | Optional Jina.ai API key used by the `web_scrape` tool. |
 
 ## 12. Webhook Inbound Server
@@ -187,11 +187,11 @@ Each media route fails closed with HTTP 503 until its own 24+ byte secret is set
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `SEERR_API_URL` | URL | *(unset)* | no | Jellyseerr/Overseerr API base URL. http allowed on loopback. |
+| `SEERR_API_URL` | URL | *(unset)* | no | Jellyseerr/Overseerr API base URL. Plain http is accepted on any host (self-hosted installs often have no TLS). |
 | `SEERR_API_KEY` | string | *(unset)* | no | Seerr API key. |
 | `SEERR_URL` | string | *(unset)* | no | HealthMonitor fallback URL for Seerr. |
 | `SEERR_WEBHOOK_SECRET` | string | *(unset)* | no | Seerr webhook secret (24+ bytes). |
-| `JELLYFIN_API_URL` | URL | *(unset)* | no | Jellyfin API base URL. http allowed on loopback. |
+| `JELLYFIN_API_URL` | URL | *(unset)* | no | Jellyfin API base URL. Plain http is accepted on any host (self-hosted installs often have no TLS). |
 | `JELLYFIN_API_KEY` | string | *(unset)* | no | Jellyfin API key / user identifier. |
 | `JELLYFIN_EXTERNAL_URL` | URL | *(unset)* | no | User-facing URL for watch links (must use https unless loopback). |
 | `JELLYFIN_URL` | string | *(unset)* | no | HealthMonitor fallback URL for Jellyfin. |
@@ -216,7 +216,7 @@ On-demand digests are always available in-chat via `/digest [hours]` (1–168).
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
 | `SCHEDULED_TASKS_ENABLED` | boolean | `false` | no | Enable `/task` reminder execution as agent turns. |
-| `SCHEDULED_TASKS_ALLOWED_ROOMS` | string | *(empty)* | no | Comma-separated canonical room keys allowed to run tasks. |
+| `SCHEDULED_TASKS_ALLOWED_ROOMS` | string | *(empty)* | no | Comma-separated rooms allowed to run tasks. Each entry may be a canonical room key (`room:<platform>:<id>`) or the raw remote room id. |
 | `SCHEDULED_TASKS_MAX_RUNS_PER_DAY` | integer | `20` | no | Daily run ceiling. |
 | `SCHEDULED_TASKS_MAX_RUNS_PER_ROOM_PER_DAY` | integer | `4` | no | Per-room daily run ceiling. |
 | `SCHEDULED_TASKS_TIMEOUT_MS` | integer | `120000` | no | Per-run timeout in ms. Range 5,000–900,000. |
@@ -294,7 +294,7 @@ Each flag governs exactly one tool; unset means the tool is not registered at al
 
 ## 25. Message Queue
 
-Inbound handling is bounded per room and globally by `src/utils/MessageQueue.ts`. Work is serialized per room (concurrency 1) and at most **8** tasks run concurrently across all rooms; that running cap is built into `AppRuntime` and is not an environment variable.
+Inbound handling is bounded per room and globally by `src/utils/MessageQueue.ts`. Work is serialized per room (concurrency 1), and at most **8** tasks run concurrently across all rooms — `MessageQueue`'s `maxRunning` default; it is not an environment variable. `MESSAGE_QUEUE_GLOBAL_LIMIT` is the *backlog* cap, not the running cap; a value below `MESSAGE_QUEUE_PER_ROOM_LIMIT` is raised to the per-room limit with a warning, because a single room may queue that many.
 
 | Variable | Type | Default | Purpose |
 |---|---|---|---|
@@ -351,6 +351,6 @@ After changing the embedding model, re-embed stored rows with `bun run db:embed`
 
 ## How defaults are enforced
 
-- `validateEnv` (`src/config/env.ts`) throws at startup if any required var is missing or malformed: bad booleans, non-integer bounds, weak secrets (< 24 bytes), non-RFC3339 compatibility deadlines, unsafe hosts (non-loopback http), and credentials in URLs.
+- `validateEnv` (`src/config/env.ts`) throws at startup if any required var is missing or malformed: bad booleans, non-integer bounds, weak `WEBHOOK_SECRET`/`SEERR_WEBHOOK_SECRET`/`JELLYFIN_WEBHOOK_SECRET` values (< 24 bytes), non-RFC3339 compatibility deadlines, unsafe hosts (plain-http URLs outside the loopback/self-hosted exceptions above), and credentials in URLs. `METRICS_AUTH_TOKEN` is deliberately exempt from that hard check (see below).
 - `readIntegerEnv` / `readFloatEnv` / `readBooleanEnv` (`src/config/runtime.ts`) fall back to the documented default with a warning when a value is malformed (except in test, where no warning is logged).
 - `readSecret` / `readOptionalSharedSecret` (`src/webhooks/config.ts`) enforce the 24-byte minimum and reject whitespace-padded secrets; a too-short `METRICS_AUTH_TOKEN` disables `/metrics` and `/admin` rather than aborting boot.

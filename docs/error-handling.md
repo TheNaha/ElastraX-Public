@@ -10,12 +10,12 @@ ElastraX uses typed errors with codes and retryability flags. Startup validation
 - Non-integer bounds or out-of-range integers.
 - Weak secrets (fewer than 24 bytes).
 - Non-RFC3339 compatibility deadlines (must be absolute, future-dated).
-- Unsafe hosts (`http` non-loopback URLs without `allowLoopbackHttp`).
+- Unsafe hosts: plain `http` is accepted only on a loopback address, except for `SEARXNG_URL`, `SEERR_API_URL` and `JELLYFIN_API_URL`, which opt in to plain http on any host because they are routinely self-hosted without TLS. The AI base URLs and `TRANSCRIBE_ENDPOINT` carry a credential, so they stay https-unless-loopback.
 - Credentials in URLs (`user:pass@`).
 - `AI_PROVIDERS` empty, duplicated, or containing invalid provider names.
 - `AI_TIER` not one of `standard`, `fast`, `powerful`.
 
-`parseWebhookConfig` (`src/webhooks/config.ts`) throws for malformed webhook settings (non-integer ports, bad host values, `0.0.0.0` without `WEBHOOK_CONTAINER_MODE=true`, whitespace-padded secrets). A too-short `METRICS_AUTH_TOKEN` does **not** abort boot; it disables `/metrics` and `/admin` (fail closed) and logs a warning.
+`parseWebhookConfig` (`src/webhooks/config.ts`) throws for malformed webhook settings (non-integer ports, bad host values, `0.0.0.0` without `WEBHOOK_CONTAINER_MODE=true`, whitespace-padded secrets). `AppRuntime.start()` calls it *before* any provider connects, so a bad `WEBHOOK_*` value fails fast instead of tearing down providers that already connected. A too-short `METRICS_AUTH_TOKEN` does **not** abort boot; it disables `/metrics` and `/admin` (fail closed) and logs a warning.
 
 ## Error types
 
@@ -40,7 +40,7 @@ Provider failures surface as `ProviderError` subclasses. WhatsApp reconnect poli
 
 ## Inbox / Outbox dead-lettering
 
-Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan (24 h lease). Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`). Note that the inbox `failed` state is terminal in practice: no worker currently selects a failed inbox row for a re-run, so a rethrow from the agent is recorded but never retried.
+Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan, which fails never-claimed rows older than 24 h and returns expired-lease rows to `received`. The outbox claim lease is 120 s; the inbox claim lease is derived from the turn budget and clamped to 10–60 minutes. Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`). Note that the inbox `failed` state is terminal in practice: no worker currently selects a failed inbox row for a re-run, so a rethrow from the agent is recorded but never retried.
 
 ## Message-handling failures
 
@@ -65,7 +65,8 @@ Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempt
 - `408` — body not completed within `WEBHOOK_BODY_READ_TIMEOUT_MS`.
 - `400` — invalid or excess destinations, invalid JSON body, invalid platform.
 - `429` — rate limit exceeded, with `Retry-After`.
-- `503` — webhook intake disabled, missing secret, durable enqueuer rejected, replay cache at capacity.
+- `502` — a synchronous delivery failed for every destination (nothing was sent, so the request is retryable).
+- `503` — webhook intake disabled, missing secret, durable enqueuer rejected, replay cache at capacity, or a duplicate delivery id still in flight.
 
 ## Logging of errors
 

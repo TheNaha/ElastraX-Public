@@ -2,6 +2,20 @@
 
 ElastraX is designed with a domain-driven architecture that completely decouples the messaging platforms (WhatsApp, Discord, Telegram) from the core conversational logic (the Agent).
 
+## Process lifecycle
+
+`src/index.ts` is the only executable entry point (`bun run start`). `bootstrap()` runs in this order:
+
+1. `validateEnv()` — every environment error is logged, then startup throws.
+2. `ensureDatabaseSchema()` — migration-state check, forward migrations, schema-contract validation, schema fingerprint, runtime lease (see [Database](./database.md)).
+3. `FlowHandler.initialize()` — load persisted flow sessions and prune expired ones.
+4. Install `SIGINT`/`SIGTERM` and `uncaughtException`/`unhandledRejection` handlers before booting the runtime, so a signal during startup unwinds.
+5. `new AppRuntime(...).start()` — wait for the tool registry, register flow processors, parse the webhook configuration (fails before any provider connects), start providers, register senders/enqueuers, start the HTTP listener and background timers (see [Services](./services.md)).
+
+A signal stops the runtime, closes the database, cancels tracked `yt-dlp`/`ffmpeg` child processes, and force-exits after a 2 s grace period, because detached children with piped stdio can otherwise keep the process alive. A fatal error follows the same path with exit code `1`.
+
+A startup failure unwinds in reverse: signal handlers are removed, the runtime is stopped if it had started, and the database handle is closed before the error is rethrown. `src/webhookServer.ts` is a compatibility re-export only; the implementation lives in `src/webhooks/`.
+
 ## Core Concepts
 
 ### 1. The `MessageContext` Interface
@@ -63,13 +77,15 @@ The AI layer features a highly resilient Failover Router:
 
 ### 8. Storage & Long-Term Memory
 - **Database**: SQLite via Bun's built-in `bun:sqlite` driver with Drizzle ORM (`src/db/schema.ts`). `better-sqlite3` is never used (`bunfig.toml` sets `peer = false`).
-- **Memory (RAG)**: The `MemoryTool` allows the AI to explicitly store facts about users. These facts are queried and injected into the system prompt, providing persistent long-term memory across chat sessions.
+- **Memory (RAG)**: `MemoryTool` stores facts only after the sender consents (`action: consent`, or `consent: true` on the first store; `revoke` withdraws consent). Scope is `private` (the sender) by default; `group` stores room-visible facts and requires the `admin` role. Stored facts are prefixed with `[INERT_DATA]` so the model treats them as data, never instructions, and each sender is bounded by entry and byte quotas. Nearby duplicates are rejected using embeddings when configured. Consent gates *storage*, not retrieval: memories already stored are still injected until `forget` deletes them, and in a group they are never mixed with another member's private facts (see §4).
 
 ### 9. Telegram Provider
 
 `src/providers/telegram.ts` implements the same `BotProvider` contract using grammy. It is optional: without `TELEGRAM_BOT_TOKEN` it reports `not_configured` and never blocks boot. Because a Telegram user id is a numeric snowflake that can never match `BOT_OWNER_JID`, a deployment that enables Telegram must also set `BOT_OWNER_TELEGRAM_ID`, otherwise the platform starts with no owner and every owner-only tool is unreachable. `BOT_OWNER_DISCORD_ID` exists for the same reason on Discord; both fall back to `BOT_OWNER_JID` when unset.
 
 The first chunk of a reply carries `reply_parameters`. If the user deletes their message in the seconds before delivery the Bot API answers `400`, so that chunk is re-sent without `reply_parameters` instead of losing the answer. Replies are chunked by the shared UTF-16 splitter (`chunkTextTelegram` → `chunkTextSmart({ measure: 'utf16' })`), and `editMessage` splits head/remainder with `splitTextAtUtf16Limit`, because the Bot API enforces its 4096 limit in UTF-16 units — 4096 emoji are 8192 units and were rejected when the chunker counted code points. Neither path splits a surrogate pair, and `chunkTelegramText` is a thin alias of the same function.
+
+Reaction feedback needs an explicit `allowed_updates: ['message', 'message_reaction']`; the Bot API's default update set excludes `message_reaction`, so without it incoming thumbs up/down never reached `src/utils/feedback.ts`.
 
 ### 10. Durable Delivery (Inbox / Outbox)
 
@@ -94,7 +110,7 @@ The first chunk of a reply carries `reply_parameters`. If the user deletes their
 - Rate-limiter prune: every 10 minutes (`RateLimiter.prune`).
 - Outbox worker: every 1 second when durable storage is present (`OutboxService.claim` + delivery, concurrency 10).
 - Outbox prune: every hour, removing terminal rows older than `MEDIA_RETENTION_HOURS`.
-- Inbox recovery: every hour, re-claiming stranded `received`/expired-lease rows (`InboxService.recoverStranded`, 24 h lease).
+- Inbox recovery: every hour, re-claiming stranded/expired-lease rows (`InboxService.recoverStranded`). Never-claimed rows older than 24 h are failed; expired-lease `processing` rows return to `received` or are dead-lettered at the attempt limit. The inbox claim lease itself is derived from the turn budget (10–60 min).
 - Flow-session TTL prune: every hour (`FlowHandler.pruneAllExpired`, 24 h local TTL).
 - Media cleanup: on startup and every `MEDIA_CLEANUP_INTERVAL_MS` (default 6 h), deleting files older than `MEDIA_RETENTION_HOURS`.
 - Retention maintenance: on startup and every 24 h, only when a durable messaging store is present (`src/db/retention.ts`, dry-run unless `RETENTION_DRY_RUN=false`).
@@ -107,7 +123,7 @@ The first chunk of a reply carries `reply_parameters`. If the user deletes their
 
 ### 14. Digests
 
-`src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. A failed delivery releases its marker so the 60 s poll retries it, but only for `MAX_DIGEST_ATTEMPTS = 3` attempts per day/week; after that the marker is kept, which parks the digest until the next period instead of re-running a paid summarisation call every minute. Markers older than 30 days are pruned during the daily pass, because nothing else covers `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.
+`src/utils/DigestService.ts` produces nightly per-room conversation summaries and a weekly Jellyfin "new media" rollup, fired once per day/week at `DIGEST_HOUR_UTC` with exactly-once delivery via markers in `app_kv`. A failed delivery releases its marker so the 60 s poll retries it, but only for 3 attempts per daily digest; the weekly media rollup has its own 30-attempt budget, because its marker is keyed by the previous week and giving up means waiting another week. After the budget is spent the marker is kept, which parks the digest until the next period instead of re-running a summarisation call every minute. Markers older than 30 days are pruned during the daily pass, because nothing else covers `app_kv`. On-demand digests are available in-chat via `/digest [hours]`.
 
 ### 15. Admin Dashboard
 
@@ -123,4 +139,4 @@ The first chunk of a reply carries `reply_parameters`. If the user deletes their
 
 ### 17. Reaction Feedback
 
-A thumbs up or thumbs down on a bot reply is recorded as a quality signal (`src/utils/feedback.ts`). Reactions were previously sent but incoming ones ignored. Counters are exported on `/metrics` (`elastrax_feedback_total`, `elastrax_feedback_retracted_total`) and appended to a JSONL eval log (`FEEDBACK_LOG_PATH`, default `data/feedback.jsonl`). The eval log is on by default; `FEEDBACK_LOG_ENABLED=false` keeps metrics only. Daily volume is bounded by `FEEDBACK_MAX_PER_DAY` (default 2000).
+A thumbs up or thumbs down on a bot reply is recorded as a quality signal (`src/utils/feedback.ts`). Reactions were previously sent but incoming ones ignored. Metrics are always collected and exported on `/metrics` (`elastrax_feedback_total`, `elastrax_feedback_retracted_total`); the optional JSONL eval log (`FEEDBACK_LOG_PATH`, default `data/feedback.jsonl`) is on by default and `FEEDBACK_LOG_ENABLED=false` turns only the log off. `FEEDBACK_MAX_PER_DAY` (default 2000) caps log entries per UTC day, not the counters.

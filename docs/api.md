@@ -101,7 +101,7 @@ Fan-out defaults to 25 destinations and is bounded by `WEBHOOK_MAX_DESTINATIONS`
 
 Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. IDs are retained in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`. When the durable outbox is registered, the same ID becomes the delivery idempotency key, so a replay that slips past the cache is still deduplicated by the outbox.
 
-`X-Webhook-Source` or the payload `source` identifies a source. Source and connection keys are independently governed by the token-bucket limits `WEBHOOK_RATE_LIMIT_MAX` and `WEBHOOK_RATE_LIMIT_WINDOW_MS`. Source length and the number of tracked rate-limit keys are bounded.
+`X-Webhook-Source` or the payload `source` identifies a source. Each source gets its own token-bucket limit governed by `WEBHOOK_RATE_LIMIT_MAX` and `WEBHOOK_RATE_LIMIT_WINDOW_MS`. The peer address is used as an additional bucket only when it is not loopback: behind the documented reverse proxy it is always `127.0.0.1`, so keying on it would cap total throughput at one bucket regardless of source. Source length and the number of tracked rate-limit keys are bounded; a key that cannot be tracked without exceeding the cap is not stored, so the map never grows past the limit.
 
 ## Request bounds
 
@@ -119,7 +119,9 @@ Formatted chat text is truncated to `WEBHOOK_MAX_TEXT_LENGTH`.
 Without an outbox enqueuer, the current synchronous sender is preserved:
 
 - `200 {"ok":true,"delivered":N}` when every destination succeeds;
-- `207` with a bounded failed-destination list when only some sends fail.
+- `200 {"ok":true,"delivered":0,"note":"No subscribers"}` (or a `Dropped: unactionable notification type` note on a media route) when there is nothing to deliver;
+- `207` with a bounded failed-destination list when only some sends fail (the replay reservation is kept, so a retry cannot re-send the destinations that already received the message);
+- `502` with the failed list when every destination failed. This is the only delivery outcome that releases the replay reservation, because nothing was sent and a retry is safe.
 
 `WebhookServer.registerEnqueuer()` is the durable-outbox integration; `AppRuntime` registers `enqueueWebhook` at boot and supplies an `AbortSignal` with `WEBHOOK_ENQUEUE_TIMEOUT_MS`. When registered, the server returns `202` only after the enqueuer confirms that it durably accepted the job:
 
@@ -137,7 +139,7 @@ A rejected enqueue returns `503`; the server never fabricates durability or fall
 
 ## Operational endpoints
 
-`/health` and `/live` expose only process liveness. `/ready` returns `200 {"status":"ready","version":"8.0.1","releaseTag":"v8.0.1"}` by default for compatibility. Integrations can register bounded readiness checks with `WebhookServer.registerReadinessCheck()`; any false, failed, or timed-out check produces `503 {"status":"not_ready","version":…,"releaseTag":…}` with no failure detail. Admin request bodies are capped separately (`4 KiB` for login, `64 KiB` for actions) and login is throttled per IP — see [admin-dashboard.md](./admin-dashboard.md).
+`/health` and `/live` expose only process liveness. `/ready` returns `200 {"status":"ready","version":"8.0.1","releaseTag":"v8.0.1"}` when no checks are registered, and `AppRuntime` registers a composed check (schema ready, queue running, at least one operational provider). Integrations can add bounded readiness checks with `WebhookServer.registerReadinessCheck()`; any false, failed, or timed-out check produces `503 {"status":"not_ready","version":…,"releaseTag":…}` with no failure detail. Admin request bodies are capped separately (`4 KiB` for login, `64 KiB` for actions) and login is throttled per IP — see [admin-dashboard.md](./admin-dashboard.md).
 
 Set `METRICS_AUTH_TOKEN` to enable `/metrics`. Without it the route is hidden with `404`. With it, send `Authorization: Bearer <token>` or `X-Metrics-Token`. Query-string metrics authentication is not supported.
 

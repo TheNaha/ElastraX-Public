@@ -72,7 +72,7 @@ A Telegram user id is a numeric snowflake and can never match `BOT_OWNER_JID`, s
 
 - Ollama: set `AI_OLLAMA_BASE_URL=http://127.0.0.1:11434/v1`, model, and tier.
 - SearXNG: set `SEARXNG_URL`; keep the service on a trusted local/private network.
-- Transcription: set `TRANSCRIBE_ENDPOINT` and `TRANSCRIBE_API_KEY` when required by the endpoint.
+- Transcription: set `TRANSCRIBE_ENDPOINT` (https, or http only on a loopback address) and `TRANSCRIBE_API_KEY` when required by the endpoint.
 - Seerr: set `SEERR_API_URL`, `SEERR_API_KEY`, and a separate 24+ byte `SEERR_WEBHOOK_SECRET`.
 - Jellyfin: set `JELLYFIN_API_URL`, API/user identifiers, and a separate 24+ byte `JELLYFIN_WEBHOOK_SECRET`.
 

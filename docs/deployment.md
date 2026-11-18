@@ -9,7 +9,7 @@ bun install --frozen-lockfile
 bun run check
 ```
 
-The container also pins yt-dlp `2026.08.19` (installed with `pip3 install yt-dlp==<version>`) and verifies an FFmpeg `8.1.3` build with SHA-256 checksums per architecture. Update those versions together with the Bun version, then rebuild and run CI.
+The container also pins yt-dlp `2026.08.19` (installed with `pip3 install yt-dlp==<version>`) and ships FFmpeg/ffprobe from BtbN's static build of the newest release branch (`n9.0` at the time of writing). Because that `latest` asset is replaced in place with each new build of the branch, the build fetches the sha256 GitHub publishes for the asset and verifies the download against it instead of a hardcoded digest. Override the branch with `--build-arg FFMPEG_BRANCH=n8.1` (or `master`). Update yt-dlp and the default branch together with the Bun version, then rebuild and run CI.
 
 ## Required configuration
 

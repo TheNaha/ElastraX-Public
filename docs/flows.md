@@ -9,6 +9,7 @@ ElastraX supports multi-step interactive flows (for example collecting several i
 - Processors are registered by name via `FlowHandler.register(flowName, processor)`. `src/flows/registry.ts` registers the built-in processors on startup through `registerFlows()` / `safeRegisterFlows()`.
 - State is loaded from the `flow_sessions` table at initialization and pruned of expired entries; surviving sessions are written back.
 - Concurrency is serialized per room/user through a promise lock; sessions are versioned so a stale writer raises `FlowVersionConflictError`.
+- A processor that throws keeps its session for two retries; the third consecutive failure releases that flow so a broken step cannot swallow every later message until the TTL expires.
 - Expiry is enforced on every access; expired flows are removed and their ids collected for cleanup.
 
 ## Registered flows

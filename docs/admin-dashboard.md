@@ -51,6 +51,7 @@ The `/admin/api/*` views are read-only operator surfaces:
 - **Roomkeys**: canonical room-key coverage and conflicts (`db:room-keys` report).
 - **Feedback**: reaction totals and retracts (Prometheus counters `elastrax_feedback_total`, `elastrax_feedback_retracted_total`).
 - **Config**: resolved environment configuration (secrets redacted).
+- **Session**: `{"ok":true,"csrf":"…"}` — the CSRF token bound to the current session cookie.
 
 ## Dashboard actions
 
@@ -59,7 +60,7 @@ The `/admin/api/*` views are read-only operator surfaces:
 - `reload-registry` — reloads the tool registry (built-in tools plus a fresh evaluation of every plugin in `src/plugins/`). In-flight tool calls are unaffected.
 - `retry-outbox` — returns a `failed` or `dead_letter` outbox row to `pending` with its attempt counter cleared; the normal claim path delivers it on its next tick.
 - `delete-knowledge` — removes room knowledge base entries.
-- `retention-report` — runs retention in dry-run mode and returns counts.
+- `retention-report` — reports whether retention is in dry-run or live mode and points at the CLI; it does not run a retention pass or return counts (applying retention is a CLI-only action, `bun run db:retention --apply`).
 
 Every mutating request requires the CSRF token in `x-admin-csrf`.
 
