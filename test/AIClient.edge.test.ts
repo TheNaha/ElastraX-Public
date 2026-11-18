@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { AIClient } from '../src/ai/client';
+import { AIProtocolError } from '../src/ai/errors';
 
 type ClientInternals = {
   baseUrl: string;
@@ -209,6 +210,28 @@ describe('AIClient – edge cases', () => {
     expect(chunks[0].choices[0]?.delta?.content).toBe('hello');
     expect(chunks[1].choices).toHaveLength(0);
     expect(chunks[1].usage?.total_tokens).toBe(4);
+  });
+
+  test('chatCompletionEnvelope bounds a chunked response that has no Content-Length', async () => {
+    process.env.AI_MAX_RESPONSE_BYTES = '64';
+    const client = new AIClient({ baseUrl: 'https://api.example.com/v1', apiKey: 'test' });
+    const encoder = new TextEncoder();
+
+    assignFetch(async () => new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('x'.repeat(256)));
+          controller.close();
+        },
+      }),
+      { status: 200 },
+    ));
+
+    const error = await client.chatCompletion([{ role: 'user', content: 'hi' }]).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(AIProtocolError);
+    // Buffering `response.json()` here ignored AI_MAX_RESPONSE_BYTES for a
+    // chunked body; the bounded reader must enforce it.
+    expect((error as AIProtocolError).code).toBe('response_too_large');
   });
 
   test('chatCompletionStream throws a typed protocol error for malformed SSE data', async () => {

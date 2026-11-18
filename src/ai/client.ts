@@ -15,6 +15,7 @@ import { AIProtocolError, AINoChoiceError } from './errors';
 import { SSEDecoder, type SSEDecoderOptions } from './sse';
 import { safeErrorMessage } from '../utils/errorUtils';
 import { timeoutSignal } from '../utils/withTimeout';
+import { readResponseTextBounded } from '../utils/httpBody';
 import {
   isToolCall,
   normalizeTokenUsage,
@@ -298,15 +299,24 @@ export class AIClient {
     const elapsed = Date.now() - startTime;
 
     let raw: unknown;
-    // The size guard runs before the JSON conversion so its own diagnostic code
-    // survives: it used to be thrown inside the `try` that rewrites *everything*
-    // to `invalid_response`, so an oversized body looked like malformed JSON.
-    const contentLength = response.headers.get('content-length');
-    if (contentLength && Number(contentLength) > getAIRequestConfig().maxResponseBytes) {
-      throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
+    // Read through a bounded reader rather than `response.json()`, which buffers
+    // the whole payload. The Content-Length check that used to live here only
+    // bounded a chunked response when the header was present; a gateway that
+    // streams without it defeated `AI_MAX_RESPONSE_BYTES`. The reader enforces
+    // the cap as bytes arrive and keeps the `response_too_large` diagnostic.
+    let bodyText: string;
+    try {
+      bodyText = await readResponseTextBounded(response, getAIRequestConfig().maxResponseBytes, 'LLM response');
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message.startsWith('LLM response exceeds')) {
+        throw new AIProtocolError('response_too_large', 'LLM response exceeded the maximum allowed size.');
+      }
+      throw new AIProtocolError('invalid_response', 'Chat completion response body could not be read.', {
+        cause: safeErrorMessage(error),
+      });
     }
     try {
-      raw = await response.json();
+      raw = JSON.parse(bodyText);
     } catch (error: unknown) {
       throw new AIProtocolError('invalid_response', 'Chat completion response was not valid JSON.', {
         cause: safeErrorMessage(error),
