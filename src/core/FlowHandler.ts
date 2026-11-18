@@ -319,18 +319,25 @@ export class FlowHandler {
   private static async getSessionInternal(userId: string, platform: string, roomId?: string): Promise<UserSession | null> {
     await this.initialize();
     const key = this.sessionKey(userId, platform, roomId);
+    let storageKey = key;
     let session = await this.readSession(key);
-    if (!session && roomId) session = await this.readSession(this.sessionKey(userId, platform));
+    if (!session && roomId) {
+      storageKey = this.sessionKey(userId, platform);
+      session = await this.readSession(storageKey);
+    }
     if (!session) return null;
     if (roomId && session.roomId && session.roomId !== roomId) return null;
     const changed = this.pruneExpiredFlows(session);
     if (changed) {
+      // Prune against the key the session was actually read from. Writing to
+      // `key` here created a new room-scoped row and orphaned the base-keyed one
+      // that this fallback had just loaded (as `clearSessionInternal` avoids).
       if (!this.hasFlows(session.flows)) {
-        this.memorySessions.delete(key);
-        FlowHandler.safeDeleteSession(key, 'Expired session deletion failed');
+        this.memorySessions.delete(storageKey);
+        FlowHandler.safeDeleteSession(storageKey, 'Expired session deletion failed');
         return null;
       }
-      await this.writeSession(key, session);
+      await this.writeSession(storageKey, session);
     }
     return session;
   }

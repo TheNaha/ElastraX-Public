@@ -410,6 +410,30 @@ describe('FlowHandler room binding and versioning', () => {
     expect(mixedData.flows.active).toBeDefined();
   });
 
+  test('pruning a base-keyed session via a room lookup updates that row, not a new one', async () => {
+    const now = Date.now();
+    const expiredFlow = { flow: 'expired', step: 'step1', data: {}, expiresAt: now - 1000 };
+    const activeFlow = { flow: 'active', step: 'step1', data: {}, expiresAt: now + 60_000 };
+    // Legacy session stored under the room-less base key.
+    await db.insert(flowSessions).values({
+      id: 'whatsapp:*:user-base-prune',
+      data: JSON.stringify({ activeFlow: 'active', flows: { expired: expiredFlow, active: activeFlow }, version: 1 }),
+      updated_at: new Date(now),
+    }).run();
+
+    const session = await FlowHandler.getSessionAsync('user-base-prune', 'whatsapp', 'chat-prune');
+
+    expect(session?.flows.expired).toBeUndefined();
+    expect(session?.flows.active).toBeDefined();
+    // The base row is the one that was read and pruned.
+    const baseRows = await db.select().from(flowSessions).where(eq(flowSessions.id, 'whatsapp:*:user-base-prune'));
+    expect(baseRows).toHaveLength(1);
+    expect(JSON.parse(baseRows[0]!.data).flows.expired).toBeUndefined();
+    // A room-scoped duplicate must not be created by the fallback path.
+    const duplicate = await db.select().from(flowSessions).where(eq(flowSessions.id, 'whatsapp:chat-prune:user-base-prune'));
+    expect(duplicate).toHaveLength(0);
+  });
+
   test('handle re-entrantly executes flow processors that call setSession or clearSession without deadlock', async () => {
     let stepExecuted = false;
     FlowHandler.register('reentrant_test_flow', async (ctx, activeFlowData, flowId) => {
