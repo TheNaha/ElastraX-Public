@@ -539,7 +539,13 @@ export class DiscordProvider implements BotProvider {
             }
             return;
           }
-          const files = await Promise.all(Array.from(msg.attachments.values(), async attachment => {
+          // Fetched sequentially, not with Promise.all: Discord allows 10
+          // attachments per message and each is buffered whole (HARD_MEDIA_MAX_BYTES
+          // is 200 MiB), so parallel fetching could hold 2 GiB live and peak near
+          // 4 GiB during the multipart encoding. One at a time keeps the peak at
+          // one attachment. (A budgeted stream-to-path would be better still.)
+          const files: AttachmentBuilder[] = [];
+          for (const attachment of msg.attachments.values()) {
             // Same guards the download path applies: the attachment URL is
             // remote-controlled, so it must pass the host allow-list, a non-2xx
             // response must not become an empty file, and the payload must be
@@ -556,8 +562,8 @@ export class DiscordProvider implements BotProvider {
               throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
             }
             const buffer = await readBoundedBody(response, HARD_MEDIA_MAX_BYTES, 'Discord attachment');
-            return new AttachmentBuilder(buffer, { name: attachment.name });
-          }));
+            files.push(new AttachmentBuilder(buffer, { name: attachment.name }));
+          }
           await targetChannel.send({
             content: truncateDiscordText(msg.content || ''),
             ...(files.length > 0 ? { files } : {}),
