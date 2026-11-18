@@ -963,6 +963,53 @@ describe('handleIncomingMessage', () => {
       expect(editedMessages.some(e => e.text.includes('✅ [1/1] 🔍 Searching web for "bun"...'))).toBe(true);
     });
 
+    test('strips the streaming cursor from a bubble when the provider stream fails mid-answer', async () => {
+      process.env.AI_STREAMING = 'true';
+      const encoder = new TextEncoder();
+      global.fetch = mock(async () => {
+        let delivered = false;
+        const event = `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{ index: 0, delta: { content: 'Partial answer' }, finish_reason: null }],
+        })}\n\n`;
+        const body = new ReadableStream<Uint8Array>({
+          pull(controller) {
+            // Deliver the first chunk, then fail the next read so the failure
+            // lands after the agent has already posted the streaming bubble.
+            if (!delivered) {
+              delivered = true;
+              controller.enqueue(encoder.encode(event));
+              return;
+            }
+            controller.error(new Error('stream exploded'));
+          },
+        });
+        return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }) as unknown as typeof global.fetch;
+
+      const sentMessages: string[] = [];
+      const edited: Array<{ key: unknown; text: string }> = [];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'stream then fail',
+        sendMessage: mock(async (text: string) => {
+          sentMessages.push(text);
+          return { id: 'bubble-1' };
+        }),
+        editMessage: mock(async (key: unknown, text: string) => {
+          edited.push({ key, text });
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      // A bubble was posted with the streaming cursor...
+      expect(sentMessages.some(text => text.endsWith('▌'))).toBe(true);
+      // ...and the catch stripped it instead of leaving a dangling cursor.
+      expect(edited.some(entry => entry.text === 'Partial answer')).toBe(true);
+      expectReply(ctx.reply, 'An internal error occurred while processing your message.');
+    });
+
     test('never renders chain-of-thought while a think block is still streaming', async () => {
       process.env.AI_STREAMING = 'true';
       const OPEN = '<' + 'think>';

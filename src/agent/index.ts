@@ -1243,6 +1243,13 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       // results when the request omits the tool definitions, so the forced round
       // sends the history with the tool protocol flattened to plain text.
       const iterationMessages = forceTextOnly ? stripToolProtocol(messagesForAI) : messagesForAI;
+      /**
+       * Set by the streaming branch to strip the `▌` cursor from a bubble that
+       * was already sent, if the stream fails before the branch can finalise it
+       * itself. Reset to `null` once the bubble is handed off (tool calls) or
+       * finalised, so a later throw in tool execution does not overwrite it.
+       */
+      let finalizeStreamedBubble: (() => Promise<void>) | null = null;
       try {
         // Show typing indicator before each LLM call
         await ctx.sendTyping?.().catch(err => log.warn({ err, chatId, iteration }, '[Agent] Typing indicator failed'));
@@ -1263,6 +1270,19 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           let lastEditTime = 0;
           let streamingFailed = false;
           const toolCallAccumulator = new StreamingToolCallAccumulator();
+          // A mid-stream provider failure throws out of the `for await` below
+          // before any of the branches that finalise the bubble run, leaving the
+          // user with a message that still ends in the streaming cursor and a
+          // second internal-error reply. This lets the catch strip the cursor.
+          finalizeStreamedBubble = async () => {
+            if (!sentKey || streamingFailed) return;
+            const text = stripThinkTags(accumulated).trim();
+            try {
+              await ctx.editMessage!(sentKey, text || '…');
+            } catch (err: unknown) {
+              log.warn({ err: getErrorMessage(err), chatId }, '[Agent] Failed to finalise a failed streamed bubble');
+            }
+          };
 
           const streamTools = iterationTools;
           for await (const chunk of modelRouter.chatCompletionStream(
@@ -1335,6 +1355,9 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               });
             }
             streamedResponseSent = false;
+            // The bubble is now owned by the tracker or finalised above; a later
+            // throw in tool execution must not overwrite it with the cursor-strip.
+            finalizeStreamedBubble = null;
 
             // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
             const toolCalls: ToolCall[] = streamedToolCalls.map(call => ({
@@ -1398,6 +1421,8 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           if (streamingFailed) {
             streamedResponseSent = false;
           }
+          // The bubble has been finalised (or a regular reply will follow).
+          finalizeStreamedBubble = null;
 
           continue;
         }
@@ -1467,6 +1492,10 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         }
 
       } catch (e) {
+        // Strip the streaming cursor from a bubble that was already posted before
+        // this failure, so the fallback reply does not sit under a message that
+        // still looks like it is being written.
+        await finalizeStreamedBubble?.();
         log.error({ err: getErrorMessage(e), chatId }, 'Failed to get AI completion or execute tool');
         healthMetrics.recordMessageError();
         finalAiResponseText = t(ctx.language, 'agent.internal_error');
