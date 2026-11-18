@@ -271,6 +271,30 @@ describe('WebhookServer security and HTTP contract', () => {
     }, server => server.registerSender('discord', send));
   });
 
+  test('does not let one sender\'s replay id swallow another sender\'s event', async () => {
+    const send = mock(async () => {});
+    await withServer({}, async (_server, baseUrl) => {
+      // `route` is 'generic' for every sender on /webhook. Before the source was
+      // part of the replay key, the second sender's identical id was answered
+      // `202 duplicate` and dropped.
+      const post = (source: string, roomId: string) => Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': SECRET,
+          'X-Webhook-Id': '1',
+          'X-Webhook-Source': source,
+        },
+        body: JSON.stringify({ room_id: roomId, text: 'hello' }),
+      });
+      expect((await post('monitor-a', '100')).status).toBe(200);
+      const b = await post('monitor-b', '200');
+      expect(b.status).toBe(200);
+      expect(await b.json()).toEqual({ ok: true, delivered: 1 });
+      expect(send).toHaveBeenCalledTimes(2);
+    }, server => server.registerSender('discord', send));
+  });
+
   test('returns 202 only after the enqueuer accepts a durable job', async () => {
     let queued: WebhookDeliveryJob | null = null;
     const enqueuer = mock(async (job: WebhookDeliveryJob) => {

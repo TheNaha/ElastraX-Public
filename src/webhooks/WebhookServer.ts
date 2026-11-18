@@ -202,11 +202,12 @@ export class WebhookServer {
     const id = validateReplayId(rawId);
     // The source is part of the identity: `route` is `generic` for every sender
     // on `/webhook`, so keying on route+id let one sender's `x-webhook-id: 1`
-    // answer another sender's event with `202 duplicate` and drop it. The
-    // durable layer already keys webhook events by route *and* source
-    // (`AppRuntime.enqueueWebhook`), and the rate limiter keys on the source
-    // too; the in-memory cache was the only layer that disagreed.
-    const key = `${route}:${source}:${id}`;
+    // answer another sender's event with `202 duplicate` and drop it. Both
+    // `validateSource` and `validateReplayId` allow `:`, so the tuple is joined
+    // with NUL (as `InboxService.eventKeyFor` does) to keep it unambiguous —
+    // `${route}:${source}:${id}` let source "a:b" + id "c" collide with source
+    // "a" + id "b:c".
+    const key = `${route}\u0000${source}\u0000${id}`;
     const reservation = this.replayCache
       ? this.replayCacheReservation(key, now)
       : 'capacity';
