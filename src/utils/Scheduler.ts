@@ -377,7 +377,7 @@ export class Scheduler {
         MAX_BATCH_SIZE,
       );
 
-      for (const reminder of due) {
+      reminderLoop: for (const reminder of due) {
         if (this.stopped) break;
         const claimTime = new Date();
         const claim = db.update(reminders)
@@ -443,47 +443,60 @@ export class Scheduler {
             );
           }
 
-          // Bookkeeping runs in its own try: a failed state write *after* a
+          // Bookkeeping runs in its own retry: a failed state write *after* a
           // successful send is not a delivery failure. Letting it reach the outer
           // catch re-armed the reminder and delivered the same message twice.
-          try {
-            if (reminder.recurrence) {
-              // Anchor the monthly cadence to the day the user actually chose.
-              // `anchor_day` is written when the reminder is created; it cannot be
-              // derived later, because `remind_at` holds the *clamped* date of the
-              // previous fire (Jan 31 -> Feb 28) and `created_at` is unrelated to
-              // the fire date (a reminder set on the 28th for Dec 1 drifted to the
-              // 28th of every month). Rows created before the column existed fall
-              // back to the previous behaviour.
-              const anchorDay = reminder.anchorDay
-                ?? reminder.created_at?.getDate()
-                ?? reminder.remindAt.getDate();
-              const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
-              if (!nextFire) {
+          // One retry, because the claim keeps the row out of the due set only
+          // until `staleClaimMs()`; if the write keeps failing the reminder will
+          // be fetched again and sent again.
+          let stateRecorded = false;
+          for (let stateAttempt = 0; stateAttempt < 2 && !stateRecorded; stateAttempt++) {
+            try {
+              if (reminder.recurrence) {
+                // Anchor the monthly cadence to the day the user actually chose.
+                // `anchor_day` is written when the reminder is created; it cannot be
+                // derived later, because `remind_at` holds the *clamped* date of the
+                // previous fire (Jan 31 -> Feb 28) and `created_at` is unrelated to
+                // the fire date (a reminder set on the 28th for Dec 1 drifted to the
+                // 28th of every month). Rows created before the column existed fall
+                // back to the previous behaviour.
+                const anchorDay = reminder.anchorDay
+                  ?? reminder.created_at?.getDate()
+                  ?? reminder.remindAt.getDate();
+                const nextFire = computeNextOccurrence(reminder.remindAt, reminder.recurrence, anchorDay);
+                if (!nextFire) {
+                  db.update(reminders)
+                    .set({ isSent: true, claimedAt: null })
+                    .where(eq(reminders.id, reminder.id))
+                    .run();
+                  logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
+                  clearAttempts(reminder.id);
+                  continue reminderLoop;
+                }
+                db.update(reminders)
+                  .set({ remindAt: nextFire, claimedAt: null })
+                  .where(eq(reminders.id, reminder.id))
+                  .run();
+                clearAttempts(reminder.id);
+              } else {
                 db.update(reminders)
                   .set({ isSent: true, claimedAt: null })
                   .where(eq(reminders.id, reminder.id))
                   .run();
-                logger.error({ id: reminder.id, recurrence: reminder.recurrence }, 'Invalid recurrence; reminder retired');
                 clearAttempts(reminder.id);
-                continue;
               }
-              db.update(reminders)
-                .set({ remindAt: nextFire, claimedAt: null })
-                .where(eq(reminders.id, reminder.id))
-                .run();
-              clearAttempts(reminder.id);
-            } else {
-              db.update(reminders)
-                .set({ isSent: true, claimedAt: null })
-                .where(eq(reminders.id, reminder.id))
-                .run();
-              clearAttempts(reminder.id);
+              stateRecorded = true;
+            } catch (stateError: unknown) {
+              logger.warn(
+                { err: stateError, id: reminder.id, stateAttempt },
+                'Reminder was delivered but its delivery state could not be recorded; retrying',
+              );
             }
-          } catch (stateError: unknown) {
+          }
+          if (!stateRecorded) {
             logger.error(
-              { err: stateError, id: reminder.id },
-              'Reminder was delivered but its delivery state could not be recorded',
+              { id: reminder.id },
+              'Reminder delivery state could not be recorded; the claim is held until it goes stale',
             );
           }
         } catch (err) {
