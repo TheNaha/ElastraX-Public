@@ -154,15 +154,22 @@ describe('DiscordProvider', () => {
     expect(send).toHaveBeenCalledWith({ content: 'after resume', allowedMentions: { parse: [] } });
   });
 
-  test('surfaces login failure as a provider start error', async () => {    const client = createFakeClient();
+  test('surfaces login failure as a provider start error and schedules a retry', async () => {    const client = createFakeClient();
     client.login = mock(async () => { throw new Error('invalid token'); });
     discordProviderDeps.createClient = () => asDiscordClient(client);
     const provider = new DiscordProvider();
+    const reconnectTimer = (): unknown => (provider as unknown as { reconnectTimer: unknown }).reconnectTimer;
 
     await expect(provider.start()).rejects.toThrow('Discord login failed');
     expect(client.destroy).toHaveBeenCalled();
-    expect(provider.status).toBe('error');
+    // A boot-time blip must not disable Discord until restart: like WhatsApp and
+    // Telegram, it backs off and retries.
+    expect(provider.status).toBe('backoff');
     expect(provider.isOperational).toBe(false);
+    expect(reconnectTimer()).not.toBeNull();
+
+    await provider.stop();
+    expect(reconnectTimer()).toBeNull();
   });
 
   test('forwardMessage sends the current message content when no custom text is provided', async () => {

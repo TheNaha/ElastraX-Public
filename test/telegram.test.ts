@@ -418,6 +418,48 @@ describe('TelegramProvider lifecycle', () => {
       await provider.stop();
     });
 
+    test('a sticker message is reported as media', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      stubBot();
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'stickers/file_0.webp' }),
+          sendMessage: async () => ({ message_id: 1 }),
+        } as never,
+        stop: () => undefined,
+        catch: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(makeContext({
+        update_id: 1,
+        message: {
+          message_id: 43,
+          date: 1000,
+          chat: { id: 12345, type: 'private' },
+          from: { id: 67890, first_name: 'TestUser', is_bot: false },
+          sticker: { file_id: 'st-1', file_size: 2048, emoji: '🙂', width: 512, height: 512, is_animated: false, is_video: false },
+        },
+      }));
+
+      expect(received).not.toBeNull();
+      expect(received!.hasMedia).toBe(true);
+      expect(received!.messageType).toBe('stickerMessage');
+      expect(received!.mediaAttachments?.[0]?.providerId).toBe('st-1');
+      await provider.stop();
+    });
+
     test('start() asks Telegram for message_reaction updates', async () => {
       process.env.TELEGRAM_BOT_TOKEN = 'test-token';
       let startOptions: { allowed_updates?: string[] } | undefined;

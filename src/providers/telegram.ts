@@ -132,6 +132,10 @@ function mediaOf(ctx: MessageCarrier | null | undefined): { fileId: string; mime
   if (ctx.voice) return { fileId: ctx.voice.file_id, mime: ctx.voice.mime_type, size: ctx.voice.file_size };
   if (ctx.audio) return { fileId: ctx.audio.file_id, mime: ctx.audio.mime_type, size: ctx.audio.file_size };
   if (ctx.document) return { fileId: ctx.document.file_id, mime: ctx.document.mime_type, size: ctx.document.file_size, name: ctx.document.file_name ?? undefined };
+  // Stickers are media: on WhatsApp they arrive with `hasMedia` true. Omitting
+  // them here made `hasMedia` false and `mediaAttachments` empty, and a sticker
+  // (which carries no text) was then dropped silently by the agent.
+  if (ctx.sticker) return { fileId: ctx.sticker.file_id, mime: ctx.sticker.mime_type ?? 'image/webp', size: ctx.sticker.file_size };
   return null;
 }
 
@@ -141,6 +145,7 @@ function defaultFilename(mime: string | undefined): string {
   if (mime?.includes('webp')) return 'image.webp';
   if (mime?.includes('ogg')) return 'voice.ogg';
   if (mime?.includes('mp4')) return 'video.mp4';
+  if (mime?.includes('webm')) return 'sticker.webm';
   if (mime?.includes('pdf')) return 'document.pdf';
   return 'file.bin';
 }

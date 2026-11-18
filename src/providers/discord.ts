@@ -74,6 +74,8 @@ export class DiscordProvider implements BotProvider {
   private generation = 0;
   private startPromise: Promise<void> | null = null;
   private readonly mediaControllers = new Set<AbortController>();
+  private reconnectAttempts = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   get status(): BotProviderStatus {
     return this.providerStatus;
@@ -112,6 +114,10 @@ export class DiscordProvider implements BotProvider {
   async stop(): Promise<void> {
     this.generation++;
     this.providerStatus = 'stopped';
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     for (const controller of this.mediaControllers) controller.abort(new ProviderLifecycleError('discord', 'media download'));
     this.mediaControllers.clear();
     const client = this.client;
@@ -180,6 +186,7 @@ export class DiscordProvider implements BotProvider {
       if (this.providerStatus === 'running') return;
       this.providerStatus = 'running';
       this.providerError = null;
+      this.reconnectAttempts = 0;
       logger.info(`[Discord] Logged in as ${client.user?.tag ?? 'unknown'}.`);
       void this.seedOwner(generation);
     };
@@ -284,8 +291,34 @@ export class DiscordProvider implements BotProvider {
       if (generation !== this.generation || this.providerStatus === 'stopped') return;
       this.providerStatus = 'error';
       this.providerError = toError(error);
+      // A transient DNS/5xx blip at boot used to disable Discord until the
+      // process restarted: AppRuntime calls start() once, and unlike WhatsApp and
+      // Telegram this provider scheduled no retry. Back off and retry.
+      this.scheduleReconnect(generation);
       throw new ProviderStartError('discord', `Discord login failed: ${safeErrorMessage(error)}`, error);
     }
+  }
+
+  /**
+   * Retry a failed start with exponential backoff, mirroring the WhatsApp and
+   * Telegram providers. `reconcileProviderAdmission` re-admits a provider that
+   * becomes operational, so no other wiring is needed once this reconnect
+   * reaches `clientReady`.
+   */
+  private scheduleReconnect(generation: number): void {
+    if (generation !== this.generation || this.providerStatus === 'stopped' || this.reconnectTimer) return;
+    const delay = Math.min(1500 * 2 ** this.reconnectAttempts, 300_000);
+    this.reconnectAttempts += 1;
+    this.providerStatus = 'backoff';
+    logger.info({ delayMs: delay, attempt: this.reconnectAttempts }, '[Discord] Scheduling reconnect');
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (generation !== this.generation || this.providerStatus === 'stopped') return;
+      this.start().catch(error => {
+        logger.error({ err: error }, '[Discord] Reconnect start failed');
+      });
+    }, delay);
+    this.reconnectTimer.unref?.();
   }
 
   private async createContext(msg: DiscordMessage, generation = this.generation): Promise<MessageContext | null> {
