@@ -652,6 +652,41 @@ describe('handleIncomingMessage', () => {
       expectReply(ctx.reply, 'Here are the results!');
     });
 
+    test('does not charge the tool-call budget for calls that fail validation', async () => {
+      // Claiming `toolCalls.length` before validation let a provider that
+      // repeated or hallucinated names exhaust the per-turn budget with zero
+      // executions, so a legitimate call in the same round was refused.
+      const previousMax = process.env.AI_MAX_TOOL_CALLS;
+      process.env.AI_MAX_TOOL_CALLS = '2';
+      process.env.AI_STREAMING = 'false';
+      const execute = mock(async () => 'real result');
+      registerTool(new FakeTool('web_search', execute));
+
+      let callCount = 0;
+      global.fetch = mock(async () => {
+        callCount++;
+        if (callCount === 1) {
+          return makeToolCallResponse([
+            { id: 'bad-1', name: 'not_a_tool', args: '{}' },
+            { id: 'bad-2', name: 'also_not_a_tool', args: '{}' },
+            { id: 'bad-3', name: 'nope', args: '{}' },
+            { id: 'good', name: 'web_search', args: '{"query":"bun"}' },
+          ]);
+        }
+        return makeFetchResponse('Done after validation.');
+      }) as unknown as typeof global.fetch;
+
+      try {
+        const ctx = makeCtx({ isGroup: false, text: 'Search for bun' });
+        await handleIncomingMessage(ctx);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expectReply(ctx.reply, 'Done after validation.');
+      } finally {
+        if (previousMax === undefined) delete process.env.AI_MAX_TOOL_CALLS;
+        else process.env.AI_MAX_TOOL_CALLS = previousMax;
+      }
+    });
+
     test('makes a final text-only call when the tool budget is exhausted', async () => {
       // Every iteration up to the budget may run tools. A turn that legitimately
       // used all of them ended with `isDone === false` and the accumulated answer

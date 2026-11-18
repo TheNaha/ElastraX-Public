@@ -305,27 +305,9 @@ async function executeRequestedToolCalls(
     accessContext: { roles: string[]; isGroup: boolean; isOwner: boolean; platform: string; userId: string };
   },
 ): Promise<{ toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }>; preferredTier?: ModelTier }> {
-  // The turn budget is a self-imposed guard, not a system failure. Claiming the
-  // calls can throw TurnBudgetExceededError, which must not escape this function
-  // and turn a normal turn into an "internal error": report it back to the model
-  // as a tool result so the loop can still finish with a real answer.
-  try {
-    options.turnBudget.claimToolCalls(toolCalls.length);
-  } catch (error) {
-    if (!(error instanceof TurnBudgetExceededError)) throw error;
-    const message = getErrorMessage(error);
-    log.warn({ chatId: options.chatId, requested: toolCalls.length }, 'Tool-call budget exhausted');
-    return {
-      toolResults: toolCalls.map(toolCall => ({
-        role: 'tool' as const,
-        tool_call_id: toolCall.id,
-        name: toolCall.function.name,
-        content: `Error: ${message}`,
-      })),
-      preferredTier: options.preferredTier,
-    };
-  }
-
+  // The turn budget is claimed *after* validation (below), so a provider that
+  // repeats or hallucinates tool names cannot exhaust the per-turn call budget
+  // without executing anything.
   type PreparedToolCall =
     | { kind: 'error'; toolCall: ToolCall; toolName: string; errorText: string }
     | { kind: 'ready'; toolCall: ToolCall; toolName: string; tool: BaseTool; validArgs: Record<string, unknown> };
@@ -366,6 +348,23 @@ async function executeRequestedToolCalls(
   const readyCount = prepared.filter(p => p.kind === 'ready').length;
   options.progressTracker?.addPlannedSteps(readyCount);
 
+  // Charge only the calls that will actually run. Claiming `toolCalls.length`
+  // before validation meant eight unknown/unauthorized/malformed calls in one
+  // round exhausted the budget with zero tool executions and every later
+  // legitimate call answered "Tool-call limit exceeded". The budget guard is
+  // self-imposed, not a system failure, so an exceeded claim is reported back to
+  // the model as a tool result rather than thrown out of this function.
+  let budgetError: string | null = null;
+  if (readyCount > 0) {
+    try {
+      options.turnBudget.claimToolCalls(readyCount);
+    } catch (error) {
+      if (!(error instanceof TurnBudgetExceededError)) throw error;
+      budgetError = getErrorMessage(error);
+      log.warn({ chatId: options.chatId, requested: toolCalls.length, ready: readyCount }, 'Tool-call budget exhausted');
+    }
+  }
+
   const toolResults: Array<{ role: 'tool'; tool_call_id: string; name: string; content: string }> = [];
   let preferredTier = options.preferredTier;
 
@@ -376,6 +375,15 @@ async function executeRequestedToolCalls(
         tool_call_id: item.toolCall.id,
         name: item.toolName,
         content: item.errorText,
+      });
+      continue;
+    }
+    if (budgetError) {
+      toolResults.push({
+        role: 'tool',
+        tool_call_id: item.toolCall.id,
+        name: item.toolName,
+        content: `Error: ${budgetError}`,
       });
       continue;
     }
