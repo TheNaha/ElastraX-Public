@@ -5,6 +5,7 @@ import { exponentialBackoff } from '../utils/backoff';
 import type { MessageContext } from '../core/MessageContext';
 import { remoteRoomIdFromKey, roomKeyForContext } from './roomKeys';
 import { safeErrorMessage } from '../utils/errorUtils';
+import { isUsableProviderMessageId } from '../agent/messageId';
 import { getAIRequestConfig, getMaxToolIterations, getToolTimeoutMs } from '../config/runtime';
 
 /**
@@ -54,7 +55,10 @@ export type InboxRoomRow = {
 
 function eventKeyFor(ctx: MessageContext): string {
   const messageId = ctx.messageId?.trim();
-  if (!messageId || messageId.toLowerCase() === 'unknown') return `local:${randomUUID()}`;
+  // One definition of "usable provider id" (excludes '', 'unknown' and 'null'),
+  // shared with the index predicate; the two used to disagree on 'null', and a
+  // literal 'null' would then hash every message of a room to one event key.
+  if (!isUsableProviderMessageId(messageId)) return `local:${randomUUID()}`;
   return createHash('sha256')
     .update(`${ctx.platform}\u0000${ctx.chatId}\u0000${messageId}`)
     .digest('hex');
@@ -198,18 +202,18 @@ export class InboxService {
     if (!current) return 'not_owned';
     const deadline = now + exponentialBackoff(current.attemptCount, { baseMs: 5_000 });
     const row = sqlite
-      .query<{ attemptCount: number }, [number, string, number, number, number, number, number, string]>(
+      .query<{ attemptCount: number }, [number, string, number, number, number, string]>(
         `UPDATE message_inbox
          SET state = CASE WHEN attempt_count >= ? THEN 'dead_letter' ELSE 'failed' END,
              last_error = ?,
-             available_at = CASE WHEN attempt_count >= ? THEN ? ELSE ? END,
+             available_at = ?,
              lease_owner = NULL,
              lease_expires_at = NULL,
              updated_at = ?
          WHERE id = ? AND state = 'processing' AND lease_owner = ?
          RETURNING attempt_count AS attemptCount`,
       )
-      .get(MAX_ATTEMPTS, message.slice(0, 2_000), MAX_ATTEMPTS, deadline, deadline, now, id, owner);
+      .get(MAX_ATTEMPTS, message.slice(0, 2_000), deadline, now, id, owner);
     if (!row) return 'not_owned';
     const deadLettered = row.attemptCount >= MAX_ATTEMPTS;
     return deadLettered ? 'dead_letter' : 'retry';

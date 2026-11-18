@@ -574,7 +574,7 @@ export class Scheduler {
       return;
     }
     deferAttempts.set(id, attempt);
-    const backoffMs = Math.min(60 * 60_000, 30_000 * 2 ** Math.min(attempt - 1, 7));
+    const backoffMs = exponentialBackoff(attempt, { baseMs: 30_000, maxExponent: 7 });
     this.releaseClaim(id, new Date(Date.now() + backoffMs), { preserveSchedule: Boolean(reminder.recurrence) });
     logger.warn({ id, reason, attempt, retryInMs: backoffMs }, 'Reminder delivery deferred');
   }

@@ -117,7 +117,6 @@ export async function validateAudioBuffer(
   const detected = await detectAudioMimeType(buffer);
   if (detected && isStrongAudioMagic(buffer, detected)) return detected;
   if (!detected && isAudioMagic(buffer, declared)) return declared;
-  if (detected === 'audio/mp4' || detected === 'audio/aac') return detected;
   if (!isAudioMimeType(declared) && declared !== 'application/octet-stream' && detected === null) {
     throw new Error(`Declared media type is not audio: ${declared || 'unknown'}.`);
   }
@@ -195,6 +194,5 @@ function codecMime(codecName: string | undefined): string {
   if (normalized === 'aac') return 'audio/aac';
   if (['flac', 'pcm_alaw', 'pcm_mulaw'].includes(normalized)) return normalized === 'flac' ? 'audio/flac' : 'audio/wav';
   if (['mp4', 'aac_latm'].includes(normalized)) return 'audio/mp4';
-  if (normalized === 'vorbis') return 'audio/ogg';
   return 'application/octet-stream';
 }

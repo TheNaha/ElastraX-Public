@@ -153,11 +153,13 @@ export function chunkTextDiscord(text: string, limit = 2000): string[] {
 export function chunkTextTelegram(text: string, limit = 4096): string[] {
   if (text.length === 0) return [];
   const chunks = chunkTextSmart(text, { mode: 'boundary', limit, measure: 'utf16' });
-  // Telegram historically trimmed each chunk and dropped leading newlines on
-  // the remainder so chunk boundaries land on clean sentence breaks.
+  // Trailing whitespace is trimmed from every chunk, and a chunk that is only
+  // whitespace is dropped: Telegram rejects an empty message, so sending `''`
+  // would fail the whole reply.
   const trimmed: string[] = [];
-  for (let i = 0; i < chunks.length; i++) {
-    trimmed.push(chunks[i]!.trimEnd());
+  for (const chunk of chunks) {
+    const value = chunk.trimEnd();
+    if (value.length > 0) trimmed.push(value);
   }
   return trimmed;
 }

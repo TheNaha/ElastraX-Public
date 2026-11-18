@@ -19,7 +19,6 @@
  *    report UNSUPPORTED rather than pretending.
  */
 import {
-  API_CONSTANTS,
   Bot,
   InputFile,
   type Bot as GrammyBot,
@@ -813,21 +812,17 @@ export class TelegramProvider implements BotProvider {
           if (!Number.isSafeInteger(userId)) {
             throw new ProviderOperationError('telegram', 'updateGroupParticipants', `"${rawId}" is not a Telegram user id.`, undefined, 'INVALID_TARGET');
           }
-          if (action === 'remove' || action === 'kick') {
+          if (action === 'remove') {
             // Telegram separates removal from muting; ban-then-unban is the
             // documented way to remove without blocking future re-joins.
             await activeBot.api.banChatMember(chatId, userId);
             await activeBot.api.unbanChatMember(chatId, userId).catch(() => undefined);
             continue;
           }
-          if (action === 'mute') {
-            await activeBot.api.restrictChatMember(chatId, userId, { can_send_messages: false });
-            continue;
-          }
-          if (action === 'unmute') {
-            await activeBot.api.restrictChatMember(chatId, userId, { ...API_CONSTANTS.ALL_CHAT_PERMISSIONS });
-            continue;
-          }
+          // `kick`, `mute` and `unmute` are not part of the updateGroupParticipants
+          // contract (`add|remove|promote|demote`); GroupAdminTool maps kick to
+          // remove and routes mute/unmute through setGroupSettings. Handling them
+          // here read as supported behaviour that no caller could reach.
           throw new ProviderOperationError(
             'telegram', 'updateGroupParticipants',
             `Telegram bots cannot perform "${action}".`, undefined, 'UNSUPPORTED',

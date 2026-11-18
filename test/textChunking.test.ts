@@ -78,6 +78,10 @@ describe('chunkTextTelegram', () => {
     const chunks = chunkTextTelegram('hello world \n\nnext', 12);
     for (const chunk of chunks) expect(chunk).toBe(chunk.trimEnd());
   });
+
+  test('drops a chunk that is only whitespace instead of sending an empty message', () => {
+    expect(chunkTextTelegram('   ')).toEqual([]);
+  });
 });
 
 describe('chunkTextSmart — code points vs UTF-16 offsets', () => {

@@ -376,18 +376,18 @@ export class OutboxService {
     }
     const deadline = now + exponentialBackoff(current.attemptCount, { baseMs: 5_000 });
     const row = sqlite
-      .query<{ attemptCount: number }, [number, string, number, number, number, number, string, string]>(
+      .query<{ attemptCount: number }, [number, string, number, number, string, string]>(
         `UPDATE message_outbox
          SET state = CASE WHEN attempt_count >= ? THEN 'dead_letter' ELSE 'failed' END,
              last_error = ?,
-             available_at = CASE WHEN attempt_count >= ? THEN ? ELSE ? END,
+             available_at = ?,
              lease_owner = NULL,
              lease_expires_at = NULL,
              updated_at = ?
          WHERE id = ? AND state = 'leased' AND lease_owner = ?
          RETURNING attempt_count AS attemptCount`,
       )
-      .get(MAX_ATTEMPTS, message.slice(0, 2_000), MAX_ATTEMPTS, deadline, deadline, now, id, owner);
+      .get(MAX_ATTEMPTS, message.slice(0, 2_000), deadline, now, id, owner);
     if (!row) {
       logger.warn({ id, owner }, '[Outbox] fail() called on a row not owned by this worker (already completed, dead-lettered, or leased elsewhere)');
       return 'not_owned';

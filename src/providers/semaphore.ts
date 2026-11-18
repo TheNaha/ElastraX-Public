@@ -41,6 +41,12 @@ export class CancellableSemaphore {
     if (!this.isValidPermitCount(permits)) {
       throw new Error('Semaphore permit count must be a positive safe integer.');
     }
+    if (permits > this.capacity) {
+      // `tryAcquire` returns null for this case too, so without the explicit
+      // check the request was queued forever: `drain` can never satisfy a waiter
+      // that asks for more permits than the semaphore has.
+      throw new Error('Semaphore permit count exceeds capacity.');
+    }
     if (signal?.aborted) throw abortError(signal);
 
     return new Promise<() => void>((resolve, reject) => {
