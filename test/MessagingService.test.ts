@@ -76,6 +76,34 @@ describe('OutboxService.prune', () => {
     expect(outboxKeyParts('unknown', 'assistant', 'chat-a')).not.toEqual(outboxKeyParts('unknown', 'assistant', 'chat-a'));
   });
 
+  test('markEnqueuedSent records a delivered reply even when the provider id collides', () => {
+    const now = Date.now();
+    db.insert(messageOutbox).values({
+      id: 'already-delivered',
+      platform: 'telegram',
+      chatRoomId: 'chat-collide',
+      idempotencyKey: 'key-delivered',
+      payload: JSON.stringify({ text: 'first' }),
+      state: 'sent',
+      attemptCount: 0,
+      availableAt: now,
+      providerMessageId: 'dup-1',
+      sentAt: now,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+
+    const pendingId = OutboxService.enqueueDirectText('telegram', 'chat-collide', 'second', outboxKeyParts('2', 'assistant', 'chat-collide'));
+    // The provider id is already recorded for this room, so the unique index
+    // would reject the write. That must not throw (the caller would treat it as
+    // a send failure and re-send a reply that was already delivered).
+    expect(OutboxService.markEnqueuedSent(pendingId, 'dup-1')).toBe(true);
+
+    const row = db.select().from(messageOutbox).all().find(entry => entry.id === pendingId)!;
+    expect(row.state).toBe('sent');
+    expect(row.providerMessageId).toBeNull();
+  });
+
   test('does nothing when there are no terminal rows', async () => {
     const pruned = OutboxService.prune(100_000);
     expect(pruned).toBe(0);

@@ -308,15 +308,26 @@ export class OutboxService {
     // path did not, so a row that had previously been leased and then failed
     // kept a stale `lease_owner`/`lease_expires_at` while sitting in `sent` —
     // a row that claims to be owned by a worker that no longer holds it.
-    const result = sqlite
+    const markSentStatement = (providerId: string | null) => sqlite
       .query<never, [string | null, number, number, string]>(
         `UPDATE message_outbox
          SET state = 'sent', provider_message_id = ?, sent_at = ?, updated_at = ?,
              lease_owner = NULL, lease_expires_at = NULL, last_error = NULL
          WHERE id = ? AND state IN ('pending', 'failed')`,
       )
-      .run(providerMessageId, now, now, id);
-    return Number(result.changes) === 1;
+      .run(providerId, now, now, id);
+    try {
+      return Number(markSentStatement(providerMessageId).changes) === 1;
+    } catch (error) {
+      // Same guard as `markSent`: `message_outbox_platform_provider_unique_idx`
+      // rejects a provider message id another row already recorded for the
+      // room. The message *was* delivered, so letting the throw escape made the
+      // caller's catch treat it as a send failure and the outbox send the reply
+      // again. Record the delivery without the colliding id instead.
+      const message = safeErrorMessage(error, 500);
+      if (!/unique|constraint/i.test(message)) throw error;
+      return Number(markSentStatement(null).changes) === 1;
+    }
   }
 
   static markSent(id: string, owner: string, providerMessageId: string | null = null): boolean {
