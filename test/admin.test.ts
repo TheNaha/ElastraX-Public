@@ -357,6 +357,27 @@ describe('admin mutations', () => {
     expect(response.status).toBe(413);
   });
 
+  test('a proxy that rewrites Host still passes the origin check via X-Forwarded-Host', async () => {
+    const handler = handlerWith(SECRET);
+    const { cookie, csrf } = await signIn(handler);
+    // The browser reached the dashboard as ops.example.com; the proxy rewrote Host
+    // to its upstream name (nginx's default `proxy_set_header Host $proxy_host`).
+    // Plain reads worked, but every mutation used to answer 403.
+    const response = await call(handler, 'api/action/retention-report', {
+      method: 'POST',
+      headers: {
+        cookie,
+        [ADMIN_CSRF_HEADER]: csrf,
+        Origin: 'https://ops.example.com',
+        'X-Forwarded-Host': 'ops.example.com',
+        Host: '172.17.0.1:3500',
+        'Content-Type': 'application/json',
+      },
+      body: '{}',
+    });
+    expect(response.status).toBe(200);
+  });
+
   test('a cross-origin mutation is rejected', async () => {
     const handler = handlerWith(SECRET);
     const { cookie, csrf } = await signIn(handler);
@@ -449,6 +470,12 @@ describe('same-origin helper', () => {
 
   test('allows the same origin', () => {
     expect(isSameOrigin(new Request(`${BASE}/admin/`, { headers: { Origin: BASE } }), HOST)).toBe(true);
+  });
+
+  test('accepts any candidate host, so a proxied request can match its forwarded name', () => {
+    const request = new Request(`${BASE}/admin/`, { headers: { Origin: 'https://ops.example.com' } });
+    expect(isSameOrigin(request, ['172.17.0.1:3500', 'ops.example.com'])).toBe(true);
+    expect(isSameOrigin(request, ['172.17.0.1:3500'])).toBe(false);
   });
 });
 

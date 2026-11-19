@@ -125,7 +125,7 @@ function readCookie(req: Request, name: string): string | null {
 }
 
 /**
- * The host an `Origin` header must match for a mutation to be accepted.
+ * The hosts an `Origin` header may name for a mutation to be accepted.
  *
  * The request's own `Host` header is the authority here, because that is the
  * name the browser used to reach us and it includes the port.
@@ -137,15 +137,27 @@ function readCookie(req: Request, name: string): string | null {
  * `403 Forbidden`: the operator could load the login page but could never
  * sign in, and the whole dashboard was unreachable. The unit test missed it
  * because it injected a fake server whose `hostname` included the port.
+ *
+ * `X-Forwarded-Host` is accepted as a second candidate. A proxy that rewrites
+ * `Host` (nginx's default `proxy_set_header Host $proxy_host`) otherwise makes
+ * the browser's `Origin` unusable while plain reads keep working, which looks
+ * like a CSRF failure and is not one. `shouldUseSecureCookie` already trusts the
+ * same proxy for `X-Forwarded-Proto`, so this is the same assumption. It does
+ * not widen CSRF exposure: a cross-site request cannot set the header without a
+ * preflight this server never answers, and the CSRF token is still required.
  */
-function readExpectedHost(req: Request, url: URL, server: unknown): string {
+function readExpectedHosts(req: Request, url: URL, server: unknown): string[] {
+  const hosts: string[] = [];
   const hostHeader = req.headers.get('host');
-  if (hostHeader) return hostHeader;
+  if (hostHeader) hosts.push(hostHeader);
+  const forwarded = req.headers.get('x-forwarded-host')?.split(',')[0]?.trim();
+  if (forwarded) hosts.push(forwarded);
+  if (hosts.length > 0) return hosts;
   if (typeof server === 'object' && server !== null && 'hostname' in server) {
     const hostname = String((server as { hostname: unknown }).hostname ?? '').trim();
-    if (hostname) return url.port ? `${hostname}:${url.port}` : hostname;
+    if (hostname) return [url.port ? `${hostname}:${url.port}` : hostname];
   }
-  return url.host;
+  return [url.host];
 }
 
 export type AdminHandler = (req: Request, ip: string, server: unknown) => Promise<Response> | Response;
@@ -182,7 +194,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       return json({ error: 'Method Not Allowed' }, 405, { Allow: 'GET, HEAD, POST' });
     }
 
-    const expectedHost = readExpectedHost(req, url, server);
+    const expectedHosts = readExpectedHosts(req, url, server);
 
     // ── Static assets (unauthenticated, but they contain no data) ──────────
     if (path === 'app.js') return asset('text/javascript; charset=utf-8', APP_JS);
@@ -207,8 +219,10 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
     // ── Login ──────────────────────────────────────────────────────────────
     if (path === 'api/login') {
       if (req.method !== 'POST') return json({ error: 'Method Not Allowed' }, 405, { Allow: 'POST' });
-      if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
-      throttle.prune(now());
+      if (!isSameOrigin(req, expectedHosts)) return json({ error: 'Forbidden' }, 403);
+      // `attempt` sweeps the bucket map itself at most once per window; an
+      // explicit prune here walked every tracked IP on every unauthenticated
+      // POST.
       if (!throttle.attempt(ip, now())) {
         return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': '60' });
       }
@@ -228,7 +242,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       // other one. It needs no CSRF token — there is no session left to
       // protect — but a cross-site POST must not be able to sign the operator
       // out.
-      if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
+      if (!isSameOrigin(req, expectedHosts)) return json({ error: 'Forbidden' }, 403);
       auth.logout(cookie);
       return json({ ok: true }, 200, { 'Set-Cookie': auth.clearCookie() });
     }
@@ -243,7 +257,7 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
 
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       // Mutating: same-origin plus a CSRF token bound to this session.
-      if (!isSameOrigin(req, expectedHost)) return json({ error: 'Forbidden' }, 403);
+      if (!isSameOrigin(req, expectedHosts)) return json({ error: 'Forbidden' }, 403);
       const csrf = req.headers.get(ADMIN_CSRF_HEADER);
       if (!auth.verifyCsrfFor(session, csrf)) return json({ error: 'Invalid CSRF token' }, 403);
       return handleAction(req, path, url);

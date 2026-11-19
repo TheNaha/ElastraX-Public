@@ -140,19 +140,14 @@ export class AdminAuth {
     return { csrf: session.csrf };
   }
 
-  /** A CSRF token is only valid for the session that issued it. */
-  verifyCsrf(cookieValue: string | null, presented: string | null, now = Date.now()): boolean {
-    const session = this.verify(cookieValue, now);
-    if (!session) return false;
-    return this.verifyCsrfFor(session, presented);
-  }
-
   /**
    * Same check against a session the caller already verified.
    *
-   * `verifyCsrf` re-ran the whole cookie HMAC and session lookup on every
-   * mutating request, immediately after the route had done exactly that. The
-   * outcome is identical; the second lookup was pure duplication.
+   * This replaced a `verifyCsrf(cookie, token)` entry point that re-ran the whole
+   * cookie HMAC and session lookup on every mutating request, immediately after
+   * the route had done exactly that. The route now resolves the session once and
+   * calls this; the cookie-reading variant had no remaining caller and was
+   * removed with it.
    */
   verifyCsrfFor(session: { csrf: string }, presented: string | null): boolean {
     if (!presented) return false;
@@ -220,9 +215,6 @@ function hostnameOf(value: string | null | undefined): string | null {
   }
 }
 
-/** Whether a `Host` value names the local machine. */
-export { isLoopbackHost };
-
 /**
  * Whether the session cookie should carry the `Secure` attribute.
  *
@@ -256,6 +248,14 @@ export class LoginThrottle {
   private readonly buckets = new Map<string, { count: number; resetAt: number }>();
   /** Upper bound on tracked IPs, so a distributed flood cannot grow the map. */
   private static readonly MAX_BUCKETS = 10_000;
+  /**
+   * When the map was last swept. `prune` walks every tracked IP, so running it
+   * on *every* unauthenticated login POST (what the route used to do before
+   * `attempt`) turned a filled table into a 10 000-iteration loop on the event
+   * loop that also serves messages — cheap amplification for an attacker. One
+   * sweep per window is all the map needs.
+   */
+  private lastPruneAt = 0;
 
   constructor(
     private readonly limit = 5,
@@ -264,7 +264,9 @@ export class LoginThrottle {
 
   /** Returns true when the attempt is allowed (and records it). */
   attempt(ip: string, now = Date.now()): boolean {
-    if (this.buckets.size > 1000) this.prune(now);
+    // Sweep at most once per window instead of on every request: an expired
+    // bucket is harmless until the map needs room or a fresh IP arrives.
+    if (this.buckets.size > 1000 && now - this.lastPruneAt >= this.windowMs) this.prune(now);
     const bucket = this.buckets.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       // Hard cap. Pruning only removes *expired* buckets, so a flood of distinct
@@ -294,6 +296,7 @@ export class LoginThrottle {
   }
 
   prune(now = Date.now()): void {
+    this.lastPruneAt = now;
     for (const [ip, bucket] of this.buckets) {
       if (bucket.resetAt <= now) this.buckets.delete(ip);
     }
@@ -310,15 +313,18 @@ export class LoginThrottle {
  * The comparison is case-insensitive because a host is case-insensitive, and
  * `new URL(...).host` lower-cases while a raw `Host` header may not.
  */
-export function isSameOrigin(req: Request, expectedHost: string | null): boolean {
+export function isSameOrigin(req: Request, expectedHost: string | readonly string[] | null): boolean {
   const origin = req.headers.get('origin');
   // A missing Origin is a non-browser client (curl, the test suite) which cannot
   // be a CSRF vector; the cookie+CSRF pair still applies.
   if (!origin) return true;
-  if (!expectedHost) return false;
+  const expected = typeof expectedHost === 'string' ? [expectedHost] : expectedHost ?? [];
+  if (expected.length === 0) return false;
+  let host: string;
   try {
-    return new URL(origin).host.toLowerCase() === expectedHost.toLowerCase();
+    host = new URL(origin).host.toLowerCase();
   } catch {
     return false;
   }
+  return expected.some(candidate => candidate.toLowerCase() === host);
 }
