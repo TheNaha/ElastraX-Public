@@ -105,23 +105,6 @@ export interface WhatsAppMediaInfo {
   ptt?: boolean;
 }
 
-/**
- * The message to hand Baileys' downloader for a round video note.
- *
- * `downloadMediaMessage` derives the HKDF info key from the content-type key
- * (`videoMessage` → `WhatsApp Video Keys`) and has no entry for `ptvMessage`, so
- * a video note reaches `WhatsApp undefined Keys` and fails to decrypt. The
- * payload of `ptvMessage` *is* a `VideoMessage`, so re-keying the wrapper is
- * exactly what the send side does.
- */
-export function downloadableMediaMessage(
-  message: proto.IMessage | null | undefined,
-): proto.IMessage | null | undefined {
-  const note = message?.ptvMessage;
-  if (!message || !note) return message;
-  return { ...message, ptvMessage: undefined, videoMessage: note };
-}
-
 export function getMessageMediaInfo(msgObj: proto.IMessage | null | undefined): WhatsAppMediaInfo | null {
   if (!msgObj) return null;
   const { type, content } = unwrapMessage(msgObj);

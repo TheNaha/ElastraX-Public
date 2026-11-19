@@ -106,6 +106,12 @@ describe('provider media safety helpers', () => {
     expect(chunks).toEqual(['😀😀', '😀']);
   });
 
+  test('WhatsApp chunking yields nothing for an empty reply', () => {
+    // Sending `{ text: '' }` to Baileys raised a provider error; the send loops
+    // now have no chunk to send at all.
+    expect(chunkWhatsAppText('')).toEqual([]);
+  });
+
   test('process environments omit unrelated secrets', () => {
     const env = minimalProcessEnv({ CUSTOM: 'yes' }, { PATH: '/bin', OPENAI_API_KEY: 'secret', DISCORD_BOT_TOKEN: 'secret' });
     expect(env).toEqual({ PATH: '/bin', CUSTOM: 'yes' });

@@ -21,7 +21,7 @@ import { describe, test, expect } from 'bun:test';
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
-import { parseWhatsAppMessage, LidResolver, getFileLength, normalizeJid, getMessageMediaInfo, downloadableMediaMessage } from '../src/providers/whatsappParser';
+import { parseWhatsAppMessage, LidResolver, getFileLength, normalizeJid, getMessageMediaInfo } from '../src/providers/whatsappParser';
 
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const BOT_JID = '6281999000111:15@s.whatsapp.net'; // hypothetical bot JID
@@ -606,17 +606,5 @@ describe('round video notes (ptvMessage)', () => {
     const info = getMessageMediaInfo((ptv as any).message);
     expect(info?.mimeType).toBe('video/mp4');
     expect(info?.sizeBytes).toBe(4096);
-  });
-
-  test('is re-keyed to videoMessage for Baileys to pick the video HKDF info', () => {
-    const rewritten = downloadableMediaMessage((ptv as any).message) as Record<string, unknown>;
-    expect(rewritten.videoMessage).toBeDefined();
-    expect(rewritten.ptvMessage).toBeUndefined();
-  });
-
-  test('leaves ordinary messages untouched', () => {
-    const message = { conversation: 'hello' };
-    expect(downloadableMediaMessage(message as any)).toBe(message);
-    expect(downloadableMediaMessage(undefined)).toBeUndefined();
   });
 });

@@ -14,7 +14,7 @@ import { jidBareId } from '../utils/jid';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
-import { downloadableMediaMessage, getMessageMediaInfo, parseWhatsAppMessage, type WhatsAppMediaInfo } from './whatsappParser';
+import { getMessageMediaInfo, parseWhatsAppMessage, type WhatsAppMediaInfo } from './whatsappParser';
 import {
   deleteSavedMedia,
   readMediaBuffer,
@@ -604,7 +604,7 @@ export class WhatsAppProvider implements BotProvider {
               id: q.stanzaId || undefined,
               participant: q.senderId,
             },
-            message: downloadableMediaMessage(q.rawMessage),
+            message: q.rawMessage,
           } as WAMessage,
           info: getMessageMediaInfo(q.rawMessage) || {
             messageType: q.messageType,
@@ -660,8 +660,7 @@ export class WhatsAppProvider implements BotProvider {
         state: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? 'skipped' : 'pending',
         error: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? `WhatsApp media exceeds ${HARD_MEDIA_MAX_BYTES} bytes.` : undefined,
       },
-      // Re-keyed so a round video note downloads under the video HKDF info.
-      message: { ...message, message: downloadableMediaMessage(message.message) } as WAMessage,
+      message,
       info: currentInfo,
     } : null;
     const sources = [currentSource, quotedSource].filter((source): source is MediaSource => !!source);

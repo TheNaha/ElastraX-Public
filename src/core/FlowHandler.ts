@@ -474,14 +474,14 @@ export class FlowHandler {
         // the user's step text processed as a brand-new message, while the inbox
         // retried a turn whose flow state no longer existed. The riskier call
         // (network) now runs while the state can still be retried.
-        await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
+        await ctx.reply(t(ctx.language, 'flow.stale_cleared'));
         await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
         return true;
       }
       const flowProcessor = this.flows[flow.flow];
       if (!flowProcessor) {
         logger.warn({ flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform }, '[FlowHandler] No processor registered for active flow; session cleared');
-        await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
+        await ctx.reply(t(ctx.language, 'flow.stale_cleared'));
         await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
         return true;
       }
@@ -493,7 +493,7 @@ export class FlowHandler {
           await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
           return true;
         }
-        await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');
+        await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }));
         return true;
       }
       const failureKey = `${key}:${flowId}:${flow.step}`;
@@ -505,7 +505,7 @@ export class FlowHandler {
       } catch (error: unknown) {
         const message = getErrorMessage(error, 'unknown error');
         logger.error({ err: error, flow: flow.flow }, `[FlowHandler] Error in flow: ${flow.flow}`);
-        await ctx.reply(t(ctx.language, 'flow.error', { msg: message }) || `An error occurred processing your flow step:\n${message}`);
+        await ctx.reply(t(ctx.language, 'flow.error', { msg: message }));
         // A step that keeps throwing used to swallow every later message into the
         // same failure until the TTL expired, leaving `/cancel` as the only way
         // out. The first failure still keeps the session so a transient error can

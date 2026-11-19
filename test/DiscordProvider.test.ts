@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from 'bun:
 import type { MessageContext } from '../src/core/MessageContext';
 
 import { DiscordProvider, chunkDiscordText, discordProviderDeps } from '../src/providers/discord';
+const { GatewayIntentBits, Partials } = await import('discord.js');
 import { mediaStorageDeps } from '../src/utils/MediaStorage';
 
 type FakeDiscordListener = (...args: unknown[]) => unknown;
@@ -210,6 +211,24 @@ describe('DiscordProvider', () => {
     await ctx.forwardMessage?.('target-1');
 
     expect(send).toHaveBeenCalledWith({ content: 'hello world', allowedMentions: { parse: [] } });
+  });
+
+  test('requests the reaction intents and partials so feedback can arrive', () => {
+    // The 👍/👎 handlers were registered but discord.js never delivered the events:
+    // the intents were missing, and a reaction on a message outside the cache is
+    // dropped without `Partials.Reaction`.
+    const client = discordProviderDeps.createClient() as unknown as {
+      options: { intents: { has(bit: number): boolean }; partials: number[] };
+    };
+    expect(client.options.intents.has(GatewayIntentBits.GuildMessageReactions)).toBe(true);
+    expect(client.options.intents.has(GatewayIntentBits.DirectMessageReactions)).toBe(true);
+    expect(client.options.partials).toContain(Partials.Reaction);
+  });
+
+  test('an empty reply produces no chunk to send', () => {
+    // Discord rejects `{ content: '' }` with API error 50006, so the send loops
+    // must have nothing to iterate over.
+    expect(chunkDiscordText('')).toEqual([]);
   });
 
   test('chunks Unicode text without splitting surrogate pairs', () => {

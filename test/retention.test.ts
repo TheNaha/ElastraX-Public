@@ -404,4 +404,23 @@ describe('retention index usage', () => {
     expect(details).toContain('messages_created_at_idx');
     expect(details).not.toMatch(/^SCAN messages$/m);
   });
+
+  test('the retention predicates in use can be range-seeked, not just index-scanned', () => {
+    // The CASE above is what breaks the seek, so retention pairs it with a plain
+    // `created_at < ?`. That leading comparison is implied by the CASE (seconds
+    // are always below a millisecond cutoff) and is what turns the plan from a
+    // whole-index scan into a seek. This pins the shape the code actually runs.
+    const rawMessagePlan = sqlite
+      .query<{ detail: string }, [number, number]>(
+        `EXPLAIN QUERY PLAN
+         SELECT rowid FROM messages
+         WHERE raw_message IS NOT NULL AND created_at < ? AND
+               CASE WHEN created_at > 100000000000 THEN created_at ELSE created_at * 1000 END < ?
+         LIMIT 500`,
+      )
+      .all(NOW, NOW);
+    const details = rawMessagePlan.map(row => row.detail).join('\n');
+    expect(details).toContain('SEARCH messages USING INDEX messages_created_at_idx');
+    expect(details).not.toContain('SCAN messages');
+  });
 });

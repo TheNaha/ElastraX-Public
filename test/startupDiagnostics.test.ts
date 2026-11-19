@@ -125,6 +125,35 @@ describe('startupDiagnostics', () => {
     );
   });
 
+  test('dumpFixtures overwrites existing fixtures when force is set', async () => {
+    // `bun run fixtures:dump --force` is the documented way to replace a fixture
+    // with a fresher sample; the CLI passes it through as `force`.
+    const loadMessages = mock(() => [{ rawMessage: '{}', providerMessageId: 'm1' }]);
+    const scanCoverage = mock(async () => ({
+      uniqueByType: new Map([
+        ['conversation', { raw: { text: 'hello' }, parsed: { messageType: 'conversation' } }],
+      ]),
+      errors: [],
+      unknownSamples: [],
+      total: 1,
+    }));
+    const writeTextFile = mock(async () => {});
+
+    const summary = await withEnvironment({ ...allowDump, FIXTURE_DUMP_DIR: 'tmp-fixtures' }, async () => dumpFixtures(null, {
+      loadMessages,
+      scanCoverage,
+      logCoverage: mock(() => {}),
+      makeDirectory: mock(async () => {}),
+      writeTextFile,
+      fileExists: mock(() => true),
+      force: true,
+    } as unknown as DiagnosticsDeps));
+
+    expect(writeTextFile).toHaveBeenCalledTimes(1);
+    expect(summary?.written).toEqual(['conversation.json']);
+    expect(summary?.skipped).toEqual([]);
+  });
+
   test('dumpFixtures returns early when no rows are loaded', async () => {
     const loadMessages = mock(() => []);
     const scanCoverage = mock(async () => emptyCoverage);

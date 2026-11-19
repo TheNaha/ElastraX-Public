@@ -297,6 +297,10 @@ export class AppRuntime {
 
   async start(): Promise<void> {
     if (this.started) return;
+    // A restart that begins while a teardown is still running would re-arm the
+    // queue and re-register hooks that the running teardown then stops (and it
+    // would leave `started` true over a dead runtime). Wait for it first.
+    if (this.stopPromise) await this.stopPromise;
     this.stopRequested = false;
     this.stopped = false;
     // A previous shutdown stopped the queue permanently; without this a

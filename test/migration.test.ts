@@ -121,6 +121,20 @@ describe('Database Migrations', () => {
       expect(() => inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations'))).toThrow('refusing unsafe automatic adoption');
     });
 
+    test('an interrupted first migration leaves an empty ledger that is still migratable', async () => {
+      // Drizzle creates `__drizzle_migrations` outside the migration transaction
+      // and inserts the first row inside it. A crash in that window leaves an
+      // empty database with an empty ledger; counting the ledger as an
+      // application table turned that into a permanent "refusing unsafe
+      // automatic adoption" for a database with nothing in it.
+      sqlite.exec('CREATE TABLE __drizzle_migrations (id SERIAL PRIMARY KEY, hash text NOT NULL, created_at NUMERIC)');
+      expect(() => inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations'))).not.toThrow();
+
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      expect(inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')).pending).toHaveLength(0);
+      expect(sqlite.prepare("SELECT count(*) AS n FROM sqlite_master WHERE name = 'messages'").get()).toEqual({ n: 1 });
+    });
+
     test('upgrades a populated migration-0007 database without losing child rows', async () => {
       const migrationsDir = join(ROOT_DIR, 'drizzle/migrations');
       const partialDir = mkdtempSync(join(tmpdir(), 'elastrax-migrations-0007-'));

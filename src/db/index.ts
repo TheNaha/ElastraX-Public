@@ -245,7 +245,6 @@ function migrateHandle(
   const leaseTtlMs = options.leaseTtlMs ?? 300_000;
   const leaseName = options.leaseName === undefined ? RUNTIME_LEASE : options.leaseName;
   let migrationLease: Lease | null = null;
-  let migrationHeartbeat: ReturnType<typeof setInterval> | null = null;
 
   const promise = Promise.resolve().then(async () => {
     ensureLeaseTable(sqlite);
@@ -257,21 +256,6 @@ function migrateHandle(
         ttlMs: leaseTtlMs,
       });
       if (!migrationLease) throw new Error('Another process is migrating or holding the database');
-      // A migration lease was taken but never renewed, so a table rebuild that
-      // ran longer than the TTL let a second process pass the same acquire and
-      // run `migrate()` concurrently. The runtime lease has a heartbeat; the
-      // migration lease needs one for exactly the window it covers.
-      migrationHeartbeat = setInterval(() => {
-        const current = migrationLease;
-        if (!current) return;
-        const renewed = renewDatabaseLease(sqlite, current, leaseTtlMs);
-        if (!renewed) {
-          logger.warn({ path: handle.path }, '[DB] Migration lease was lost; another process may be migrating');
-          return;
-        }
-        migrationLease = renewed;
-      }, Math.max(5_000, Math.floor(leaseTtlMs / 3)));
-      migrationHeartbeat.unref?.();
     }
 
     try {
@@ -334,8 +318,6 @@ function migrateHandle(
         'Database schema ensured',
       );
     } finally {
-      if (migrationHeartbeat) clearInterval(migrationHeartbeat);
-      migrationHeartbeat = null;
       if (migrationLease) releaseDatabaseLease(sqlite, migrationLease);
     }
 

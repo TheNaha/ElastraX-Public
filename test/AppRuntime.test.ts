@@ -212,6 +212,99 @@ describe('AppRuntime', () => {
     expect(provider.stop).toHaveBeenCalledTimes(1);
   });
 
+  test('a second stop() waits for the teardown that is already running', async () => {
+    // `bootstrap` closes the database as soon as `stop()` resolves. When it used
+    // to answer a mid-teardown caller with a resolved promise, the handle was
+    // closed while provider.stop()/drainOutbox() were still using it.
+    let releaseStop!: () => void;
+    const provider = createProvider('whatsapp');
+    provider.stop = mock(() => new Promise<void>(resolve => { releaseStop = resolve; }));
+    const messageQueue = { enqueue: mock(() => {}), stop: mock(() => {}), resume: mock(() => {}) };
+    const webhookServer = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const scheduler = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const timers = {
+      setInterval: mock(() => ({ id: 'interval' } as FakeTimerHandle)),
+      clearInterval: mock(() => {}),
+      setTimeout: mock(() => ({ id: 'timeout' } as FakeTimerHandle)),
+      clearTimeout: mock(() => {}),
+    };
+    const runtime = new AppRuntime({
+      providers: [provider],
+      messageQueue,
+      webhookServer,
+      scheduler,
+      timers: timers as unknown as AppRuntimeDeps['timers'],
+      runStartupCoverageScan: async () => {},
+    });
+
+    await runtime.start();
+    const first = runtime.stop();
+    // Wait until the first teardown is actually inside `provider.stop()`.
+    for (let i = 0; i < 200 && provider.stop.mock.calls.length === 0; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+    expect(provider.stop).toHaveBeenCalledTimes(1);
+
+    let secondSettled = false;
+    const second = runtime.stop().then(() => { secondSettled = true; });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+
+    releaseStop();
+    await Promise.all([first, second]);
+    expect(provider.stop).toHaveBeenCalledTimes(1);
+  });
+
+  test('a restart after stop() re-arms the queue and accepts messages', async () => {
+    const provider = createProvider('whatsapp');
+    const resume = mock(() => {});
+    const enqueue = mock((_roomId: string, task: () => Promise<void>) => { void task(); return true; });
+    const messageQueue = { enqueue, stop: mock(() => {}), resume };
+    const webhookServer = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const scheduler = {
+      registerSender: mock((_platform: string, _fn: RegisteredSender) => {}),
+      start: mock(() => {}),
+      stop: mock(() => {}),
+    };
+    const timers = {
+      setInterval: mock(() => ({ id: 'interval' } as FakeTimerHandle)),
+      clearInterval: mock(() => {}),
+      setTimeout: mock(() => ({ id: 'timeout' } as FakeTimerHandle)),
+      clearTimeout: mock(() => {}),
+    };
+    const runtime = new AppRuntime({
+      providers: [provider],
+      messageQueue,
+      webhookServer,
+      scheduler,
+      timers: timers as unknown as AppRuntimeDeps['timers'],
+      runStartupCoverageScan: async () => {},
+    });
+
+    await runtime.start();
+    await runtime.stop();
+    await runtime.start();
+
+    // `resume()` runs on every start (a no-op for a queue that was never
+    // stopped), and the provider is listening again.
+    expect(resume).toHaveBeenCalledTimes(2);
+    expect(provider.start).toHaveBeenCalledTimes(2);
+    expect(provider.capturedHandler).not.toBeNull();
+    await runtime.stop();
+  });
+
   test('admits a provider that only becomes operational after boot', async () => {
     // A provider whose first start() failed still retries on its own. Once that
     // retry connects, the platform must get its outbound lanes back without a

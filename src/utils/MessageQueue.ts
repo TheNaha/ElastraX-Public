@@ -238,8 +238,9 @@ export class MessageQueue {
    * resets its own flags and rebuilds every hook). The queue kept
    * `stopped = true` for the life of the process after the first shutdown, so a
    * restart refused every inbound message (80 × 25 ms of backpressure, then a
-   * drop) and `/ready` answered 503 forever. `resume()` puts the queue back in
-   * the state its constructor produces.
+   * drop) and `/ready` answered 503 forever. This restores the runnable state the
+   * constructor produces, except for the cumulative `droppedTasks` counter, which
+   * stays because it is a lifetime metric.
    */
   resume(): void {
     if (!this.stopped) return;

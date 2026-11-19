@@ -7,7 +7,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { toError } from './errorUtils';
-import { stripPartialThinkTags, stripThinkTags } from './textUtils';
+import { stripPartialThinkTags } from './textUtils';
 import { getAIRequestConfig, getProviderCooldownMs, readBooleanEnv } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 
@@ -231,9 +231,13 @@ export function adaptChatRequest(
 
 function hasUsefulResponse(message: ChatCompletionMessage): boolean {
   if (Array.isArray(message.tool_calls) && message.tool_calls.length > 0) return true;
-  if (typeof message.refusal === 'string' && stripThinkTags(message.refusal).length > 0) return true;
+  // `stripPartialThinkTags` so a completion that ends inside an unterminated
+  // reasoning block counts as empty, the same rule the streaming path applies. A
+  // non-streamed answer of that shape has no visible text, and passing it through
+  // delivered raw chain of thought.
+  if (typeof message.refusal === 'string' && stripPartialThinkTags(message.refusal).length > 0) return true;
   const content = typeof message.content === 'string' ? message.content : message.output_text ?? '';
-  return stripThinkTags(content).length > 0;
+  return stripPartialThinkTags(content).length > 0;
 }
 
 export class ModelRouter {
