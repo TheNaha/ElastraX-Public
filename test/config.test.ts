@@ -218,6 +218,69 @@ describe("Config Validation", () => {
     expect(mockLoggerError).toHaveBeenCalledWith("TRANSCRIBE_ENDPOINT must use https unless it points to a loopback address");
   });
 
+  test("ALLOW_INSECURE_HTTP_ENDPOINTS accepts plain http for a self-hosted AI server", () => {
+    // A private-network inference server (no certificate, not internet-reachable)
+    // is a real deployment; the operator opts in explicitly and gets a warning.
+    const warn = mock(() => {});
+    const originalWarn = logger.warn;
+    logger.warn = warn;
+    try {
+      expect(() => validateEnv({
+        ...baseValidEnv,
+        AI_API_BASE_URL: "http://100.150.0.4:8080/v1",
+        ALLOW_INSECURE_HTTP_ENDPOINTS: "true",
+      })).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("ALLOW_INSECURE_HTTP_ENDPOINTS"));
+    } finally {
+      logger.warn = originalWarn;
+    }
+  });
+
+  test("ALLOW_INSECURE_HTTP_ENDPOINTS covers per-provider and transcription URLs", () => {
+    expect(() => validateEnv({
+      AI_PROVIDERS: "omnirouter",
+      AI_OMNIROUTER_BASE_URL: "http://100.150.0.4:8080/v1",
+      AI_OMNIROUTER_API_KEY: "key",
+      AI_OMNIROUTER_MODEL: "model",
+      TRANSCRIBE_ENDPOINT: "http://whisper.lan:9000/transcribe",
+      ALLOW_INSECURE_HTTP_ENDPOINTS: "true",
+    })).not.toThrow();
+
+    // …and the same configuration is refused without the opt-in.
+    expect(() => validateEnv({
+      AI_PROVIDERS: "omnirouter",
+      AI_OMNIROUTER_BASE_URL: "http://100.150.0.4:8080/v1",
+      AI_OMNIROUTER_API_KEY: "key",
+      AI_OMNIROUTER_MODEL: "model",
+      TRANSCRIBE_ENDPOINT: "http://whisper.lan:9000/transcribe",
+    })).toThrow("Environment validation failed");
+  });
+
+  test("ALLOW_INSECURE_HTTP_ENDPOINTS does not relax every endpoint", () => {
+    // The opt-out is scoped to the keys it names; the externally reachable
+    // Jellyfin URL keeps its https requirement, and URL credentials are still
+    // refused because they would be logged and shown in the dashboard.
+    expect(() => validateEnv({
+      ...baseValidEnv,
+      JELLYFIN_EXTERNAL_URL: "http://jellyfin.example.com",
+      ALLOW_INSECURE_HTTP_ENDPOINTS: "true",
+    })).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback address");
+
+    expect(() => validateEnv({
+      ...baseValidEnv,
+      AI_API_BASE_URL: "http://user:pass@100.150.0.4:8080/v1",
+      ALLOW_INSECURE_HTTP_ENDPOINTS: "true",
+    })).toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith("AI_API_BASE_URL must not contain credentials");
+  });
+
+  test("ALLOW_INSECURE_HTTP_ENDPOINTS must be true or false", () => {
+    expect(() => validateEnv({ ...baseValidEnv, ALLOW_INSECURE_HTTP_ENDPOINTS: "yes" }))
+      .toThrow("Environment validation failed");
+    expect(mockLoggerError).toHaveBeenCalledWith('ALLOW_INSECURE_HTTP_ENDPOINTS must be either "true" or "false"');
+  });
+
   test("should still allow plain http for self-hosted internal media services", () => {
     expect(() => validateEnv({
       ...baseValidEnv,

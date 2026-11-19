@@ -69,9 +69,10 @@ function validateUrl(
     // Loopback http is always allowed. `allowPlainHttp` is the narrower,
     // opt-in escape hatch for self-hosted internal services that genuinely have
     // no TLS (Jellyfin on a docker hostname, SearXNG on a LAN box). Endpoints
-    // that carry a credential - the AI base URLs and transcription - do not get
-    // it, so a typo like `http://api.openai.com/v1` is rejected instead of
-    // sending the key in cleartext.
+    // that carry a credential - the AI base URLs and transcription - only get it
+    // when the operator sets `ALLOW_INSECURE_HTTP_ENDPOINTS`, so a typo like
+    // `http://api.openai.com/v1` is rejected instead of sending the key in
+    // cleartext.
     if (url.protocol === 'http:' && !options.allowPlainHttp && !isLoopbackHost(url.hostname)) {
       errors.push(`${key} must use https unless it points to a loopback address`);
     }
@@ -98,6 +99,18 @@ function validateSecret(raw: string | undefined, key: string, errors: string[], 
 export function validateEnv(env: Env = process.env): void {
   const errors: string[] = [];
   const providerList = env.AI_PROVIDERS?.trim();
+  // Credential-bearing endpoints (AI base URLs, transcription) require https
+  // unless they point at loopback. A self-hosted inference server on a private
+  // network (`http://100.150.0.4:8080/v1`) has no certificate and is not
+  // reachable from the internet, so an operator can opt out explicitly. It has
+  // to be opt-in: the API key travels in cleartext, and nothing can tell a
+  // private address from a public one at validation time reliably enough to
+  // relax this automatically.
+  const allowInsecureHttp = validateBoolean(
+    env.ALLOW_INSECURE_HTTP_ENDPOINTS,
+    'ALLOW_INSECURE_HTTP_ENDPOINTS',
+    errors,
+  ) === true;
 
   if (!providerList) {
     const model = env.AI_MODEL_NAME?.trim();
@@ -107,7 +120,7 @@ export function validateEnv(env: Env = process.env): void {
       env.AI_API_BASE_URL || (env.AI_CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${env.AI_CF_ACCOUNT_ID.trim()}/ai/v1` : ''),
       'AI_API_BASE_URL',
       errors,
-      { required: true },
+      { required: true, allowPlainHttp: allowInsecureHttp },
     );
     const apiKey = env.AI_API_KEY?.trim() || env.AI_CF_API_TOKEN?.trim();
     if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -128,7 +141,7 @@ export function validateEnv(env: Env = process.env): void {
         env[`AI_${upper}_BASE_URL`] || (env[`AI_${upper}_CF_ACCOUNT_ID`] ? `https://api.cloudflare.com/client/v4/accounts/${env[`AI_${upper}_CF_ACCOUNT_ID`]?.trim()}/ai/v1` : ''),
         `AI_${upper}_BASE_URL`,
         errors,
-        { required: true },
+        { required: true, allowPlainHttp: allowInsecureHttp },
       );
       const apiKey = env[`AI_${upper}_API_KEY`]?.trim() || env[`AI_${upper}_CF_API_TOKEN`]?.trim();
       if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -222,7 +235,7 @@ export function validateEnv(env: Env = process.env): void {
     errors.push('AI_MAX_TOKENS_PARAM must be max_tokens or max_completion_tokens');
   }
 
-  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors);
+  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors, { allowPlainHttp: allowInsecureHttp });
   validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors, { allowPlainHttp: true });
   validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors, { allowPlainHttp: true });
   validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors, { allowPlainHttp: true });
@@ -240,5 +253,12 @@ export function validateEnv(env: Env = process.env): void {
   if (errors.length > 0) {
     for (const error of errors) logger.error(error);
     throw new Error(`Environment validation failed with ${errors.length} error(s)`);
+  }
+
+  if (allowInsecureHttp) {
+    logger.warn(
+      'ALLOW_INSECURE_HTTP_ENDPOINTS is set: plain http:// is accepted for AI provider base URLs and '
+      + 'TRANSCRIBE_ENDPOINT, so those API keys are sent in cleartext. Keep those hosts on a trusted private network.',
+    );
   }
 }
