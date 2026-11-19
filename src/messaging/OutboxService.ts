@@ -121,11 +121,22 @@ export class OutboxService {
       .get(id, platform, chatRoomId, roomKey, key, payload, availableAt, now, now);
     if (row) return String(row.id);
     const existing = sqlite
-      .query<{ id: string }, [string, string]>(
-        'SELECT id FROM message_outbox WHERE platform = ? AND idempotency_key = ?',
+      .query<{ id: string; state: string }, [string, string]>(
+        'SELECT id, state FROM message_outbox WHERE platform = ? AND idempotency_key = ?',
       )
       .get(platform, key);
     if (!existing) throw new Error('Unable to enqueue outbox message');
+    // The conflict clause only updates `pending`/`failed` rows, so a collision with
+    // a terminal row returns its id and the caller reports the delivery as
+    // accepted. That is right for `sent` (idempotent replay) and for `leased`
+    // (already in flight), but a `dead_letter` row will never be delivered again:
+    // say so, otherwise a 202 silently covers a message that was dropped.
+    if (existing.state === 'dead_letter') {
+      logger.warn(
+        { id: String(existing.id), platform, chatRoomId },
+        '[Outbox] Enqueue matched a dead-lettered row; this message will not be delivered',
+      );
+    }
     return String(existing.id);
   }
 
@@ -282,6 +293,9 @@ export class OutboxService {
    * to the raw provider room id for rows written before the room was re-keyed.
    */
   static pendingForRoom(roomKey: string, platform?: string, limit = 50): PendingOutboxRow[] {
+    // Same guard as `InboxService.findByRoom`: an empty key matched the
+    // `chat_room_id IN ('')` fallback and returned rows belonging to no room.
+    if (!roomKey) return [];
     const ids = [roomKey];
     const remote = remoteRoomIdFromKey(roomKey);
     if (remote) ids.push(remote);

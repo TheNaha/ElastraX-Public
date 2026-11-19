@@ -234,6 +234,50 @@ describe('InboxService.admit', () => {
   });
 });
 
+describe('InboxService.claim backoff', () => {
+  beforeEach(() => {
+    db.delete(messageInbox).run();
+  });
+
+  async function seedFailedInBackoff(): Promise<number> {
+    await db.insert(messageInbox).values({
+      platform: 'whatsapp', chatRoomId: 'room-backoff', eventKey: 'event-backoff', payload: '{}',
+      state: 'failed', attemptCount: 2, availableAt: Date.now() + 60_000,
+      receivedAt: RECENT_TS, createdAt: RECENT_TS, updatedAt: RECENT_TS, lastError: 'provider error',
+    }).run();
+    const row = db.select().from(messageInbox).where(eq(messageInbox.eventKey, 'event-backoff')).all()[0]!;
+    return Number(row.id);
+  }
+
+  test('a row inside its backoff window is not claimable by the normal path', async () => {
+    const id = await seedFailedInBackoff();
+    expect(InboxService.claim(id, 'worker-a')).toBe(false);
+    const row = db.select().from(messageInbox).where(eq(messageInbox.id, id)).all()[0]!;
+    expect(row.state).toBe('failed');
+    expect(row.attemptCount).toBe(2);
+  });
+
+  test('a live redelivery may preempt the backoff (allowBackoff)', async () => {
+    const id = await seedFailedInBackoff();
+    expect(InboxService.claim(id, 'worker-a', { allowBackoff: true })).toBe(true);
+    const row = db.select().from(messageInbox).where(eq(messageInbox.id, id)).all()[0]!;
+    expect(row.state).toBe('processing');
+    expect(row.attemptCount).toBe(3);
+    expect(row.leaseOwner).toBe('worker-a');
+  });
+
+  test('allowBackoff never preempts a turn that is still running', async () => {
+    await db.insert(messageInbox).values({
+      platform: 'whatsapp', chatRoomId: 'room-backoff', eventKey: 'event-running', payload: '{}',
+      state: 'processing', attemptCount: 1, availableAt: RECENT_TS,
+      receivedAt: RECENT_TS, createdAt: RECENT_TS, updatedAt: RECENT_TS,
+      leaseOwner: 'worker-live', leaseExpiresAt: Date.now() + 60_000,
+    }).run();
+    const row = db.select().from(messageInbox).where(eq(messageInbox.eventKey, 'event-running')).all()[0]!;
+    expect(InboxService.claim(Number(row.id), 'worker-b', { allowBackoff: true })).toBe(false);
+  });
+});
+
 describe('OutboxService idempotency conflicts', () => {
   const row = (id: string) => db.select().from(messageOutbox).where(eq(messageOutbox.id, id)).all()[0]!;
 

@@ -83,3 +83,39 @@ describe('MessageQueue', () => {
     expect(order).toContain('b1');
   });
 });
+
+describe('MessageQueue.resume', () => {
+  let queue: MessageQueue;
+
+  afterEach(() => {
+    queue?.stop();
+  });
+
+  test('a stopped queue refuses work and reports stopped', async () => {
+    queue = new MessageQueue(1, 60000);
+    queue.stop();
+    expect(queue.getStats().stopped).toBe(true);
+    expect(queue.enqueue('room-1', async () => {})).toBe(false);
+  });
+
+  test('resume() re-arms the queue so a restarted runtime accepts messages', async () => {
+    queue = new MessageQueue(1, 60000);
+    queue.stop();
+    queue.resume();
+
+    expect(queue.getStats().stopped).toBe(false);
+    let executed = false;
+    expect(queue.enqueue('room-1', async () => { executed = true; })).toBe(true);
+    await new Promise(r => setTimeout(r, 50));
+    expect(executed).toBe(true);
+  });
+
+  test('resume() on a queue that was never stopped is a no-op', async () => {
+    queue = new MessageQueue(1, 60000);
+    let executed = false;
+    queue.resume();
+    queue.enqueue('room-1', async () => { executed = true; });
+    await new Promise(r => setTimeout(r, 50));
+    expect(executed).toBe(true);
+  });
+});

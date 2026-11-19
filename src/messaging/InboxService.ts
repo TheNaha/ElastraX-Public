@@ -137,8 +137,23 @@ export class InboxService {
     return rows.map(row => ({ ...row, roomKey: row.roomKey ?? roomKey }));
   }
 
-  static claim(id: number, owner: string): boolean {
+  /**
+   * Claim one row for this worker.
+   *
+   * `allowBackoff` is for a *live* provider delivery of an event that is
+   * already in the ledger: `available_at` exists to space out the retries the
+   * worker schedules for itself, and applying it to a fresh delivery discarded
+   * the only redelivery path the providers actually have (WhatsApp re-emits a
+   * message after a decrypt retry). The task then returned with no log, nothing
+   * re-drove the row, and it rotted in `failed` until retention deleted it.
+   * The state and lease predicates are unchanged, so a turn that is still
+   * running is never preempted.
+   */
+  static claim(id: number, owner: string, options: { allowBackoff?: boolean } = {}): boolean {
     const now = Date.now();
+    // No backoff means "any `available_at` is eligible"; a large finite bound
+    // keeps the statement (and its parameter count) identical on both paths.
+    const backoffCutoff = options.allowBackoff ? Number.MAX_SAFE_INTEGER : now;
     const result = sqlite
       .query<never, [string, number, number, number, number, number]>(
         `UPDATE message_inbox
@@ -147,7 +162,7 @@ export class InboxService {
          WHERE id = ? AND available_at <= ?
            AND (state IN ('received', 'failed') OR (state = 'processing' AND lease_expires_at <= ?))`,
       )
-      .run(owner, now + LEASE_MS, now, id, now, now);
+      .run(owner, now + LEASE_MS, now, id, backoffCutoff, now);
     return Number(result.changes) === 1;
   }
 

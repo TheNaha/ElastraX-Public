@@ -65,6 +65,8 @@ type SenderRegistry = {
 type QueueController = {
   enqueue(roomId: string, task: (signal?: AbortSignal) => Promise<void>, options?: { silent?: boolean }): unknown;
   stop(): void;
+  /** Re-arms a queue that a previous shutdown stopped. Optional for test doubles. */
+  resume?(): void;
   closeAndDrain?(graceMs?: number): Promise<void>;
   getStats?(): Partial<MessageQueueStats>;
 };
@@ -233,13 +235,25 @@ export class AppRuntime {
   private unregisterWebhookHooks: Array<() => void> = [];
   private unregisterSenderHooks: Array<() => void> = [];
   private started = false;
-  private stopping = false;
+  /**
+   * The in-flight `stop()`, if any.
+   *
+   * `stop()` used to answer every caller that arrived while a teardown was
+   * already running with a bare `return`, i.e. a resolved promise. The second
+   * caller was `bootstrap`'s shutdown, which then closed the database and told
+   * the process to exit while `provider.stop()` and `drainOutbox()` were still
+   * using that handle. Sharing one promise makes every caller — including the
+   * interrupted-boot path in `start()` — wait for the teardown that is actually
+   * running instead of starting a second one.
+   */
+  private stopPromise: Promise<void> | null = null;
+
   /**
    * Persistent "has been shut down at least once" flag. `stop()` is idempotent:
    * once a shutdown has completed, a second `stop()` is a no-op. During boot
    * (`started` still false, `stopped` still false) a shutdown is NOT dropped —
    * `stop()` proceeds to `teardown()` so providers started mid-boot are always
-   * released. `start()` resets both flags.
+   * released. `start()` resets this and `stopRequested`, and re-arms the queue.
    */
   private stopped = false;
 
@@ -285,6 +299,10 @@ export class AppRuntime {
     if (this.started) return;
     this.stopRequested = false;
     this.stopped = false;
+    // A previous shutdown stopped the queue permanently; without this a
+    // stop/start cycle in one process refuses every inbound message and reports
+    // `queue: stopped` on /ready for the rest of the process's life.
+    this.messageQueue.resume?.();
 
     // Wait for the tool registry (core tools + plugins) before accepting messages,
     // so slash commands and LLM tool lookups never hit an empty registry.
@@ -343,7 +361,23 @@ export class AppRuntime {
         if (!ctx.signal && signal) {
           Object.defineProperty(ctx, 'signal', { value: signal, configurable: true });
         }
-        if (!InboxService.claim(admission.id, this.inboxOwner)) return;
+        // A duplicate admission means the provider delivered an event whose row
+        // is already in `failed` with a backoff: this is a live redelivery, so it
+        // may skip the backoff the worker set for itself. A first admission keeps
+        // the backoff predicate.
+        if (!InboxService.claim(admission.id, this.inboxOwner, { allowBackoff: admission.reason === 'duplicate' })) {
+          // A duplicate that loses this race is another delivery of an event the
+          // queue already holds; expected, so it is debug. A first admission that
+          // cannot be claimed means the ledger is not in the state `admit` just
+          // reported, which is worth a warning.
+          const context = { chatId: ctx.chatId, platform: ctx.platform, inboxId: admission.id };
+          if (admission.reason === 'duplicate') {
+            logger.debug(context, 'Duplicate delivery was already claimed by another task');
+          } else {
+            logger.warn(context, 'Inbox row could not be claimed; the event was not processed');
+          }
+          return;
+        }
         try {
           await this.messageHandler(ctx);
           if (!InboxService.complete(admission.id, this.inboxOwner)) {
@@ -382,11 +416,11 @@ export class AppRuntime {
     if (this.stopRequested) {
       // A shutdown landed while the providers were connecting. Unwind what came
       // up instead of continuing to bind the HTTP listener against a database
-      // the shutdown path has already closed.
+      // the shutdown path has already closed. `stop()` is shared, so this joins
+      // a teardown that is already running rather than tearing down twice
+      // against providers the first pass has stopped.
       logger.info('Startup interrupted while providers were connecting; unwinding');
-      this.started = true;
-      await this.teardown();
-      this.started = false;
+      await this.stop();
       return;
     }
     // Admission is deliberately based on `start()` resolving, NOT on
@@ -506,18 +540,22 @@ export class AppRuntime {
     // which `start()` bound the HTTP listener and connected both providers
     // against an already-closed database.
     this.stopRequested = true;
-    if (this.stopping) return;
+    // A caller that arrives mid-teardown must wait for it, not be told it is
+    // already done: bootstrap closes the database as soon as this resolves.
+    if (this.stopPromise) return this.stopPromise;
     if (!this.started && this.stopped) return;
-    this.stopping = true;
-    try {
-      await this.teardown();
-    } finally {
-      this.activeProviders = [];
-      this.started = false;
-      this.stopping = false;
-      this.stopped = true;
-      logger.info('Graceful shutdown complete');
-    }
+    this.stopPromise = (async () => {
+      try {
+        await this.teardown();
+      } finally {
+        this.activeProviders = [];
+        this.started = false;
+        this.stopped = true;
+        this.stopPromise = null;
+        logger.info('Graceful shutdown complete');
+      }
+    })();
+    return this.stopPromise;
   }
 
   /**

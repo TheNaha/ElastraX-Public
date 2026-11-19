@@ -230,6 +230,26 @@ export class MessageQueue {
     this.beginStop();
   }
 
+  /**
+   * Re-arm a stopped queue.
+   *
+   * `stop()` is permanent by design — it aborts queued and running work — but
+   * `AppRuntime` explicitly supports a stop/start cycle in one process (it
+   * resets its own flags and rebuilds every hook). The queue kept
+   * `stopped = true` for the life of the process after the first shutdown, so a
+   * restart refused every inbound message (80 × 25 ms of backpressure, then a
+   * drop) and `/ready` answered 503 forever. `resume()` puts the queue back in
+   * the state its constructor produces.
+   */
+  resume(): void {
+    if (!this.stopped) return;
+    this.stopped = false;
+    if (!this.pruneTimer) {
+      this.pruneTimer = setInterval(() => this.prune(), Math.min(2 * 60_000, this.idleTimeoutMs));
+      this.pruneTimer.unref?.();
+    }
+  }
+
   async closeAndDrain(graceMs: number = this.shutdownGraceMs): Promise<void> {
     this.beginStop();
     const tasks = Array.from(this.runningTasks.values());
