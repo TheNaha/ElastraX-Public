@@ -54,7 +54,7 @@ export class TranscribeTool extends BaseTool<TranscribeArgs> {
         typeof args.attachment_id === 'string' ? args.attachment_id : undefined,
       );
       if (!source) {
-        return t(ctx.language, 'convert.no_media');
+        return t(ctx.language, 'transcribe.no_media');
       }
 
       const transcript = await transcribeSource(source, ctx.language || 'en', fetch, process.env, {

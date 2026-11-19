@@ -1,6 +1,6 @@
 import { AuthenticationState, initAuthCreds, proto, type SignalDataTypeMap } from '@whiskeysockets/baileys';
 import { BufferJSON } from '@whiskeysockets/baileys/lib/Utils/generics';
-import { eq } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import { db, sqlite, withImmediateTransaction } from '../db';
 import { waAuthState } from '../db/schema';
 import { readdir, readFile } from 'node:fs/promises';
@@ -81,15 +81,34 @@ export const useDBAuthState = async (): Promise<{
       keys: {
         get: async <T extends keyof SignalDataTypeMap>(type: T, ids: string[]) => {
           const data = {} as { [id: string]: SignalDataTypeMap[T] };
-          await Promise.all(ids.map(async id => {
-            let value = await readData(`${type}-${id}`) as SignalDataTypeMap[T] | null;
+          if (ids.length === 0) return data;
+          // One query for the batch instead of one per id. Baileys requests
+          // session and pre-key *sets* on every send/receive, so the per-id
+          // `readData` calls made the crypto path N round trips through Drizzle
+          // for a single lookup.
+          const rows = await db
+            .select({ id: waAuthState.id, data: waAuthState.data })
+            .from(waAuthState)
+            .where(inArray(waAuthState.id, ids.map(id => `${type}-${id}`)));
+          const stored = new Map(rows.map(row => [row.id, row.data] as const));
+          for (const id of ids) {
+            const raw = stored.get(`${type}-${id}`);
+            let value: SignalDataTypeMap[T] | null = null;
+            if (raw !== undefined && raw !== null && raw !== '') {
+              try {
+                value = JSON.parse(raw, BufferJSON.reviver) as SignalDataTypeMap[T];
+              } catch (error) {
+                logger.error({ id: `${type}-${id}`, err: error }, 'Corrupt WhatsApp auth state row');
+                throw new Error(`Corrupt WhatsApp auth state row: ${type}-${id}`, { cause: error });
+              }
+            }
             if (type === 'app-state-sync-key' && value) {
               value = proto.Message.AppStateSyncKeyData.fromObject(
                 value as Record<string, unknown>,
               ) as unknown as SignalDataTypeMap[T];
             }
             data[id] = value as SignalDataTypeMap[T];
-          }));
+          }
           return data;
         },
         set: async data => {

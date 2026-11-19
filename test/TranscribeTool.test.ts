@@ -88,9 +88,12 @@ describe('TranscribeTool', () => {
 
   test('should return transcription when endpoint is configured', async () => {
     process.env.TRANSCRIBE_ENDPOINT = 'https://api.example.com/transcribe';
-    global.fetch = mock(async () => ({
-      ok: true,
-      json: async () => ({ text: 'hello world' }),
+    // A real Response always carries headers and a body; the transcription client
+    // reads the body through the shared bounded reader, so the double has to
+    // model a response rather than just `json()`.
+    global.fetch = mock(async () => new Response(JSON.stringify({ text: 'hello world' }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
     })) as unknown as typeof fetch;
 
     const tool = new TranscribeTool();

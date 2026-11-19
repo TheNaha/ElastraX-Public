@@ -367,7 +367,7 @@ export class MediaBindTool extends BaseTool {
   private async handleStatus(ctx: MessageContext): Promise<ToolResult> {
     const bindings = await MediaService.bindingService.getBindings(ctx.senderId, ctx.platform);
     if (bindings.length === 0) {
-      return t(ctx.language, 'media.no_binding_status') || 'You don\'t have any linked media accounts. Use connect to link your account.';
+      return t(ctx.language, 'media.no_binding_status');
     }
 
     const lines = bindings.map((b) => {
@@ -376,7 +376,7 @@ export class MediaBindTool extends BaseTool {
         try {
           const m = JSON.parse(b.metadata);
           if (m.isAdmin) {
-            meta = ' 👑 ' + (t(ctx.language, 'media.admin_label') || 'Admin');
+            meta = ' 👑 ' + t(ctx.language, 'media.admin_label');
           }
         } catch (error) {
           log.debug({ err: error }, 'Failed to parse binding metadata');
@@ -396,6 +396,6 @@ export class MediaBindTool extends BaseTool {
       ? visibleSubs.map((s) => ` • ${s.chatRoomId} (${s.serviceType})`).join('\n\n')
       : '_None_';
 
-    return `${t(ctx.language, 'media.status_header') || '📋 *Linked Accounts:*'}\n${lines.join('\n\n')}\n\n${t(ctx.language, 'media.status_notify_header') || '📬 *Notification Rooms:*'}\n${subLines}`;
+    return `${t(ctx.language, 'media.status_header')}\n${lines.join('\n\n')}\n\n${t(ctx.language, 'media.status_notify_header')}\n${subLines}`;
   }
 }

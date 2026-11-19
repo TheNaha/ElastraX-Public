@@ -224,9 +224,11 @@ export class AuthService {
         const resolved = await IdentityService.getJidsAndRoles(userId, chatId, platform);
         userIds = resolved.jids;
         roleRows = resolved.roles;
-        if (senderPn && !userIds.includes(senderPn)) {
-          userIds.push(senderPn);
-        }
+        // No extra `senderPn` entry is appended here: `getJidsAndRoles` already
+        // queries `user_roles` for every JID the identity maps to, so adding the
+        // PN afterwards changed nothing but the debug log (and read like a
+        // fallback that worked). Owner matching against `senderPn` is separate and
+        // happens above.
       } catch (err) {
         logger.warn({ err, userId, senderPn }, '[AuthService] Identity role lookup failed');
         userIds = senderPn && senderPn !== userId ? [userId, senderPn] : [userId];

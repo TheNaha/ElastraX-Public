@@ -93,6 +93,12 @@ function buildConvertArgs(
   }
 
   if (fps) {
+    // The schema pattern is the only guard on every other path; `resolution` and
+    // `quality` are also checked here, and `fps` is interpolated straight into an
+    // ffmpeg filter chain. Reject anything that is not a sane frame rate.
+    if (!/^\d{1,3}$/.test(fps) || Number(fps) < 1 || Number(fps) > 240) {
+      throw new Error('fps must be an integer between 1 and 240.');
+    }
     filters.push(`fps=${fps}`);
   }
 

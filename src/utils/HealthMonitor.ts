@@ -104,10 +104,6 @@ export class HealthMonitor {
     return this.started;
   }
 
-  pendingChecks(): number {
-    return this.inFlight.size;
-  }
-
   private schedule(name: string, check: HealthCheck): void {
     const run = () => {
       if (this.inFlight.has(name)) return;

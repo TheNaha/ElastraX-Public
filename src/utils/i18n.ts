@@ -292,6 +292,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     // Voice Transcription
     'transcribe.starting': '🎤 Transcribing voice note...',
     'transcribe.not_supported': '❌ Voice transcription endpoint is not configured.',
+    'transcribe.no_media': '❌ No audio to transcribe — attach a voice note, or reply to one and try again.',
     'transcribe.error': '❌ Transcription failed: {msg}',
     'transcribe.result': '🎤 *Voice note transcript:*\n\n{text}',
 
@@ -710,6 +711,7 @@ export const translations: Record<Locale, Record<string, string>> = {
     // Voice Transcription
     'transcribe.starting': '🎤 Mentranskrip pesan suara...',
     'transcribe.not_supported': '❌ Endpoint transkripsi suara belum dikonfigurasi.',
+    'transcribe.no_media': '❌ Tidak ada audio untuk ditranskripsi — lampirkan pesan suara, atau balas salah satunya lalu coba lagi.',
     'transcribe.error': '❌ Transkripsi gagal: {msg}',
     'transcribe.result': '🎤 *Transkripsi pesan suara:*\n\n{text}',
 

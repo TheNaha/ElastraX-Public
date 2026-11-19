@@ -1,6 +1,10 @@
 import { createHash } from 'crypto';
 import { logger } from './logger';
 import { getErrorMessage } from './errorUtils';
+import { readResponseTextBounded } from './httpBody';
+
+/** One embedding response: 32 inputs x 1536 floats is ~1 MB of JSON at most. */
+const MAX_EMBEDDING_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const log = logger.child({ module: 'EmbeddingService' });
 const CACHE_MAX_ENTRIES = 500;
@@ -169,10 +173,16 @@ export class EmbeddingService {
       signal: AbortSignal.timeout(config.timeoutMs),
     });
     if (!response.ok) {
-      throw new Error(`Embeddings API responded ${response.status}: ${(await response.text()).slice(0, 200)}`);
+      // Bounded like every other response in the codebase: `.text()` buffers the
+      // whole body before the slice, so a large error page was read in full.
+      const detail = await readResponseTextBounded(response, 2_048, 'Embeddings error response')
+        .catch(() => '');
+      throw new Error(`Embeddings API responded ${response.status}: ${detail.slice(0, 200)}`);
     }
 
-    const json = await response.json() as unknown;
+    const json = JSON.parse(
+      await readResponseTextBounded(response, MAX_EMBEDDING_RESPONSE_BYTES, 'Embeddings response'),
+    ) as unknown;
     const data = typeof json === 'object' && json !== null && 'data' in json
       ? (json as { data?: unknown }).data
       : null;

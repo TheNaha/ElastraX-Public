@@ -4,6 +4,7 @@ import { resolveTargetMedia } from './mediaResolve';
 import { detectAudioMimeType, isAudioMagic, readMediaBuffer } from './MediaStorage';
 import { NORMAL_MEDIA_MAX_BYTES, normalizeMime } from '../providers/media';
 import { runBoundedProcess, type BoundedProcessOptions } from '../providers/process';
+import { readResponseTextBounded } from './httpBody';
 
 type TranscriptionResponse = {
   text?: string;
@@ -87,7 +88,15 @@ export async function requestTranscription(
     signal,
   });
   if (!response.ok) throw new Error(`Transcription request failed with HTTP ${response.status}.`);
-  const data = await response.json() as TranscriptionResponse;
+  // `response.json()` buffered the whole body first: the timeout bounds time, not
+  // size, so a misconfigured or hostile endpoint could allocate without limit.
+  const raw = await readResponseTextBounded(response, 1024 * 1024, 'Transcription response');
+  let data: TranscriptionResponse;
+  try {
+    data = JSON.parse(raw) as TranscriptionResponse;
+  } catch {
+    throw new Error('Transcription endpoint returned a non-JSON body.');
+  }
   const transcript = String(data.text || data.transcript || '').trim();
   if (!transcript) throw new Error('Empty transcript');
   return transcript;

@@ -37,9 +37,12 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
     return isTtsConfigured(readTtsConfig());
   }
 
-  /** Whether synthesis can actually run. */
+  /**
+   * Alias for {@link isEnabled} so a caller can ask the instance directly. It
+   * used to repeat the body, which meant the two answers could drift.
+   */
   isConfigured(): boolean {
-    return isTtsConfigured(readTtsConfig());
+    return this.isEnabled();
   }
 
   get definition(): ToolDefinition {
@@ -67,7 +70,7 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
     };
   }
 
-  async execute(args: SpeakArgs, ctx: MessageContext): Promise<string> {
+  async execute(args: SpeakArgs, ctx: MessageContext, signal?: AbortSignal): Promise<string> {
     const config = readTtsConfig();
     // Defence in depth. The registry already withholds this tool when
     // unconfigured, but config is read per call, so a key removed after load
@@ -84,7 +87,11 @@ export class SpeakTool extends BaseTool<SpeakArgs> {
       const audio = await synthesizeSpeech({
         text,
         ...(typeof args.voice === 'string' && args.voice ? { voice: args.voice } : {}),
-        signal: ctx.signal,
+        // The tool-timeout controller, not the caller's signal: both invocation
+        // paths pass a fresh one, and forwarding `ctx.signal` instead let a
+        // timed-out `/speak` keep synthesising (and transcoding) after the user
+        // had already been told it failed.
+        signal: signal ?? ctx.signal,
         config,
       });
 
