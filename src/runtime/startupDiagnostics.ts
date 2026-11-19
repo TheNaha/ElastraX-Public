@@ -17,6 +17,16 @@ type StartupDiagnosticsDeps = {
   makeDirectory?: typeof mkdir;
   writeTextFile?: typeof writeFile;
   fileExists?: typeof existsSync;
+  /** Overwrite existing fixture files (the CLI's `--force`). */
+  force?: boolean;
+};
+
+/** What a dump wrote, so the CLI can report it without a second implementation. */
+export type FixtureDumpSummary = {
+  fixtureDir: string;
+  coverage: CoverageResult;
+  written: string[];
+  skipped: string[];
 };
 
 
@@ -51,7 +61,7 @@ export function stripFixtureBlobs(raw: unknown): unknown {
 export async function dumpFixtures(
   botUserId: string | null,
   deps: StartupDiagnosticsDeps = {},
-): Promise<void> {
+): Promise<FixtureDumpSummary | null> {
   if (process.env.NODE_ENV === 'production' || process.env.ALLOW_FIXTURE_DUMP !== 'true') {
     throw new Error('Fixture dumping is disabled outside an explicit development environment');
   }
@@ -68,7 +78,7 @@ export async function dumpFixtures(
   const rows = loadMessages();
   if (rows.length === 0) {
     logger.info('[FixtureDumper] No messages in database, skipping fixture dump.');
-    return;
+    return null;
   }
 
   const result = await scanCoverage(rows, botUserId);
@@ -80,15 +90,20 @@ export async function dumpFixtures(
     const code = getErrorCode(err);
     if (code === 'EACCES' || code === 'EROFS') {
       logger.warn({ path: fixtureDir, code }, '[FixtureDumper] Fixture directory is not writable; skipping fixture dump.');
-      return;
+      return null;
     }
     throw err;
   }
 
-  let written = 0;
+  const written: string[] = [];
+  const skipped: string[] = [];
   for (const [messageType, { raw }] of result.uniqueByType) {
-    const filepath = join(fixtureDir, `${messageType}.json`);
-    if (fileExists(filepath)) continue;
+    const filename = `${messageType}.json`;
+    const filepath = join(fixtureDir, filename);
+    if (fileExists(filepath) && !deps.force) {
+      skipped.push(filename);
+      continue;
+    }
 
     try {
       await writeTextFile(filepath, JSON.stringify(stripFixtureBlobs(raw), null, 2), { encoding: 'utf-8', mode: 0o600 });
@@ -96,20 +111,22 @@ export async function dumpFixtures(
       const code = getErrorCode(err);
       if (code === 'EACCES' || code === 'EROFS') {
         logger.warn({ path: filepath, code }, '[FixtureDumper] Cannot write fixture file; skipping remaining fixture dump.');
-        return;
+        break;
       }
       throw err;
     }
 
-    logger.info(`[FixtureDumper] Wrote ${messageType}.json`);
-    written++;
+    logger.info(`[FixtureDumper] Wrote ${filename}`);
+    written.push(filename);
   }
 
-  logger.info(`[FixtureDumper] Done. Wrote ${written} new fixture(s), skipped ${result.uniqueByType.size - written} existing.`);
+  logger.info(`[FixtureDumper] Done. Wrote ${written.length} new fixture(s), skipped ${skipped.length} existing.`);
 
   if (result.errors.length > 0 || result.unknownSamples.length > 0) {
     logger.warn('[FixtureDumper] ⚠  Parser gaps detected — see logs above. Run "bun run fixtures:dump" for a full report.');
   }
+
+  return { fixtureDir, coverage: result, written, skipped };
 }
 
 export async function runStartupCoverageScan(

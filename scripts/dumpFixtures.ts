@@ -4,116 +4,66 @@
  *
  * Standalone script:  bun run fixtures:dump [--force]
  *
- * Reads every `raw_message` from the SQLite database, runs each through
+ * Reads recent WhatsApp `raw_message` rows, runs each through
  * `parseWhatsAppMessage()`, then writes one representative JSON fixture per
- * unique messageType to `test/fixtures/wa_messages/<messageType>.json`.
+ * unique messageType to `test/fixtures/wa_messages/<messageType>.json`
+ * (or `FIXTURE_DUMP_DIR`).
  *
- * Rules for overwriting an existing fixture:
- *  - Only overwrite if the new sample has no large binary blobs
- *    (jpegThumbnail, firstFrameSidecar, mediaKey, fileSha256 stripped from
- *    the output so fixtures stay readable in the repo).
- *  - Never overwrite hand-crafted fixtures that already have no such blobs,
- *    unless the existing file's messageType no longer matches.
- *
- * After writing, it prints a table to stdout showing which types are covered
- * and which raised errors, so you know where the parser has gaps.
+ * The dumping itself is `dumpFixtures()` in `src/runtime/startupDiagnostics.ts`,
+ * which owns the production guard, the bounded row read, the 0700/0600 modes and
+ * the unwritable-directory handling. This file only parses arguments and prints
+ * the coverage report; it used to carry a second, unbounded implementation that
+ * ignored `FIXTURE_DUMP_DIR` and wrote world-readable files.
  */
 
-import { db } from '../src/db';
-import { messages } from '../src/db/schema';
-import { scanParserCoverage } from '../src/utils/parserCoverage';
-import { stripBlobs } from '../src/utils/rawMessage';
-import { writeFile, mkdir } from 'fs/promises';
-import { join, resolve } from 'path';
-import { existsSync } from 'fs';
+import { dumpFixtures } from '../src/runtime/startupDiagnostics';
 
-// ─── Config ──────────────────────────────────────────────────────────────────
-const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const FORCE = process.argv.includes('--force');
 
-// stripBlobs imported from src/utils/rawMessage (canonical).
-
-async function main() {
-  // Same guard as startupDiagnostics.dumpFixtures. Without it this script had no
-  // protection at all, so `bun run scripts/dumpFixtures.ts` in production copied
-  // real WhatsApp message payloads out of the live database and into the repo.
-  // The npm script sets both variables, but the guard has to live here: the file
-  // is directly invokable.
-  if (process.env.NODE_ENV === 'production' || process.env.ALLOW_FIXTURE_DUMP !== 'true') {
-    throw new Error('Fixture dumping is disabled outside an explicit development environment');
-  }
-
+async function main(): Promise<void> {
   console.log('📦  ElastraX fixture dumper\n');
-  console.log('Reading messages from database...');
-
-  const rows = db.select({
-    rawMessage: messages.rawMessage,
-    providerMessageId: messages.providerMessageId,
-  }).from(messages).all();
-
-  console.log(`Found ${rows.length} rows. Scanning...\n`);
-
-  const result = await scanParserCoverage(rows, null /* offline — no bot JID */);
-
-  await mkdir(FIXTURE_DIR, { recursive: true });
-
-  // ── Write fixtures ──────────────────────────────────────────────────────
-  const written: string[] = [];
-  const skipped: string[] = [];
-
-  for (const [messageType, { raw }] of result.uniqueByType) {
-    const filename = `${messageType}.json`;
-    const filepath = join(FIXTURE_DIR, filename);
-    const clean = stripBlobs(raw);
-
-    // Don't overwrite if already exists AND looks externally managed (has no URL field)
-    if (existsSync(filepath) && !FORCE) {
-      skipped.push(filename);
-      continue;
-    }
-
-    await writeFile(filepath, JSON.stringify(clean, null, 2), 'utf-8');
-    written.push(filename);
+  const summary = await dumpFixtures(null, { force: FORCE });
+  if (!summary) {
+    console.log('No fixture candidates found (nothing dumped).');
+    return;
   }
 
-  // ── Print report ─────────────────────────────────────────────────────────
-  console.log('─'.repeat(60));
-  console.log('COVERAGE REPORT');
-  console.log('─'.repeat(60));
-  console.log(`Total messages scanned:  ${result.total}`);
-  console.log(`Unique message types:    ${result.uniqueByType.size}`);
-  console.log(`Parse errors:            ${result.errors.length}`);
-  console.log(`Unknown type samples:    ${result.unknownSamples.length}`);
-  console.log('');
+  const { coverage, written, skipped, fixtureDir } = summary;
+  const bar = '─'.repeat(60);
+  console.log(`\n${bar}\nCOVERAGE REPORT\n${bar}`);
+  console.log(`Total messages scanned:  ${coverage.total}`);
+  console.log(`Unique message types:    ${coverage.uniqueByType.size}`);
+  console.log(`Parse errors:            ${coverage.errors.length}`);
+  console.log(`Unknown type samples:    ${coverage.unknownSamples.length}\n`);
 
   console.log('✅  Types covered:');
-  for (const type of [...result.uniqueByType.keys()].sort()) {
+  for (const type of [...coverage.uniqueByType.keys()].sort()) {
     const status = written.includes(`${type}.json`) ? '  [NEW]  ' : ' [EXIST] ';
     console.log(`  ${status} ${type}`);
   }
 
-  if (result.errors.length > 0) {
+  if (coverage.errors.length > 0) {
     console.log('\n❌  Parse errors (first 5):');
-    for (const { error, raw } of result.errors.slice(0, 5)) {
+    for (const { error, raw } of coverage.errors.slice(0, 5)) {
       const key = (raw as { key?: { id?: unknown } } | null)?.key;
       const id = typeof key?.id === 'string' ? key.id : '?';
       console.log(`  [msg ${id}] ${error.message}`);
     }
   }
 
-  if (result.unknownSamples.length > 0) {
+  if (coverage.unknownSamples.length > 0) {
     console.log('\n⚠️   Unknown type samples (first 5):');
-    for (const { raw } of result.unknownSamples.slice(0, 5)) {
+    for (const { raw } of coverage.unknownSamples.slice(0, 5)) {
       const body = (raw as { message?: Record<string, unknown> } | null)?.message;
       const keys = Object.keys(body ?? {}).join(', ') || '(no message body)';
       console.log(`  keys: ${keys}`);
     }
   }
 
-  console.log('\n─'.repeat(60));
+  console.log(`\n${bar}`);
   if (written.length > 0) {
-    console.log(`\n📁  Wrote ${written.length} new fixture(s) to ${FIXTURE_DIR}`);
-    written.forEach(f => console.log(`    + ${f}`));
+    console.log(`\n📁  Wrote ${written.length} fixture(s) to ${fixtureDir}`);
+    written.forEach(file => console.log(`    + ${file}`));
   }
   if (skipped.length > 0) {
     console.log(`\n⏭   Skipped ${skipped.length} existing fixture(s) (use --force to overwrite)`);

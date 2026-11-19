@@ -158,7 +158,7 @@ describe('startupDiagnostics', () => {
         scanCoverage,
         makeDirectory,
         writeTextFile,
-      } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+      } as unknown as DiagnosticsDeps)).resolves.toBeNull();
     });
     expect(writeTextFile).not.toHaveBeenCalled();
   });
@@ -184,7 +184,7 @@ describe('startupDiagnostics', () => {
         makeDirectory: mock(async () => {}),
         writeTextFile,
         fileExists: mock(() => false),
-      } as unknown as DiagnosticsDeps)).resolves.toBeUndefined();
+      } as unknown as DiagnosticsDeps)).resolves.toMatchObject({ written: [], skipped: [] });
     });
 
     expect(writeTextFile).toHaveBeenCalledTimes(1);
