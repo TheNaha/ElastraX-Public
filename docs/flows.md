@@ -7,6 +7,7 @@ ElastraX supports multi-step interactive flows (for example collecting several i
 - `src/core/FlowHandler.ts` owns flow state. A `UserSession` holds a map of `FlowSession` objects keyed by flow id, plus an `activeFlow` pointer.
 - Each `FlowSession` carries `flow`, `step`, `data`, `expiresAt`, and optional `roomId`/`platform`/`version`.
 - Processors are registered by name via `FlowHandler.register(flowName, processor)`. `src/flows/registry.ts` registers the built-in processors on startup through `registerFlows()` / `safeRegisterFlows()`.
+- A stale or unhandled session is announced to the user *before* it is cleared (and `/cancel` reacts, replies, then clears), so a failed reply cannot leave the session gone while the user's step text is reprocessed as a new message.
 - State is loaded from the `flow_sessions` table at initialization and pruned of expired entries; surviving sessions are written back.
 - Concurrency is serialized per room/user through a promise lock; sessions are versioned so a stale writer raises `FlowVersionConflictError`.
 - A processor that throws keeps its session for two retries; the third consecutive failure releases that flow so a broken step cannot swallow every later message until the TTL expires.

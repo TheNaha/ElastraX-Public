@@ -116,7 +116,7 @@ Unset → tool absent from `/menu`, absent from the model's tool list, and its s
 
 ### Binding-gated tools
 
-Media tools (`media_search`, `media_request`, `media_library`) declare `requiresBinding`. The agent resolves sender binding (`ServiceBindingService`) only when a binding-gated tool is registered; an unbound user is never offered tools it cannot use.
+Media tools (`media_search`, `media_request`, `media_library`) declare `requiresBinding`. One predicate decides visibility everywhere — `isToolAccessible` in `src/tools/access.ts`, which the registry, `/menu`, `/find_tools` and the slash listing all call — so an unbound user is never shown a tool the agent would refuse. The agent resolves the sender's binding (`ServiceBindingService`, via `resolveSenderHasBinding` in `src/utils/toolAccess.ts`) only when a binding-gated tool is registered, and publishes it as `ctx.hasBinding`; `/menu` and `/find_tools` run before that on the slash path, so they fall back to the same lookup when the flag is absent. A failed binding read is treated as "unbound": a database problem hides the media tools rather than exposing them.
 
 ### Per-tool parameters
 

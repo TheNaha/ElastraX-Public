@@ -64,6 +64,8 @@ The `/admin/api/*` views are read-only operator surfaces:
 
 Every mutating request requires the CSRF token in `x-admin-csrf`.
 
+An action answers `200 {"ok":true,…}`; a rejected action answers `400 {"ok":false,"message":"…"}` with a human-readable reason, which the dashboard shows instead of the bare status. Unexpected exceptions are caught at the action boundary and returned in the same `{ok:false,message}` shape, so a handler failure is still explained in the UI.
+
 ## Request bounds
 
 The dashboard shares a listener that sets no `maxRequestBodySize`, so its own handlers bound every body before parsing:
@@ -72,7 +74,7 @@ The dashboard shares a listener that sets no `maxRequestBodySize`, so its own ha
 - `POST /admin/api/action/*` reads at most **64 KiB**;
 - oversized bodies fail with `413`, a stalled read with `408`, and a non-object or malformed JSON body with `400`.
 
-Login attempts are throttled per client IP (5 attempts per 60 s, bounded table), and at most 32 sessions are kept; the oldest is evicted on login. A rejected mutation also needs the request to be same-origin, a valid session, and the CSRF header.
+Login attempts are throttled per client IP (5 attempts per 60 s, bounded table; expired buckets are swept at most once per window, so a full table cannot turn every login POST into a 10 000-entry walk), and at most 32 sessions are kept; the oldest is evicted on login. A rejected mutation also needs the request to be same-origin, a valid session, and the CSRF header. `Host` and the first `X-Forwarded-Host` value are both accepted as origin candidates, so a reverse proxy that rewrites `Host` does not break every action.
 
 ## Deployment notes
 

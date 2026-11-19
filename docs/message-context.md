@@ -19,8 +19,8 @@
 | `isBotMentioned` | `boolean` | yes | True if the bot was explicitly mentioned. Providers calculate this from platform-specific mention syntax/IDs. |
 | `receivedAt` | `number` | no | Unix timestamp (ms) of receipt. Used by `PingTool` for round-trip latency. |
 | `language` | `string` | no | Active language for this room (`'en'` \| `'id'`). Populated by the agent before invoking tools. Defaults to `'en'`. |
-| `messageType` | `string` | yes | Canonical Baileys message type (e.g. `imageMessage`, `audioMessage`, `conversation`). View-once messages are unwrapped to their inner type. |
-| `hasMedia` | `boolean` | yes | True if the message contains image/video/audio/document. |
+| `messageType` | `string` | yes | Shared message-type vocabulary (`imageMessage`, `videoMessage`, `audioMessage`, `documentMessage`, `stickerMessage`, `conversation`, …). Each provider maps its own payload onto it (`messageTypeOf` in `src/providers/telegram.ts` and `whatsappParser.ts`). View-once messages are unwrapped to their inner type; an unrecognised payload is `unknown`. |
+| `hasMedia` | `boolean` | yes | True when the message carries image, video, audio, document or sticker media. Telegram `animation` (GIF) and `video_note` (round video) count as video; Telegram and WhatsApp stickers count as media, and Discord stickers (`message.stickers`, which arrive outside `attachments`) are converted into attachment descriptors. |
 | `mediaPath` | `string` | no | Local cached path of downloaded media. |
 | `mimeType` | `string` | no | MIME type of the media. |
 | `mediaReady` | `Promise<void>` | yes | Resolves once lazy media acquisition has completed. Constructing a context does not start downloads. |

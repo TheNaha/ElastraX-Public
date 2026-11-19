@@ -45,6 +45,8 @@ Snapshots are missing for some old migrations, and drizzle-kit diffs against the
 
 `src/db/retention.ts` deletes terminal and stale inbox/outbox rows, sent one-off reminders, flow sessions, and old messages according to the `RETENTION_*` knobs. Independently of those knobs, it clears `messages.raw_message`, `media_path`, and `mime_type` for rows older than 7 days. It defaults to dry-run. `scripts/runRetention.ts` exposes `--apply`. Retention runs on startup and every 24 h via AppRuntime (only when a durable messaging store is present), and overlaps with the hourly outbox prune; deletes are idempotent.
 
+Timestamps are read through a mixed-unit normalisation (`CASE WHEN ts > 100000000000 THEN ts ELSE ts * 1000 END`), because rows written before the unit clean-up are still stored in seconds. A cutoff wrapped in that expression cannot be range-seeked, so each predicate also carries the plain `column < ?` comparison the normalised form implies in both units (seconds are always below a millisecond cutoff), and the cutoff is bound twice. Together with migration `0026_retention_indexes` (`messages(created_at)`, `reminders(created_at)`, both in `REQUIRED_INDEXES`) this turns a full scan into an index range seek for `messages`, `raw_message`, `reminders` and `flow_sessions`. `message_inbox`/`message_outbox` still evaluate their cutoff as a filter rather than a range seek, because `COALESCE(completed_at|sent_at, updated_at)` spans two columns; changing that would change which timestamp decides expiry.
+
 | Knob | Default | Purpose |
 |---|---|---|
 | `RETENTION_DRY_RUN` | `true` | Dry-run unless `false`. |
@@ -76,7 +78,7 @@ Snapshots are missing for some old migrations, and drizzle-kit diffs against the
 | `bun run db:room-keys` | `scripts/dbRoomKeys.ts` | Read-only report of canonical room-key coverage and conflicts. |
 | `bun run db:room-keys:record` | `scripts/dbRoomKeys.ts --record-conflicts` | Record conflict audit rows. |
 | `bun run db:embed` | `scripts/backfillEmbeddings.ts` | Re-embed stored memories after changing the embedding model. |
-| `bun run db:retention` | `scripts/runRetention.ts` | Dry-run retention (default). Add `-- --apply` to delete. |
+| `bun run db:retention` | `scripts/runRetention.ts` | Dry-run retention (default). Add `-- --apply` to delete. Refuses a path with no database file or one missing the retention tables, so a mistyped `ELASTRAX_DB_PATH` cannot create or target the wrong database. |
 
 ## Verification
 

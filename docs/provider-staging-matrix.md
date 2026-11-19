@@ -3,7 +3,7 @@
 Two layers of provider verification exist, and they are deliberately separate:
 
 1. **Automated, hermetic, credential-free** — `scripts/providerStagingHarness.ts` plus `test/ProviderStagingHarness.test.ts`. It exercises the provider contract with in-memory fakes. It runs in CI, proves nothing about the network, and is not a substitute for a real account.
-2. **Manual, real-provider** — this document. Every cell below must be executed by a human against real WhatsApp and Discord accounts, with the recorded evidence attached to the release record.
+2. **Manual, real-provider** — this document. Every cell below must be executed by a human against real WhatsApp, Discord and Telegram accounts, with the recorded evidence attached to the release record.
 
 Nothing in this document may be automated with production credentials, and no cell may be marked passed from the fake harness alone.
 
@@ -69,7 +69,26 @@ Record for every cell: date, operator, commit SHA, image digest or `bun.lock` ha
 | DC-11 | Unsupported operations | Call group promote/demote through the Discord adapter | `UNSUPPORTED` error with a clear message; no partial state change | Log slice and the error code surfaced to the caller |
 | DC-12 | Not-configured degradation | Start the bot with `DISCORD_BOT_TOKEN` unset or set to the dummy placeholder | Status `not_configured`, warning logged, WhatsApp still serves traffic, `/ready` reflects the remaining provider | Startup log and `/ready` sample |
 
-### C. Cross-cutting
+### C. Telegram
+
+Requires `TELEGRAM_BOT_TOKEN` plus `BOT_OWNER_TELEGRAM_ID`; a Telegram user id is a numeric snowflake and can never match `BOT_OWNER_JID`.
+
+| ID | Scenario | Procedure | Expected result | Evidence |
+|----|----------|-----------|-----------------|----------|
+| TG-1 | Optional provider off | Start with `TELEGRAM_BOT_TOKEN` unset | Status `not_configured`, an informational log line, no crash, and the other providers serve traffic | Startup log and `/ready` sample |
+| TG-2 | Polling and reconnect | Start the bot, then interrupt the network path to the Bot API for longer than one poll and restore it | Log shows the poll error and `[Telegram] Scheduling reconnect` at the doubling `1500 ms → 300000 ms` backoff; status returns to `running` without a restart; queued updates are processed once, not twice | Log slice with both timestamps and the deduplicated message |
+| TG-3 | Duplicate event | Deliver the same update twice (for example by replaying `getUpdates` with the same offset in a scratch bot) | One reply; the inbox suppresses the second delivery | Log slice showing both deliveries and a single reply |
+| TG-4 | Owner seeding and group admin | With `BOT_OWNER_TELEGRAM_ID` set, use three accounts in a group: a plain member, a Telegram group administrator, and the owner; run an owner-only command from each | Owner succeeds; the group administrator holds `admin` (from `getChatMember` status `creator`/`administrator`) but not `owner`; the member is denied; DM never grants native admin | Chat transcript for all three plus the resolved role sets |
+| TG-5 | Media coverage | Send a photo with caption, a GIF (`animation`), a round video (`video_note`), a voice note, an audio file, a sticker and a document | Every one of them sets `hasMedia`, produces an attachment descriptor, and is downloadable; a caption-less GIF or round video still gets a turn instead of being dropped | Descriptor log per message and chat transcript |
+| TG-6 | Media limits | Send a file over the 50 MiB bot-upload limit, and one over the hard media cap | Outbound upload over the limit fails with a clear `UNSUPPORTED` message; an inbound attachment over the hard cap is `skipped` in the descriptor and never downloaded | Error log, descriptor log, and `du -sh` of the media directory |
+| TG-7 | Long reply and edits | Ask for an answer well over 4 096 characters, with `AI_STREAMING=true` | Answer split into ordered chunks, none over 4 096 UTF-16 units (emoji counted as two), no split surrogate pair; streamed edits replace the head and post the remainder instead of failing with "message is too long" | Chat transcript plus the chunk/edit log |
+| TG-8 | Reply target deleted | Ask the bot to reply, and delete your message in the seconds before delivery | The first chunk is re-sent without `reply_parameters` and the answer arrives; no lost reply | Log line "Reply target was deleted" and the chat transcript |
+| TG-9 | Reaction feedback | React 👍 then 👎 to two bot answers, and retract one | `elastrax_feedback_total` / `elastrax_feedback_retracted_total` move (this requires the explicit `message_reaction` update subscription); the JSONL eval log receives the entries when enabled | `/metrics` samples before/after and the log lines |
+| TG-10 | Quoted bot message | Reply to a bot message with a question, and ask the bot to delete its previous reply | The quoted context is attributed to the bot (`key.fromMe`), so reply-to-bot triggering and `/delete` behave as on WhatsApp | Chat transcript plus the quoted-context log |
+| TG-11 | Unsupported group operations | Attempt promote/demote or add-member through the Telegram adapter | `UNSUPPORTED` error with a clear message; ban-then-unban removal, invite links and leave still work | Error code surfaced to the caller and the membership diff |
+| TG-12 | Graceful shutdown | `docker compose stop` during a reply | The poller stops, in-flight work finishes or is cancelled with a lifecycle error, exit code 0, and a restart needs no re-pairing | Stop log, exit code, and the following start log |
+
+### D. Cross-cutting
 
 | ID | Scenario | Procedure | Expected result | Evidence |
 |----|----------|-----------|-----------------|----------|

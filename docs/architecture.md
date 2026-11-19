@@ -6,15 +6,18 @@ ElastraX is designed with a domain-driven architecture that completely decouples
 
 `src/index.ts` is the only executable entry point (`bun run start`). `bootstrap()` runs in this order:
 
-1. `validateEnv()` — every environment error is logged, then startup throws.
-2. `ensureDatabaseSchema()` — migration-state check, forward migrations, schema-contract validation, schema fingerprint, runtime lease (see [Database](./database.md)).
-3. `FlowHandler.initialize()` — load persisted flow sessions and prune expired ones.
-4. Install `SIGINT`/`SIGTERM` and `uncaughtException`/`unhandledRejection` handlers before booting the runtime, so a signal during startup unwinds.
-5. `new AppRuntime(...).start()` — wait for the tool registry, register flow processors, parse the webhook configuration (fails before any provider connects), start providers, register senders/enqueuers, start the HTTP listener and background timers (see [Services](./services.md)).
+1. Register `SIGINT`/`SIGTERM` handlers. This is the first statement, *before* any `await`, so a SIGTERM during a long migration still runs shutdown instead of taking the default disposition.
+2. `validateEnv()` — every environment error is logged, then startup throws.
+3. `ensureDatabaseSchema()` — migration-state check, forward migrations, schema-contract validation, schema fingerprint, runtime lease (see [Database](./database.md)).
+4. `FlowHandler.initialize()` — load persisted flow sessions and prune expired ones.
+5. Register `uncaughtException`/`unhandledRejection` handlers. They are deliberately registered here and not with the signals: making every stray rejection fatal while libraries are still importing would turn a benign warning into a boot crash-loop.
+6. `new AppRuntime({ runStartupCoverageScan }).start()` — wait for the tool registry, register flow processors, parse the webhook configuration (fails before any provider connects), start providers, register senders/enqueuers, start the HTTP listener and background timers (see [Services](./services.md)).
 
-A signal stops the runtime, closes the database, cancels tracked `yt-dlp`/`ffmpeg` child processes, and force-exits after a 2 s grace period, because detached children with piped stdio can otherwise keep the process alive. A fatal error follows the same path with exit code `1`.
+A signal stops the runtime, closes the database, cancels tracked `yt-dlp`/`ffmpeg` child processes, and force-exits after a 2 s grace period, because detached children with piped stdio can otherwise keep the process alive. A fatal error follows the same path with exit code `1`. The database is closed only after the schema work has finished; closing it under a running migration would abort that work.
 
-A startup failure unwinds in reverse: signal handlers are removed, the runtime is stopped if it had started, and the database handle is closed before the error is rethrown. `src/webhookServer.ts` is a compatibility re-export only; the implementation lives in `src/webhooks/`.
+A signal that lands during startup — while the schema is being ensured or flows are loading — marks shutdown as requested. The boot sequence notices this at the guard just before it would construct the runtime, and fails with `Startup interrupted by shutdown signal` instead of starting providers and the HTTP listener against a handle the shutdown path already closed. A startup failure unwinds in reverse: handlers are removed, the runtime is stopped if it had started, and the database handle is closed before the error is rethrown. `src/webhookServer.ts` is a compatibility re-export only; the implementation lives in `src/webhooks/`.
+
+The default bootstrap is also the only place that hands `AppRuntime` a `runStartupCoverageScan` implementation, so the parser-coverage diagnostic is armed in production and not only in tests (see [Services](./services.md)).
 
 ## Core Concepts
 
@@ -51,7 +54,7 @@ The `handleIncomingMessage` function is the single entry point for all normalize
 3. **Rate Limiting**: Per-sender, per-role limit; only messages the bot will actually process are counted (see below).
 4. **Explicit Commands**: Routes slash commands directly to their tool implementations (bypassing the LLM).
 5. **LLM Inference**: Fetches chat history, builds the context, and invokes the `AIClient`.
-6. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with running/completed/failed icons (⏳/✅/❌, see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the final answer is delivered as a separate message.
+6. **Tool Execution Loop**: If the LLM returns tool calls, the agent executes them securely and feeds the result back until a final answer is generated. Only calls that pass the permission check and argument validation are charged to the turn budget, so a round of unauthorized or malformed calls cannot exhaust it; when a round asks for more calls than the budget still allows, the ones that fit run and the remainder get a budget-exceeded tool result instead of the whole batch being dropped. While tools run, a live status message is posted and edited in place, listing each step as `[i/N]` with running/completed/failed icons (⏳/✅/❌, see `src/agent/toolProgress.ts` and `BaseTool.describeAction`); the footer only plans the calls that will actually run. The final answer is delivered as a separate message. One extra iteration past `AI_MAX_TOOL_ITERATIONS` runs text-only (with the tool protocol flattened to plain text), so a turn that used its whole tool budget still ends with an answer instead of "internal error".
 
 The limiter runs after the flow check and after the trigger decision, so group chatter the bot ignores neither consumes a sender's budget nor earns a "rate limited" reply, an active flow step is never dropped by it, and a slash command is still limited.
 
@@ -73,6 +76,7 @@ ElastraX v8.0.1 (migration `0022_room_keys`) stores a canonical `room:<platform>
 The AI layer features a highly resilient Failover Router:
 - Allows configuration of multiple providers (e.g., Modal, Gemini, Ollama, Cloudflare).
 - If the primary tier fails (HTTP 5xx, timeout, or rate-limit), the router circuit-breaks and silently falls back to a lower tier without dropping the user's message.
+- "Empty" means no usable text: a response that holds only a reasoning block — including one a truncated stream left open — counts as empty on both the streaming and non-streaming paths. That is what makes a reasoning-only answer a failure worth retrying, and a mid-stream fallback calls the consumer's `onRestart` hook so the abandoned provider's chunks are dropped instead of being glued onto the next answer.
 - AI clients are constructed when the `ModelRouter` is built (not lazily). Service-health checks are run by `src/utils/HealthMonitor.ts`; `src/utils/HealthMetrics.ts` records request, latency, and token metrics.
 
 ### 8. Storage & Long-Term Memory

@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit:** `10fc3b2` (code through the 2026-11-17 evening fixes; docs resynced 2026-11-18)
-**Date:** 2026-11-18
+**Recorded Commit:** `9e16190` (code through maintenance pass 6; docs resynced 2026-11-19)
+**Date:** 2026-11-19
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -67,6 +67,7 @@ ElastraX/
 │   │   └── seerr/SeerrClient.ts
 │   ├── tools/
 │   │   ├── BaseTool.ts          # Abstract tool with JSON schema and metadata
+│   │   ├── access.ts            # isToolAccessible: the one visibility predicate (registry, /menu, /find_tools, slash)
 │   │   ├── registry.ts          # Builtin registry, plugin loader, admission, mutability table
 │   │   ├── index.ts             # Registry re-export
 │   │   └── *Tool.ts             # One file per built-in tool
@@ -101,6 +102,7 @@ ElastraX/
 │   │   └── data.ts              # Read-only data collectors for the dashboard
 │   ├── types/                   # Shared type declarations
 │   └── utils/                   # Shared infrastructure and services (see each file's header)
+│                                #   toolAccess.ts — shared tool guards (binding lookup, permission check)
 ├── scripts/                     # Operational CLIs (dbBackup, dbRoomKeys, ciDiagnostics, retention, …)
 ├── drizzle/
 │   ├── migrations/              # Applied SQL migrations with immutable hash history

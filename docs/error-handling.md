@@ -31,6 +31,10 @@ ElastraX uses typed errors with codes and retryability flags. Startup validation
 | `ScheduledTaskCapabilityError` | `src/runtime/AppRuntime.ts` | raised when a scheduled agent task reaches for a denied capability | — |
 | `ReadOnlyViolationError` | `scripts/ciDiagnostics.ts` | raised when a non-allowlisted `gh` command is attempted | — |
 
+### LLM request failures
+
+`AIClient` (`src/ai/client.ts`) throws a plain `Error` — `LLM API returned <status>: request failed` — for a non-2xx completion. The response body is read through a 64 KiB bound and truncated to 500 characters for the log line; it is never re-thrown, because a gateway error page can echo credentials. An oversized error body is logged as `<error body exceeds 64 KiB>` rather than `<unreadable>`, so the log says why the text is missing. A success body is bounded by `AI_MAX_RESPONSE_BYTES` as bytes arrive and an oversize one becomes `AIProtocolError('response_too_large')`.
+
 ## Provider lifecycle errors
 
 Provider failures surface as `ProviderError` subclasses. WhatsApp reconnect policy:
@@ -40,7 +44,7 @@ Provider failures surface as `ProviderError` subclasses. WhatsApp reconnect poli
 
 ## Inbox / Outbox dead-lettering
 
-Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan, which fails never-claimed rows older than 24 h and returns expired-lease rows to `received`. The outbox claim lease is 120 s; the inbox claim lease is derived from the turn budget and clamped to 10–60 minutes. Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`). Note that the inbox `failed` state is terminal in practice: no worker currently selects a failed inbox row for a re-run, so a rethrow from the agent is recorded but never retried.
+Both `InboxService` and `OutboxService` dead-letter a row after 5 failed attempts (`MAX_ATTEMPTS = 5`). Stranded in-flight rows are recovered or dead-lettered by the hourly `recoverStranded` scan, which fails never-claimed rows older than 24 h and returns expired-lease rows to `received`. The outbox claim lease is 120 s; the inbox claim lease is derived from the turn budget and clamped to 10–60 minutes. Outbox rows are retried with attempt-aware exponential backoff (`baseMs: 30_000`, `maxExponent: 7`). A `failed` inbox row has no periodic retry driver of its own, with one exception: a provider redelivery of an event already in the ledger is admitted with `claim(id, owner, { allowBackoff: true })`, so it proceeds despite the worker's own backoff (WhatsApp's decrypt-retry re-emit is the one real redelivery path). That exception never preempts a turn that is still running.
 
 ## Message-handling failures
 
