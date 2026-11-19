@@ -418,6 +418,54 @@ describe('TelegramProvider lifecycle', () => {
       await provider.stop();
     });
 
+    test('a failed unban after removal is reported instead of a clean success', async () => {
+      process.env.TELEGRAM_BOT_TOKEN = 'test-token';
+      let messageCallback: ((ctx: unknown) => Promise<void>) | undefined;
+      telegramProviderDeps.createBot = () => ({
+        on: (event: string, handler: (ctx: unknown) => Promise<void>) => {
+          if (event === 'message') messageCallback = handler;
+        },
+        api: {
+          getFile: async () => ({ file_path: 'photos/file_0.jpg' }),
+          sendMessage: async () => ({ message_id: 1 }),
+          banChatMember: async () => true,
+          // The member is banned (so removed) but can never rejoin.
+          unbanChatMember: async () => { throw new Error('not enough rights'); },
+        } as never,
+        stop: () => undefined,
+        catch: () => undefined,
+        start: async (options?: { onStart?: (info: { id: number; username: string }) => Promise<void> }) => {
+          await options?.onStart?.({ id: 777, username: 'elastrax_bot' });
+        },
+      }) as never;
+
+      const provider = new TelegramProvider();
+      let received: MessageContext | null = null;
+      provider.onMessage(async ctx => { received = ctx; });
+      await provider.start();
+
+      await messageCallback!(new GrammyContext(
+        {
+          update_id: 9,
+          message: {
+            message_id: 44,
+            date: 1000,
+            chat: { id: -100123, type: 'supergroup', title: 'Group' },
+            from: { id: 67890, first_name: 'TestUser', is_bot: false },
+            text: 'remove him',
+            entities: [],
+          },
+        } as never,
+        { callApi: async () => ({}) } as never,
+        { id: 777, is_bot: true, first_name: 'ElastraX', username: 'elastrax_bot' } as never,
+      ));
+
+      expect(received).not.toBeNull();
+      await expect(received!.updateGroupParticipants!('remove', ['67890']))
+        .rejects.toThrow(/could not lift their ban/);
+      await provider.stop();
+    });
+
     test('a sticker message is reported as media', async () => {
       process.env.TELEGRAM_BOT_TOKEN = 'test-token';
       stubBot();

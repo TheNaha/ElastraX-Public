@@ -14,7 +14,7 @@ import { jidBareId } from '../utils/jid';
 import type { BotProvider, BotProviderStatus } from './BotProvider';
 import { ProviderLifecycleError, ProviderOperationError, ProviderStartError } from './errors';
 import { createLazyPromise, HARD_MEDIA_MAX_BYTES } from './media';
-import { getMessageMediaInfo, parseWhatsAppMessage, type WhatsAppMediaInfo } from './whatsappParser';
+import { downloadableMediaMessage, getMessageMediaInfo, parseWhatsAppMessage, type WhatsAppMediaInfo } from './whatsappParser';
 import {
   deleteSavedMedia,
   readMediaBuffer,
@@ -92,7 +92,11 @@ export const WHATSAPP_TEXT_LIMIT = 65_536;
 const WHATSAPP_MEDIA_TIMEOUT_MS = 60_000;
 
 export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
-  return chunkTextFixed(text, limit);
+  // Empty chunks are dropped: `chunkTextFixed('')` answers `['']`, and sending an
+  // empty text to Baileys raised a provider error where every other platform
+  // simply sends nothing. Discord did the same thing and its API rejected the
+  // message outright (50006 "Cannot send an empty message").
+  return chunkTextFixed(text, limit).filter(chunk => chunk.length > 0);
 }
 
 /**
@@ -600,7 +604,7 @@ export class WhatsAppProvider implements BotProvider {
               id: q.stanzaId || undefined,
               participant: q.senderId,
             },
-            message: q.rawMessage,
+            message: downloadableMediaMessage(q.rawMessage),
           } as WAMessage,
           info: getMessageMediaInfo(q.rawMessage) || {
             messageType: q.messageType,
@@ -656,7 +660,8 @@ export class WhatsAppProvider implements BotProvider {
         state: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? 'skipped' : 'pending',
         error: currentInfo.sizeBytes && currentInfo.sizeBytes > HARD_MEDIA_MAX_BYTES ? `WhatsApp media exceeds ${HARD_MEDIA_MAX_BYTES} bytes.` : undefined,
       },
-      message,
+      // Re-keyed so a round video note downloads under the video HKDF info.
+      message: { ...message, message: downloadableMediaMessage(message.message) } as WAMessage,
       info: currentInfo,
     } : null;
     const sources = [currentSource, quotedSource].filter((source): source is MediaSource => !!source);
@@ -863,6 +868,7 @@ export class WhatsAppProvider implements BotProvider {
       editMessage: async (key: unknown, text: string) => {
         assertSocket();
         const chunks = chunkWhatsAppText(text);
+        if (chunks.length === 0) return;
         await socket.sendMessage(jid, { text: chunks[0], edit: key as proto.IMessageKey });
         for (const chunk of chunks.slice(1)) await socket.sendMessage(jid, { text: chunk });
       },
@@ -874,7 +880,8 @@ export class WhatsAppProvider implements BotProvider {
 
       sendSticker: async (buffer: Buffer) => {
         assertSocket();
-        await socket.sendMessage(jid, { sticker: buffer }, { quoted: message });
+        const sent = await socket.sendMessage(jid, { sticker: buffer }, { quoted: message });
+        noteBotMessageSent('whatsapp', sent?.key?.id ?? null);
       },
 
       deleteMessage: async (key?: unknown) => {

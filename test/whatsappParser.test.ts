@@ -21,7 +21,7 @@ import { describe, test, expect } from 'bun:test';
 
 import { readdirSync, readFileSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
-import { parseWhatsAppMessage, LidResolver, getFileLength, normalizeJid } from '../src/providers/whatsappParser';
+import { parseWhatsAppMessage, LidResolver, getFileLength, normalizeJid, getMessageMediaInfo, downloadableMediaMessage } from '../src/providers/whatsappParser';
 
 const FIXTURE_DIR = resolve('./test/fixtures/wa_messages');
 const BOT_JID = '6281999000111:15@s.whatsapp.net'; // hypothetical bot JID
@@ -582,5 +582,41 @@ describe('parseWhatsAppMessage — quoted wrapper and media edge cases', () => {
     const r = await parseWhatsAppMessage(raw as any, null, null, resolver);
     expect(r.quoted).toBeDefined();
     expect(r.quoted!.senderId).toBe('other-lid@lid');
+  });
+});
+
+describe('round video notes (ptvMessage)', () => {
+  const ptv = {
+    key: { remoteJid: 'room@s.whatsapp.net', id: 'ptv-1', fromMe: false },
+    message: {
+      ptvMessage: {
+        url: 'https://mmg.whatsapp.net/video',
+        mimetype: 'video/mp4',
+        fileLength: '4096',
+        mediaKey: 'key',
+        directPath: '/v/t62',
+      },
+    },
+  };
+
+  test('is reported as media, not as an empty text message', async () => {
+    const parsed = await parseWhatsAppMessage(ptv as any, null);
+    expect(parsed.messageType).toBe('ptvMessage');
+    expect(parsed.hasMedia).toBe(true);
+    const info = getMessageMediaInfo((ptv as any).message);
+    expect(info?.mimeType).toBe('video/mp4');
+    expect(info?.sizeBytes).toBe(4096);
+  });
+
+  test('is re-keyed to videoMessage for Baileys to pick the video HKDF info', () => {
+    const rewritten = downloadableMediaMessage((ptv as any).message) as Record<string, unknown>;
+    expect(rewritten.videoMessage).toBeDefined();
+    expect(rewritten.ptvMessage).toBeUndefined();
+  });
+
+  test('leaves ordinary messages untouched', () => {
+    const message = { conversation: 'hello' };
+    expect(downloadableMediaMessage(message as any)).toBe(message);
+    expect(downloadableMediaMessage(undefined)).toBeUndefined();
   });
 });

@@ -55,14 +55,38 @@ export const discordProviderDeps = {
       GatewayIntentBits.GuildMessages,
       GatewayIntentBits.MessageContent,
       GatewayIntentBits.DirectMessages,
+      // The 👍/👎 handlers below only receive events if the reaction intents are
+      // requested. They were registered but never delivered, so Discord was the
+      // one platform whose feedback never reached `recordReactionFeedback`.
+      GatewayIntentBits.GuildMessageReactions,
+      GatewayIntentBits.DirectMessageReactions,
     ],
-    partials: [Partials.Channel, Partials.Message],
+    // `Partials.Reaction` delivers reactions on messages that are not in the
+    // client cache (any bot message older than the cache window). Without it the
+    // event is dropped by discord.js before it reaches a handler.
+    partials: [Partials.Channel, Partials.Message, Partials.Reaction],
   }),
   fetch: globalThis.fetch,
 };
 
 export function chunkDiscordText(text: string, limit = DISCORD_TEXT_LIMIT): string[] {
-  return chunkTextDiscord(text, limit);
+  // Same rule as WhatsApp: an empty chunk would be sent as
+  // `{ content: '' }`, which Discord rejects (API error 50006).
+  return chunkTextDiscord(text, limit).filter(chunk => chunk.length > 0);
+}
+
+/**
+ * Close a client without letting teardown fail the caller.
+ *
+ * `destroy()` returns a promise in discord.js, but a test double may return
+ * nothing and a half-open gateway may reject; both are teardown, not work.
+ */
+async function destroyQuietly(client: { destroy(): unknown }): Promise<void> {
+  try {
+    await client.destroy();
+  } catch (error) {
+    logger.debug({ err: error }, '[Discord] Client destroy failed');
+  }
 }
 
 export class DiscordProvider implements BotProvider {
@@ -123,7 +147,11 @@ export class DiscordProvider implements BotProvider {
     const client = this.client;
     this.client = null;
     if (client) {
-      client.destroy();
+      // `destroy()` closes the gateway socket and returns a promise. Not awaiting
+      // it let teardown finish (and bootstrap close the database) while the
+      // gateway was still shutting down, and a rejection escaped as an unhandled
+      // rejection, which is fatal under Bun's default policy.
+      await destroyQuietly(client);
       logger.info('[Discord] Disconnected.');
     }
   }
@@ -278,7 +306,7 @@ export class DiscordProvider implements BotProvider {
     try {
       await client.login(token);
       if (this.client !== client || generation !== this.generation) {
-        client.destroy();
+        await destroyQuietly(client);
         return;
       }
       // Deliberately NOT set to 'running' here: `login()` resolves once the raw
@@ -287,7 +315,7 @@ export class DiscordProvider implements BotProvider {
       // report success over a connection that never became usable.
     } catch (error) {
       if (this.client === client) this.client = null;
-      client.destroy();
+      await destroyQuietly(client);
       if (generation !== this.generation || this.providerStatus === 'stopped') return;
       this.providerStatus = 'error';
       this.providerError = toError(error);
@@ -500,11 +528,14 @@ export class DiscordProvider implements BotProvider {
           name: filename,
           description: options.durationSeconds ? `Audio duration: ${Math.max(0, Math.round(options.durationSeconds))} seconds` : undefined,
         });
-        await msg.reply({
+        const sent = await msg.reply({
           files: [attachment],
           content: options.caption ? truncateDiscordText(options.caption) : undefined,
           allowedMentions: { parse: [] },
         });
+        // Without this a 👍 on a generated image is dropped by the feedback
+        // recorder, which only attributes reactions to messages it saw us send.
+        noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
       },
 
       deleteMessage: async (key?: unknown) => {
@@ -657,7 +688,8 @@ export class DiscordProvider implements BotProvider {
 
       sendSticker: async (buffer: Buffer) => {
         ensureCurrentGeneration();
-        await msg.reply({ files: [new AttachmentBuilder(buffer, { name: 'sticker.webp' })], allowedMentions: { parse: [] } });
+        const sent = await msg.reply({ files: [new AttachmentBuilder(buffer, { name: 'sticker.webp' })], allowedMentions: { parse: [] } });
+        noteBotMessageSent('discord', (sent as { id?: string } | null)?.id ?? null);
       },
 
       updateGroupParticipants: async (action, userIds) => {

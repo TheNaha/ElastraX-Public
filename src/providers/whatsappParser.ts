@@ -44,6 +44,10 @@ const MEDIA_TYPES = new Set([
   'audioMessage',
   'documentMessage',
   'stickerMessage',
+  // `ptvMessage` is the round "video note". WhatsApp sends its content-type as
+  // `ptvMessage`, so without it here the message looked like text with no body:
+  // `hasMedia` stayed false and the whole note was dropped.
+  'ptvMessage',
   'viewOnceMessage',
   'viewOnceMessageV2',
   'viewOnceMessageV2Extension',
@@ -99,6 +103,23 @@ export interface WhatsAppMediaInfo {
   fileName?: string;
   sizeBytes?: number;
   ptt?: boolean;
+}
+
+/**
+ * The message to hand Baileys' downloader for a round video note.
+ *
+ * `downloadMediaMessage` derives the HKDF info key from the content-type key
+ * (`videoMessage` → `WhatsApp Video Keys`) and has no entry for `ptvMessage`, so
+ * a video note reaches `WhatsApp undefined Keys` and fails to decrypt. The
+ * payload of `ptvMessage` *is* a `VideoMessage`, so re-keying the wrapper is
+ * exactly what the send side does.
+ */
+export function downloadableMediaMessage(
+  message: proto.IMessage | null | undefined,
+): proto.IMessage | null | undefined {
+  const note = message?.ptvMessage;
+  if (!message || !note) return message;
+  return { ...message, ptvMessage: undefined, videoMessage: note };
 }
 
 export function getMessageMediaInfo(msgObj: proto.IMessage | null | undefined): WhatsAppMediaInfo | null {

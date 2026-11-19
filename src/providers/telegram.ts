@@ -880,6 +880,7 @@ export class TelegramProvider implements BotProvider {
         // Remove every user the bot can, and report the failures together: a
         // single `ban` rejection used to abort the loop and leave the rest of the
         // list untouched, while the caller reported one opaque failure.
+        const unbanFailures: string[] = [];
         const results = await Promise.allSettled(userIds.map(async rawId => {
           const userId = Number(rawId);
           if (!Number.isSafeInteger(userId)) {
@@ -888,7 +889,15 @@ export class TelegramProvider implements BotProvider {
           // Telegram separates removal from muting; ban-then-unban is the
           // documented way to remove without blocking future re-joins.
           await activeBot.api.banChatMember(chatId, userId);
-          await activeBot.api.unbanChatMember(chatId, userId).catch(() => undefined);
+          try {
+            await activeBot.api.unbanChatMember(chatId, userId);
+          } catch (error) {
+            // Swallowing this reported a successful removal for a member who is
+            // now banned and can never rejoin. Collect them and fail the call
+            // with the reason instead of claiming a clean removal.
+            unbanFailures.push(String(userId));
+            logger.warn({ err: error, chatId, userId }, '[Telegram] Member removed but the ban could not be lifted');
+          }
         }));
         const failures = results.filter(result => result.status === 'rejected');
         if (failures.length > 0) {
@@ -896,6 +905,14 @@ export class TelegramProvider implements BotProvider {
             'telegram', 'updateGroupParticipants',
             `Failed to remove ${failures.length} of ${userIds.length} Telegram users.`,
             new AggregateError(failures.map(failure => (failure as PromiseRejectedResult).reason)),
+          );
+        }
+        if (unbanFailures.length > 0) {
+          throw new ProviderOperationError(
+            'telegram', 'updateGroupParticipants',
+            `Removed ${unbanFailures.length} member(s) but could not lift their ban (${unbanFailures.join(', ')}); `
+            + 'they cannot rejoin the group until they are unbanned.',
+            undefined, 'UNSUPPORTED',
           );
         }
       },
