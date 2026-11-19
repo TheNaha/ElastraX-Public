@@ -257,9 +257,18 @@ function validateAppliedHashes(
 function validateKnownUpgradeState(sqlite: Database, state: MigrationState): void {
   const appliedCount = state.applied.length;
   if (appliedCount === 0) {
+    // Drizzle creates `__drizzle_migrations` *before* it opens the migration
+    // transaction and inserts the first journal row *inside* it. A crash (or a
+    // failing first migration) in that window leaves an empty ledger table and
+    // no application tables — and counting the ledger itself as an application
+    // table turned that empty database into a permanent "schema exists without
+    // a ledger" refusal: unmigratable, with manual SQL as the only way out.
+    // `database_leases` is excluded for the same reason: it is created by this
+    // module before the migrations run.
     const applicationTables = sqlite
       .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('database_leases')",
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+        + "AND name NOT IN ('database_leases', '__drizzle_migrations')",
       )
       .all();
     if (applicationTables.length > 0) {

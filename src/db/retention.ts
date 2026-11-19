@@ -61,24 +61,24 @@ function deleteBatches(
   sqlite: Database,
   table: string,
   where: string,
-  cutoff: number,
+  params: readonly number[],
   batchSize: number,
   dryRun: boolean,
 ): number {
   validateTableName(table);
   if (dryRun) {
     const row = sqlite
-      .query<{ count: number }, [number]>(`SELECT count(*) AS count FROM ${table} WHERE ${where}`)
-      .get(cutoff);
+      .query<{ count: number }, number[]>(`SELECT count(*) AS count FROM ${table} WHERE ${where}`)
+      .get(...params);
     return Number(row?.count ?? 0);
   }
   let deleted = 0;
   while (true) {
     const result = sqlite
-      .query<never, [number, number]>(
+      .query<never, number[]>(
         `DELETE FROM ${table} WHERE rowid IN (SELECT rowid FROM ${table} WHERE ${where} LIMIT ?)`,
       )
-      .run(cutoff, batchSize);
+      .run(...params, batchSize);
     const changed = Number(result.changes);
     deleted += changed;
     if (changed < batchSize) break;
@@ -93,25 +93,44 @@ function deleteBatches(
 const NORMALIZE_TS = (column: string): string =>
   `CASE WHEN ${column} > 100000000000 THEN ${column} ELSE ${column} * 1000 END`;
 
+/**
+ * "This timestamp is older than the cutoff, in whichever unit it was stored in".
+ *
+ * The `CASE` has to stay: rows written before the unit clean-up are still in the
+ * table. But a column wrapped in an expression cannot be range-seeked, so the
+ * plan for every retention pass was a scan of the whole timestamp index (verified
+ * with `EXPLAIN QUERY PLAN`). The leading plain comparison is implied by the
+ * normalized one in both units — seconds are always below a millisecond cutoff —
+ * and gives the planner the range it needs. Bind the cutoff twice.
+ */
+function olderThan(column: string): string {
+  return `${column} < ? AND ${NORMALIZE_TS(column)} < ?`;
+}
+
+/** Bindings for {@link olderThan} / {@link NORMALIZE_TS} predicates. */
+function cutoffParams(cutoff: number): number[] {
+  return [cutoff, cutoff];
+}
+
 function clearRawMessageBatches(
   sqlite: Database,
   cutoff: number,
   batchSize: number,
   dryRun: boolean,
 ): number {
-  const where = `raw_message IS NOT NULL AND ${NORMALIZE_TS('created_at')} < ?`;
+  const where = `raw_message IS NOT NULL AND ${olderThan('created_at')}`;
   if (dryRun) {
     const row = sqlite
-      .query<{ count: number }, [number]>(
+      .query<{ count: number }, number[]>(
         `SELECT count(*) AS count FROM messages WHERE ${where}`,
       )
-      .get(cutoff);
+      .get(...cutoffParams(cutoff));
     return Number(row?.count ?? 0);
   }
   let cleared = 0;
   while (true) {
     const result = sqlite
-      .query<never, [number, number]>(
+      .query<never, number[]>(
         `UPDATE messages
          SET raw_message = NULL, media_path = NULL, mime_type = NULL
          WHERE rowid IN (
@@ -120,7 +139,7 @@ function clearRawMessageBatches(
            LIMIT ?
          )`,
       )
-      .run(cutoff, batchSize);
+      .run(...cutoffParams(cutoff), batchSize);
     const changed = Number(result.changes);
     cleared += changed;
     if (changed < batchSize) break;
@@ -158,16 +177,16 @@ export function applyRetentionPolicy(
     messages: deleteBatches(
       sqlite,
       'messages',
-      `${NORMALIZE_TS('created_at')} < ?`,
-      nowMs - (policy.messagesDays + policy.messageDeleteGraceDays) * dayMs,
+      olderThan('created_at'),
+      cutoffParams(nowMs - (policy.messagesDays + policy.messageDeleteGraceDays) * dayMs),
       batchSize,
       dryRun,
     ),
     reminders: deleteBatches(
       sqlite,
       'reminders',
-      `is_sent = 1 AND recurrence IS NULL AND ${NORMALIZE_TS('created_at')} < ?`,
-      nowMs - policy.sentRemindersDays * dayMs,
+      `is_sent = 1 AND recurrence IS NULL AND ${olderThan('created_at')}`,
+      cutoffParams(nowMs - policy.sentRemindersDays * dayMs),
       batchSize,
       dryRun,
     ),
@@ -175,7 +194,7 @@ export function applyRetentionPolicy(
       sqlite,
       'message_inbox',
       `state IN ('completed', 'dead_letter') AND COALESCE(${NORMALIZE_TS('completed_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
-      nowMs - policy.terminalDeliveriesDays * dayMs,
+      [nowMs - policy.terminalDeliveriesDays * dayMs],
       batchSize,
       dryRun,
     ),
@@ -189,7 +208,7 @@ export function applyRetentionPolicy(
       sqlite,
       'message_inbox',
       `state IN ('received', 'processing', 'failed') AND COALESCE(${NORMALIZE_TS('completed_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
-      nowMs - policy.terminalDeliveriesDays * dayMs,
+      [nowMs - policy.terminalDeliveriesDays * dayMs],
       batchSize,
       dryRun,
     ),
@@ -197,7 +216,7 @@ export function applyRetentionPolicy(
       sqlite,
       'message_outbox',
       `state IN ('sent', 'dead_letter') AND COALESCE(${NORMALIZE_TS('sent_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
-      nowMs - policy.terminalDeliveriesDays * dayMs,
+      [nowMs - policy.terminalDeliveriesDays * dayMs],
       batchSize,
       dryRun,
     ),
@@ -205,15 +224,15 @@ export function applyRetentionPolicy(
       sqlite,
       'message_outbox',
       `state IN ('pending', 'failed', 'leased') AND COALESCE(${NORMALIZE_TS('sent_at')}, ${NORMALIZE_TS('updated_at')}) < ?`,
-      nowMs - policy.terminalDeliveriesDays * dayMs,
+      [nowMs - policy.terminalDeliveriesDays * dayMs],
       batchSize,
       dryRun,
     ),
     flowSessions: deleteBatches(
       sqlite,
       'flow_sessions',
-      `${NORMALIZE_TS('updated_at')} < ?`,
-      nowMs - policy.expiredFlowSessionsDays * dayMs,
+      olderThan('updated_at'),
+      cutoffParams(nowMs - policy.expiredFlowSessionsDays * dayMs),
       batchSize,
       dryRun,
     ),

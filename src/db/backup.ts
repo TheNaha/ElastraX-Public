@@ -19,6 +19,7 @@ import { nowISO } from '../utils/date.js';
 import { logger } from '../utils/logger.js';
 import {
   fingerprintSchema,
+  getMigrationsFolder,
   readMigrationJournal,
   validateSchemaContract,
   verifyStoredSchemaFingerprint,
@@ -30,6 +31,8 @@ export interface BackupOptions {
   backupDir: string;
   keep?: number;
   prefix?: string;
+  /** Journal folder used to name the latest applied migration. Defaults to the shipped migrations. */
+  migrationsFolder?: string;
 }
 
 export interface BackupManifest {
@@ -310,7 +313,12 @@ export async function backupDatabase(options: BackupOptions): Promise<BackupResu
     }
     chmodSync(temporaryDatabase, 0o600);
 
-    const database = validateDatabaseFile(temporaryDatabase);
+    // The migrations folder was never passed here, so `migrationSummary` could
+    // not name the latest journal entry and every published manifest recorded
+    // `latestMigration: null` — a field no restore check could then use.
+    const database = validateDatabaseFile(temporaryDatabase, undefined, {
+      migrationsFolder: options.migrationsFolder ?? getMigrationsFolder(),
+    });
     const manifest: BackupManifest = {
       formatVersion: 1,
       createdAt: nowISO(),

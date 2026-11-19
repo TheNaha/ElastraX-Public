@@ -124,10 +124,16 @@ export function releaseDatabaseLease(sqlite: Database, lease: Lease): boolean {
 
 export function withImmediateTransaction<T>(sqlite: Database, operation: () => T): T {
   sqlite.exec('BEGIN IMMEDIATE');
+  // Whether a transaction is still open. The promise branch rolls back itself,
+  // and the catch below rolled back a second time — which throws "cannot
+  // rollback - no transaction is active" and logged a warning that pointed at
+  // the rollback instead of the caller's actual bug.
+  let active = true;
   try {
     const result = operation();
     if (result instanceof Promise) {
       sqlite.exec('ROLLBACK');
+      active = false;
       // The callback's promise is already running: it cannot be cancelled, so it
       // will keep executing after this rollback and any statement it reaches now
       // runs in autocommit. Observe it, otherwise a later rejection surfaces as
@@ -139,12 +145,15 @@ export function withImmediateTransaction<T>(sqlite: Database, operation: () => T
       );
     }
     sqlite.exec('COMMIT');
+    active = false;
     return result;
   } catch (error) {
-    try {
-      sqlite.exec('ROLLBACK');
-    } catch (rollbackError) {
-      logger.warn({ err: rollbackError }, 'Rollback failed during transaction error handling');
+    if (active) {
+      try {
+        sqlite.exec('ROLLBACK');
+      } catch (rollbackError) {
+        logger.warn({ err: rollbackError }, 'Rollback failed during transaction error handling');
+      }
     }
     throw error;
   }
