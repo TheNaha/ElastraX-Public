@@ -470,23 +470,27 @@ export class FlowHandler {
       if (!activeFlow) return false;
       const { flowId, flow } = activeFlow;
       if (!this.flowBelongsToContext(flow, ctx)) {
-        await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
+        // Notify before clearing: a failed reply used to leave the session gone and
+        // the user's step text processed as a brand-new message, while the inbox
+        // retried a turn whose flow state no longer existed. The riskier call
+        // (network) now runs while the state can still be retried.
         await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
+        await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
         return true;
       }
       const flowProcessor = this.flows[flow.flow];
       if (!flowProcessor) {
-        await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
         logger.warn({ flow: flow.flow, senderId: ctx.senderId, platform: ctx.platform }, '[FlowHandler] No processor registered for active flow; session cleared');
         await ctx.reply(t(ctx.language, 'flow.stale_cleared') || 'Previous process was interrupted. You can start a new request.');
+        await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
         return true;
       }
       const normalized = ctx.text.trim().toLowerCase();
       if (normalized.startsWith('/')) {
         if (CANCEL_COMMANDS.some((command) => command.toLowerCase() === normalized)) {
-          await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
           await ctx.react?.('✅');
           await ctx.reply(t(ctx.language, 'flow.cancelled'));
+          await this.clearSession(ctx.senderId, flowId, ctx.platform, ctx.chatId);
           return true;
         }
         await ctx.reply(t(ctx.language, 'flow.in_progress_warning', { cmd: ctx.text.trim() }) || 'You are currently in an active process. Please complete it, or type /cancel to exit.');

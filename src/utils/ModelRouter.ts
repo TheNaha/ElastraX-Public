@@ -7,7 +7,7 @@ import type { ToolDefinition } from '../tools/BaseTool';
 import type { ChatCompletionMessage, ModelTier } from '../types/ai';
 import { healthMetrics } from './HealthMetrics';
 import { toError } from './errorUtils';
-import { stripThinkTags } from './textUtils';
+import { stripPartialThinkTags, stripThinkTags } from './textUtils';
 import { getAIRequestConfig, getProviderCooldownMs, readBooleanEnv } from '../config/runtime';
 import { resolveLLMProviders } from '../config/llm';
 
@@ -452,6 +452,7 @@ export class ModelRouter {
     temperature: number = 0.7,
     maxTokens?: number,
     tier?: ModelTier,
+    options: { onRestart?: () => void } = {},
   ): AsyncGenerator<AIStreamChunk> {
     let lastError: Error | null = null;
     let attempted = false;
@@ -506,7 +507,11 @@ export class ModelRouter {
           yield chunk;
         }
 
-        if (!sawChunk || (!sawToolCall && stripThinkTags(accumulatedText).length === 0)) {
+        // `stripPartialThinkTags`, not `stripThinkTags`: the latter only matches a
+        // *closed* block, so a stream that ended mid-reasoning (truncated, or a
+        // provider that emitted the opening tag and stopped) counted as having
+        // content and its raw chain of thought was delivered as the answer.
+        if (!sawChunk || (!sawToolCall && stripPartialThinkTags(accumulatedText).length === 0)) {
           throw new AIProtocolError('empty_response', `Provider "${provider.name}" returned an empty stream.`);
         }
         if (!usageRecorded) {
@@ -524,12 +529,22 @@ export class ModelRouter {
         lastError = err;
         this.markProviderFailure(provider.key);
         healthMetrics.recordLLMRequest(provider.name, this.now() - start, false);
-        if (sawToolCall || stripThinkTags(accumulatedText).length > 0) {
+        // Same measure as above: fallback is only safe when nothing the user can
+        // see has been yielded yet.
+        if (sawToolCall || stripPartialThinkTags(accumulatedText).length > 0) {
           logger.warn(
             { provider: provider.name, err: err.message },
             '[ModelRouter] Streaming provider failed after yielding output; cross-provider fallback is unsafe',
           );
           throw err;
+        }
+        if (sawChunk) {
+          // The chunks that were yielded are still in the consumer's buffer. A
+          // provider that streamed only reasoning and then ended had no usable
+          // text, so the retry is safe — but only if the consumer drops what it
+          // accumulated, otherwise the next provider's answer is appended to the
+          // abandoned think block and the raw reasoning ships to the user.
+          options.onRestart?.();
         }
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Streaming provider failed, trying next');
       }

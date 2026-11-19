@@ -538,7 +538,14 @@ async function executeToolWithTimeout(
 
 async function transcribeVoiceIfAny(ctx: MessageContext): Promise<string | null> {
   if (!isTranscriptionConfigured()) return null;
-  await ctx.mediaReady;
+  // A rejected media acquisition must degrade to "no transcript", not abort the
+  // whole turn: the sibling branch below already catches for the same reason.
+  try {
+    await ctx.mediaReady;
+  } catch (err: unknown) {
+    log.warn({ err, chatId: ctx.chatId }, '[Transcription] Media acquisition failed');
+    return null;
+  }
   if (!isAudioMimeType(ctx.mimeType)) return null;
 
   try {
@@ -896,6 +903,11 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       if (shouldTriggerAI) {
         // Block execution so AI can see the media in context
         await ctx.react?.('📥').catch(err => log.warn({ err, chatId }, '[Agent] Reaction failed'));
+        // A rejected `mediaReady` aborts the turn on purpose: the user asked about
+        // media the bot could not read, and an explicit "internal error" is
+        // clearer than an answer produced without it (test/agent.test.ts pins
+        // this). `transcribeVoiceIfAny` degrades instead, because a missing
+        // transcript is a normal outcome there.
         await ctx.mediaReady;
         await syncDbMedia();
       } else {
@@ -1305,7 +1317,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           let sentKey: unknown = null;
           let lastEditTime = 0;
           let streamingFailed = false;
-          const toolCallAccumulator = new StreamingToolCallAccumulator();
+          let toolCallAccumulator = new StreamingToolCallAccumulator();
           // A mid-stream provider failure throws out of the `for await` below
           // before any of the branches that finalise the bubble run, leaving the
           // user with a message that still ends in the streaming cursor and a
@@ -1327,6 +1339,15 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
             config.temperature,
             config.maxTokens,
             preferredTier,
+            {
+              // The router only restarts on another provider when this one
+              // streamed nothing usable (reasoning only). Its chunks are already
+              // in `accumulated`, so drop them with it.
+              onRestart: () => {
+                accumulated = '';
+                toolCallAccumulator = new StreamingToolCallAccumulator();
+              },
+            },
           )) {
             const delta = chunk.choices?.[0]?.delta;
             if (!delta) continue;
@@ -1493,7 +1514,9 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
         if (aiMsgObj.tool_calls && aiMsgObj.tool_calls.length > 0 && !forceTextOnly) {
           log.info({ chatId, toolCount: aiMsgObj.tool_calls.length, iteration }, 'LLM requested tool calls');
-          // Tool Call Requested - Parallel Execution
+          // Tool calls are executed sequentially: side-effecting tools share a
+          // per-user mutation lock, so parallel execution would only reorder them
+          // without gaining throughput.
           const execution = await executeRequestedToolCalls(aiMsgObj.tool_calls, {
             ctx,
             chatId,

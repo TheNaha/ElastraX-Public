@@ -273,6 +273,53 @@ describe('ModelRouter', () => {
     primarySpy.mockRestore();
     fallbackSpy.mockRestore();
   });
+
+  test('asks the consumer to drop reasoning-only output before falling back', async () => {
+    configureTwoProviders();
+    const router = new ModelRouter();
+    const providers = providersOf(router);
+    // Provider 1 streams only an unterminated reasoning block, then finishes
+    // without any answer text. `stripThinkTags` keeps it (no closing tag), so the
+    // router classifies it as empty and retries — the consumer has to discard the
+    // reasoning it already accumulated or the answer is appended to it.
+    const primarySpy = spyOn(providers[0]!.client, 'chatCompletionStream').mockImplementation(
+      async function* () {
+        yield { choices: [{ delta: { content: '<think>let me reason' } }] };
+        yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+      },
+    );
+    const fallbackSpy = spyOn(providers[1]!.client, 'chatCompletionStream').mockImplementation(
+      async function* () {
+        yield { choices: [{ delta: { content: 'the answer' } }] };
+        yield { choices: [{ delta: {}, finish_reason: 'stop' }] };
+      },
+    );
+
+    let accumulated = '';
+    let restarts = 0;
+    for await (const chunk of router.chatCompletionStream(
+      [{ role: 'user', content: 'hi' }],
+      undefined,
+      0.7,
+      undefined,
+      undefined,
+      {
+        onRestart: () => {
+          restarts += 1;
+          accumulated = '';
+        },
+      },
+    )) {
+      const content = (chunk.choices?.[0]?.delta as { content?: string } | undefined)?.content;
+      if (content) accumulated += content;
+    }
+
+    expect(restarts).toBe(1);
+    expect(accumulated).toBe('the answer');
+    expect(fallbackSpy).toHaveBeenCalled();
+    primarySpy.mockRestore();
+    fallbackSpy.mockRestore();
+  });
 });
 
 describe('provider request adaptation', () => {
