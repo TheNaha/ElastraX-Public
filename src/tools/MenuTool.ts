@@ -15,7 +15,7 @@
 
 import { BaseTool, type ToolArgs, ToolDefinition } from './BaseTool';
 import { MessageContext } from '../core/MessageContext';
-import { t } from '../utils/i18n';
+import { t, hasTranslation } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { levenshtein } from '../utils/similarity';
 import { isToolAccessible } from './access';
@@ -123,7 +123,9 @@ export class MenuTool extends BaseTool<MenuArgs> {
       }
 
       let help = t(lang, 'menu.help_for', { name: tool.name });
-      help += ` • ${t(lang, 'menu.description')} ${tool.description}\n\n`;
+      const toolDescKey = `help.tool.${tool.name}`;
+      const toolDesc = hasTranslation(lang, toolDescKey) ? t(lang, toolDescKey) : tool.description;
+      help += ` • ${t(lang, 'menu.description')} ${toolDesc}\n\n`;
 
       if (tool.aliases.length > 0) {
         const aliasesFmt = tool.aliases.map((a) => `\`${a}\``).join(', ');
@@ -155,7 +157,11 @@ export class MenuTool extends BaseTool<MenuArgs> {
           const isReq = requiredSet.has(key);
           const reqText = isReq ? t(lang, 'menu.required') : t(lang, 'menu.optional');
           const typeCap = prop.type ? String(prop.type).charAt(0).toUpperCase() + String(prop.type).slice(1) : '';
-          help += ` • *\`${key}\`* (${reqText}): ${prop.description} (${t(lang, 'menu.param_type')} ${typeCap})`;
+          const paramDescKey = `help.param.${tool.name}.${key}`;
+          const paramDesc = prop.description && hasTranslation(lang, paramDescKey)
+            ? t(lang, paramDescKey)
+            : prop.description;
+          help += ` • *\`${key}\`* (${reqText}): ${paramDesc} (${t(lang, 'menu.param_type')} ${typeCap})`;
           if (prop.enum && prop.enum.length > 0) {
             const enumFmt = prop.enum.map((e) => `\`${e}\``).join(' | ');
             help += `\n   *${t(lang, 'menu.options')}* ${enumFmt}`;
@@ -186,7 +192,9 @@ export class MenuTool extends BaseTool<MenuArgs> {
     const sortedCategories = Object.entries(categories).sort((a, b) => a[0].localeCompare(b[0]));
 
     for (const [cat, catTools] of sortedCategories) {
-      menu += `*=== ${cat.toUpperCase()} ===*\n\n`;
+      const catKey = `help.category.${cat}`;
+      const catLabel = hasTranslation(lang, catKey) ? t(lang, catKey) : cat;
+      menu += `*=== ${catLabel.toUpperCase()} ===*\n\n`;
       // Sort tools within category alphabetically
       const sortedTools = catTools.sort((a, b) => a.name.localeCompare(b.name));
       for (const tool of sortedTools) {

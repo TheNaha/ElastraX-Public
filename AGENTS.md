@@ -37,7 +37,8 @@ Bun 1.3.14 TypeScript bot (WhatsApp/Baileys, Discord, Telegram) with an LLM tool
 
 - `src/index.ts` (bootstrap) -> `src/runtime/AppRuntime.ts` starts providers, the scheduler, and `src/webhookServer.ts`. All messages are normalized into `MessageContext` and handled by `src/agent/index.ts`.
 - Tools extend `BaseTool` and are registered in `src/tools/registry.ts`. That file also loads any `.ts` in `src/plugins/` as a plugin. A plugin must export a `pluginManifest` whose permissions cover its tools, otherwise it is refused.
-- User-facing strings go through `t()` in `src/utils/i18n.ts`. Add every key to both the `en` and `id` blocks.
+- User-facing strings go through `t()` in `src/utils/i18n.ts`. Add every key to both the `en` and `id` blocks. Test-enforced invariants: the two locales keep identical key and placeholder sets, every key is referenced somewhere in `src/`, and every tool ships `help.tool.<name>` plus `help.param.<name>.<param>` help text (that is what `/help` renders).
+- Anything rendered outside a `MessageContext` needs the room language passed in explicitly: `formatToolAction(..., lang)`, `buildWebhookMessage(headers, body, lang)`, and `getRoomLanguage(roomKey)` in `src/db/roomLanguage.ts` for reminders and webhook fan-out. Webhook jobs carry `textVariants` so one payload can reach `en` and `id` rooms in their own language.
 - ESLint 10 flat config: every config object needs a `name`.
 - `modal/` is a separate, experimental Python vLLM adapter. It is not part of the bot or CI.
 - Point-in-time audit reports live under `docs/maintenance/` (`audit-YYYY-MM-DD.md`); there are no `AUDIT*.md` files at the repo root.

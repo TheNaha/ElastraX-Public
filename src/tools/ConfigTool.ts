@@ -191,9 +191,12 @@ export class ConfigTool extends BaseTool {
     }
 
     if (action === 'reset') {
+      if (!key) {
+        return `${t(lang, 'config.please_specify_key')}\n\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
+      }
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `${t(lang, 'config.reset_prompt', { suggestion: suggestionStr })}\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
+        return `${t(lang, 'config.invalid_key', { key: String(key), suggestion: suggestionStr })}\n\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
       }
       const updateData: RoomConfigUpdate = { [key]: null };
       // Dual write: adopt the canonical key on rows the migration has not
@@ -205,9 +208,12 @@ export class ConfigTool extends BaseTool {
     }
 
     if (action === 'set') {
+      if (!key) {
+        return `${t(lang, 'config.please_specify_key')}\n\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
+      }
       if (!isConfigKey(key)) {
         const suggestionStr = getSuggestionMessage(key);
-        return `${t(lang, 'config.set_prompt', { suggestion: suggestionStr })}\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
+        return `${t(lang, 'config.invalid_key', { key: String(key), suggestion: suggestionStr })}\n\n${t(lang, 'config.available_keys')}${this.buildKeyListing(room, resolved, lang)}`;
       }
       if (value === undefined || value === '') {
         return t(lang, 'config.set_value_missing', { key: String(key) });
@@ -223,7 +229,7 @@ export class ConfigTool extends BaseTool {
         return t(lang, 'config.set_success', { key: String(key) });
 
       } catch (error: unknown) {
-        const message = getErrorMessage(error, 'Unknown validation error.');
+        const message = getErrorMessage(error, t(lang, 'config.unknown_error'));
         log.warn({ chatId: ctx.chatId, key, err: message }, 'Invalid config value rejected');
         return t(lang, 'config.set_invalid_value', { key: String(key), msg: message });
       }

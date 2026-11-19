@@ -97,12 +97,12 @@ export const menfessConfirmFlowProcessor = async (ctx: MessageContext, flowData:
 
   if (!isMenfessFlowData(flowData.data)) {
     await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
-    await ctx.reply(t(lang, 'flow.error', { msg: 'Invalid menfess confirmation state.' }));
+    await ctx.reply(t(lang, 'flow.error', { msg: t(lang, 'menfess.invalid_state') }));
     return;
   }
   if (flowData.data.sourceRoomId !== ctx.chatId || flowData.data.platform !== ctx.platform) {
     await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
-    await ctx.reply(t(lang, 'menfess.error', { msg: 'The confirmation must be sent in the original chat.' }));
+    await ctx.reply(t(lang, 'menfess.error', { msg: t(lang, 'menfess.confirm_wrong_chat') }));
     return;
   }
 
@@ -111,7 +111,7 @@ export const menfessConfirmFlowProcessor = async (ctx: MessageContext, flowData:
     const resolvedTarget = resolveTarget(targetLabel);
     if (!resolvedTarget || resolvedTarget !== targetChatId) {
       await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
-      await ctx.reply(t(lang, 'menfess.error', { msg: 'The destination is no longer allowlisted.' }));
+      await ctx.reply(t(lang, 'menfess.error', { msg: t(lang, 'menfess.target_not_allowlisted') }));
       return;
     }
     if (!ctx.forwardMessage) {
@@ -120,10 +120,10 @@ export const menfessConfirmFlowProcessor = async (ctx: MessageContext, flowData:
       return;
     }
     try {
-      await ctx.forwardMessage(targetChatId, `[Anonymous Message]\n\n${message}`);
+      await ctx.forwardMessage(targetChatId, `${t(lang, 'menfess.forward_prefix')}\n\n${message}`);
       await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
       log.info({ targetChatId, senderId: ctx.senderId }, 'Anonymous message sent');
-      await ctx.reply(`${t(lang, 'menfess.sent')}\nDestination: ${targetChatId}\nThe platform may still identify the sender; anonymity is not guaranteed.`);
+      await ctx.reply(`${t(lang, 'menfess.sent')}${t(lang, 'menfess.sent_detail', { chatId: targetChatId })}`);
     } catch (err: unknown) {
       await FlowHandler.clearSession(ctx.senderId, 'menfess_confirm', ctx.platform, ctx.chatId);
       log.error({ err, targetChatId }, 'Failed to send anonymous message');
@@ -178,11 +178,14 @@ export class MenfessTool extends BaseTool {
 
     if (!targetInput) return t(lang, 'menfess.no_target');
     if (!message) return t(lang, 'menfess.no_message');
-    if (message.length > 4000) return 'Menfess messages are limited to 4000 characters.';
+    if (message.length > 4000) return t(lang, 'menfess.too_long');
 
     const targetChatId = resolveTarget(targetInput, aliases);
     if (!targetChatId) {
-      return `Unknown target or non-allowlisted destination "${targetInput}". Available destinations: ${Array.from(aliases.keys()).join(', ') || 'none configured'}.`;
+      return t(lang, 'menfess.unknown_target', {
+        target: targetInput,
+        targets: Array.from(aliases.keys()).join(', ') || t(lang, 'menfess.none_configured'),
+      });
     }
 
     await FlowHandler.setSession(

@@ -1,7 +1,8 @@
 import type { WebhookBody } from '../types';
 import { asNonEmptyString, normalizePriority, toStringArray } from '../utils';
+import { t } from '../../utils/i18n';
 
-export function buildGenericMessage(body: WebhookBody): string {
+export function buildGenericMessage(body: WebhookBody, lang: string = 'en'): string {
   const title = asNonEmptyString(body.title);
   const text = asNonEmptyString(body.text)
     || asNonEmptyString(body.message)
@@ -29,8 +30,8 @@ export function buildGenericMessage(body: WebhookBody): string {
   if (!title && !text && !source && !event && tags.length === 0 && !link) {
     const keys = Object.keys(body).slice(0, 20);
     return keys.length > 0
-      ? `📨 Webhook payload received\nFields: ${keys.join(', ')}`
-      : '📨 Webhook payload received';
+      ? t(lang, 'webhook.generic.received_fields', { fields: keys.join(', ') })
+      : t(lang, 'webhook.generic.received');
   }
 
   const lines: string[] = [];
@@ -41,10 +42,10 @@ export function buildGenericMessage(body: WebhookBody): string {
   }
 
   if (text) lines.push(text);
-  if (source) lines.push(`🧩 Source: ${source}`);
-  if (event && title) lines.push(`📌 Event: ${event}`);
-  if (level) lines.push(`📊 Priority: ${level}`);
-  if (tags.length > 0) lines.push(`🏷️ Tags: ${tags.join(', ')}`);
+  if (source) lines.push(t(lang, 'webhook.generic.source', { source }));
+  if (event && title) lines.push(t(lang, 'webhook.generic.event', { event }));
+  if (level) lines.push(t(lang, 'webhook.generic.priority', { level }));
+  if (tags.length > 0) lines.push(t(lang, 'webhook.generic.tags', { tags: tags.join(', ') }));
   if (link) lines.push(`🔗 ${link}`);
 
   return lines.join('\n');

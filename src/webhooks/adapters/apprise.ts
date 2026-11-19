@@ -1,5 +1,6 @@
 import type { WebhookBody } from '../types';
 import { asNonEmptyString, toStringArray } from '../utils';
+import { t } from '../../utils/i18n';
 
 export function isApprisePayload(headers: Record<string, string | undefined>, body: WebhookBody): boolean {
   if (headers['x-apprise-notification-type']) return true;
@@ -16,7 +17,7 @@ export function isApprisePayload(headers: Record<string, string | undefined>, bo
   return hasSubject && hasBodyLikeText !== null;
 }
 
-export function adaptApprise(body: WebhookBody): string {
+export function adaptApprise(body: WebhookBody, lang: string = 'en'): string {
   const title = asNonEmptyString(body.title) || asNonEmptyString(body.subject);
   const content = asNonEmptyString(body.body)
     || asNonEmptyString(body.message)
@@ -45,12 +46,12 @@ export function adaptApprise(body: WebhookBody): string {
           : '🔔';
 
   const lines = [
-    `${icon} *${title || 'Apprise Notification'}*`,
-    content || '(empty message body)',
+    `${icon} ${t(lang, 'webhook.apprise.title', { title: title || t(lang, 'webhook.apprise.default_title') })}`,
+    content || t(lang, 'webhook.apprise.empty_body'),
   ];
 
-  if (source) lines.push(`🧩 Source: ${source}`);
-  if (tags.length > 0) lines.push(`🏷️ Tags: ${tags.join(', ')}`);
+  if (source) lines.push(t(lang, 'webhook.generic.source', { source }));
+  if (tags.length > 0) lines.push(t(lang, 'webhook.generic.tags', { tags: tags.join(', ') }));
   if (timestamp) lines.push(`🕒 Time: ${timestamp}`);
   if (link) lines.push(`🔗 ${link}`);
 

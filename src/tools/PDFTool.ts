@@ -169,11 +169,11 @@ export class PDFTool extends BaseTool<PDFArgs> {
       // pdf-lib parses.
       const statInfo = await stat(media.path).catch(() => null);
       if (statInfo && statInfo.size > MAX_PDF_BYTES) {
-        return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' });
+        return t(lang, 'pdf.error', { msg: t(lang, 'pdf.too_large') });
       }
       const pdfBytes = await readFile(media.path);
       if (pdfBytes.byteLength > MAX_PDF_BYTES) {
-        return t(lang, 'pdf.error', { msg: 'PDF file is too large to process safely (max 100MB).' });
+        return t(lang, 'pdf.error', { msg: t(lang, 'pdf.too_large') });
       }
       if (!hasPdfSignature(pdfBytes)) return t(lang, 'pdf.not_pdf');
       const sizeKb = Math.round(pdfBytes.length / 1024);
@@ -352,7 +352,7 @@ export class PDFTool extends BaseTool<PDFArgs> {
         }
 
         default:
-          return t(lang, 'pdf.error', { msg: `Unknown action: ${action}` });
+          return t(lang, 'pdf.error', { msg: t(lang, 'pdf.unknown_action', { action }) });
       }
     } catch (error: unknown) {
       log.error({ err: error, action, chatId: ctx.chatId }, 'PDF operation failed');
@@ -401,18 +401,18 @@ export class PDFTool extends BaseTool<PDFArgs> {
       const { PDFDocument } = await import('pdf-lib');
       await ctx.react?.('⏳');
       const merged = await PDFDocument.create();
-      if (filePaths.length > MAX_COLLECT_FILES) return t(lang, 'pdf.error', { msg: 'Too many files selected.' });
+      if (filePaths.length > MAX_COLLECT_FILES) return t(lang, 'pdf.error', { msg: t(lang, 'pdf.too_many_files') });
       for (const fp of filePaths) {
         const info = await stat(fp).catch(() => null);
-        if (info && info.size > MAX_PDF_BYTES) throw new Error('One or more files is not a valid PDF within the size limit.');
+        if (info && info.size > MAX_PDF_BYTES) throw new Error(t(lang, 'pdf.merge_invalid'));
         const bytes = await readFile(fp);
-        if (bytes.byteLength > MAX_PDF_BYTES || !hasPdfSignature(bytes)) throw new Error('One or more files is not a valid PDF within the size limit.');
+        if (bytes.byteLength > MAX_PDF_BYTES || !hasPdfSignature(bytes)) throw new Error(t(lang, 'pdf.merge_invalid'));
         const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
-        if (src.getPageCount() < 1) throw new Error('A selected PDF has no pages.');
+        if (src.getPageCount() < 1) throw new Error(t(lang, 'pdf.merge_no_pages'));
         const pages = await merged.copyPages(src, src.getPageIndices());
         for (const p of pages) merged.addPage(p);
       }
-      if (merged.getPageCount() < 1) throw new Error('The merged PDF has no pages.');
+      if (merged.getPageCount() < 1) throw new Error(t(lang, 'pdf.merge_empty'));
       const mergedBytes = await merged.save();
       await this.sendPdf(ctx, mergedBytes, 'merged.pdf');
       return t(lang, 'pdf.merge_done', { pages: String(merged.getPageCount()) });

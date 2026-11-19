@@ -36,6 +36,7 @@ import {
 } from './utils';
 import { adaptJellyfin, adaptSeerr, buildWebhookMessage } from './adapters';
 import { resolveSubscriptionDestination, resolveWebhookDestinations } from './rooms';
+import { pickWebhookText } from './utils';
 
 const log = logger.child({ module: 'WebhookServer' });
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
@@ -272,7 +273,7 @@ export class WebhookServer {
     const results = await Promise.allSettled(
       job.destinations.map(destination => this.send(
         destination.chatRoomId,
-        job.text,
+        pickWebhookText(job, destination.language),
         destination.platform,
       )),
     );
@@ -369,6 +370,12 @@ export class WebhookServer {
     }
     const serviceSecret = route === 'seerr' ? config.seerrSecret : config.jellyfinSecret;
     const text = this.redactSecret(truncateText(formatted, config.maxTextLength), serviceSecret);
+    // Both renderings are built here because the destinations (and their
+    // languages) are resolved afterwards; each room then receives its own.
+    const formattedId = route === 'seerr' ? adaptSeerr(body, 'id') : adaptJellyfin(body, 'id');
+    const textVariants = formattedId === null
+      ? { en: text }
+      : { en: text, id: this.redactSecret(truncateText(formattedId, config.maxTextLength), serviceSecret) };
     // The subscription's `notifyTypes` filter is keyed on the event name the
     // service sent, exactly as `adaptSeerr`/`adaptJellyfin` read it.
     const eventType = route === 'seerr'
@@ -464,6 +471,7 @@ export class WebhookServer {
       route,
       source,
       text,
+      textVariants,
       destinations: targets,
       receivedAt: new Date(this.now()).toISOString(),
     }, replay);
@@ -489,6 +497,11 @@ export class WebhookServer {
       // `buildWebhookMessage` sanitises the body itself; passing a sanitised copy
       // made every GitHub/generic request deep-copy and walk the payload twice.
       : buildWebhookMessage(Object.fromEntries(req.headers.entries()), body);
+    // A caller-supplied plain text body is already in the caller's language; only
+    // our own labels are translated.
+    const formattedId = route === 'generic' && textBody
+      ? textBody
+      : buildWebhookMessage(Object.fromEntries(req.headers.entries()), body, 'id');
     const requestedPlatform = route === 'generic' ? asNonEmptyString(body.platform)?.toLowerCase() : null;
     // The allow-list used to be a hard-coded `!== 'discord' && !== 'whatsapp'`,
     // so a destination that explicitly named Telegram was rejected with a 400
@@ -502,6 +515,10 @@ export class WebhookServer {
       route,
       source,
       text: this.redactSecret(truncateText(formatted, config.maxTextLength), config.sharedSecret),
+      textVariants: {
+        en: this.redactSecret(truncateText(formatted, config.maxTextLength), config.sharedSecret),
+        id: this.redactSecret(truncateText(formattedId, config.maxTextLength), config.sharedSecret),
+      },
       destinations: await resolveWebhookDestinations(roomIds, requestedPlatform),
       receivedAt: new Date(this.now()).toISOString(),
     }, replay);

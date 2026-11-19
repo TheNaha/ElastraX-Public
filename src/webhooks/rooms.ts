@@ -20,16 +20,21 @@ import {
 } from '../messaging/roomKeys';
 import type { WebhookDestination } from './types';
 import { WebhookRequestError } from './utils';
+import { getRoomLanguage } from '../db/roomLanguage';
 
 async function resolveOrThrow(remoteRoomId: string, platform?: string | null): Promise<WebhookDestination> {
   const resolution = await resolveRemoteRoomDestinationAsync(remoteRoomId, platform);
   if (!resolution.ok) {
     throw new WebhookRequestError(400, describeRoomResolutionFailure(resolution as RoomResolutionFailure));
   }
+  // Resolved once here so the delivery path never has to guess: a room that
+  // switched to Indonesian reads webhook notices in Indonesian.
+  const storedLanguage = getRoomLanguage(resolution.roomKey ?? resolution.remoteRoomId);
   return {
     chatRoomId: resolution.remoteRoomId,
     platform: resolution.platform ?? undefined,
     ...(resolution.roomKey ? { roomKey: resolution.roomKey } : {}),
+    ...(storedLanguage === 'id' || storedLanguage === 'en' ? { language: storedLanguage } : {}),
   };
 }
 

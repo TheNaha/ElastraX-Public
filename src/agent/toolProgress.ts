@@ -1,4 +1,5 @@
 import type { MessageContext } from '../core/MessageContext';
+import { t } from '../utils/i18n';
 
 export type ToolStepState = 'running' | 'completed' | 'failed';
 
@@ -35,96 +36,119 @@ export function extractSafeHost(rawUrl: unknown): string {
   }
 }
 
+/**
+ * Human-readable progress line for a running tool.
+ *
+ * `lang` is the room language; it is optional so callers that render progress
+ * outside a chat context (tests, logs) still get the English wording.
+ */
 export function formatToolAction(
   toolName: string,
   category: string,
   args: Record<string, unknown> = {},
+  lang?: string,
 ): string {
   switch (toolName) {
     case 'web_search': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `🔍 Searching web for "${sanitizeInlineText(q, 60)}"...` : '🔍 Searching web...';
+      return q
+        ? t(lang, 'progress.web_search_query', { query: sanitizeInlineText(q, 60) })
+        : t(lang, 'progress.web_search');
     }
     case 'web_scrape': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
       const u = typeof args.url === 'string' ? args.url.trim() : '';
-      if (q) return `📄 Reading ${sanitizeInlineText(q, 60)}...`;
-      if (u) return `📄 Reading page from ${extractSafeHost(u)}...`;
-      return '📄 Reading webpage...';
+      if (q) return t(lang, 'progress.web_scrape_query', { query: sanitizeInlineText(q, 60) });
+      if (u) return t(lang, 'progress.web_scrape_page', { host: extractSafeHost(u) });
+      return t(lang, 'progress.web_scrape');
     }
     case 'find_tools': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `🔎 Finding tools for "${sanitizeInlineText(q, 50)}"...` : '🔎 Finding tools...';
+      return q
+        ? t(lang, 'progress.find_tools_query', { query: sanitizeInlineText(q, 50) })
+        : t(lang, 'progress.find_tools');
     }
     case 'game_search': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `🎮 Searching games for "${sanitizeInlineText(q, 60)}"...` : '🎮 Searching games...';
+      return q
+        ? t(lang, 'progress.game_search_query', { query: sanitizeInlineText(q, 60) })
+        : t(lang, 'progress.game_search');
     }
     case 'software_search': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `💻 Searching software for "${sanitizeInlineText(q, 60)}"...` : '💻 Searching software...';
+      return q
+        ? t(lang, 'progress.software_search_query', { query: sanitizeInlineText(q, 60) })
+        : t(lang, 'progress.software_search');
     }
     case 'download_media': {
-      const fmt = typeof args.format === 'string' && args.format.trim()
-        ? `${sanitizeInlineText(args.format, 10).toUpperCase()} `
-        : '';
       const host = extractSafeHost(args.url);
-      return `⬇️ Downloading ${fmt}media from ${host}...`;
+      const hasFormat = typeof args.format === 'string' && args.format.trim();
+      return hasFormat
+        ? t(lang, 'progress.download_format', { format: sanitizeInlineText(args.format, 10).toUpperCase(), host })
+        : t(lang, 'progress.download', { host });
     }
     case 'sticker':
-      return '🎨 Creating sticker...';
+      return t(lang, 'progress.sticker');
     case 'convert_media': {
-      const fmt = typeof args.format === 'string' && args.format.trim()
-        ? ` to ${sanitizeInlineText(args.format, 10).toUpperCase()}`
-        : '';
-      return `🔄 Converting media${fmt}...`;
+      const hasFormat = typeof args.format === 'string' && args.format.trim();
+      return hasFormat
+        ? t(lang, 'progress.convert_media_format', { format: sanitizeInlineText(args.format, 10).toUpperCase() })
+        : t(lang, 'progress.convert_media');
     }
     case 'translate': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `🌐 Translating "${sanitizeInlineText(q, 40)}"...` : '🌐 Translating...';
+      return q
+        ? t(lang, 'progress.translate_query', { query: sanitizeInlineText(q, 40) })
+        : t(lang, 'progress.translate');
     }
     case 'speak':
-      return '🔊 Generating voice note...';
+      return t(lang, 'progress.speak');
     case 'transcribe_audio':
-      return '🎙️ Transcribing audio...';
+      return t(lang, 'progress.transcribe');
     case 'pdf_tool': {
       const action = typeof args.action === 'string' && args.action.trim()
         ? sanitizeInlineText(args.action.replace(/_/g, ' '), 30)
         : 'document';
-      return `📑 Processing PDF (${action})...`;
+      return t(lang, 'progress.pdf', { action });
     }
     case 'media_search': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `🎬 Searching media for "${sanitizeInlineText(q, 60)}"...` : '🎬 Searching media...';
+      return q
+        ? t(lang, 'progress.media_search_query', { query: sanitizeInlineText(q, 60) })
+        : t(lang, 'progress.media_search');
     }
     case 'media_request':
-      return '📥 Processing media request...';
+      return t(lang, 'progress.media_request');
     case 'media_library': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `📚 Searching library for "${sanitizeInlineText(q, 60)}"...` : '📚 Checking media library...';
+      return q
+        ? t(lang, 'progress.media_library_query', { query: sanitizeInlineText(q, 60) })
+        : t(lang, 'progress.media_library');
     }
     case 'reminder': {
       const action = typeof args.action === 'string' && args.action.trim()
         ? sanitizeInlineText(args.action, 20)
         : 'update';
-      return `⏰ Managing reminders (${action})...`;
+      return t(lang, 'progress.reminder', { action });
     }
     case 'memory': {
       const action = typeof args.action === 'string' && args.action.trim()
         ? sanitizeInlineText(args.action, 20)
         : 'lookup';
-      return `🧠 Accessing memory (${action})...`;
+      return t(lang, 'progress.memory', { action });
     }
     case 'knowledge': {
       const q = typeof args.query === 'string' ? args.query.trim() : '';
-      return q ? `📖 Searching room knowledge for "${sanitizeInlineText(q, 50)}"...` : '📖 Managing room knowledge...';
+      return q
+        ? t(lang, 'progress.knowledge_query', { query: sanitizeInlineText(q, 50) })
+        : t(lang, 'progress.knowledge');
     }
     default: {
       let emoji = '🔧';
       if (category === 'media') emoji = '🎬';
       else if (category === 'admin' || category === 'moderation' || category === 'owner') emoji = '🛡️';
       else if (category === 'system' || category === 'config') emoji = '⚙️';
-      return `${emoji} Running ${toolName.replace(/_/g, ' ')}...`;
+      return t(lang, 'progress.running', { emoji, tool: toolName.replace(/_/g, ' ') });
     }
   }
 }

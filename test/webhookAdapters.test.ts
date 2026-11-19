@@ -6,8 +6,8 @@
  * string-only reader.
  */
 import { describe, test, expect } from 'bun:test';
-import { WebhookRateLimiter, WebhookReplayCache, webhookRateLimitKeys } from '../src/webhooks/utils';
-import { adaptJellyfin, buildWebhookMessage } from '../src/webhooks/adapters';
+import { WebhookRateLimiter, WebhookReplayCache, pickWebhookText, webhookRateLimitKeys } from '../src/webhooks/utils';
+import { adaptJellyfin, adaptSeerr, buildWebhookMessage } from '../src/webhooks/adapters';
 
 describe('webhookRateLimitKeys', () => {
   test('omits the ip key for a loopback peer', () => {
@@ -145,5 +145,32 @@ describe('webhook adapters', () => {
     });
     expect(text).toContain('(2026)');
     expect(text).toContain('S1E4');
+  });
+});
+
+describe('webhook adapter localisation', () => {
+  test('Seerr labels follow the requested language', () => {
+    const body = { notification_type: 'MEDIA_APPROVED', subject: 'Dune', message: 'Approved by admin' };
+    expect(adaptSeerr(body)).toBe('✅ *Request Approved* — Dune\nApproved by admin');
+    expect(adaptSeerr(body, 'id')).toBe('✅ *Permintaan Disetujui* — Dune\nApproved by admin');
+  });
+
+  test('Jellyfin labels follow the requested language but payload values do not', () => {
+    const body = { NotificationType: 'ItemAdded', Name: 'Dune', Year: '2021', Overview: 'Spice.' };
+    expect(adaptJellyfin(body)).toBe('📥 *New Media Added* — Dune (2021)\nSpice.');
+    expect(adaptJellyfin(body, 'id')).toBe('📥 *Media Baru Ditambahkan* — Dune (2021)\nSpice.');
+  });
+
+  test('generic payload field labels are translated, payload values are not', () => {
+    const body = { title: 'Deploy done', text: 'v1.2.3 shipped', source: 'ci', event: 'pipeline' };
+    expect(buildWebhookMessage({}, body, 'id')).toContain('🧩 Sumber: ci');
+    expect(buildWebhookMessage({}, body, 'id')).toContain('Deploy done');
+    expect(buildWebhookMessage({}, body, 'id')).toContain('v1.2.3 shipped');
+  });
+
+  test('a room language with no variant falls back to the English text', () => {
+    expect(pickWebhookText({ text: 'plain' }, 'id')).toBe('plain');
+    expect(pickWebhookText({ text: 'plain', textVariants: { en: 'plain', id: 'biasa' } }, 'id')).toBe('biasa');
+    expect(pickWebhookText({ text: 'plain', textVariants: { en: 'plain', id: 'biasa' } }, undefined)).toBe('plain');
   });
 });

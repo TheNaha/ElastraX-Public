@@ -1,5 +1,6 @@
 import { BaseTool, type ToolArgs, type ToolDefinition, type ToolParameter } from './BaseTool';
 import { isPlainObject } from '../utils/typeGuards';
+import { t, hasTranslation } from '../utils/i18n';
 
 export type CommandArgumentValue = string | number | boolean;
 export type ParsedCommandArgs = ToolArgs & Record<string, CommandArgumentValue>;
@@ -39,56 +40,56 @@ function issue(path: string, message: string, keyword: string): ValidationIssue 
   return { path: path || '$', message, keyword };
 }
 
-function validateValue(value: unknown, schema: ToolParameter, path: string, issues: ValidationIssue[]): void {
+function validateValue(value: unknown, schema: ToolParameter, path: string, issues: ValidationIssue[], lang: string = 'en'): void {
   if (value === undefined) return;
-  if (schema.const !== undefined && value !== schema.const) issues.push(issue(path, 'Value does not match the required constant', 'const'));
+  if (schema.const !== undefined && value !== schema.const) issues.push(issue(path, t(lang, 'validation.const'), 'const'));
   if (schema.oneOf) {
-    const matches = schema.oneOf.some((candidate) => { const candidateIssues: ValidationIssue[] = []; validateValue(value, candidate, path, candidateIssues); return candidateIssues.length === 0; });
-    if (!matches) issues.push(issue(path, 'Value does not match any allowed schema', 'oneOf'));
+    const matches = schema.oneOf.some((candidate) => { const candidateIssues: ValidationIssue[] = []; validateValue(value, candidate, path, candidateIssues, lang); return candidateIssues.length === 0; });
+    if (!matches) issues.push(issue(path, t(lang, 'validation.one_of'), 'oneOf'));
   }
   if (schema.anyOf) {
-    const matches = schema.anyOf.some((candidate) => { const candidateIssues: ValidationIssue[] = []; validateValue(value, candidate, path, candidateIssues); return candidateIssues.length === 0; });
-    if (!matches) issues.push(issue(path, 'Value does not match any allowed schema', 'anyOf'));
+    const matches = schema.anyOf.some((candidate) => { const candidateIssues: ValidationIssue[] = []; validateValue(value, candidate, path, candidateIssues, lang); return candidateIssues.length === 0; });
+    if (!matches) issues.push(issue(path, t(lang, 'validation.one_of'), 'anyOf'));
   }
   if (value === null && (schema.nullable === true || schemaTypes(schema).includes('null'))) return;
 
   const types = schemaTypes(schema);
   if (types.length > 0 && !types.some((type) => typeMatches(value, type))) {
-    issues.push(issue(path, `Expected ${types.join(' or ')}`, 'type'));
+    issues.push(issue(path, t(lang, 'validation.type', { types: types.join(t(lang, 'validation.or_list')) }), 'type'));
     return;
   }
 
   if (schema.enum && !schema.enum.some((entry) => entry === value)) {
-    issues.push(issue(path, `Value must be one of: ${schema.enum.map(String).join(', ')}`, 'enum'));
+    issues.push(issue(path, t(lang, 'validation.enum', { values: schema.enum.map(String).join(', ') }), 'enum'));
   }
 
   if (typeof value === 'string') {
-    if (schema.minLength !== undefined && value.length < schema.minLength) issues.push(issue(path, `Must contain at least ${schema.minLength} characters`, 'minLength'));
-    if (schema.maxLength !== undefined && value.length > schema.maxLength) issues.push(issue(path, `Must contain at most ${schema.maxLength} characters`, 'maxLength'));
+    if (schema.minLength !== undefined && value.length < schema.minLength) issues.push(issue(path, t(lang, 'validation.min_length', { n: String(schema.minLength) }), 'minLength'));
+    if (schema.maxLength !== undefined && value.length > schema.maxLength) issues.push(issue(path, t(lang, 'validation.max_length', { n: String(schema.maxLength) }), 'maxLength'));
     if (schema.pattern) {
       try {
-        if (!new RegExp(schema.pattern).test(value)) issues.push(issue(path, 'Does not match the required pattern', 'pattern'));
+        if (!new RegExp(schema.pattern).test(value)) issues.push(issue(path, t(lang, 'validation.pattern'), 'pattern'));
       } catch {
-        issues.push(issue(path, 'Schema pattern is invalid', 'pattern'));
+        issues.push(issue(path, t(lang, 'validation.pattern_invalid'), 'pattern'));
       }
     }
   }
 
   if (typeof value === 'number') {
-    if (schema.minimum !== undefined && value < schema.minimum) issues.push(issue(path, `Must be >= ${schema.minimum}`, 'minimum'));
-    if (schema.maximum !== undefined && value > schema.maximum) issues.push(issue(path, `Must be <= ${schema.maximum}`, 'maximum'));
-    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) issues.push(issue(path, `Must be > ${schema.exclusiveMinimum}`, 'exclusiveMinimum'));
-    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) issues.push(issue(path, `Must be < ${schema.exclusiveMaximum}`, 'exclusiveMaximum'));
+    if (schema.minimum !== undefined && value < schema.minimum) issues.push(issue(path, t(lang, 'validation.minimum', { n: String(schema.minimum) }), 'minimum'));
+    if (schema.maximum !== undefined && value > schema.maximum) issues.push(issue(path, t(lang, 'validation.maximum', { n: String(schema.maximum) }), 'maximum'));
+    if (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum) issues.push(issue(path, t(lang, 'validation.exclusive_minimum', { n: String(schema.exclusiveMinimum) }), 'exclusiveMinimum'));
+    if (schema.exclusiveMaximum !== undefined && value >= schema.exclusiveMaximum) issues.push(issue(path, t(lang, 'validation.exclusive_maximum', { n: String(schema.exclusiveMaximum) }), 'exclusiveMaximum'));
   }
 
   if (Array.isArray(value)) {
-    if (schema.minItems !== undefined && value.length < schema.minItems) issues.push(issue(path, `Must contain at least ${schema.minItems} items`, 'minItems'));
-    if (schema.maxItems !== undefined && value.length > schema.maxItems) issues.push(issue(path, `Must contain at most ${schema.maxItems} items`, 'maxItems'));
+    if (schema.minItems !== undefined && value.length < schema.minItems) issues.push(issue(path, t(lang, 'validation.min_items', { n: String(schema.minItems) }), 'minItems'));
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) issues.push(issue(path, t(lang, 'validation.max_items', { n: String(schema.maxItems) }), 'maxItems'));
     if (schema.uniqueItems === true) {
       const encoded = value.map((entry) => JSON.stringify(entry));
-      if (new Set(encoded).size !== encoded.length) issues.push(issue(path, 'Items must be unique', 'uniqueItems'));
+      if (new Set(encoded).size !== encoded.length) issues.push(issue(path, t(lang, 'validation.unique_items'), 'uniqueItems'));
     }
-    if (schema.items) value.forEach((entry, index) => validateValue(entry, schema.items as ToolParameter, `${path}[${index}]`, issues));
+    if (schema.items) value.forEach((entry, index) => validateValue(entry, schema.items as ToolParameter, `${path}[${index}]`, issues, lang));
   }
 
   if (isPlainObject(value) && (schema.type === 'object' || (Array.isArray(schema.type) && schema.type.includes('object')) || schema.properties)) {
@@ -96,21 +97,21 @@ function validateValue(value: unknown, schema: ToolParameter, path: string, issu
     const required = schema.required ?? [];
     for (const key of required) {
       if (!Object.prototype.hasOwnProperty.call(value, key) || value[key] === undefined) {
-        issues.push(issue(`${path}.${key}`, 'Required property is missing', 'required'));
+        issues.push(issue(`${path}.${key}`, t(lang, 'validation.required'), 'required'));
       }
     }
     for (const [key, entry] of Object.entries(value)) {
       const child = properties[key];
-      if (child) validateValue(entry, child, `${path}.${key}`, issues);
-      else if (schema.additionalProperties === false) issues.push(issue(`${path}.${key}`, 'Additional properties are not allowed', 'additionalProperties'));
-      else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validateValue(entry, schema.additionalProperties, `${path}.${key}`, issues);
+      if (child) validateValue(entry, child, `${path}.${key}`, issues, lang);
+      else if (schema.additionalProperties === false) issues.push(issue(`${path}.${key}`, t(lang, 'validation.additional_properties'), 'additionalProperties'));
+      else if (schema.additionalProperties && typeof schema.additionalProperties === 'object') validateValue(entry, schema.additionalProperties, `${path}.${key}`, issues, lang);
     }
   }
 }
 
-export function validateJsonSchema<T = unknown>(schema: ToolParameter | ToolDefinition['function']['parameters'], value: unknown): ValidationResult<T> {
+export function validateJsonSchema<T = unknown>(schema: ToolParameter | ToolDefinition['function']['parameters'], value: unknown, lang: string = 'en'): ValidationResult<T> {
   const issues: ValidationIssue[] = [];
-  validateValue(value, schema as ToolParameter, '$', issues);
+  validateValue(value, schema as ToolParameter, '$', issues, lang);
   return {
     valid: issues.length === 0,
     value: value as T,
@@ -131,15 +132,15 @@ const ACTION_REQUIREMENTS: Record<string, Record<string, readonly string[]>> = {
   knowledge: { search: ['query'] },
 };
 
-function validateActionRequirements(tool: BaseTool, args: Record<string, unknown>, result: ValidationResult): void {
+function validateActionRequirements(tool: BaseTool, args: Record<string, unknown>, result: ValidationResult, lang: string = 'en'): void {
   const action = typeof args.action === 'string' ? args.action : undefined;
   const required = action ? ACTION_REQUIREMENTS[tool.name]?.[action] : undefined;
   if (!required) return;
   for (const key of required) {
     if (args[key] === undefined) {
       result.valid = false;
-      result.errors.push(`$.${key}: required for action ${action}`);
-      result.issues.push(issue(`$.${key}`, 'Required for this action', 'required'));
+      result.errors.push(`$.${key}: ${t(lang, 'validation.required_for_action_error', { action: String(action) })}`);
+      result.issues.push(issue(`$.${key}`, t(lang, 'validation.required_for_action'), 'required'));
     }
   }
 }
@@ -179,6 +180,7 @@ function parseActionSpecific(
   action: string,
   properties: Record<string, ToolParameter>,
   normalizedCommand: string,
+  lang: string = 'en',
 ): ParsedCommandArgs | null {
   // The tool's own command grammar is the authority on which arguments an
   // action takes. `ACTION_ARGUMENTS` below is a second, parallel copy of the
@@ -206,7 +208,7 @@ function parseActionSpecific(
   for (let fieldIndex = 0; fieldIndex < fields.length; fieldIndex++) {
     const field = fields[fieldIndex] as string;
     if (overrides[field] !== undefined) {
-      result[field] = parseScalar(overrides[field], properties[field], field);
+      result[field] = parseScalar(overrides[field], properties[field], field, lang);
       continue;
     }
     // `index` and `positional` are the same scale: `values` still holds the
@@ -221,64 +223,64 @@ function parseActionSpecific(
       result[field] = positional.slice(index).join(' ');
       index = positional.length;
     } else {
-      result[field] = parseScalar(positional[index] as string, parameter, field);
+      result[field] = parseScalar(positional[index] as string, parameter, field, lang);
       index += 1;
     }
   }
-  if (index < positional.length) throw new Error(`Unexpected argument: ${positional.slice(index).join(' ')}`);
+  if (index < positional.length) throw new Error(t(lang, 'validation.unexpected_argument', { argument: positional.slice(index).join(' ') }));
   if (normalizedCommand) result.__command = normalizedCommand;
-  assertParsedEnums(result, properties);
-  assertParsedActionRequirements(tool, result);
+  assertParsedEnums(result, properties, lang);
+  assertParsedActionRequirements(tool, result, lang);
   return result;
 }
 
-function assertParsedActionRequirements(tool: BaseTool, args: ParsedCommandArgs): void {
+function assertParsedActionRequirements(tool: BaseTool, args: ParsedCommandArgs, lang: string = 'en'): void {
   const action = typeof args.action === 'string' ? args.action : undefined;
   const required = action ? ACTION_REQUIREMENTS[tool.name]?.[action] : undefined;
   if (!required) return;
   const missing = required.filter((key) => args[key] === undefined);
-  if (missing.length > 0) throw new Error(`Missing argument(s) for ${action}: ${missing.join(', ')}`);
+  if (missing.length > 0) throw new Error(t(lang, 'validation.missing_arguments', { action: String(action), fields: missing.join(', ') }));
 }
 
-export function validateToolArguments<T = unknown>(toolOrDefinition: BaseTool | ToolDefinition, value: unknown): ValidationResult<T> {
+export function validateToolArguments<T = unknown>(toolOrDefinition: BaseTool | ToolDefinition, value: unknown, lang: string = 'en'): ValidationResult<T> {
   const definition = toolOrDefinition instanceof BaseTool ? toolOrDefinition.definition : toolOrDefinition;
   const rawParameters = definition.function.parameters;
   const parameters = { ...rawParameters, additionalProperties: rawParameters.additionalProperties ?? false } as ToolParameter;
   const sanitized = isPlainObject(value) && Object.prototype.hasOwnProperty.call(value, '__command')
     ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== '__command'))
     : value;
-  const result = validateJsonSchema<T>(parameters, sanitized);
+  const result = validateJsonSchema<T>(parameters, sanitized, lang);
   result.value = sanitized as T;
   if (result.valid && toolOrDefinition instanceof BaseTool && isPlainObject(sanitized) && typeof sanitized.action === 'string' && toolOrDefinition.commandGrammar) {
     const variant = toolOrDefinition.commandGrammar.variants.find((entry) => entry.value === sanitized.action);
     if (!variant) {
       result.valid = false;
-      result.errors.push(`$.action: unsupported action ${sanitized.action}`);
-      result.issues.push(issue('$.action', `Unsupported action ${sanitized.action}`, 'action'));
+      result.errors.push(`$.action: ${t(lang, 'validation.unsupported_action_error', { action: sanitized.action })}`);
+      result.issues.push(issue('$.action', t(lang, 'validation.unsupported_action', { action: String(sanitized.action) }), 'action'));
     } else {
       const allowed = new Set(variant.arguments.map((argument) => argument.name));
       for (const argument of variant.arguments) {
         if (argument.required && sanitized[argument.name] === undefined) {
           result.valid = false;
-          result.errors.push(`$.${argument.name}: required for action ${sanitized.action}`);
-          result.issues.push(issue(`$.${argument.name}`, 'Required for this action', 'required'));
+          result.errors.push(`$.${argument.name}: ${t(lang, 'validation.required_for_action_error', { action: sanitized.action })}`);
+          result.issues.push(issue(`$.${argument.name}`, t(lang, 'validation.required_for_action'), 'required'));
         }
       }
       for (const key of Object.keys(sanitized)) {
         if (key === 'action' || key === '__command' || allowed.has(key)) continue;
         result.valid = false;
-        result.errors.push(`$.${key}: unexpected for action ${sanitized.action}`);
-        result.issues.push(issue(`$.${key}`, 'Unexpected for this action', 'additionalProperties'));
+        result.errors.push(`$.${key}: ${t(lang, 'validation.unexpected_for_action_error', { action: sanitized.action })}`);
+        result.issues.push(issue(`$.${key}`, t(lang, 'validation.unexpected_for_action'), 'additionalProperties'));
       }
     }
   }
-  if (result.valid && toolOrDefinition instanceof BaseTool && isPlainObject(sanitized)) validateActionRequirements(toolOrDefinition, sanitized, result);
+  if (result.valid && toolOrDefinition instanceof BaseTool && isPlainObject(sanitized)) validateActionRequirements(toolOrDefinition, sanitized, result, lang);
   return result;
 }
 
-export function assertValidToolArguments(toolOrDefinition: BaseTool | ToolDefinition, value: unknown): void {
-  const result = validateToolArguments(toolOrDefinition, value);
-  if (!result.valid) throw new Error(`Invalid tool arguments: ${result.errors.join('; ')}`);
+export function assertValidToolArguments(toolOrDefinition: BaseTool | ToolDefinition, value: unknown, lang: string = 'en'): void {
+  const result = validateToolArguments(toolOrDefinition, value, lang);
+  if (!result.valid) throw new Error(t(lang, 'validation.invalid_tool_arguments', { detail: result.errors.join('; ') }));
 }
 
 function getNoArgAliases(tool: BaseTool): Set<string> {
@@ -364,22 +366,22 @@ export function parseCommandString(commandString: string): string[] {
   return result;
 }
 
-function assertGrammar(tool: BaseTool, result: ParsedCommandArgs): void {
+function assertGrammar(tool: BaseTool, result: ParsedCommandArgs, lang: string = 'en'): void {
   const grammar = tool.commandGrammar;
   if (!grammar || typeof result.action !== 'string') return;
   const variant = grammar.variants.find((entry) => entry.value === result.action);
-  if (!variant) throw new Error(`Unsupported action: ${result.action}`);
+  if (!variant) throw new Error(t(lang, 'validation.unsupported_action', { action: result.action }));
   const allowed = new Set(variant.arguments.map((argument) => argument.name));
   for (const key of Object.keys(result)) {
     if (key === 'action' || key === '__command') continue;
-    if (!allowed.has(key)) throw new Error(`Unexpected argument: ${key}`);
+    if (!allowed.has(key)) throw new Error(t(lang, 'validation.unexpected_argument', { argument: key }));
   }
   for (const argument of variant.arguments) {
-    if (argument.required && result[argument.name] === undefined) throw new Error(`Missing argument: ${argument.name}`);
+    if (argument.required && result[argument.name] === undefined) throw new Error(t(lang, 'validation.missing_argument', { name: argument.name }));
   }
 }
 
-function assertParsedEnums(result: ParsedCommandArgs, properties: Record<string, ToolParameter>): void {
+function assertParsedEnums(result: ParsedCommandArgs, properties: Record<string, ToolParameter>, lang: string = 'en'): void {
   for (const [key, value] of Object.entries(result)) {
     if (key === '__command') continue;
     const parameter = properties[key];
@@ -387,36 +389,36 @@ function assertParsedEnums(result: ParsedCommandArgs, properties: Record<string,
       const exact = parameter.enum.some((entry) => entry === value);
       if (!exact) {
         const canonical = parameter.enum.find((entry) => String(entry).toLowerCase() === String(value).toLowerCase());
-        if (canonical === undefined) throw new Error(`Parameter <${key}> must be one of: ${parameter.enum.map(String).join(', ')}`);
+        if (canonical === undefined) throw new Error(t(lang, 'validation.param_enum', { param: key, values: parameter.enum.map(String).join(', ') }));
         result[key] = canonical as CommandArgumentValue;
       }
     }
   }
 }
 
-function parseScalar(value: string, parameter: ToolParameter | undefined, key: string): CommandArgumentValue {
+function parseScalar(value: string, parameter: ToolParameter | undefined, key: string, lang: string = 'en'): CommandArgumentValue {
   const kind = Array.isArray(parameter?.type) ? parameter?.type[0] : parameter?.type;
   if (kind === 'number' || kind === 'integer') {
     const parsed = Number(value);
-    if (!Number.isFinite(parsed) || (kind === 'integer' && !Number.isInteger(parsed))) throw new Error(`Parameter <${key}> must be a valid number.`);
+    if (!Number.isFinite(parsed) || (kind === 'integer' && !Number.isInteger(parsed))) throw new Error(t(lang, 'validation.param_number', { param: key }));
     return parsed;
   }
   if (kind === 'boolean') {
     const normalized = value.toLowerCase();
     if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
     if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
-    throw new Error(`Parameter <${key}> must be true or false.`);
+    throw new Error(t(lang, 'validation.param_boolean', { param: key }));
   }
   return value;
 }
 
-export const parseExplicitCommand = (tool: BaseTool, args: string, command?: string): ParsedCommandArgs => ParameterValidator.parseArgs(tool, args, command);
+export const parseExplicitCommand = (tool: BaseTool, args: string, command?: string, lang?: string): ParsedCommandArgs => ParameterValidator.parseArgs(tool, args, command, lang);
 export const parseCommand = parseExplicitCommand;
 export const validateArguments = validateToolArguments;
 export const validateJsonSchemaArguments = validateJsonSchema;
 
 export class ParameterValidator {
-  static parseArgs(tool: BaseTool, argsStr: string, command?: string): ParsedCommandArgs {
+  static parseArgs(tool: BaseTool, argsStr: string, command?: string, lang: string = 'en'): ParsedCommandArgs {
     const def = tool.definition.function.parameters;
     const properties = def.properties || {};
     const keys = Object.keys(properties);
@@ -465,19 +467,19 @@ export class ParameterValidator {
     const tokenAction = actionValues.includes(tokens[0]?.toLowerCase() ?? '') ? tokens[0] : undefined;
     const explicitAction = tokenAction ?? effectiveInferred;
     if (explicitAction) {
-      const actionSpecific = parseActionSpecific(tool, tokens, explicitAction, properties, normalizedCommand);
+      const actionSpecific = parseActionSpecific(tool, tokens, explicitAction, properties, normalizedCommand, lang);
       if (actionSpecific) return actionSpecific;
     }
 
     if (keys.length === 1 && properties[keys[0]]?.type === 'string') {
       const key = keys[0];
-      if (!argsStr && def.required?.includes(key) && !noArg) throw new Error(this.getUsageHelp(tool));
+      if (!argsStr && def.required?.includes(key) && !noArg) throw new Error(this.getUsageHelp(tool, lang));
       const result: ParsedCommandArgs = {};
       if (argsStr || !noArg) result[key] = argsStr;
       if (normalizedCommand) result.__command = normalizedCommand;
-      assertParsedEnums(result, properties);
-      assertGrammar(tool, result);
-      assertParsedActionRequirements(tool, result);
+      assertParsedEnums(result, properties, lang);
+      assertGrammar(tool, result, lang);
+      assertParsedActionRequirements(tool, result, lang);
       return result;
     }
 
@@ -543,14 +545,14 @@ export class ParameterValidator {
       }
     }
 
-    if (index < positional.length) throw new Error(`Unexpected argument: ${positional.slice(index).join(' ')}`);
+    if (index < positional.length) throw new Error(t(lang, 'validation.unexpected_argument', { argument: positional.slice(index).join(' ') }));
     const missing = def.required?.filter((key) => result[key] === undefined) ?? [];
-    if (missing.length > 0 && !noArg) throw new Error(this.getUsageHelp(tool));
+    if (missing.length > 0 && !noArg) throw new Error(this.getUsageHelp(tool, lang));
     if (effectiveInferred && result.action === undefined) result.action = effectiveInferred;
     if (normalizedCommand) result.__command = normalizedCommand;
-    assertParsedEnums(result, properties);
-    assertGrammar(tool, result);
-    assertParsedActionRequirements(tool, result);
+    assertParsedEnums(result, properties, lang);
+    assertGrammar(tool, result, lang);
+    assertParsedActionRequirements(tool, result, lang);
     return result;
   }
 
@@ -566,19 +568,20 @@ export class ParameterValidator {
     return validateToolArguments<T>(tool, args);
   }
 
-  static assertValid(tool: BaseTool, args: unknown): void {
-    assertValidToolArguments(tool, args);
+  static assertValid(tool: BaseTool, args: unknown, lang: string = 'en'): void {
+    assertValidToolArguments(tool, args, lang);
   }
 
-  static getUsageHelp(tool: BaseTool): string {
+  static getUsageHelp(tool: BaseTool, lang: string = 'en'): string {
     const name = tool.aliases.length > 0 ? tool.aliases[0] : tool.name;
     const props = tool.definition.function.parameters?.properties || {};
-    let help = `Invalid usage.\n\n*Usage:* /${name}`;
+    let help = t(lang, 'validation.invalid_usage', { name });
     for (const key of Object.keys(props)) help += tool.definition.function.parameters.required?.includes(key) ? ` <${key}>` : ` [${key}]`;
-    help += `\n\n*Description:*\n${tool.description}`;
+    const helpDescKey = `help.tool.${tool.name}`;
+    help += `\n\n${t(lang, 'menu.description')}\n${hasTranslation(lang, helpDescKey) ? t(lang, helpDescKey) : tool.description}`;
     const enumEntries = Object.entries(props).filter(([, prop]) => prop.enum && prop.enum.length > 0);
     if (enumEntries.length > 0) {
-      help += `\n\n*Available Options:*`;
+      help += `\n\n${t(lang, 'validation.available_options')}`;
       for (const [key, prop] of enumEntries) help += `\n  *${key}:* ${prop.enum!.map(String).join(' | ')}`;
     }
     return help;

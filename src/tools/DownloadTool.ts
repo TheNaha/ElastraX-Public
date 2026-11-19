@@ -415,18 +415,18 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     const format = (args.format || 'mp4') as DownloadFormat;
     if (!url) return t(language, 'download.no_url');
     if (!AUDIO_FORMATS.has(format) && !VIDEO_FORMATS.has(format)) {
-      return t(language, 'download.error', { msg: 'Invalid format requested.' });
+      return t(language, 'download.error', { msg: t(language, 'download.invalid_format') });
     }
     if (args.max_resolution && VIDEO_FORMATS.has(format)) {
       const res = validateResolution(args.max_resolution);
       if (!res) return t(language, 'download.invalid_resolution');
     }
     if (args.max_fps && VIDEO_FORMATS.has(format) && !validateFps(args.max_fps)) {
-      return t(language, 'download.error', { msg: 'Invalid max_fps. Use one of: 24, 30, 48, 60, 120.' });
+      return t(language, 'download.error', { msg: t(language, 'download.invalid_fps') });
     }
     if (args.audio_quality && AUDIO_FORMATS.has(format)) {
       const q = validateAudioQuality(args.audio_quality);
-      if (!q) return t(language, 'download.error', { msg: 'Invalid audio_quality. Use a number 0-10 (0 is best).' });
+      if (!q) return t(language, 'download.error', { msg: t(language, 'download.invalid_audio_quality') });
     }
     try {
       await downloadToolDeps.validateUrl(url);
@@ -434,10 +434,13 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
       return t(language, 'download.error', { msg: getErrorMessage(error).slice(0, 200) });
     }
     if (!ctx.sendMedia) return t(language, 'download.not_supported');
+    /** Kept outside the try so a size failure can name the limit it hit. */
+    let effectiveMaxMb: number | null = null;
     try {
       const roles = await ctx.resolveRoles();
       const privileges = await AuthService.getEffectivePrivileges(roles);
       const maxMb = privileges.maxDownloadMb === -1 ? Infinity : privileges.maxDownloadMb || getDownloadMaxMb();
+      effectiveMaxMb = maxMb;
       await ctx.react?.('⬇️');
       await ctx.reply(t(language, 'download.starting'));
       log.info({ url: redactUrl(url), format, max_resolution: args.max_resolution, max_fps: args.max_fps, audio_quality: args.audio_quality, chatId: ctx.chatId, senderId: ctx.senderId }, 'Download started');
@@ -459,6 +462,12 @@ export class DownloadTool extends BaseTool<DownloadArgs> {
     } catch (error) {
       const errorMessage = getErrorMessage(error);
       log.error({ err: error, url: redactUrl(url), format }, 'Download failed');
+      if (errorMessage.includes('Download exceeds the')) {
+        const limitMb = effectiveMaxMb !== null && Number.isFinite(effectiveMaxMb)
+          ? String(effectiveMaxMb)
+          : String(Math.floor(HARD_MEDIA_MAX_BYTES / MIB));
+        return t(language, 'download.too_large', { max: limitMb });
+      }
       if (errorMessage.includes('not found') || errorMessage.includes('YTDLP_PATH')) return t(language, 'download.ytdlp_missing');
       if (errorMessage.includes('error while loading shared libraries')) {
         return t(language, 'download.ytdlp_broken', {

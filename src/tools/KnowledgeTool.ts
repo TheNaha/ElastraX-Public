@@ -169,7 +169,11 @@ export class KnowledgeTool extends BaseTool<KnowledgeArgs> {
         text = await extractPdfText(buffer);
       } catch (error: unknown) {
         if (error instanceof PdfTextExtractionUnavailableError) {
-          text = ocrConfig.enabled ? await viaOcr() : '';
+          // The deployment has no PDF text extractor at all. Saying so beats the
+          // generic "no text could be extracted", which reads as if the document
+          // were blank.
+          if (!ocrConfig.enabled) return t(ctx.language, 'kb.pdf_unsupported');
+          text = await viaOcr();
         } else {
           log.debug({ err: error }, 'PDF text extraction failed');
           text = '';

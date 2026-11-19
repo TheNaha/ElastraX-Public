@@ -94,7 +94,7 @@ export class StatsTool extends BaseTool<ToolArgs> {
       });
     } catch (error: unknown) {
       log.error({ err: error, chatId: ctx.chatId }, 'Failed to fetch stats');
-      return `Failed to retrieve stats: ${getErrorMessage(error)}`;
+      return t(ctx.language, 'stats.fetch_failed', { msg: getErrorMessage(error) });
     }
   }
 }

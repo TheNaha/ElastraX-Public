@@ -168,7 +168,7 @@ export class TranslateTool extends BaseTool<TranslateArgs> {
       ], undefined, 0.3);
 
       const translated = typeof aiMsg?.content === 'string' ? aiMsg.content.trim() : '';
-      if (!translated) throw new Error('Empty translation returned.');
+      if (!translated) throw new Error(t(lang, 'translate.empty_result'));
 
       return t(lang, 'translate.success', {
         from: 'auto',

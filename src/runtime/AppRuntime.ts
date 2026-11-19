@@ -37,6 +37,8 @@ import type {
   WebhookEnqueuer,
   WebhookReadinessCheck,
 } from '../webhooks/types';
+import { pickWebhookText } from '../webhooks/utils';
+import { getRoomLanguage } from '../db/roomLanguage';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import { nowISO } from '../utils/date.js';
 import { randomUUID, createHash } from 'node:crypto';
@@ -715,10 +717,13 @@ export class AppRuntime {
     }
     const deliveryIds: string[] = [];
     for (const { destination, platform, roomKey } of resolved) {
+      // Each destination gets its own rendering: one webhook fans out to rooms
+      // that may be set to different languages.
+      const language = destination.language ?? getRoomLanguage(roomKey);
       deliveryIds.push(OutboxService.enqueueText(
         platform,
         destination.chatRoomId,
-        job.text,
+        pickWebhookText(job, language),
         ['webhook', job.route, eventKey, destination.platform ?? '', destination.chatRoomId, roomKey],
         { roomKey },
       ));

@@ -40,6 +40,7 @@ import { getToolTimeoutMs, readIntegerEnv } from '../config/runtime';
 import { withCancellableTimeout } from '../utils/withTimeout.js';
 import type { MessageContext } from '../core/MessageContext';
 import { parseExplicitCommand, validateToolArguments, type ValidationResult } from './ParameterValidator';
+import { t } from '../utils/i18n';
 import type { ToolResult } from './BaseTool';
 import { roleSatisfies } from '../core/roleAccess';
 import { safeErrorMessage } from '../utils/errorUtils';
@@ -301,11 +302,31 @@ function isToolInvocationAccessible(tool: BaseTool, args: { action?: unknown; __
   return isToolAccessible(tool, context);
 }
 
-export function validateAndAuthorizeInvocation(tool: BaseTool, args: unknown, context: ToolAccessContext = {}): ValidationResult {
-  if (!isToolInvocationAccessible(tool, args as { action?: unknown; __command?: unknown } | null, context)) {
-    return { valid: false, value: args, errors: ['Tool invocation is not authorized for this context.'], issues: [{ path: '$', message: 'Tool invocation is not authorized for this context.', keyword: 'access' }] };
+/**
+ * A malformed slash command: wrong arity, unknown action, bad value.
+ *
+ * Typed rather than detected by matching message text, because the message is
+ * translated — an Indonesian usage error must still be answered as a usage
+ * error instead of collapsing into "an internal error occurred".
+ */
+export class CommandUsageError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'CommandUsageError';
   }
-  return validateToolArguments(tool, args);
+}
+
+export function validateAndAuthorizeInvocation(
+  tool: BaseTool,
+  args: unknown,
+  context: ToolAccessContext = {},
+  lang: string = 'en',
+): ValidationResult {
+  if (!isToolInvocationAccessible(tool, args as { action?: unknown; __command?: unknown } | null, context)) {
+    const denied = t(lang, 'validation.not_authorized');
+    return { valid: false, value: args, errors: [denied], issues: [{ path: '$', message: denied, keyword: 'access' }] };
+  }
+  return validateToolArguments(tool, args, lang);
 }
 
 export function getToolsForContext(context: ToolAccessContext = {}): BaseTool[] {
@@ -345,16 +366,17 @@ export function getToolByAliasOrName(command: string, context?: ToolAccessContex
 export async function executeAuthorizedCommand(command: string, argsString: string, ctx: MessageContext): Promise<ToolResult | undefined> {
   const tool = await getAuthorizedTool(command, ctx);
   if (!tool) return undefined;
+  const lang = ctx.language ?? 'en';
   let args: Record<string, unknown>;
   try {
-    args = parseExplicitCommand(tool, argsString, command) as Record<string, unknown>;
+    args = parseExplicitCommand(tool, argsString, command, lang) as Record<string, unknown>;
   } catch (error: unknown) {
-    throw new Error(`Invalid ${command} arguments: ${safeErrorMessage(error)}`, { cause: error });
+    throw new CommandUsageError(t(lang, 'validation.invalid_arguments', { command, detail: safeErrorMessage(error) }), { cause: error });
   }
   const roles = typeof ctx.resolveRoles === 'function' ? await ctx.resolveRoles() : [];
   const context: ToolAccessContext = { roles, isGroup: ctx.isGroup, isOwner: roles.includes('owner'), platform: ctx.platform, userId: ctx.senderId };
-  const validation = validateAndAuthorizeInvocation(tool, args, context);
-  if (!validation.valid) throw new Error(`Invalid ${command} arguments: ${validation.errors.join('; ')}`);
+  const validation = validateAndAuthorizeInvocation(tool, args, context, lang);
+  if (!validation.valid) throw new CommandUsageError(t(lang, 'validation.invalid_arguments', { command, detail: validation.errors.join('; ') }));
   return runMutatingTool(tool, ctx, () => withCancellableTimeout(
     signal => tool.execute(args, ctx, signal),
     getToolTimeoutMs(),

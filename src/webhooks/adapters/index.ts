@@ -11,20 +11,24 @@ function looksLikeGrafanaPayload(body: WebhookBody): boolean {
   return typeof body.receiver === 'string' && (body.status === 'firing' || body.status === 'resolved');
 }
 
-export function buildWebhookMessage(headers: Record<string, string | undefined>, body: WebhookBody): string {
+export function buildWebhookMessage(
+  headers: Record<string, string | undefined>,
+  body: WebhookBody,
+  lang: string = 'en',
+): string {
   const safeBody = sanitizeWebhookBody(body);
   const githubEvent = headers['x-github-event'];
-  if (githubEvent) return adaptGitHub(githubEvent, safeBody);
+  if (githubEvent) return adaptGitHub(githubEvent, safeBody, lang);
 
   // A Grafana generic-webhook contact point sends JSON only; the origin header
   // is set by Grafana's own webhook integration, not by the contact point. Keying
   // on the header alone sent real alerts to the generic formatter.
   const grafanaOrigin = headers['x-grafana-origin'];
-  if (grafanaOrigin || looksLikeGrafanaPayload(safeBody)) return adaptGrafana(safeBody);
+  if (grafanaOrigin || looksLikeGrafanaPayload(safeBody)) return adaptGrafana(safeBody, lang);
 
-  if (isApprisePayload(headers, safeBody)) return adaptApprise(safeBody);
+  if (isApprisePayload(headers, safeBody)) return adaptApprise(safeBody, lang);
 
-  return buildGenericMessage(safeBody);
+  return buildGenericMessage(safeBody, lang);
 }
 
 export * from './media';

@@ -3,12 +3,17 @@ export type SendFn = (chatId: string, text: string, signal?: AbortSignal) => Pro
 
 export type WebhookRoute = 'generic' | 'github' | 'seerr' | 'jellyfin';
 
+/** Locale codes understood by the translation table. */
+export type WebhookLocale = 'en' | 'id';
+
 export type WebhookDestination = {
   /** Raw provider room id — the value handed to the provider. */
   chatRoomId: string;
   platform?: string;
   /** Canonical room key used for durable rows and dedupe. */
   roomKey?: string;
+  /** Room language, resolved once so each target reads the notice in its own language. */
+  language?: WebhookLocale;
 };
 
 export type WebhookDeliveryJob = {
@@ -16,6 +21,11 @@ export type WebhookDeliveryJob = {
   route: WebhookRoute;
   source: string;
   text: string;
+  /**
+   * Per-locale renderings of `text`. `text` stays the English default: it is
+   * what older queue rows and the idempotency key are built from.
+   */
+  textVariants?: Partial<Record<WebhookLocale, string>>;
   destinations: WebhookDestination[];
   receivedAt: string;
 };

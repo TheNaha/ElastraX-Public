@@ -6,6 +6,7 @@ import { timeoutSignal } from '../utils/withTimeout';
 import { readResponseTextBounded } from '../utils/httpBody';
 import { validateSsrfUrl } from '../providers/ssrf';
 import { redactUrl } from './DownloadTool';
+import { t } from '../utils/i18n';
 
 const log = logger.child({ module: 'WebScrapeTool' });
 const esc = (s: string) => s.replace(/([*`_[\]\\])/g, '\\$1');
@@ -48,20 +49,21 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
     };
   }
 
-  async execute(args: WebScrapeArgs, _ctx: MessageContext): Promise<string> {
+  async execute(args: WebScrapeArgs, ctx: MessageContext): Promise<string> {
     const query = args.query;
-    if (!args.url) return 'Error: URL is required.';
+    const lang = ctx.language ?? 'en';
+    if (!args.url) return t(lang, 'web_scrape.url_required');
     try {
       const url = new URL(args.url);
       if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-         return 'Error: Only HTTP/HTTPS URLs are supported.';
+         return t(lang, 'web_scrape.http_only');
       }
       // SSRF guard: match DownloadTool policy so internal/loopback/metadata
       // URLs are rejected before being forwarded to the reader service.
       try {
         await validateSsrfUrl(url);
       } catch {
-        return 'Error: URL is not allowed.';
+        return t(lang, 'web_scrape.blocked');
       }
       log.info({ url: redactUrl(args.url) }, 'Scraping URL via jina.ai reader');
       const headers: Record<string, string> = {
@@ -75,20 +77,21 @@ export class WebScrapeTool extends BaseTool<WebScrapeArgs> {
       const signal = timeoutSignal(15_000);
 
       const response = await fetch(`https://r.jina.ai/${url.toString()}`, { headers, signal });
-      if (!response.ok) return `Error fetching URL: HTTP ${response.status}`;
+      if (!response.ok) return t(lang, 'web_scrape.http_error', { status: String(response.status) });
       // Bounded read: response.text() buffers the whole body before the 25k
       // character cap below can run, so a huge page was fully allocated first.
       const text = await readResponseTextBounded(response, 4 * 1024 * 1024, 'Scraped page');
       
       // Cap at 25,000 chars to avoid LLM context explosion
       if (text.length > 25000) {
-        return text.substring(0, 25000) + '\n\n[Content truncated due to length]';
+        return `${text.substring(0, 25000)}\n\n${t(lang, 'web_scrape.truncated')}`;
       }
       return text;
     } catch (e) {
       const msg = getErrorMessage(e);
-      const qPart = query ? ` for "${esc(query)}"` : '';
-      return `Error scraping URL${qPart}: ${msg}`;
+      return query
+        ? t(lang, 'web_scrape.failed_query', { query: esc(query), msg })
+        : t(lang, 'web_scrape.failed', { msg });
     }
   }
 }

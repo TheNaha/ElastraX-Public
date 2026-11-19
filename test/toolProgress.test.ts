@@ -230,3 +230,26 @@ describe('ToolProgressTracker render bound', () => {
     expect(dropped).toBeLessThan(59);
   });
 });
+
+describe('formatToolAction localisation', () => {
+  test('follows the room language', () => {
+    expect(formatToolAction('web_search', 'utility', { query: 'Arsenal' }, 'id'))
+      .toBe('🔍 Mencari di web "Arsenal"...');
+    expect(formatToolAction('sticker', 'media', {}, 'id')).toBe('🎨 Membuat stiker...');
+    expect(formatToolAction('speak', 'media', {}, 'id')).toBe('🔊 Membuat pesan suara...');
+    expect(formatToolAction('made_up_tool', 'media', {}, 'id')).toBe('🎬 Menjalankan made up tool...');
+  });
+
+  test('defaults to English when no language is given', () => {
+    expect(formatToolAction('web_search', 'utility', { query: 'Arsenal' })).toBe('🔍 Searching web for "Arsenal"...');
+  });
+
+  test('English output is unchanged by the localisation refactor', () => {
+    expect(formatToolAction('download_media', 'utility', { url: 'https://youtube.com/watch?v=1', format: 'mp3' }, 'en'))
+      .toBe('⬇️ Downloading MP3 media from youtube.com...');
+    expect(formatToolAction('download_media', 'utility', { url: 'https://youtube.com/watch?v=1' }, 'en'))
+      .toBe('⬇️ Downloading media from youtube.com...');
+    expect(formatToolAction('convert_media', 'media', { format: 'webp' }, 'en')).toBe('🔄 Converting media to WEBP...');
+    expect(formatToolAction('convert_media', 'media', {}, 'en')).toBe('🔄 Converting media...');
+  });
+});

@@ -38,7 +38,7 @@ export class GameSearchTool extends SearxSearchToolBase {
   }
 
   async execute(args: SearchToolArgs, ctx: MessageContext): Promise<string> {
-    if (!this.isEnabled()) return 'Game search is disabled until explicitly enabled by the bot owner.';
+    if (!this.isEnabled()) return t(ctx.language, 'search.game.disabled');
     return super.execute(args, ctx);
   }
 
@@ -52,7 +52,7 @@ export class GameSearchTool extends SearxSearchToolBase {
   }
 
   protected override resultsHeader(lang: string, query: string): string {
-    return `Game Search Results for "${query}":`;
+    return t(lang, 'search.game.header', { query });
   }
 
   protected override noResultsMessage(lang: string, query: string): string {

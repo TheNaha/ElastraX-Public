@@ -172,3 +172,61 @@ describe('MenuTool', () => {
     expect(result).toContain('Did you mean "*`mt`*"?');
   });
 });
+
+describe('MenuTool localisation', () => {
+  class ReminderLikeTool extends BaseTool {
+    name = 'reminder';
+    description = 'Set, list, or cancel reminders. Supports natural time parsing and recurring schedules.';
+    aliases: string[] = [];
+    category = 'utility';
+    permissions = 'user' as const;
+    get definition(): ToolDefinition {
+      return {
+        type: 'function',
+        function: {
+          name: this.name,
+          description: this.description,
+          parameters: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', description: 'The reminder action to perform.' },
+              time: { type: 'string', description: 'When to fire the reminder.' },
+            },
+            required: ['action'],
+          },
+        },
+      };
+    }
+    async execute() { return 'reminder'; }
+  }
+
+  test('help text follows the room language', async () => {
+    const menuTool = new MenuTool(() => [new ReminderLikeTool()]);
+    const ctx = { senderName: 'Budi', language: 'id' } as MessageContext;
+
+    const help = await menuTool.execute({ command_name: 'reminder' }, ctx);
+
+    expect(help).toContain('Mengatur, menampilkan, atau membatalkan pengingat');
+    expect(help).toContain('"set" untuk membuat pengingat');
+    expect(help).toContain('Kapan pengingat berbunyi');
+    // The raw English source must not leak through.
+    expect(help).not.toContain('Set, list, or cancel reminders');
+  });
+
+  test('falls back to the tool source text for an untranslated tool', async () => {
+    const menuTool = new MenuTool(() => [new MockTool()]);
+    const ctx = { senderName: 'Budi', language: 'id' } as MessageContext;
+
+    const help = await menuTool.execute({ command_name: 'mock_tool' }, ctx);
+    expect(help).toContain('A mock tool');
+    expect(help).toContain('*Kategori:* Mock');
+  });
+
+  test('category headings are translated in the main menu', async () => {
+    const menuTool = new MenuTool(() => [new ReminderLikeTool()]);
+    const ctx = { senderName: 'Budi', language: 'id' } as MessageContext;
+
+    const menu = await menuTool.execute({}, ctx);
+    expect(menu).toContain('*=== UTILITAS ===*');
+  });
+});

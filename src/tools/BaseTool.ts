@@ -185,8 +185,8 @@ export abstract class BaseTool<TArgs extends ToolArgs = ToolArgs> {
   abstract get definition(): ToolDefinition;
   abstract execute(args: TArgs, ctx: MessageContext, signal?: AbortSignal): Promise<ToolResult>;
 
-  describeAction(args: TArgs): string {
-    return formatToolAction(this.name, this.category, args);
+  describeAction(args: TArgs, lang?: string): string {
+    return formatToolAction(this.name, this.category, args, lang);
   }
 
   /**

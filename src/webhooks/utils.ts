@@ -461,3 +461,18 @@ export class WebhookReplayCache {
     }
   }
 }
+
+/**
+ * The rendering a room should receive.
+ *
+ * Webhook jobs carry one English `text` plus optional per-locale variants; a
+ * room whose language has no variant falls back to English rather than to a
+ * half-translated mix.
+ */
+export function pickWebhookText(
+  job: { text: string; textVariants?: Partial<Record<'en' | 'id', string>> },
+  lang?: string | null,
+): string {
+  const wanted = lang === 'id' ? 'id' : 'en';
+  return job.textVariants?.[wanted] ?? job.text;
+}

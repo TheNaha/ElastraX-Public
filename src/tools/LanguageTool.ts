@@ -89,7 +89,7 @@ export class LanguageTool extends BaseTool<LanguageToolArgs> {
       return t(lang_code, key);
     } catch (error: unknown) {
       log.error({ err: error, chatId: ctx.chatId, lang_code }, 'Failed to update language');
-      return t(ctx.language, 'language.error', { msg: 'Unable to update language' });
+      return t(ctx.language, 'language.error', { msg: t(ctx.language, 'language.update_failed') });
     }
   }
 }

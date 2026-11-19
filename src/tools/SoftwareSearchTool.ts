@@ -38,7 +38,7 @@ export class SoftwareSearchTool extends SearxSearchToolBase {
   }
 
   async execute(args: SearchToolArgs, ctx: MessageContext): Promise<string> {
-    if (!this.isEnabled()) return 'Software search is disabled until explicitly enabled by the bot owner.';
+    if (!this.isEnabled()) return t(ctx.language, 'search.software.disabled');
     return super.execute(args, ctx);
   }
 

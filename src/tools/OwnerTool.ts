@@ -122,7 +122,7 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
       case 'pinout':
         return this.handlePinout(ctx, lang);
       case 'system_info':
-        return this.handleSystemInfo(ctx);
+        return this.handleSystemInfo(ctx, lang);
       default:
         return t(lang, 'owner.usage');
     }
@@ -144,7 +144,6 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
     let sent = 0;
     let failed = 0;
     let skipped = 0;
-    const broadcastText = `📢 *Broadcast from Bot Owner:*\n\n${message}`;
 
     log.info({ roomCount: rooms.length, platform: ctx.platform }, 'Broadcast initiated');
 
@@ -162,6 +161,10 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
         log.warn({ roomId: room.id, roomKey: room.roomKey }, 'Broadcast skipped: room has no usable provider id');
         continue;
       }
+      // The banner follows the *target* room's language, not the language of the
+      // owner who issued the command: one broadcast reaches rooms set to en and
+      // to id alike.
+      const broadcastText = t(room.language ?? lang, 'owner.broadcast_banner', { message });
       try {
         if (ctx.sendToChat) {
           await ctx.sendToChat(remoteRoomId, broadcastText);
@@ -201,21 +204,24 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
       return '';
     } catch (error: unknown) {
       log.error({ err: error, chatId: ctx.chatId }, 'Failed to leave group');
-      return t(lang, 'owner.leave_error', { msg: 'Unable to leave group' });
+      return t(lang, 'owner.leave_error', { msg: t(lang, 'owner.leave_error_generic') });
     }
   }
 
-  private async handleSystemInfo(_ctx: MessageContext): Promise<string> {
+  private async handleSystemInfo(_ctx: MessageContext, lang: string): Promise<string> {
     const [roomCountRow] = db.select({ value: count() }).from(chatRooms).all();
     const roomCount = roomCountRow?.value ?? 0;
     const memUsage = process.memoryUsage();
 
     return [
-      '🤖 *ElastraX System Info*',
-      ` • ⬆️ Uptime: *${formatUptime(process.uptime())}*`,
-      ` • 💬 Total Rooms: *${roomCount}*`,
-      ` • 🧠 Memory: *${Math.round(memUsage.heapUsed / 1024 / 1024)}MB* / ${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
-      ` • 🏗️ Runtime: *Bun ${process.versions.bun || 'unknown'}*`,
+      t(lang, 'owner.system_info_header'),
+      t(lang, 'owner.system_info_uptime', { uptime: formatUptime(process.uptime()) }),
+      t(lang, 'owner.system_info_rooms', { count: String(roomCount) }),
+      t(lang, 'owner.system_info_memory', {
+        used: String(Math.round(memUsage.heapUsed / 1024 / 1024)),
+        total: String(Math.round(memUsage.heapTotal / 1024 / 1024)),
+      }),
+      t(lang, 'owner.system_info_runtime', { version: process.versions.bun || 'unknown' }),
     ].join('\n\n');
   }
 
@@ -237,7 +243,7 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
       for (const file of logFiles) {
         if (shards.length >= 25) {
           const remaining = logFiles.length - 25;
-          if (remaining > 0) shards.push(` • _…and ${remaining} more log files_`);
+          if (remaining > 0) shards.push(t(lang, 'owner.pinout_more', { count: String(remaining) }));
           break;
         }
         const stat = await fsPromises.stat(pathJoin(logPath, file.name));
@@ -245,20 +251,25 @@ export class OwnerTool extends BaseTool<OwnerArgs> {
         totalSizeMB += sizeMB;
         const ageMs = Date.now() - stat.mtimeMs;
         const age = ageMs >= 86400000
-          ? `${(ageMs / 86400000).toFixed(0)}d ago`
-          : `${Math.round(ageMs / 3600000)}h ago`;
+          ? t(lang, 'owner.pinout_age_days', { days: String((ageMs / 86400000).toFixed(0)) })
+          : t(lang, 'owner.pinout_age_hours', { hours: String(Math.round(ageMs / 3600000)) });
         const rotated = file.name.endsWith('.log.1') || file.name.match(/\.log\.\d+$/) !== null;
-        shards.push(` • *${file.name}* — ${(sizeMB).toFixed(2)}MB, ${age}${rotated ? ' (rotated)' : ''}`);
+        shards.push(t(lang, 'owner.pinout_shard', {
+          name: file.name,
+          size: sizeMB.toFixed(2),
+          age,
+          rotated: rotated ? t(lang, 'owner.pinout_rotated') : '',
+        }));
       }
     } catch (error) {
       log.warn({ err: error }, 'Could not scan log directory');
-      shards.push(` • _Could not read log directory (${String(error).slice(0, 80)})_`);
+      shards.push(t(lang, 'owner.pinout_unreadable', { error: String(error).slice(0, 80) }));
     }
 
     return [
       t(lang, 'admin.pinout_title'),
-      `Logs are written under: \`${pathRelative(process.cwd(), logPath) || logPath}/\``,
-      `Total size across scanned logs: *${totalSizeMB.toFixed(2)}MB*`,
+      t(lang, 'owner.pinout_path', { path: `${pathRelative(process.cwd(), logPath) || logPath}/` }),
+      t(lang, 'owner.pinout_size', { size: totalSizeMB.toFixed(2) }),
       '',
       ...shards,
       '',

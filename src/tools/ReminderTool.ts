@@ -350,7 +350,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
     if (!message) return t(lang, 'reminder.no_message', {});
     const reminderMessage = String(message).trim();
     if (!reminderMessage || reminderMessage.length > MAX_REMINDER_MESSAGE_LENGTH) {
-      return t(lang, 'reminder.error', { msg: 'Message must contain 1-1000 characters' });
+      return t(lang, 'reminder.error', { msg: t(lang, 'reminder.invalid_length') });
     }
 
     const fireAt = parseRelativeTime(time);
@@ -375,7 +375,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
       MAX_ACTIVE_REMINDERS + 1,
     ) as Array<{ id: number }>;
     if (active.length >= MAX_ACTIVE_REMINDERS) {
-      return t(lang, 'reminder.error', { msg: `Maximum ${MAX_ACTIVE_REMINDERS} active reminders reached` });
+      return t(lang, 'reminder.error', { msg: t(lang, 'reminder.max_active', { max: String(MAX_ACTIVE_REMINDERS) }) });
     }
 
     try {
@@ -402,7 +402,7 @@ export class ReminderTool extends BaseTool<ReminderArgs> {
         }).onConflictDoNothing();
         room = { id: canonicalRoomId } as typeof chatRooms.$inferSelect;
       }
-      if (!room) return t(lang, 'reminder.error', { msg: 'Chat room not found' });
+      if (!room) return t(lang, 'reminder.error', { msg: t(lang, 'reminder.room_not_found') });
       db.insert(reminders).values({
         chatRoomId: room.id,
         ...roomKeyWriteValues(roomIdentity.roomKey),

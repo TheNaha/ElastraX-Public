@@ -163,7 +163,11 @@ export class RoleTool extends BaseTool {
 
     // Normalise scope
     if (!scope || scope === 'here') scope = ctx.chatId;
-    const scopeLabel = scope === 'global' ? 'global' : scope === ctx.chatId ? 'this chat' : scope;
+    const scopeLabel = scope === 'global'
+      ? t(lang, 'role.scope_global_lower')
+      : scope === ctx.chatId
+        ? t(lang, 'role.scope_this_chat_lower')
+        : scope;
     const callerRoles = await ctx.resolveRoles();
     if (scope !== 'global' && !scopeMatches(scope, null, ctx.chatId, ctx.platform) && !callerRoles.includes('owner')) {
       return t(lang, 'role.insufficient', { callerRole: callerRoles.filter((role) => role !== 'user').join(',') || 'user', targetRole: scope });
@@ -185,8 +189,8 @@ export class RoleTool extends BaseTool {
       log.debug({ targetId, chatId: ctx.chatId }, 'Checking roles for user');
 
       const summary = targetId === ctx.senderId
-        ? await buildSenderRoleSummary(ctx)
-        : await buildTargetRoleSummary(targetId, ctx.chatId, ctx.platform);
+        ? await buildSenderRoleSummary(ctx, lang)
+        : await buildTargetRoleSummary(targetId, ctx.chatId, ctx.platform, undefined, lang);
       const accessProfile = await AuthService.getAccessProfile(summary.effectiveRoles);
       const privsStr = formatPrivileges(accessProfile.privileges);
 
@@ -242,14 +246,14 @@ export class RoleTool extends BaseTool {
       const current = await AuthService.getPrivilegesForRole(targetRole);
       const defaults = AuthService.getDefaultPrivileges(targetRole);
       const roleCap = targetRole.charAt(0).toUpperCase() + targetRole.slice(1);
-      let out = `📊 *Privileges for "${roleCap}":*\n\n`;
+      let out = t(lang, 'role.privs_header', { role: roleCap });
       for (const f of PRIVILEGE_FIELDS) {
         const cur = current[f];
         const def = defaults[f];
-        const label = cur === -1 ? 'Unlimited' : String(cur);
-        const defLabel = def === -1 ? 'Unlimited' : String(def);
-        const overridden = cur !== def ? ' (Overridden)' : '';
-        out += ` • *\`${f}\`:* ${label} (Default: ${defLabel})${overridden}\n\n`;
+        const label = cur === -1 ? t(lang, 'role.privs_unlimited') : String(cur);
+        const defLabel = def === -1 ? t(lang, 'role.privs_unlimited') : String(def);
+        const overridden = cur !== def ? t(lang, 'role.privs_overridden') : '';
+        out += t(lang, 'role.privs_line', { field: f, value: label, default: defLabel, overridden });
       }
       return out.trimEnd();
     }
@@ -342,7 +346,7 @@ export class RoleTool extends BaseTool {
       invalidateNativeAdminCache(ctx.chatId, ctx.platform);
       if (!removed) {
         const { tag } = await resolveUserTag(targetId);
-        return `❌ No matching role found for ${tag} in *${scopeLabel}*.`;
+        return t(lang, 'role.no_match', { tag, scope: scopeLabel });
       }
       logger.info({ targetId, role: revokeRole, scope, revokedBy: ctx.senderId }, '[RoleTool] Role revoked');
 
@@ -359,16 +363,19 @@ export class RoleTool extends BaseTool {
 
 function formatExplicitRoles(
   roles: Array<{ role: string; scope: string }>,
+  lang: string = 'en',
 ): string {
   return roles.length > 0
     ? roles.map((entry) => {
-        const scopeCap = entry.scope === 'global' ? 'Global' : 'This Chat';
+        const scopeCap = entry.scope === 'global'
+          ? t(lang, 'role.scope_global')
+          : t(lang, 'role.scope_this_chat');
         return ` • *\`${entry.role}\`* (${scopeCap})`;
       }).join('\n\n')
-    : '_No explicit roles assigned_';
+    : t(lang, 'role.no_explicit');
 }
 
-async function buildTargetRoleSummary(targetId: string, chatId: string, platform = 'whatsapp', targetPn?: string): Promise<RoleSummary> {
+async function buildTargetRoleSummary(targetId: string, chatId: string, platform = 'whatsapp', targetPn?: string, lang: string = 'en'): Promise<RoleSummary> {
   const allDbRoles = await AuthService.getUserRoles(targetId, platform);
   const visibleRoles = allDbRoles.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, chatId, platform) && (!entry.platform || entry.platform === platform));
   const effectiveRoles = new Set<string>(['user']);
@@ -383,18 +390,18 @@ async function buildTargetRoleSummary(targetId: string, chatId: string, platform
   }
 
   return {
-    explicitRoles: formatExplicitRoles(visibleRoles),
+    explicitRoles: formatExplicitRoles(visibleRoles, lang),
     effectiveRoles: Array.from(effectiveRoles),
   };
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
-async function buildSenderRoleSummary(ctx: MessageContext): Promise<RoleSummary> {
+async function buildSenderRoleSummary(ctx: MessageContext, lang: string = 'en'): Promise<RoleSummary> {
   const allDbRoles = await AuthService.getUserRoles(ctx.senderId, ctx.platform);
   const visibleRoles = allDbRoles.filter(entry => scopeMatches(entry.scope, entry.scopeRoomKey, ctx.chatId, ctx.platform) && (!entry.platform || entry.platform === ctx.platform));
   return {
-    explicitRoles: formatExplicitRoles(visibleRoles),
+    explicitRoles: formatExplicitRoles(visibleRoles, lang),
     effectiveRoles: await ctx.resolveRoles(),
   };
 }

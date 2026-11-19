@@ -1,8 +1,9 @@
 import { db } from '../db';
-import { chatRooms, reminders } from '../db/schema';
+import { reminders } from '../db/schema';
 import { asc, eq, lte, and, or, isNull } from 'drizzle-orm';
 import { readIntegerEnv } from '../config/runtime';
 import { logger } from './logger';
+import { getRoomLanguage } from '../db/roomLanguage';
 import { t } from './i18n';
 import { exponentialBackoff } from './backoff';
 import { withCancellableTimeout } from './withTimeout.js';
@@ -112,31 +113,9 @@ function resolveReminderTarget(reminder: typeof reminders.$inferSelect): Reminde
   return {
     roomKey,
     remoteRoomId: remoteRoomId ?? stored,
-    language: reminder.language ?? languageForRoomKey(roomKey, platform),
+    language: reminder.language ?? getRoomLanguage(roomKey),
     mismatch,
   };
-}
-
-/** Room language keyed on the canonical room key, tolerating raw-id rows. */
-function languageForRoomKey(roomKey: string, platform: string): string | null {
-  const remote = remoteRoomIdFromKey(roomKey);
-  try {
-    const byKey = db.select({ language: chatRooms.language })
-      .from(chatRooms)
-      .where(eq(chatRooms.roomKey, roomKey))
-      .all()[0];
-    if (byKey?.language) return byKey.language;
-    for (const candidate of remote ? [remote] : [roomKey]) {
-      const row = db.select({ language: chatRooms.language })
-        .from(chatRooms)
-        .where(eq(chatRooms.id, candidate))
-        .all()[0];
-      if (row?.language) return row.language;
-    }
-  } catch (error) {
-    logger.warn({ err: error, roomKey, platform }, '[Scheduler] Room configuration lookup failed');
-  }
-  return null;
 }
 
 /** Rebuild a Date from `source`'s wall-clock time, with optional date-component overrides. */

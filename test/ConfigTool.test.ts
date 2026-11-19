@@ -239,7 +239,7 @@ describe('ConfigTool', () => {
         { action: 'set', key: 'unknownKey', value: 'value' },
         createCtx(),
       );
-      expect(result).toContain('valid key');
+      expect(result).toContain('is not a valid configuration key');
     });
 
     test('should return suggestion for mistyped key in set action', async () => {
@@ -252,7 +252,7 @@ describe('ConfigTool', () => {
 
     test('should return error when key is missing', async () => {
       const result = await tool.execute({ action: 'set', value: 'something' }, createCtx());
-      expect(result).toContain('valid key');
+      expect(result).toContain('specify a configuration key');
     });
 
     test('should return suggestion for mistyped key in reset action', async () => {
@@ -317,12 +317,12 @@ describe('ConfigTool', () => {
         { action: 'reset', key: 'notAValidKey' },
         createCtx(),
       );
-      expect(result).toContain('valid key');
+      expect(result).toContain('is not a valid configuration key');
     });
 
     test('should return error when key is missing on reset', async () => {
       const result = await tool.execute({ action: 'reset' }, createCtx());
-      expect(result).toContain('valid key');
+      expect(result).toContain('specify a configuration key');
     });
   });
 

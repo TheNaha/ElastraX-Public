@@ -598,10 +598,10 @@ export class DigestService {
     const client = MediaService.createJellyfinClient();
     const typeLabel = (itemType: unknown): string => {
       const value = String(itemType ?? '');
-      if (value === 'Movie') return 'Film';
-      if (value.startsWith('Episode') || value === 'Series') return 'Series';
-      if (value.startsWith('Music') || value === 'Audio') return 'Audio';
-      return 'Media';
+      if (value === 'Movie') return t(lang, 'digest.type_movie');
+      if (value.startsWith('Episode') || value === 'Series') return t(lang, 'digest.type_series');
+      if (value.startsWith('Music') || value === 'Audio') return t(lang, 'digest.type_audio');
+      return t(lang, 'digest.type_media');
     };
     const lines = items.map(item => {
       const year = item.ProductionYear ? ` (${item.ProductionYear})` : '';

@@ -125,7 +125,7 @@ export class GroupAdminTool extends BaseTool<GroupAdminArgs> {
       if (!ctx.setGroupSettings) return t(lang, 'group.not_supported');
       try {
         await ctx.setGroupSettings(ctx.chatId, action === 'mute' ? 'announcement' : 'not_announcement');
-        const status = action === 'mute' ? 'muted (admins only)' : 'unmuted (everyone)';
+        const status = t(lang, action === 'mute' ? 'group.status_muted' : 'group.status_unmuted');
         log.info({ chatId: ctx.chatId, action, requestedBy: ctx.senderId }, 'Group mute setting changed');
         return t(lang, 'group.mute_success', { status });
       } catch (error: unknown) {

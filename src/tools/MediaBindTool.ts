@@ -109,19 +109,19 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
       if (seerrClient.isConfigured && typeof seerrClient.authenticateJellyfin === 'function') {
         const seerrAuth = await seerrClient.authenticateJellyfin(username, password);
         const verifiedSeerrId = Number(seerrAuth?.id);
-        if (!Number.isInteger(verifiedSeerrId) || verifiedSeerrId <= 0) throw new Error('The service returned an invalid verified user id.');
+        if (!Number.isInteger(verifiedSeerrId) || verifiedSeerrId <= 0) throw new Error(t(ctx.language, 'media.err_invalid_id'));
         seerrUserId = verifiedSeerrId;
         seerrEmail = seerrAuth.email;
         jellyfinUserId = seerrAuth.jellyfinUserId ?? '';
         jellyfinUsername = seerrAuth.displayName ?? username;
         if (jellyfinUserId && jellyfinClient.isConfigured && typeof jellyfinClient.getUserById === 'function') {
           const jfUser = await jellyfinClient.getUserById(jellyfinUserId);
-          if (jfUser.Id && jfUser.Id !== jellyfinUserId) throw new Error('The verified Jellyfin identity did not match.');
+          if (jfUser.Id && jfUser.Id !== jellyfinUserId) throw new Error(t(ctx.language, 'media.err_identity_mismatch'));
           isAdmin = jfUser.Policy?.IsAdministrator === true;
         }
       } else if (jellyfinClient.isConfigured) {
         const authResult = await jellyfinClient.authenticateUser(username, password);
-        if (!authResult?.User?.Id) throw new Error('The service returned an invalid verified user id.');
+        if (!authResult?.User?.Id) throw new Error(t(ctx.language, 'media.err_invalid_id'));
         jellyfinUserId = authResult.User.Id;
         jellyfinUsername = authResult.User.Name || username;
         isAdmin = authResult.User.Policy?.IsAdministrator === true;
@@ -131,7 +131,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
         return;
       }
 
-      if (!jellyfinUserId && seerrUserId === undefined) throw new Error('No verified service identity was returned.');
+      if (!jellyfinUserId && seerrUserId === undefined) throw new Error(t(ctx.language, 'media.err_no_identity'));
       const metadata = JSON.stringify({ isAdmin, seerrUserId, verified: true, verifiedAt: nowISO(), authMethod: seerrUserId !== undefined ? 'jellyfin-via-seerr' : 'jellyfin' });
       let bound = 0;
       if (jellyfinUserId) {
@@ -142,7 +142,7 @@ export const mediaConnectFlowProcessor: FlowProcessor = async (ctx, flowData) =>
         await MediaService.bindingService.bind({ userId: ctx.senderId, platform: ctx.platform, serviceType: 'seerr', externalUserId: String(seerrUserId), externalUsername: jellyfinUsername || username, externalEmail: seerrEmail, metadata });
         bound++;
       }
-      if (bound === 0) throw new Error('No verified service binding could be created.');
+      if (bound === 0) throw new Error(t(ctx.language, 'media.err_no_binding'));
 
       await FlowHandler.clearSession(ctx.senderId, 'media_connect', ctx.platform, ctx.chatId);
 

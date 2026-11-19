@@ -13,6 +13,7 @@ import { BaseTool, type ToolArgs, type ToolDefinition, type ToolResult } from '.
 import { MessageContext } from '../core/MessageContext';
 import { ToolSearchIndex } from '../agent/ToolSearchIndex';
 import { isToolAccessible } from './access';
+import { t } from '../utils/i18n';
 import { resolveSenderHasBinding } from '../utils/toolAccess';
 
 interface FindToolsArgs extends ToolArgs {
@@ -61,12 +62,13 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
    */
   async execute(args: FindToolsArgs, ctx: MessageContext): Promise<ToolResult> {
     const query = typeof args.query === 'string' ? args.query.trim() : '';
+    const lang = ctx.language ?? 'en';
     if (!query) {
-      return 'Please provide a search query to find tools.';
+      return t(lang, 'find_tools.no_query');
     }
 
     if (!searchIndex) {
-      return 'Tool search is not available.';
+      return t(lang, 'find_tools.unavailable');
     }
 
     const candidates = searchIndex.search(query, 1000);
@@ -91,10 +93,10 @@ export class FindToolsTool extends BaseTool<FindToolsArgs> {
       if (results.length >= 7) break;
     }
     if (results.length === 0) {
-      return `No tools found matching "${query}". Try different keywords.`;
+      return t(lang, 'find_tools.none', { query });
     }
 
     const lines = results.map((r) => ` • *\`${r.name}\`* — ${r.description}`);
-    return `Found ${results.length} tool(s):\n\n${lines.join('\n\n')}\n\nYou can now call any of these tools directly.`;
+    return t(lang, 'find_tools.found', { count: String(results.length), items: lines.join('\n\n') });
   }
 }

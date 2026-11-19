@@ -47,6 +47,7 @@ import {
   hasBindingGatedTools,
   toolSearchIndex,
   executeAuthorizedCommand,
+  CommandUsageError,
   runMutatingTool,
   secureDefinition,
   validateAndAuthorizeInvocation,
@@ -312,7 +313,7 @@ async function executeRequestedToolCalls(
       if (!args) {
         prepared.push({ kind: 'error', toolCall, toolName, errorText: `Error: Arguments for ${toolName} must be a valid JSON object.` });
       } else {
-        const validation = validateAndAuthorizeInvocation(tool, args, options.accessContext);
+        const validation = validateAndAuthorizeInvocation(tool, args, options.accessContext, options.ctx.language);
         if (!validation.valid || !isPlainObject(validation.value)) {
           const denied = validation.issues?.some(issue => issue.keyword === 'access') ?? false;
           prepared.push({
@@ -398,8 +399,8 @@ async function executeRequestedToolCalls(
     healthMetrics.recordToolInvocation(toolName);
 
     const description = typeof tool.describeAction === 'function'
-      ? tool.describeAction(validArgs)
-      : formatToolAction(tool.name, tool.category ?? 'utility', validArgs);
+      ? tool.describeAction(validArgs, options.ctx.language)
+      : formatToolAction(tool.name, tool.category ?? 'utility', validArgs, options.ctx.language);
 
     const stepIndex = await options.progressTracker?.startStep(description);
     await options.ctx.react?.('🔧').catch(err => log.warn({ err, toolName, chatId: options.chatId }, '[Agent] Reaction failed'));
@@ -747,7 +748,11 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         // in favour of "An internal error occurred" — so every typo looked
         // like a crash.
         const detail = getErrorMessage(err);
-        const isUsageError = /^Invalid \S+ arguments:/.test(detail)
+        // The registry raises `CommandUsageError` for a malformed command. The
+        // text patterns stay as a fallback for errors thrown before that class
+        // existed (a plugin, an older tool path) and must stay language-neutral.
+        const isUsageError = err instanceof CommandUsageError
+          || /^Invalid \S+ arguments:/.test(detail)
           || /Missing argument/i.test(detail)
           || /Command access denied/i.test(detail);
         if (isUsageError) {
