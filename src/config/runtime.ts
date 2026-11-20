@@ -33,35 +33,49 @@ export function isUsableSharedSecret(secret: string | null | undefined): boolean
   return Buffer.byteLength(secret, 'utf8') >= MIN_SHARED_SECRET_BYTES;
 }
 
+/**
+ * Warnings from these readers are emitted once per distinct message.
+ *
+ * They run on hot paths — `getAIRequestConfig` is evaluated per LLM call — so a
+ * genuinely bad value used to log on every message, and a container that passes
+ * `KEY=` (empty) for an optional setting produced thousands of identical lines.
+ */
+const warnedConfigMessages = new Set<string>();
+
+function warnOnce(message: string): void {
+  if (process.env.NODE_ENV === 'test') return;
+  if (warnedConfigMessages.has(message)) return;
+  // Bounded: a caller that interpolates the raw value must not grow this set
+  // without limit.
+  if (warnedConfigMessages.size < 100) warnedConfigMessages.add(message);
+  logger.warn(message);
+}
+
 export function readIntegerEnv(
   rawValue: string | undefined,
   fallback: number,
   options: { min?: number; max?: number } = {},
 ): number {
   const raw = (rawValue ?? '').trim();
+  // An empty value means "not set", not "invalid": `KEY=` is how a `.env`
+  // template and a compose `KEY: ${KEY-}` both spell an omitted optional
+  // setting. Treating it as invalid logged a warning on every message.
+  if (raw === '') return fallback;
   if (!/^[+-]?\d+$/.test(raw)) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Invalid integer "${rawValue ?? ''}", using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Invalid integer "${rawValue ?? ''}", using fallback ${fallback}`);
     return fallback;
   }
   const parsed = Number(raw);
   if (!Number.isSafeInteger(parsed)) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Integer "${rawValue}" out of safe range, using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Integer "${rawValue}" out of safe range, using fallback ${fallback}`);
     return fallback;
   }
   if (options.min !== undefined && parsed < options.min) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Integer "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Integer "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
     return fallback;
   }
   if (options.max !== undefined && parsed > options.max) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Integer "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Integer "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
     return fallback;
   }
   return parsed;
@@ -72,23 +86,20 @@ export function readFloatEnv(
   fallback: number,
   options: { min?: number; max?: number } = {},
 ): number {
-  const parsed = Number.parseFloat((rawValue ?? '').trim());
+  const raw = (rawValue ?? '').trim();
+  // Same rule as `readIntegerEnv`: empty is unset.
+  if (raw === '') return fallback;
+  const parsed = Number.parseFloat(raw);
   if (!Number.isFinite(parsed)) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Invalid float "${rawValue ?? ''}", using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Invalid float "${rawValue ?? ''}", using fallback ${fallback}`);
     return fallback;
   }
   if (options.min !== undefined && parsed < options.min) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Float "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Float "${rawValue}" below minimum ${options.min}, using fallback ${fallback}`);
     return fallback;
   }
   if (options.max !== undefined && parsed > options.max) {
-    if (process.env.NODE_ENV !== 'test') {
-      logger.warn(`[Config] Float "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
-    }
+    warnOnce(`[Config] Float "${rawValue}" above maximum ${options.max}, using fallback ${fallback}`);
     return fallback;
   }
   return parsed;
