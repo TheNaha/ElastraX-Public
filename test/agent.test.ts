@@ -1043,6 +1043,16 @@ describe('handleIncomingMessage', () => {
       // ...and the catch stripped it instead of leaving a dangling cursor.
       expect(edited.some(entry => entry.text === 'Partial answer')).toBe(true);
       expectReply(ctx.reply, 'An internal error occurred while processing your message.');
+
+      // The placeholder is not an assistant turn: persisting it fed "An internal
+      // error occurred…" back to the model as its own previous answer on every
+      // later turn in the room.
+      const stored = db.select({ role: messages.role, content: messages.content })
+        .from(messages)
+        .where(eq(messages.chatRoomId, ctx.chatId))
+        .all()
+        .filter(row => row.role === 'assistant');
+      expect(stored.some(row => row.content.includes('internal error'))).toBe(false);
     });
 
     test('never renders chain-of-thought while a think block is still streaming', async () => {

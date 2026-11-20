@@ -178,6 +178,58 @@ describe('ModelRouter', () => {
     fallbackSpy.mockRestore();
   });
 
+  test('releases a half-open probe when the consumer abandons the stream', async () => {
+    // A consumer that breaks out of `for await` (an aborted turn, or a throw in
+    // its own loop body) closes the generator without reaching the success or
+    // failure path. The probe flag used to stay set forever, so a half-open
+    // provider was skipped for the life of the process.
+    const router = new ModelRouter();
+    const providers = providersOf(router);
+    const clientSpy = spyOn(providers[0]!.client, 'chatCompletionEnvelope')
+      .mockRejectedValue(new Error('down'));
+    for (let index = 0; index < 5; index++) {
+      await expect(router.chatCompletion([{ role: 'user', content: `failure ${index}` }])).rejects.toThrow('down');
+    }
+    expect(router.getProviderCircuit('llm').state).toBe('open');
+    setSystemTime(new Date('2024-01-01T00:02:00Z'));
+    clientSpy.mockRestore();
+
+    const streamSpy = spyOn(providers[0]!.client, 'chatCompletionStream').mockImplementation(
+      async function* () {
+        yield {
+          id: 'stream-1',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'stream-model',
+          choices: [{ index: 0, delta: { content: 'partial' }, finish_reason: null }],
+          usage: null,
+        };
+        yield {
+          id: 'stream-1',
+          object: 'chat.completion.chunk',
+          created: 1,
+          model: 'stream-model',
+          choices: [{ index: 0, delta: { content: ' answer' }, finish_reason: 'stop' }],
+          usage: null,
+        };
+      },
+    );
+
+    for await (const _chunk of router.chatCompletionStream([{ role: 'user', content: 'abandon' }])) {
+      void _chunk;
+      break;
+    }
+    expect(router.getProviderCircuit('llm').probeInFlight).toBe(false);
+
+    let text = '';
+    for await (const chunk of router.chatCompletionStream([{ role: 'user', content: 'second' }])) {
+      text += chunk.choices[0]?.delta.content ?? '';
+    }
+    expect(text).toBe('partial answer');
+    expect(router.getProviderCircuit('llm').state).toBe('closed');
+    streamSpy.mockRestore();
+  });
+
   test('fails fast when the only circuit is open', async () => {
     const router = new ModelRouter();
     const providers = providersOf(router);

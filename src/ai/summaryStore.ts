@@ -1,5 +1,5 @@
 import { eq } from 'drizzle-orm';
-import { db } from '../db';
+import { db, sqlite, withImmediateTransaction } from '../db';
 import { appKv } from '../db/schema';
 import { logger } from '../utils/logger';
 import {
@@ -52,20 +52,45 @@ class AppKvSummaryStore implements SummaryStore {
     }
     const now = new Date();
     const value = JSON.stringify(watermark);
-    await db.insert(appKv)
-      .values({
-        id: storageKey(scope),
-        value,
-        updated_at: now,
-      })
-      .onConflictDoUpdate({
-        target: appKv.id,
-        set: {
+    // Read-compare-write inside one immediate transaction. Summarisation loads
+    // the watermark, calls the model, then saves — and two turns in one room can
+    // overlap (a scheduled run does not go through the per-room message queue).
+    // Writing unconditionally let the slower batch overwrite the faster one,
+    // dropping its messages from the summary and, when the batches finished out
+    // of order, moving the watermark *backwards* so already-summarised messages
+    // were summarised again and `summarizedMessages` inflated.
+    withImmediateTransaction(sqlite, () => {
+      const existing = db.select({ value: appKv.value })
+        .from(appKv)
+        .where(eq(appKv.id, storageKey(scope)))
+        .limit(1)
+        .all()[0]?.value;
+      if (existing) {
+        try {
+          const parsed = JSON.parse(existing) as unknown;
+          if (isWatermark(parsed, scope) && parsed.summarizedMessages > watermark.summarizedMessages) {
+            // A newer batch already committed; never move the watermark back.
+            return;
+          }
+        } catch {
+          // An unreadable watermark is replaced rather than preserved.
+        }
+      }
+      db.insert(appKv)
+        .values({
+          id: storageKey(scope),
           value,
           updated_at: now,
-        },
-      })
-      .run();
+        })
+        .onConflictDoUpdate({
+          target: appKv.id,
+          set: {
+            value,
+            updated_at: now,
+          },
+        })
+        .run();
+    });
   }
 
   async delete(scope: string): Promise<void> {

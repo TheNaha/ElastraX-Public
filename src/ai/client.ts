@@ -486,13 +486,26 @@ export class AIClient {
       throw new AIProtocolError('invalid_chunk', 'SSE chunk created must be a finite number.');
     }
 
+    // Usage arrives in the *final* chunk, after every text delta has already
+    // been yielded. Treating an out-of-spec usage object (a gateway that sends
+    // `"prompt_tokens": "12"`) as fatal therefore replaced a complete answer
+    // with "an internal error occurred". Usage is advisory here: drop it and
+    // keep the answer. The non-streaming envelope keeps the strict check,
+    // because there nothing has been shown to the user yet.
+    let usage: AIStreamChunk['usage'] = null;
+    try {
+      usage = usageOrThrow(value.usage, 'SSE chunk');
+    } catch (error: unknown) {
+      log.warn({ err: safeErrorMessage(error) }, 'Ignoring malformed token usage in a stream chunk');
+    }
+
     return {
       id,
       object: 'chat.completion.chunk',
       created,
       model,
       choices,
-      usage: usageOrThrow(value.usage, 'SSE chunk'),
+      usage,
     };
   }
 

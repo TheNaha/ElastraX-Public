@@ -166,6 +166,15 @@ describe('SSE decoder', () => {
     expect(() => new SSEDecoder({ maxBufferBytes: 8 }).push('data: too-long')).toThrow(AIProtocolError);
     expect(() => new SSEDecoder({ maxEventBytes: 8 }).push('data:1234\n')).toThrow(AIProtocolError);
   });
+
+  test('accepts one read that carries more than the buffer cap in complete events', () => {
+    // The cap bounds an unterminated line, not the size of a network read: a
+    // single read can deliver many complete events (a burst of content deltas),
+    // and the pre-drain check rejected such an answer as `sse_buffer_limit`.
+    const decoder = new SSEDecoder({ maxBufferBytes: 16 });
+    const events = decoder.push('data: a\n\ndata: b\n\ndata: c\n\ndata: d\n\n');
+    expect(events).toEqual([{ data: 'a' }, { data: 'b' }, { data: 'c' }, { data: 'd' }]);
+  });
 });
 
 describe('streaming tool-call fragments', () => {

@@ -333,6 +333,24 @@ export class ModelRouter {
     this.circuits.delete(providerKey);
   }
 
+  /**
+   * Give a half-open probe slot back without recording a failure.
+   *
+   * `acquireProvider` sets `probeInFlight` and only `markProviderFailure` /
+   * `clearProviderCircuit` ever clear it. A streaming call can end without
+   * either running: when the consumer abandons the generator (`for await`
+   * calls `return()` on a throw in its own body, and the turn-abort path does
+   * the same), the `return` completion skips `catch` but runs `finally`. The
+   * probe then stayed `true` for the life of the process, and because a
+   * `half-open` circuit is never re-armed by `getCandidateProviders`, that
+   * provider was silently skipped forever — with a single configured provider
+   * every later turn failed with `AllProvidersOpenError`.
+   */
+  private releaseProviderProbe(providerKey: string): void {
+    const circuit = this.circuits.get(providerKey);
+    if (circuit?.state === 'half-open') circuit.probeInFlight = false;
+  }
+
   private markProviderFailure(providerKey: string): void {
     const circuit = this.getCircuit(providerKey);
     if (circuit.state === 'open') return;
@@ -475,6 +493,11 @@ export class ModelRouter {
       let usageRecorded = false;
       let latestUsage: AIStreamChunk['usage'] = null;
       let usageModel = provider.modelName;
+      // Whether this provider's turn reached a terminal state on its own. A
+      // consumer that abandons the generator runs this function's `finally` but
+      // not its `catch`, so the half-open probe slot has to be returned there
+      // instead of relying on a failure path that never runs.
+      let settled = false;
       const recordUsage = (): void => {
         if (usageRecorded || !latestUsage) return;
         healthMetrics.recordTokenUsage(
@@ -526,8 +549,10 @@ export class ModelRouter {
         }
         healthMetrics.recordLLMRequest(provider.name, this.now() - start, true);
         this.clearProviderCircuit(provider.key);
+        settled = true;
         return;
       } catch (error: unknown) {
+        settled = true;
         recordUsage();
         const err = toError(error);
         lastError = err;
@@ -551,6 +576,16 @@ export class ModelRouter {
           options.onRestart?.();
         }
         logger.warn({ provider: provider.name, err: err.message }, '[ModelRouter] Streaming provider failed, trying next');
+      } finally {
+        if (!settled) {
+          // The consumer abandoned the generator before this provider finished
+          // (an abort, or a throw in the caller's loop body). Nothing here is a
+          // provider failure, so no failure is recorded — but the half-open
+          // probe must be handed back or this provider is skipped forever.
+          recordUsage();
+          this.releaseProviderProbe(provider.key);
+          logger.debug({ provider: provider.name }, '[ModelRouter] Streaming call was abandoned; probe released');
+        }
       }
     }
 

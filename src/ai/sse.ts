@@ -37,14 +37,12 @@ export class SSEDecoder {
 
   push(chunk: string): SSEEvent[] {
     if (!chunk) return [];
-    const chunkBytes = Buffer.byteLength(chunk, 'utf8');
-    const bufferBytes = Buffer.byteLength(this.buffer, 'utf8');
-    if (chunkBytes > this.maxBufferBytes || bufferBytes + chunkBytes > this.maxBufferBytes) {
-      throw new AIProtocolError('sse_buffer_limit', 'SSE input exceeded the configured buffer limit.', {
-        limit: this.maxBufferBytes,
-      });
-    }
-
+    // Drain before enforcing the cap: `drain` consumes every complete event, so
+    // the steady-state buffer is tiny. Checking first rejected a single read
+    // that happened to deliver more than the cap of *complete* events — a long
+    // answer discarded as `sse_buffer_limit`. The post-drain check at the end of
+    // `drain` still bounds a genuinely unterminated line, which is the case the
+    // cap exists for.
     this.buffer += chunk;
     return this.drain(false);
   }

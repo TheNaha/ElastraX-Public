@@ -774,7 +774,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     let suggestion: string | null = null;
     let bestDistance = Infinity;
 
-    for (const tool of getAllowedTools(userRoles, isGroup, platform)) {
+    // The suggestion must respect the same binding gate the tool list uses, or
+    // an unbound user is pointed at a media command they cannot run.
+    const suggestionBinding = hasBindingGatedTools()
+      ? await resolveSenderHasBinding(ctx.senderId, platform)
+      : undefined;
+    for (const tool of getAllowedTools(userRoles, isGroup, platform, suggestionBinding)) {
       // Check tool name
       const nameDist = levenshtein(command, tool.name);
       if (nameDist <= 3 && nameDist < bestDistance) {
@@ -1177,6 +1182,11 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     let isDone = false;
     let finalAiResponseText = '';
     let streamedResponseSent = false;
+    // Set when the reply is the "internal error" placeholder rather than model
+    // output. Tracked explicitly instead of comparing the final string: a model
+    // that genuinely answers with that exact text used to skip the edit that
+    // removes the streaming cursor and have its answer sent twice.
+    let usedFallbackError = false;
     const internalErrorText = t(ctx.language, 'agent.internal_error');
     // The media tools declare `requiresBinding`, but the access context never
     // carried a `hasBinding` flag, so the gate could never fire: an unbound
@@ -1423,7 +1433,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
             // ⚡ Bolt: Combine Array.from() and map() to avoid allocating an intermediate array, reducing GC pressure
             const toolCalls: ToolCall[] = streamedToolCalls.map(call => ({
-              id: call.id,
+              // A provider that never sends a call id leaves this `''` (see
+              // `StreamingToolCallAccumulator`). Two id-less calls then produced
+              // two `tool_call_id: ""` results, which OpenAI-compatible servers
+              // reject — after the tools had already run. Synthesise a stable id
+              // so the follow-up request is well-formed.
+              id: call.id || `call_${crypto.randomUUID()}`,
               type: 'function' as const,
               function: { name: call.function.name, arguments: call.function.arguments },
             }));
@@ -1445,7 +1460,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               availableTools,
               toolLoadingMode,
               preferredTier,
-              logMalformedArgs: false,
+              logMalformedArgs: true,
               turnBudget: toolTurnBudget,
               mode: 'stream',
               progressTracker,
@@ -1458,12 +1473,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
           // Stream produced only text — we are done
           isDone = true;
-          finalAiResponseText = stripThinkTags(accumulated)
-            || (forceTextOnly ? lastAssistantText : '')
-            || internalErrorText;
+          const streamedText = stripThinkTags(accumulated) || (forceTextOnly ? lastAssistantText : '');
+          finalAiResponseText = streamedText || internalErrorText;
+          usedFallbackError = streamedText.length === 0;
 
           // Final edit to remove cursor indicator
-          if (sentKey && finalAiResponseText !== internalErrorText && !streamingFailed) {
+          if (sentKey && !usedFallbackError && !streamingFailed) {
             try {
               await ctx.editMessage!(sentKey, finalAiResponseText);
             } catch (err: unknown) {
@@ -1544,6 +1559,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           finalAiResponseText = extractAssistantText(aiMsgObj) || (forceTextOnly ? lastAssistantText : '');
           if (!finalAiResponseText) {
             finalAiResponseText = internalErrorText;
+            usedFallbackError = true;
             log.warn({
               chatId,
               platform,
@@ -1563,6 +1579,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         log.error({ err: getErrorMessage(e), chatId }, 'Failed to get AI completion or execute tool');
         healthMetrics.recordMessageError();
         finalAiResponseText = t(ctx.language, 'agent.internal_error');
+        usedFallbackError = true;
         isDone = true;
       }
     }
@@ -1574,21 +1591,28 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         maxToolIterations,
       }, '[Agent] Aborted inference loop after reaching max tool iterations');
       finalAiResponseText = lastAssistantText || internalErrorText;
+      usedFallbackError = lastAssistantText.length === 0;
     }
 
-    // 4. Save Final AI Response
-    await db.insert(messages).values({
-      chatRoomId: roomId,
-      ...messageRoomKeyInsertValues(roomIdentity.roomKey),
-      senderId: 'bot',
-      senderName: BOT_NAME,
-      role: 'assistant',
-      content: finalAiResponseText,
-      platform,
-      created_at: new Date(),
-    });
+    // 4. Save Final AI Response.
+    //
+    // The "internal error" placeholder is not an assistant turn: storing it made
+    // every later turn in the room carry "An internal error occurred." as the
+    // bot's own previous answer, and the model could echo it back.
+    if (!usedFallbackError) {
+      await db.insert(messages).values({
+        chatRoomId: roomId,
+        ...messageRoomKeyInsertValues(roomIdentity.roomKey),
+        senderId: 'bot',
+        senderName: BOT_NAME,
+        role: 'assistant',
+        content: finalAiResponseText,
+        platform,
+        created_at: new Date(),
+      });
+    }
 
-    const replyAlreadyDelivered = streamedResponseSent && finalAiResponseText !== internalErrorText;
+    const replyAlreadyDelivered = streamedResponseSent && !usedFallbackError;
     const keyParts = outboxKeyParts(ctx.messageId, 'assistant', ctx.chatId);
     if (replyAlreadyDelivered) {
       // Set before the bookkeeping write: `recordTextDelivered` is a raw INSERT
@@ -1613,7 +1637,6 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     const duration_ms = Date.now() - startMs;
     healthMetrics.recordMessageDuration(duration_ms);
 
-    const usedFallbackError = finalAiResponseText === internalErrorText;
     const logPayload = {
       chatId,
       platform,
