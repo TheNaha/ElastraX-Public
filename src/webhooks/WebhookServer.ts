@@ -605,6 +605,21 @@ export class WebhookServer {
     if (!isJsonContentType(req.headers.get('content-type'))) {
       throw new WebhookRequestError(415, 'Content-Type must be application/json');
     }
+    if (!this.rateLimiter) {
+      return jsonResponse({ error: 'Webhook server is not ready' }, 503);
+    }
+    // Pre-authentication throttle. The body used to be read (up to
+    // `maxBodyBytes`) and the token bucket consulted only *after* the secret
+    // check, so an unauthenticated client had unlimited attempts and could hold
+    // `maxBodyBytes` of buffer per connection. This bucket is keyed on the peer
+    // alone and is deliberately separate from the route/source keys below, so it
+    // cannot change the effective limit for a legitimate sender.
+    const preAuth = this.rateLimiter.consume([`preauth:${ip}`], this.now());
+    if (!preAuth.allowed) {
+      return jsonResponse({ error: 'Rate limit exceeded' }, 429, {
+        'Retry-After': String(preAuth.retryAfterSeconds),
+      });
+    }
 
     let bodyBytes: Uint8Array;
     let bodyRaw: string;
@@ -653,9 +668,6 @@ export class WebhookServer {
       }
     }
 
-    if (!this.rateLimiter) {
-      return jsonResponse({ error: 'Webhook server is not ready' }, 503);
-    }
     const rate = this.rateLimiter.consume(webhookRateLimitKeys(route, source, ip), this.now());
     if (!rate.allowed) {
       return jsonResponse({ error: 'Rate limit exceeded' }, 429, {

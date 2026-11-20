@@ -223,14 +223,20 @@ export function createAdminHandler(deps: AdminDeps = {}): AdminHandler {
       // `attempt` sweeps the bucket map itself at most once per window; an
       // explicit prune here walked every tracked IP on every unauthenticated
       // POST.
-      if (!throttle.attempt(ip, now())) {
-        return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': '60' });
+      if (!throttle.isAllowed(ip, now())) {
+        const retryAfter = throttle.retryAfterSeconds(ip, now());
+        return json({ error: 'Too many login attempts. Try again shortly.' }, 429, { 'Retry-After': String(retryAfter) });
       }
       const body = await readJsonObjectBody(req, ADMIN_LOGIN_MAX_BODY_BYTES);
       if (!body.ok) return json({ error: body.error }, body.status);
       const presented = typeof body.value.token === 'string' ? body.value.token : '';
       const session = auth.login(presented, now());
-      if (!session) return json({ error: 'Invalid token.' }, 401);
+      if (!session) {
+        // Only a failed attempt consumes the budget.
+        throttle.recordFailure(ip, now());
+        return json({ error: 'Invalid token.' }, 401);
+      }
+      throttle.reset(ip);
       return json({ ok: true, csrf: session.csrf }, 200, {
         'Set-Cookie': auth.buildCookie(session.cookieValue, shouldUseSecureCookie(req, url, auth.cookieSecureByDefault)),
       });

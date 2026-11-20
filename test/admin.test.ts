@@ -210,6 +210,28 @@ describe('admin authentication', () => {
     expect(statuses).toContain(429);
   });
 
+  test('a successful login clears the failure budget instead of consuming it', async () => {
+    const handler = handlerWith(SECRET);
+    const ip = '10.0.0.11';
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const wrong = await call(handler, 'api/login', {
+        method: 'POST', body: JSON.stringify({ token: 'wrong' }), ip,
+      });
+      expect(wrong.status).toBe(401);
+    }
+    const ok = await call(handler, 'api/login', {
+      method: 'POST', body: JSON.stringify({ token: SECRET }), ip,
+    });
+    expect(ok.status).toBe(200);
+
+    // Under the old rule the successful login consumed the fifth slot, so the
+    // very next failure answered 429.
+    const afterSuccess = await call(handler, 'api/login', {
+      method: 'POST', body: JSON.stringify({ token: 'wrong' }), ip,
+    });
+    expect(afterSuccess.status).toBe(401);
+  });
+
   test('a throttled IP does not lock out a different IP', async () => {
     const handler = handlerWith(SECRET);
     for (let attempt = 0; attempt < 8; attempt += 1) {

@@ -264,9 +264,30 @@ export class LoginThrottle {
 
   /** Returns true when the attempt is allowed (and records it). */
   attempt(ip: string, now = Date.now()): boolean {
+    if (!this.isAllowed(ip, now)) return false;
+    this.recordFailure(ip, now);
+    return true;
+  }
+
+  /**
+   * Whether another attempt would be accepted, without recording one.
+   *
+   * The login route used to call `attempt` *before* verifying the token, so a
+   * correct login charged the bucket too: two typos plus a success consumed
+   * three of the five slots, and a correct login from a limited IP was refused
+   * before it could be checked.
+   */
+  isAllowed(ip: string, now = Date.now()): boolean {
     // Sweep at most once per window instead of on every request: an expired
     // bucket is harmless until the map needs room or a fresh IP arrives.
     if (this.buckets.size > 1000 && now - this.lastPruneAt >= this.windowMs) this.prune(now);
+    const bucket = this.buckets.get(ip);
+    if (!bucket || bucket.resetAt <= now) return true;
+    return bucket.count < this.limit;
+  }
+
+  /** Record one failed attempt, arming the window when it is the first. */
+  recordFailure(ip: string, now = Date.now()): void {
     const bucket = this.buckets.get(ip);
     if (!bucket || bucket.resetAt <= now) {
       // Hard cap. Pruning only removes *expired* buckets, so a flood of distinct
@@ -284,11 +305,21 @@ export class LoginThrottle {
       // "oldest" entry and be evicted with a fresh budget.
       this.buckets.delete(ip);
       this.buckets.set(ip, { count: 1, resetAt: now + this.windowMs });
-      return true;
+      return;
     }
-    if (bucket.count >= this.limit) return false;
     bucket.count += 1;
-    return true;
+  }
+
+  /** Forget an IP's failures, e.g. after a successful login. */
+  reset(ip: string): void {
+    this.buckets.delete(ip);
+  }
+
+  /** Seconds until `ip` may try again; 0 when it is not limited. */
+  retryAfterSeconds(ip: string, now = Date.now()): number {
+    if (this.isAllowed(ip, now)) return 0;
+    const resetAt = this.buckets.get(ip)?.resetAt ?? now + this.windowMs;
+    return Math.max(1, Math.ceil((resetAt - now) / 1000));
   }
 
   get size(): number {

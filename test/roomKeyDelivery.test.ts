@@ -334,6 +334,58 @@ describe('provider send isolation', () => {
     sqlite.query<never, [string]>(`DELETE FROM message_inbox WHERE chat_room_id = ?`).run(PUMP_ROOM);
     sqlite.query<never, [string]>(`DELETE FROM message_outbox WHERE chat_room_id = ?`).run(PUMP_ROOM);
   });
+  test('two senders reusing an event id on the same route both get delivered', async () => {
+    // The replay cache deduplicates on route + source + id. The outbox
+    // idempotency key dropped `source`, so a second sender that happened to use
+    // the same small numeric id was answered `202 duplicate` and never delivered.
+    const whatsapp = createProvider('whatsapp');
+    const intervals: Array<() => void> = [];
+    const timers = {
+      setInterval: (callback: () => void) => {
+        intervals.push(callback);
+        return { id: `interval-${intervals.length}` };
+      },
+      clearInterval: () => {},
+      setTimeout: () => ({ id: 'timeout' }),
+      clearTimeout: () => {},
+    } as unknown as AppRuntimeDeps['timers'];
+
+    const runtime = new AppRuntime({
+      providers: [whatsapp],
+      messageQueue: { enqueue: () => true, stop: () => {} },
+      webhookServer: {
+        registerSender: () => {},
+        start: () => {},
+        stop: () => {},
+        registerReadinessCheck: () => () => {},
+      },
+      scheduler: { registerSender: () => {}, start: () => {}, stop: () => {} },
+      digestService: { registerSender: () => {}, start: () => {}, stop: () => {} },
+      timers,
+      healthMonitor: { start: () => {}, stop: () => {} } as never,
+    });
+    await runtime.start();
+    const enqueuer = (runtime as unknown as {
+      enqueueWebhook: (job: WebhookDeliveryJob, signal: AbortSignal) => Promise<{ accepted: boolean; deliveryId: string }>;
+    }).enqueueWebhook;
+
+    const base: WebhookDeliveryJob = {
+      eventId: '1',
+      route: 'generic',
+      source: 'sender-a',
+      text: 'first sender',
+      destinations: [{ chatRoomId: PUMP_ROOM, platform: 'whatsapp', roomKey: canonicalRoomKey('whatsapp', PUMP_ROOM) }],
+      receivedAt: new Date().toISOString(),
+    };
+    const first = await enqueuer(base, new AbortController().signal);
+    const second = await enqueuer({ ...base, source: 'sender-b', text: 'second sender' }, new AbortController().signal);
+    await runtime.stop();
+
+    expect(first.accepted).toBe(true);
+    expect(second.accepted).toBe(true);
+    expect(second.deliveryId).not.toBe(first.deliveryId);
+  });
+
   test('outbox delivery reaches only the provider that owns the room', async () => {
     const whatsapp = createProvider('whatsapp');
     const discord = createProvider('discord');

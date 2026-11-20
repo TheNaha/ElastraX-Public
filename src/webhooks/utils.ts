@@ -154,6 +154,10 @@ export async function readRequestBytesWithLimit(
 
         totalBytes += value.byteLength;
         if (totalBytes > maxBytes) {
+          // Cancel the stream instead of only releasing the lock: the client kept
+          // writing into a connection nobody was draining, and Bun had to buffer
+          // or reset it on its own.
+          void reader.cancel('body too large').catch(() => undefined);
           throw new WebhookRequestError(413, `Request body too large. Limit is ${maxBytes} bytes.`);
         }
         chunks.push(value);

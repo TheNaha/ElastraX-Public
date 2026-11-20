@@ -445,8 +445,14 @@ const CONFIG_ALLOWLIST = [
   'TELEGRAM_BOT_TOKEN', 'BOT_OWNER_JID', 'BOT_OWNER_TELEGRAM_ID', 'BOT_OWNER_DISCORD_ID',
 ];
 
-/** Anything whose name looks like a secret is reported as set/unset, never by value. */
-const SECRET_PATTERN = /(secret|token|password|api[-_]?key|credential|private)/i;
+/**
+ * Anything whose name looks like a secret is reported as set/unset, never by value.
+ *
+ * The segment must be a whole `_`-delimited word: the old substring test matched
+ * `AI_MAX_TOKENS` on "token" and hid a number an operator opens this tab to read
+ * (and redacted a harmless `?max_tokens=` query parameter).
+ */
+const SECRET_PATTERN = /(^|[_-])(secret|token|password|passwd|api[_-]?key|credential|private)($|[_-])/i;
 
 /**
  * Strip credentials that can hide inside a URL-shaped value.

@@ -693,6 +693,10 @@ export class AppRuntime {
       return { accepted: false, deliveryId: '', acceptedAt: nowISO() };
     }
     const acceptedAt = nowISO();
+    // The replay cache deduplicates on `route + source + id`; the outbox key must
+    // use the same three parts. With the bare id, two senders on the same route
+    // that both use `x-webhook-id: 1` produced one idempotency key, so the second
+    // event was answered `202 duplicate` and silently never delivered.
     const eventKey = job.eventId ?? `${job.route}:${job.source}:${job.receivedAt}:${job.text}`;
     // Resolve and validate every destination first so a non-deliverable or
     // unclassifiable one cannot leave earlier rows enqueued behind a 503.
@@ -724,7 +728,7 @@ export class AppRuntime {
         platform,
         destination.chatRoomId,
         pickWebhookText(job, language),
-        ['webhook', job.route, eventKey, destination.platform ?? '', destination.chatRoomId, roomKey],
+        ['webhook', job.route, job.source ?? '', eventKey, destination.platform ?? '', destination.chatRoomId, roomKey],
         { roomKey },
       ));
     }
