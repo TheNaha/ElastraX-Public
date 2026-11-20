@@ -134,6 +134,9 @@ export abstract class BaseHttpClient {
           if (timedOut) {
             throw new HttpClientError(service, method, path, 'TIMEOUT', `${service} response body timed out after ${timeoutMs}ms.`, { retryable: true, cause: error });
           }
+          // A `RESPONSE_TOO_LARGE` from `readResponseText` explains the upstream
+          // fault; swallowing it produced a generic HTTP_ERROR with no detail.
+          if (error instanceof HttpClientError) throw error;
         }
         const detail = sanitizeResponseText(text);
         this.log.error({ status: response.status, path }, 'API error');

@@ -29,6 +29,12 @@ export const useDBAuthState = async (): Promise<{
       const data = typeof records[0].data === 'string' ? records[0].data : JSON.stringify(records[0].data);
       return JSON.parse(data, BufferJSON.reviver);
     } catch (error) {
+      // Deliberately fail closed: `AppRuntime` starts providers with
+      // `allSettled`, so this disables WhatsApp with a clear log line while the
+      // other platforms keep working. Treating an unreadable credential as
+      // "absent" would silently re-pair the device, which is a bigger surprise
+      // than an actionable startup error. Recovery: delete the `creds` row (or
+      // restore a backup) and pair again.
       logger.error({ id, err: error }, 'Corrupt WhatsApp auth state row');
       throw new Error(`Corrupt WhatsApp auth state row: ${id}`, { cause: error });
     }

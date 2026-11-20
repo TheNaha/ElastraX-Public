@@ -370,7 +370,11 @@ export class Scheduler {
         if (claim.changes === 0) continue;
 
         try {
-          const sender = this.senders.get(reminder.platform);
+          // Senders are registered under canonical provider names, while a legacy
+          // or hand-edited row may store `WhatsApp`. The target resolution below
+          // already normalises; the lookup did not, so a deliverable reminder was
+          // deferred to death because no sender matched.
+          const sender = this.senders.get(normalizeRoomPlatform(reminder.platform) ?? reminder.platform);
           if (!sender) {
             // No sender is registered for this platform. That is a configuration
             // problem, not a transient send failure: releasing the claim with

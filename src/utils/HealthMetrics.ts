@@ -349,10 +349,12 @@ export class HealthMetricsCollector {
     lines.push(`elastrax_messages_total{status="processed"} ${m.messages.processed}`);
     lines.push(`elastrax_messages_total{status="error"} ${m.messages.errors}`);
 
-    lines.push('# HELP elastrax_feedback_total User reaction feedback on bot replies');
-    lines.push('# TYPE elastrax_feedback_total counter');
+    lines.push('# HELP elastrax_feedback_total Net user reaction feedback on bot replies (a retracted reaction is subtracted)');
+    lines.push('# TYPE elastrax_feedback_total gauge');
     lines.push(`elastrax_feedback_total{sentiment="positive"} ${m.feedback.positive}`);
     lines.push(`elastrax_feedback_total{sentiment="negative"} ${m.feedback.negative}`);
+    lines.push('# HELP elastrax_feedback_retracted_total Reactions the user took back');
+    lines.push('# TYPE elastrax_feedback_retracted_total counter');
     lines.push(`elastrax_feedback_retracted_total ${m.feedback.retracted}`);
 
     lines.push('# HELP elastrax_llm_requests_total Total LLM requests');

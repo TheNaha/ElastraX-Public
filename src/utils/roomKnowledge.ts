@@ -18,7 +18,7 @@
  * thing the agent should call for group context.
  */
 import { and, desc, eq, like, or, sql } from 'drizzle-orm';
-import { db } from '../db';
+import { db, sqlite, withImmediateTransaction } from '../db';
 import { memories } from '../db/schema';
 import { logger } from './logger';
 import { EmbeddingService } from './EmbeddingService';
@@ -127,13 +127,16 @@ export function chunkText(text: string, target = CHUNK_TARGET_CHARS, overlap = C
 }
 
 async function roomUsage(roomKey: string): Promise<{ count: number; bytes: number }> {
-  const rows = await db
-    .select({ content: memories.content })
-    .from(memories)
-    .where(and(eq(memories.ownerId, roomKey), eq(memories.category, DOCUMENT_CATEGORY)));
-  let bytes = 0;
-  for (const row of rows) bytes += Buffer.byteLength(row.content, 'utf8');
-  return { count: rows.length, bytes };
+  // `CAST(content AS BLOB)` makes `length()` count bytes, which is what the byte
+  // quota means. Counting in SQL also avoids pulling the room's whole text
+  // (up to the 8 MiB quota) into JS on every ingest.
+  const row = sqlite
+    .query<{ count: number; bytes: number }, [string, string]>(
+      'SELECT COUNT(*) AS count, COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS bytes '
+      + 'FROM memories WHERE owner_id = ? AND category = ?',
+    )
+    .get(roomKey, DOCUMENT_CATEGORY);
+  return { count: Number(row?.count ?? 0), bytes: Number(row?.bytes ?? 0) };
 }
 
 /**
@@ -191,15 +194,39 @@ export async function ingestRoomDocument(options: {
   // writes rather than a network round-trip each.
   const vectors = canEmbed ? await embedChunkBatch(contents, options.embed) : null;
 
+  // Insert the whole document in one transaction, re-checking the quota inside
+  // it. The quota check above is a pre-flight (so the cheap rejection happens
+  // before embedding anything), but it is a read followed by N writes: two
+  // concurrent ingests could both pass it. The transaction also means a failure
+  // part-way leaves no orphan chunk rows under a document id the caller never
+  // received.
+  const insertRows = contents.map((content, ordinal) => ({
+    id: `${documentId}_${ordinal}`,
+    ownerId: roomKey,
+    content,
+    category: DOCUMENT_CATEGORY,
+    created_at: new Date(),
+  }));
+  withImmediateTransaction(sqlite, () => {
+    const current = sqlite
+      .query<{ count: number; bytes: number }, [string, string]>(
+        'SELECT COUNT(*) AS count, COALESCE(SUM(length(CAST(content AS BLOB))), 0) AS bytes '
+        + 'FROM memories WHERE owner_id = ? AND category = ?',
+      )
+      .get(roomKey, DOCUMENT_CATEGORY);
+    const count = Number(current?.count ?? 0);
+    const bytes = Number(current?.bytes ?? 0);
+    if (count + insertRows.length > ROOM_CHUNK_QUOTA) {
+      throw new Error(`Room knowledge base is full (${count}/${ROOM_CHUNK_QUOTA} chunks). Remove documents first.`);
+    }
+    if (bytes + addedBytes > ROOM_BYTE_QUOTA) {
+      throw new Error(`Room knowledge base exceeds its ${ROOM_BYTE_QUOTA} byte budget.`);
+    }
+    for (const row of insertRows) db.insert(memories).values(row).run();
+  });
+
   for (const [ordinal, content] of contents.entries()) {
     const id = `${documentId}_${ordinal}`;
-    await db.insert(memories).values({
-      id,
-      ownerId: roomKey,
-      content,
-      category: DOCUMENT_CATEGORY,
-      created_at: new Date(),
-    });
     if (vectors) {
       const vector = vectors[ordinal];
       if (vector && vector.length > 0) {

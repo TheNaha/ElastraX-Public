@@ -27,7 +27,7 @@
 
 import { db } from '../db';
 import { appKv, chatRooms, messages, notificationSubscriptions } from '../db/schema';
-import { and, desc, eq, gte, inArray, isNull, like, lt, or } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
 import { logger } from './logger';
 import { dateKey, nowISO } from './date';
 import { getErrorMessage } from './errorUtils';
@@ -152,8 +152,13 @@ function forgetMarkerAttempts(id: string): void {
  */
 function pruneDigestMarkers(now: Date): number {
   const cutoff = new Date(now.getTime() - DIGEST_MARKER_RETENTION_DAYS * 86_400_000);
+  // A range on the primary key instead of `LIKE 'digest:%'`: SQLite cannot use a
+  // B-tree index for a case-insensitive `LIKE` without `PRAGMA
+  // case_sensitive_like`, so every call scanned the whole `app_kv` table — twice
+  // per minute while the digest scheduler was awake. `'digest;'` is the next
+  // string after every `'digest:'` prefix.
   const result = db.delete(appKv)
-    .where(and(like(appKv.id, 'digest:%'), lt(appKv.updated_at, cutoff)))
+    .where(and(gte(appKv.id, 'digest:'), lt(appKv.id, 'digest;'), lt(appKv.updated_at, cutoff)))
     .run() as unknown as { changes?: number };
   const removed = Number(result?.changes ?? 0);
   if (removed > 0) log.debug({ removed }, '[DigestService] Pruned old digest markers');
@@ -301,6 +306,8 @@ export function fetchRoomTranscript(
     if (!text) continue;
     const hh = String(r.created_at.getHours()).padStart(2, '0');
     const mm = String(r.created_at.getMinutes()).padStart(2, '0');
+    // Senders are deliberately anonymised: a digest may be forwarded or shown to
+    // other room members, and the transcript is only summarised, never attributed.
     const who = r.role === 'assistant' ? 'Bot' : 'Sender';
     const line = `[${hh}:${mm}] ${who}: ${text}`;
     const bytes = Buffer.byteLength(line, 'utf8');
