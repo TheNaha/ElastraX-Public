@@ -147,6 +147,40 @@ describe('backupDatabase', () => {
     expect(restored.error).toContain('leftover -wal');
   });
 
+  test('the restore command migrates a snapshot that carries the source runtime lease', async () => {
+    // `VACUUM INTO` copies `database_leases`, so a backup taken from a live
+    // process carries its `elastrax:runtime` row with up to five minutes of TTL
+    // left. Opening the copy and asking for a runtime lease refused a healthy
+    // backup with "held by another process".
+    const sourcePath = join(TMP, 'lease-source.db');
+    const handle = createDatabase({ path: sourcePath });
+    let result: Awaited<ReturnType<typeof backupDatabase>>;
+    try {
+      await ensureDatabaseSchema({ database: handle });
+      // Take the snapshot while the source still holds its runtime lease, which
+      // is what a backup of a live bot does.
+      result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'lease-backups'), keep: 1 });
+    } finally {
+      handle.close();
+    }
+    expect(result.ok).toBe(true);
+
+    const destination = join(TMP, 'lease-restored.db');
+    const previousBackup = process.env.DB_BACKUP_PATH;
+    const previousRestore = process.env.DB_RESTORE_PATH;
+    process.env.DB_BACKUP_PATH = result.path!;
+    process.env.DB_RESTORE_PATH = destination;
+    try {
+      const { runRestore } = await import('../scripts/dbBackup');
+      expect(await runRestore()).toBe(0);
+    } finally {
+      if (previousBackup === undefined) delete process.env.DB_BACKUP_PATH;
+      else process.env.DB_BACKUP_PATH = previousBackup;
+      if (previousRestore === undefined) delete process.env.DB_RESTORE_PATH;
+      else process.env.DB_RESTORE_PATH = previousRestore;
+    }
+  });
+
   /**
    * `snapshot.file` is read back out of a JSON file in the backup directory.
    * Pruning joined it onto the directory without a check, so a planted manifest

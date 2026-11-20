@@ -104,7 +104,12 @@ export async function runRestore(): Promise<number> {
   // the file is usable as-is and the contract is verified afterwards.
   const handle = createDatabase({ path: resolve(destination) });
   try {
-    await ensureDatabaseSchema({ database: handle });
+    // `VACUUM INTO` copies the source's `database_leases` row, whose runtime
+    // lease may still be inside its TTL when the snapshot was taken from a live
+    // process. Taking a runtime lease on a scratch copy is meaningless, and the
+    // check would refuse a perfectly good backup, so this is run like the
+    // migrations in tests: no runtime lease.
+    await ensureDatabaseSchema({ database: handle, leaseName: null });
     validateSchemaContract(handle.sqlite);
   } catch (error) {
     handle.close();

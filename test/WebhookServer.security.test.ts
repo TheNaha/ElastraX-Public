@@ -370,6 +370,28 @@ describe('WebhookServer security and HTTP contract', () => {
     }, server => server.registerSender('discord', send));
   });
 
+  test('rejected secrets do not consume the delivery rate budget', async () => {
+    // The pre-auth bucket is separate from the delivery buckets: a flood of bad
+    // secrets must not make a legitimate sender see 429.
+    const send = mock(async () => {});
+    await withServer({ WEBHOOK_RATE_LIMIT_MAX: '1' }, async (_server, baseUrl) => {
+      const flood = async () => Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'wrong-secret-value-000000' },
+        body: JSON.stringify({ room_id: '100', text: 'guess' }),
+      });
+      for (let attempt = 0; attempt < 10; attempt += 1) {
+        expect((await flood()).status).toBe(401);
+      }
+      const valid = await Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        body: JSON.stringify({ room_id: '100', text: 'hello' }),
+      });
+      expect(valid.status).toBe(200);
+    }, server => server.registerSender('discord', send));
+  });
+
   test('enforces the configured request body limit', async () => {
     await withServer({ WEBHOOK_MAX_BODY_BYTES: '1024' }, async (_server, baseUrl) => {
       const response = await Bun.fetch(`${baseUrl}/webhook`, {

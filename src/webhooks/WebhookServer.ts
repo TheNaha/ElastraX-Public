@@ -37,6 +37,7 @@ import {
 import { adaptJellyfin, adaptSeerr, buildWebhookMessage } from './adapters';
 import { resolveSubscriptionDestination, resolveWebhookDestinations } from './rooms';
 import { pickWebhookText } from './utils';
+import { isLoopbackHost } from '../utils/netAddress';
 
 const log = logger.child({ module: 'WebhookServer' });
 const JSON_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' };
@@ -64,6 +65,13 @@ export class WebhookServer {
   private enqueuer: WebhookEnqueuer | null = null;
   private config: WebhookConfig | null = null;
   private rateLimiter: WebhookRateLimiter | null = null;
+  /**
+   * Separate bucket for unauthenticated traffic, so a flood of bad requests can
+   * never consume a legitimate sender's delivery budget. Deliberately more
+   * generous than the delivery limit: it only has to stop unbounded secret
+   * guessing and body buffering, not shape normal traffic.
+   */
+  private preAuthLimiter: WebhookRateLimiter | null = null;
   private replayCache: WebhookReplayCache | null = null;
   private accepting = false;
   private now: () => number;
@@ -611,14 +619,17 @@ export class WebhookServer {
     // Pre-authentication throttle. The body used to be read (up to
     // `maxBodyBytes`) and the token bucket consulted only *after* the secret
     // check, so an unauthenticated client had unlimited attempts and could hold
-    // `maxBodyBytes` of buffer per connection. This bucket is keyed on the peer
-    // alone and is deliberately separate from the route/source keys below, so it
-    // cannot change the effective limit for a legitimate sender.
-    const preAuth = this.rateLimiter.consume([`preauth:${ip}`], this.now());
-    if (!preAuth.allowed) {
-      return jsonResponse({ error: 'Rate limit exceeded' }, 429, {
-        'Retry-After': String(preAuth.retryAfterSeconds),
-      });
+    // `maxBodyBytes` of buffer per connection. It runs on its own bucket, not the
+    // delivery one, so this traffic cannot spend a real sender's budget. Loopback
+    // is exempt, exactly like the `ip:` key below, because the documented
+    // deployment puts a reverse proxy in front (every peer is 127.0.0.1).
+    if (!isLoopbackHost(ip) && this.preAuthLimiter) {
+      const preAuth = this.preAuthLimiter.consume([`ip:${ip}`], this.now());
+      if (!preAuth.allowed) {
+        return jsonResponse({ error: 'Rate limit exceeded' }, 429, {
+          'Retry-After': String(preAuth.retryAfterSeconds),
+        });
+      }
     }
 
     let bodyBytes: Uint8Array;
@@ -735,6 +746,14 @@ export class WebhookServer {
       this.config.rateLimitWindowMs,
       this.config.rateLimitMaxSources,
     );
+    // Four times the delivery budget, in its own map, for unauthenticated
+    // attempts. Sharing the delivery buckets let 60 bad POSTs drain a pool that
+    // real senders depend on.
+    this.preAuthLimiter = new WebhookRateLimiter(
+      Math.min(10_000, this.config.rateLimitMax * 4),
+      this.config.rateLimitWindowMs,
+      this.config.rateLimitMaxSources,
+    );
     this.replayCache = new WebhookReplayCache(this.config.replayTtlMs, this.config.replayMaxEntries);
     this.accepting = true;
 
@@ -771,6 +790,7 @@ export class WebhookServer {
       }
       this.server = null;
       this.rateLimiter?.clear();
+      this.preAuthLimiter?.clear();
       this.replayCache?.clear();
       log.info('Webhook server stopped');
     }

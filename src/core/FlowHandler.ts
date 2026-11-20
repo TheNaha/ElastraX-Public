@@ -334,7 +334,21 @@ export class FlowHandler {
       // that this fallback had just loaded (as `clearSessionInternal` avoids).
       if (!this.hasFlows(session.flows)) {
         this.memorySessions.delete(storageKey);
-        FlowHandler.safeDeleteSession(storageKey, 'Expired session deletion failed');
+        // Delete under the lock after re-reading. A `setSession` that lands
+        // between the read above and the delete would otherwise lose the flow it
+        // just wrote (this path used to fire-and-forget the delete outside the
+        // lock).
+        await this.withLock(storageKey, async () => {
+          const latest = await this.readSession(storageKey);
+          if (!latest) return;
+          const stillChanged = this.pruneExpiredFlows(latest, Date.now());
+          if (this.hasFlows(latest.flows)) {
+            if (stillChanged) await this.writeSession(storageKey, latest);
+            return;
+          }
+          this.memorySessions.delete(storageKey);
+          await FlowHandler.safeDeleteSession(storageKey, 'Expired session deletion failed');
+        });
         return null;
       }
       await this.writeSession(storageKey, session);

@@ -260,9 +260,11 @@ function platformScope(column: typeof messages.platform, platform: RoomPlatform 
 
 /**
  * Fetch up to `limit` messages for a room since `since`, oldest first,
- * formatted as "[HH:MM] Name: content".  Accepts a canonical room key or a raw
- * provider room id and reads both forms, scoped to the room's own platform so a
- * room key never picks up another platform's history.
+ * formatted as "[HH:MM] Sender: content" with human senders anonymised and the
+ * bot labelled "Bot" (a digest may be forwarded, so names are not included).
+ * Accepts a canonical room key or a raw provider room id and reads both forms,
+ * scoped to the room's own platform so a room key never picks up another
+ * platform's history.
  */
 export function fetchRoomTranscript(
   roomId: string,

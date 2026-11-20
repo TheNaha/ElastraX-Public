@@ -27,6 +27,8 @@ echo "🔒 Running gitleaks check..."
 gitleaks detect --source . --verbose --redact
 
 echo "🚀 Pushing to public repo..."
-git push origin-public main
+# Push the verified commit explicitly: `git push origin-public main` publishes the
+# local branch ref, which can differ from HEAD in a detached checkout.
+git push origin-public "${local_sha}:refs/heads/main"
 
 echo "✅ Public repo synced!"

@@ -195,10 +195,14 @@ function validateDatabaseFile(
     }
     if (options.maxSchemaVersion !== undefined) {
       // Only a *future* schema is refused. An older one is the normal rollback
-      // case and is migrated forward by the caller.
+      // case and is migrated forward by the caller. A `schema_version` from
+      // before the journal's `when` was renumbered to 1..N is an epoch-ms value
+      // (≈1.7e12); it predates every current `when` by definition and must not be
+      // mistaken for a future schema.
       if (!meta) throw new Error('Backup is missing db_schema_meta');
       const version = Number(meta.schema_version);
-      if (!Number.isFinite(version) || version > options.maxSchemaVersion) {
+      const legacyTimestamp = Number.isFinite(version) && version >= 1_000_000_000_000;
+      if (!Number.isFinite(version) || (!legacyTimestamp && version > options.maxSchemaVersion)) {
         throw new Error(
           `Backup schema version ${version} is newer than this build (${options.maxSchemaVersion})`,
         );

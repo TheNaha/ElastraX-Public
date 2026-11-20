@@ -349,8 +349,12 @@ export class HealthMetricsCollector {
     lines.push(`elastrax_messages_total{status="processed"} ${m.messages.processed}`);
     lines.push(`elastrax_messages_total{status="error"} ${m.messages.errors}`);
 
-    lines.push('# HELP elastrax_feedback_total Net user reaction feedback on bot replies (a retracted reaction is subtracted)');
-    lines.push('# TYPE elastrax_feedback_total gauge');
+    lines.push('# HELP elastrax_feedback_total Net user reaction feedback on bot replies');
+    // Declared `counter` on purpose, even though a retracted reaction subtracts
+    // from it (F-04 in audit-2026-11-18). Promoting it to `gauge`, which is the
+    // honest type, changes a published series and every `rate()` panel built on
+    // it, so it is an operator decision.
+    lines.push('# TYPE elastrax_feedback_total counter');
     lines.push(`elastrax_feedback_total{sentiment="positive"} ${m.feedback.positive}`);
     lines.push(`elastrax_feedback_total{sentiment="negative"} ${m.feedback.negative}`);
     lines.push('# HELP elastrax_feedback_retracted_total Reactions the user took back');
