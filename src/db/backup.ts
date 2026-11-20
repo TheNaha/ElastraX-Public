@@ -69,7 +69,17 @@ export interface RestoreOptions {
   destination: string;
   manifestPath?: string;
   requireCurrentSchema?: boolean;
-  expectedSchemaVersion?: number;
+  /**
+   * Highest schema version the snapshot may carry, i.e. the current journal's
+   * latest `when`.
+   *
+   * An older version is accepted on purpose: refusing anything but the newest
+   * made every backup unrestorable from the moment a new migration shipped,
+   * which is exactly the "I upgraded and it broke, roll back" case restore
+   * exists for. The caller is expected to migrate the restored copy forward
+   * (`ensureDatabaseSchema`) before using it.
+   */
+  maxSchemaVersion?: number;
   migrationsFolder?: string;
 }
 
@@ -145,7 +155,7 @@ function migrationSummary(sqlite: Database, migrationsFolder?: string): {
 function validateDatabaseFile(
   path: string,
   expected?: Pick<BackupManifest, 'snapshot' | 'database'>,
-  options: { migrationsFolder?: string; requireCurrentSchema?: boolean; expectedSchemaVersion?: number } = {},
+  options: { migrationsFolder?: string; requireCurrentSchema?: boolean; maxSchemaVersion?: number } = {},
 ): BackupManifest['database'] {
   const sqlite = new Database(path, { readonly: true, strict: true });
   try {
@@ -183,10 +193,17 @@ function validateDatabaseFile(
       if (!meta) throw new Error('Current-schema backup is missing db_schema_meta');
       validateSchemaContract(sqlite);
     }
-    if (options.expectedSchemaVersion !== undefined && (!meta || Number(meta.schema_version) !== options.expectedSchemaVersion)) {
-      throw new Error('Backup schema version is not the requested version');
+    if (options.maxSchemaVersion !== undefined) {
+      // Only a *future* schema is refused. An older one is the normal rollback
+      // case and is migrated forward by the caller.
+      if (!meta) throw new Error('Backup is missing db_schema_meta');
+      const version = Number(meta.schema_version);
+      if (!Number.isFinite(version) || version > options.maxSchemaVersion) {
+        throw new Error(
+          `Backup schema version ${version} is newer than this build (${options.maxSchemaVersion})`,
+        );
+      }
     }
-
     return {
       integrityCheck: 'ok',
       foreignKeyViolations,
@@ -209,6 +226,18 @@ function parseManifest(path: string): BackupManifest | null {
       || typeof manifest.snapshot?.file !== 'string'
       || !/^[a-f0-9]{64}$/.test(manifest.snapshot?.sha256 ?? '')
       || !Number.isSafeInteger(manifest.snapshot?.bytes)
+      // `pruneBackups` sorts by this; an unparseable value made the comparator
+      // return NaN, which left the order implementation-defined and could pick
+      // a valid recent backup for deletion while keeping the broken one.
+      || !Number.isFinite(Date.parse(manifest.createdAt))
+      // `validateDatabaseFile` dereferences `database.schemaFingerprint` as soon
+      // as a manifest is supplied, so a manifest without the object surfaced a
+      // `TypeError` ("cannot read properties of undefined") instead of the
+      // honest "manifest is invalid".
+      || typeof manifest.database !== 'object'
+      || manifest.database === null
+      || typeof manifest.database.schemaFingerprint !== 'string'
+      || !Number.isSafeInteger(manifest.database.migrationCount)
     ) return null;
     return manifest;
   } catch {
@@ -360,6 +389,16 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
   let temporaryPath: string | null = null;
   try {
     if (existsSync(options.destination)) throw new Error('Restore destination must be a new file');
+    // SQLite treats `<db>-wal` / `<db>-shm` as part of the database. A WAL left
+    // beside a deleted database file carries no marker tying it to the *old*
+    // file, so the first open of the restored copy would replay those frames
+    // into it. Refuse rather than delete: the sibling may belong to a database
+    // the operator still cares about.
+    for (const suffix of ['-wal', '-shm']) {
+      if (existsSync(`${options.destination}${suffix}`)) {
+        throw new Error(`Restore destination has a leftover ${suffix} file; remove it first`);
+      }
+    }
     const manifest = parseManifest(manifestPath);
     if (!manifest) throw new Error('Backup manifest is missing or invalid');
     if (!existsSync(options.backupPath)) throw new Error('Backup database does not exist');
@@ -377,7 +416,7 @@ export async function restoreDatabase(options: RestoreOptions): Promise<RestoreR
     const database = validateDatabaseFile(temporaryPath, manifest, {
       migrationsFolder: options.migrationsFolder,
       requireCurrentSchema: options.requireCurrentSchema ?? false,
-      expectedSchemaVersion: options.expectedSchemaVersion,
+      maxSchemaVersion: options.maxSchemaVersion,
     });
     if (database.schemaFingerprint !== manifest.database.schemaFingerprint) {
       throw new Error('Restored schema fingerprint does not match its manifest');

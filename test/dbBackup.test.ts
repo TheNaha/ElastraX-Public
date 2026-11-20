@@ -72,7 +72,7 @@ describe('backupDatabase', () => {
       requireCurrentSchema: true,
       // The schema version is the last journal `when`, which every migration
       // increments; assert against the manifest rather than a baked-in number.
-      expectedSchemaVersion: manifest.database.schemaVersion,
+      maxSchemaVersion: manifest.database.schemaVersion,
     });
     expect(restored.ok).toBe(true);
     expect(readdirSync(TMP).some(name => name.includes('.tmp'))).toBe(false);
@@ -88,6 +88,63 @@ describe('backupDatabase', () => {
     });
     expect(overwrite.ok).toBe(false);
     expect(overwrite.error).toContain('new file');
+  });
+
+  test('accepts a snapshot at or below the current schema and refuses a newer one', async () => {
+    // Restore is the "I upgraded and it broke" path, so a snapshot from an older
+    // release has to be accepted and migrated forward. Only a snapshot *newer*
+    // than this build is refused (the script then re-runs the migrations).
+    const sourcePath = join(TMP, 'version-source.db');
+    const handle = createDatabase({ path: sourcePath });
+    try {
+      await ensureDatabaseSchema({ database: handle, leaseName: null });
+    } finally {
+      handle.close();
+    }
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'version-backups'), keep: 1 });
+    expect(result.ok).toBe(true);
+    const version = result.manifestPath
+      ? (JSON.parse(readFileSync(result.manifestPath, 'utf8')) as { database: { schemaVersion: number } }).database.schemaVersion
+      : 0;
+
+    const accepted = await restoreDatabase({
+      backupPath: result.path!,
+      manifestPath: result.manifestPath,
+      destination: join(TMP, 'version-restored-old.db'),
+      maxSchemaVersion: version + 1,
+    });
+    expect(accepted.ok).toBe(true);
+
+    const refused = await restoreDatabase({
+      backupPath: result.path!,
+      manifestPath: result.manifestPath,
+      destination: join(TMP, 'version-restored-new.db'),
+      maxSchemaVersion: version - 1,
+    });
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toContain('newer than this build');
+  });
+
+  test('refuses a restore destination that still has a WAL sidecar', async () => {
+    const sourcePath = join(TMP, 'wal-source.db');
+    const handle = createDatabase({ path: sourcePath });
+    try {
+      await ensureDatabaseSchema({ database: handle, leaseName: null });
+    } finally {
+      handle.close();
+    }
+    const result = await backupDatabase({ dbPath: sourcePath, backupDir: join(TMP, 'wal-backups'), keep: 1 });
+    expect(result.ok).toBe(true);
+    const destination = join(TMP, 'wal-restored.db');
+    writeFileSync(`${destination}-wal`, Buffer.alloc(32));
+
+    const restored = await restoreDatabase({
+      backupPath: result.path!,
+      manifestPath: result.manifestPath,
+      destination,
+    });
+    expect(restored.ok).toBe(false);
+    expect(restored.error).toContain('leftover -wal');
   });
 
   /**

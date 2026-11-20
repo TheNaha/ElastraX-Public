@@ -84,6 +84,40 @@ describe('Database Migrations', () => {
         .toThrow(/unexpected checksum/);
     });
 
+    test('accepts a ledger written before the journal used sequential `when` values', async () => {
+      // Journals from earlier commits used `null` and epoch-millisecond `when`
+      // values; drizzle copies whatever it finds into `created_at`. Comparing it
+      // with today's 1..N bricked those databases at the next upgrade.
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      const journal = readMigrationJournal(join(ROOT_DIR, 'drizzle/migrations'));
+
+      // The `null` era: every row recorded `0`.
+      sqlite.prepare('UPDATE __drizzle_migrations SET created_at = 0').run();
+      expect(inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')).pending).toHaveLength(0);
+
+      // The epoch-millisecond era, same order.
+      const ids = sqlite
+        .query<{ id: number }, []>('SELECT id FROM __drizzle_migrations ORDER BY id')
+        .all();
+      ids.forEach((row, index) => {
+        sqlite
+          .prepare('UPDATE __drizzle_migrations SET created_at = ? WHERE id = ?')
+          .run(1_700_000_000_000 + index * 60_000, row.id);
+      });
+      const state = inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations'));
+      expect(state.pending).toHaveLength(0);
+      expect(state.applied).toHaveLength(journal.length);
+    });
+
+    test('refuses a ledger with more rows than the journal', async () => {
+      await migrate(db, { migrationsFolder: join(ROOT_DIR, 'drizzle/migrations') });
+      sqlite
+        .prepare('INSERT INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)')
+        .run('0'.repeat(64), 9_999_999);
+      expect(() => inspectMigrationState(sqlite, join(ROOT_DIR, 'drizzle/migrations')))
+        .toThrow(/but the journal has/);
+    });
+
     /**
      * `validateSchemaContract` only guards the indexes named in
      * `REQUIRED_INDEXES`, so an index that exists after a migration but is

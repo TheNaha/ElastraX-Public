@@ -162,7 +162,20 @@ function createHandle(path: string, options: DatabaseOptions): DatabaseHandle {
       const timer = leaseTimers.get(sqlite);
       if (timer) clearInterval(timer);
       leaseTimers.delete(sqlite);
+      // The lease is released *last*. Releasing it first let the next process
+      // acquire the database while this one still had it open and was running a
+      // TRUNCATE checkpoint (which needs exclusive access) — the lease stopped
+      // protecting the interval it exists for.
       const lease = runtimeLeases.get(sqlite);
+      try {
+        if (!inMemory) sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
+      } catch (error) {
+        logger.warn({ err: error }, '[db] WAL checkpoint failed during close');
+      }
+      // Release after the checkpoint (which needs exclusive access) but before
+      // `close()`, because releasing needs the open handle. The old order let the
+      // next process acquire the database while this one was still holding it
+      // through the checkpoint.
       if (lease) {
         try {
           releaseDatabaseLease(sqlite, lease);
@@ -170,11 +183,6 @@ function createHandle(path: string, options: DatabaseOptions): DatabaseHandle {
           logger.warn({ err: error }, '[db] Failed to release database lease during close');
         }
         runtimeLeases.delete(sqlite);
-      }
-      try {
-        if (!inMemory) sqlite.exec('PRAGMA wal_checkpoint(TRUNCATE)');
-      } catch (error) {
-        logger.warn({ err: error }, '[db] WAL checkpoint failed during close');
       }
       sqlite.close();
       readyHandles.delete(sqlite);
@@ -317,19 +325,24 @@ function migrateHandle(
         { path: handle.path, migrations: after.applied.length, fingerprint },
         'Database schema ensured',
       );
+
+      // Take the runtime lease while the migration lease is still held. The old
+      // order released the migration lease first and only then acquired the
+      // runtime one, so another process could win the gap (or acquire during a
+      // long `migrate()`): this process had already applied migrations and
+      // recorded the fingerprint, and then failed to boot.
+      if (leaseName !== null && handle.path !== ':memory:') {
+        const lease = acquireDatabaseLease(sqlite, {
+          name: leaseName,
+          owner: options.owner,
+          ttlMs: leaseTtlMs,
+        });
+        if (!lease) throw new Error(`Database lease ${leaseName} is held by another process`);
+        runtimeLeases.set(sqlite, lease);
+        startLeaseHeartbeat(handle, lease, leaseTtlMs);
+      }
     } finally {
       if (migrationLease) releaseDatabaseLease(sqlite, migrationLease);
-    }
-
-    if (leaseName !== null && handle.path !== ':memory:') {
-      const lease = acquireDatabaseLease(sqlite, {
-        name: leaseName,
-        owner: options.owner,
-        ttlMs: leaseTtlMs,
-      });
-      if (!lease) throw new Error(`Database lease ${leaseName} is held by another process`);
-      runtimeLeases.set(sqlite, lease);
-      startLeaseHeartbeat(handle, lease, leaseTtlMs);
     }
   }).catch(error => {
     migratePromises.delete(sqlite);

@@ -86,18 +86,32 @@ export async function runRestore(): Promise<number> {
     return 2;
   }
   const migrationsFolder = getMigrationsFolder();
-  const expectedSchemaVersion = readMigrationJournal(migrationsFolder).at(-1)?.when;
+  const maxSchemaVersion = readMigrationJournal(migrationsFolder).at(-1)?.when;
   const result = await restoreDatabase({
     backupPath: resolve(backupPath),
     destination: resolve(destination),
-    requireCurrentSchema: true,
-    expectedSchemaVersion,
+    // A snapshot from an older release is the normal rollback case: validate it
+    // structurally here, then migrate the copy forward below. Only a *newer*
+    // schema than this build understands is refused.
+    maxSchemaVersion,
     migrationsFolder,
   });
   if (!result.ok) {
     console.error(`[db:restore] FAILED: ${result.error}`);
     return 1;
   }
+  // Bring the restored copy up to the current schema, exactly as boot would, so
+  // the file is usable as-is and the contract is verified afterwards.
+  const handle = createDatabase({ path: resolve(destination) });
+  try {
+    await ensureDatabaseSchema({ database: handle });
+    validateSchemaContract(handle.sqlite);
+  } catch (error) {
+    handle.close();
+    console.error(`[db:restore] Restored copy could not be migrated: ${error instanceof Error ? error.message : error}`);
+    return 1;
+  }
+  handle.close();
   console.log(`[db:restore] Validated new database: ${result.path}`);
   return 0;
 }

@@ -342,22 +342,33 @@ export function inspectMigrationState(
 ): MigrationState {
   const entries = readMigrationJournal(migrationsFolder);
   const applied = appliedMigrations(sqlite);
-  const appliedTimes = new Set(entries.slice(0, applied.length).map(entry => entry.when));
 
-  for (let index = 0; index < applied.length; index++) {
-    const row = applied[index]!;
-    const expected = entries[index];
-    if (!expected || row.createdAt !== expected.when) {
-      throw new Error(`Migration ledger has a gap or unknown record at position ${index + 1}`);
-    }
-  }
-  if (appliedTimes.size !== applied.length) {
-    throw new Error('Migration ledger contains duplicate timestamps');
+  // The ledger stores no tag, so a row is identified by its *position*; the
+  // per-position checksum in `validateAppliedHashes` is what proves the row
+  // really is that migration.
+  //
+  // `created_at` is deliberately NOT compared with the journal's `when`. Drizzle
+  // copies `when` into the ledger, and this repository renumbers `when` to small
+  // sequential integers (`AGENTS.md`: "set `when` to the next integer"), while
+  // journals from earlier commits used `null` and epoch milliseconds. A database
+  // migrated back then therefore holds values that can never equal today's
+  // `1..N` — every one of them zero for the `null` era — and demanding equality
+  // bricked it on the next upgrade with no recovery short of manual SQL. The row
+  // *position* identifies the migration, `validateAppliedHashes` proves each
+  // position still matches its file, and `validateSchemaContract` proves the
+  // result, so the ledger length is the only thing left to bound.
+  if (applied.length > entries.length) {
+    throw new Error(
+      `Migration ledger records ${applied.length} migrations but the journal has ${entries.length}`,
+    );
   }
 
   const state: MigrationState = {
     applied,
-    latestCreatedAt: applied.at(-1)?.createdAt ?? null,
+    // The journal's `when` for that position, not the ledger's possibly-legacy
+    // value: callers compare this with `db_schema_meta.schema_version`, which is
+    // written from the journal.
+    latestCreatedAt: entries[applied.length - 1]?.when ?? null,
     pending: entries.slice(applied.length),
     fingerprint: null,
   };
