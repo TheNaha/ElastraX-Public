@@ -136,6 +136,10 @@ describe('FFmpegConverter option arguments built by MediaConvertTool', () => {
     ['encoder preset', ['-preset', 'medium']],
     ['height-only resolution', ['-vf', 'scale=-2:720']],
     ['resolution plus fps', ['-vf', 'scale=1280:720,fps=30']],
+    // `MediaConvertTool` merges a gif override into the format's own palette
+    // chain, so the `-vf` value carries `scale=320:-1:flags=lanczos` as well.
+    ['gif resolution override', ['-vf', 'fps=10,scale=320:-1:flags=lanczos,scale=-2:720']],
+    ['gif fps override', ['-vf', 'fps=10,scale=320:-1:flags=lanczos,fps=24']],
   ])('accepts %s', async (_label, args) => {
     await expect(FFmpegConverter.convert(Buffer.from('input'), args as string[], 'mp4', 'mp4'))
       .resolves.toBeDefined();

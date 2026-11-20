@@ -29,14 +29,14 @@ import { createLazyPromise } from './media';
 import { MessageContext, type PlatformName, type ReplyOptions } from '../core/MessageContext';
 import type { MediaAttachmentDescriptor } from '../core/MessageContext';
 import { ProviderError, ProviderLifecycleError, ProviderOperationError } from './errors';
-import { chunkTelegramText, TELEGRAM_TEXT_LIMIT } from './telegramText';
+import { chunkTelegramText, clampTelegramCaption, TELEGRAM_TEXT_LIMIT } from './telegramText';
 import { splitTextAtUtf16Limit } from '../utils/textChunking';
 import { logger } from '../utils/logger';
 import { AuthService } from '../utils/AuthService';
 import { IdentityService } from '../utils/IdentityService';
 import { readMediaBuffer, saveMediaResponse, type SavedMedia } from '../utils/MediaStorage';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
-import { getErrorMessage, toError } from '../utils/errorUtils';
+import { getErrorMessage, safeErrorMessage, toError } from '../utils/errorUtils';
 import { roleSatisfies } from '../core/roleAccess';
 
 const log = logger.child({ module: 'Telegram' });
@@ -72,6 +72,15 @@ function isMissingReplyTarget(error: unknown): boolean {
   if (typeof description === 'string' && /message to be replied not found/i.test(description)) return true;
   const message = (error as { message?: unknown }).message;
   return typeof message === 'string' && /message to be replied not found/i.test(message);
+}
+
+/** Telegram's "message to delete/be replied not found" class. */
+function isMissingMessageError(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const description = (error as { description?: unknown }).description;
+  if (typeof description === 'string' && /message to (?:be replied |delete )?not found/i.test(description)) return true;
+  const message = (error as { message?: unknown }).message;
+  return typeof message === 'string' && /message to (?:be replied |delete )?not found/i.test(message);
 }
 
 function senderDisplayName(ctx: GrammyContext): string {
@@ -652,7 +661,12 @@ export class TelegramProvider implements BotProvider {
         }
       } catch (error) {
         log.debug({ err: error }, '[Telegram] Media download failed');
-        if (attachments[0]?.state === 'pending') attachments[0].state = 'error';
+        if (attachments[0]) {
+          attachments[0].state = 'error';
+          // The staging contract documents a rejected download as `error` *with a
+          // reason*; WhatsApp and Discord both set it, Telegram did not.
+          attachments[0].error = safeErrorMessage(error);
+        }
       }
     });
     const selectMediaAttachment = async (id: string): Promise<MediaAttachmentDescriptor> => {
@@ -806,28 +820,38 @@ export class TelegramProvider implements BotProvider {
             'UNSUPPORTED',
           );
         }
+        const caption = clampTelegramCaption(options.caption);
         if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('image/')) {
-          const sent = await activeBot.api.sendPhoto(chatId, new InputFile(buffer), { caption: options.caption });
+          const sent = await activeBot.api.sendPhoto(chatId, new InputFile(buffer), { caption });
           // The reaction recorder looks a message up by *message id*. Recording
           // the media `file_id` instead made every reaction on a media reply
           // invisible to the feedback recorder.
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
-        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('audio/') && (options.ptt || mime.includes('ogg'))) {
-          const sent = await activeBot.api.sendVoice(chatId, new InputFile(buffer), { caption: options.caption });
+        // `sendVoice` only accepts OGG/OPUS. An `audio/mpeg` buffer with
+        // `ptt: true` (what the media tools pass) was rejected by the API after
+        // the whole upload; send it as audio, which is what WhatsApp does for the
+        // same request.
+        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('audio/') && (mime.includes('ogg') || mime.includes('opus'))) {
+          const sent = await activeBot.api.sendVoice(chatId, new InputFile(buffer), { caption });
+          noteBotMessageSent('telegram', messageIdOf(sent));
+          return;
+        }
+        if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('audio/')) {
+          const sent = await activeBot.api.sendAudio(chatId, new InputFile(buffer), { caption });
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
         if (buffer.byteLength <= TELEGRAM_UPLOAD_LIMIT_BYTES && mime.startsWith('video/')) {
-          const sent = await activeBot.api.sendVideo(chatId, new InputFile(buffer), { caption: options.caption });
+          const sent = await activeBot.api.sendVideo(chatId, new InputFile(buffer), { caption });
           noteBotMessageSent('telegram', messageIdOf(sent));
           return;
         }
         const sent = await activeBot.api.sendDocument(
           chatId,
           new InputFile(new Uint8Array(buffer), filename),
-          options.caption ? { caption: options.caption } : {},
+          caption ? { caption } : {},
         );
         noteBotMessageSent('telegram', messageIdOf(sent));
       },
@@ -839,7 +863,16 @@ export class TelegramProvider implements BotProvider {
       deleteMessage: async (key?: unknown) => {
         const activeBot = ensureCurrent();
         const messageId = resolveSentMessageId(key) ?? msg.message_id;
-        await activeBot.api.deleteMessage(chatId, messageId);
+        try {
+          await activeBot.api.deleteMessage(chatId, messageId);
+        } catch (error) {
+          // The desired end state ("that message is gone") already holds when the
+          // API says it does not exist — deleting is idempotent from the user's
+          // point of view, and reporting it as a failure only produced an error
+          // reply.
+          if (isMissingMessageError(error)) return;
+          throw error;
+        }
       },
       forwardMessage: async (targetChatId: string, forwardText?: string) => {
         const activeBot = ensureCurrent();

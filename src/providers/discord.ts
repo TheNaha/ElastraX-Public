@@ -170,6 +170,11 @@ export class DiscordProvider implements BotProvider {
         throw new Error(`Discord channel ${chatId} is not text-based or cannot send messages.`);
       }
       const chunks = chunkDiscordText(text);
+      if (chunks.length === 0) {
+        // Empty or whitespace-only text: returning normally recorded the outbox
+        // row as delivered while nothing was sent. Telegram already refuses.
+        throw new ProviderOperationError('discord', 'sendMessage', 'Refusing to send an empty message.', undefined, 'UNSUPPORTED');
+      }
       for (let index = 0; index < chunks.length; index++) {
         signal?.throwIfAborted();
         const sent = await channel.send({
@@ -243,6 +248,10 @@ export class DiscordProvider implements BotProvider {
       const wasBackoff = this.providerStatus === 'backoff';
       this.providerStatus = 'running';
       this.providerError = null;
+      // A resume-based recovery is evidence the connection is healthy: without
+      // this the counter stayed high after a resume, so the next `login()`
+      // failure slept for minutes instead of retrying quickly.
+      this.reconnectAttempts = 0;
       if (wasBackoff) logger.info('[Discord] Gateway resumed');
     };
     client.on(Events.ShardResume, markResumed);
@@ -553,6 +562,10 @@ export class DiscordProvider implements BotProvider {
           }
           await msg.delete();
         } catch (error) {
+          // 10008 Unknown Message / 10003 Unknown Channel: the message is already
+          // gone, which is the requested end state.
+          const code = (error as { code?: unknown } | null)?.code;
+          if (code === 10008 || code === 10003) return;
           throw new ProviderOperationError('discord', 'deleteMessage', `Discord delete failed: ${safeErrorMessage(error)}`, error);
         }
       },

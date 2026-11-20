@@ -36,7 +36,7 @@ import { messages } from '../db/schema';
 import { toRoomKey } from '../core/roomKeyFormat';
 import { IdentityService } from '../utils/IdentityService';
 import { AuthService } from '../utils/AuthService';
-import { chunkTextFixed } from '../utils/textChunking';
+import { clampCaption, chunkTextFixed } from '../utils/textChunking';
 import { withTimeout } from '../utils/withTimeout';
 
 type BaileysSocket = ReturnType<typeof makeWASocket>;
@@ -90,6 +90,8 @@ export const WHATSAPP_TEXT_LIMIT = 65_536;
  * their downloads; this matches them.
  */
 const WHATSAPP_MEDIA_TIMEOUT_MS = 60_000;
+/** WhatsApp caps a media caption at 1024 characters. */
+const WHATSAPP_CAPTION_LIMIT = 1024;
 
 export function chunkWhatsAppText(text: string, limit = WHATSAPP_TEXT_LIMIT): string[] {
   // Empty chunks are dropped: `chunkTextFixed('')` answers `['']`, and sending an
@@ -292,6 +294,11 @@ export class WhatsAppProvider implements BotProvider {
   async sendMessage(chatId: string, text: string, signal?: AbortSignal, options?: { mentions?: string[] }): Promise<void> {
     const sock = this.requireRunningSocket('sendMessage');
     const chunks = chunkWhatsAppText(text);
+    if (chunks.length === 0) {
+      // Empty or whitespace-only text: iterating zero chunks resolved successfully,
+      // so the outbox recorded a delivery for a message that was never sent.
+      throw new ProviderOperationError('whatsapp', 'sendMessage', 'Refusing to send an empty message.', undefined, 'UNSUPPORTED');
+    }
     for (let index = 0; index < chunks.length; index++) {
       // Honour the signal between chunks. `AppRuntime.processOutbox` relies on
       // it to cancel a slow send; without this the underlying Baileys call kept
@@ -352,6 +359,11 @@ export class WhatsAppProvider implements BotProvider {
         }
       }
 
+      // A `stop()` may have landed inside the awaited close above (up to 10 s).
+      // Creating the socket anyway resurrected it after stop(): `providerStatus`
+      // said "stopped" while a live websocket existed, and that stop could never
+      // end it.
+      this.ensureGeneration(generation);
       const socket = whatsAppProviderDeps.createSocket({
         version,
         auth: state,
@@ -808,19 +820,22 @@ export class WhatsAppProvider implements BotProvider {
       sendMedia: async (buffer: Buffer, options: SendMediaOptions = {}) => {
         assertSocket();
         const mime = options.mimetype || 'application/octet-stream';
+        // WhatsApp rejects the whole upload when the caption exceeds 1024
+        // characters; clamp it like Telegram and Discord do.
+        const caption = clampCaption(options.caption, WHATSAPP_CAPTION_LIMIT) ?? '';
         let sent: WAMessage | undefined;
         if (options.ptt || mime.startsWith('audio/')) {
           sent = await socket.sendMessage(jid, { audio: buffer, mimetype: mime, ptt: !!options.ptt }, { quoted: message });
         } else if (mime.startsWith('video/')) {
-          sent = await socket.sendMessage(jid, { video: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+          sent = await socket.sendMessage(jid, { video: buffer, caption, mimetype: mime }, { quoted: message });
         } else if (mime.startsWith('image/')) {
-          sent = await socket.sendMessage(jid, { image: buffer, caption: options.caption || '', mimetype: mime }, { quoted: message });
+          sent = await socket.sendMessage(jid, { image: buffer, caption, mimetype: mime }, { quoted: message });
         } else {
           sent = await socket.sendMessage(jid, {
             document: buffer,
             mimetype: mime,
             fileName: options.filename || 'file',
-            caption: options.caption,
+            caption: clampCaption(options.caption, WHATSAPP_CAPTION_LIMIT),
           }, { quoted: message });
         }
         noteBotMessageSent('whatsapp', sent?.key?.id ?? null);

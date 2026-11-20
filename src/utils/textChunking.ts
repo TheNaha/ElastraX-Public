@@ -190,3 +190,18 @@ export function splitTextAtUtf16Limit(text: string, limit: number): { head: stri
   };
 }
 
+/**
+ * Clamp a media caption to `limit` UTF-16 units, appending an ellipsis when it
+ * was cut and never splitting a surrogate pair.
+ *
+ * WhatsApp and Telegram both cap captions at 1024 characters and reject the
+ * whole upload when it is longer; Discord truncates. This is the one helper, so
+ * the three providers cannot disagree.
+ */
+export function clampCaption(caption: string | undefined, limit: number): string | undefined {
+  if (caption === undefined) return undefined;
+  if (caption.length <= limit) return caption;
+  const { head } = splitTextAtUtf16Limit(caption, Math.max(1, limit - 1));
+  return `${head}…`;
+}
+

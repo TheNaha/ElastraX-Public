@@ -148,7 +148,13 @@ function validateArguments(args: string[]): void {
 function isAllowedFilterChain(value: string): boolean {
   const segments = value.split(',');
   return segments.every(segment =>
-    /^scale=-?\d{1,4}:\d{1,4}$/.test(segment) || /^fps=\d{1,3}$/.test(segment),
+    /^scale=-?\d{1,4}:\d{1,4}$/.test(segment)
+    || /^fps=\d{1,3}$/.test(segment)
+    // The GIF palette scaler is a compile-time constant in
+    // `MediaConvertTool.FORMAT_ARGS.gif`; `mergeFfmpegArgs` folds a user
+    // `resolution`/`fps` override into the same `-vf`, so this segment has to be
+    // accepted or every `/convert gif resolution=…` failed validation.
+    || /^scale=\d{1,4}:-1:flags=lanczos$/.test(segment),
   );
 }
 
