@@ -204,7 +204,7 @@ describe("Config Validation", () => {
     // cleartext; only loopback http is allowed for credential-bearing endpoints.
     expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: "http://api.openai.com/v1" }))
       .toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("AI_API_BASE_URL must use https unless it points to a loopback address");
+    expect(mockLoggerError).toHaveBeenCalledWith("AI_API_BASE_URL must use https unless it points to a loopback or private-network address (set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)");
   });
 
   test("should accept a loopback plain-http AI base URL", () => {
@@ -215,7 +215,48 @@ describe("Config Validation", () => {
   test("should reject a plain-http transcription endpoint that is not loopback", () => {
     expect(() => validateEnv({ ...baseValidEnv, TRANSCRIBE_ENDPOINT: "http://whisper.lan:9000/transcribe" }))
       .toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("TRANSCRIBE_ENDPOINT must use https unless it points to a loopback address");
+    expect(mockLoggerError).toHaveBeenCalledWith("TRANSCRIBE_ENDPOINT must use https unless it points to a loopback or private-network address (set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)");
+  });
+
+  test("should accept a literal private-network plain-http AI base URL", () => {
+    // A self-hosted inference box on the LAN has no certificate and is not
+    // internet-reachable. Classifying a *literal* address is exact, so this
+    // needs no operator opt-out.
+    for (const base of [
+      "http://192.168.1.10:8080/v1",
+      "http://10.4.0.9:8000/v1",
+      "http://172.20.5.5/v1",
+      "http://100.64.0.9:8080/v1", // CGNAT / Tailscale
+      "http://[fd00::5]:8080/v1", // IPv6 ULA
+    ]) {
+      expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: base })).not.toThrow();
+    }
+  });
+
+  test("warns that a private-network plain-http endpoint sends its key in cleartext", () => {
+    const warn = mock(() => {});
+    const originalWarn = logger.warn;
+    logger.warn = warn;
+    try {
+      expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: "http://192.168.1.10:8080/v1" })).not.toThrow();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("AI_API_BASE_URL uses plain http to a private address"));
+    } finally {
+      logger.warn = originalWarn;
+    }
+  });
+
+  test("still rejects a public literal and a name over plain http", () => {
+    // 100.150.0.4 is a real deployment's inference host and is *not* in the
+    // 100.64/10 shared block: it is a public address, so it needs the opt-out.
+    for (const base of [
+      "http://100.150.0.4:8080/v1",
+      "http://8.8.8.8/v1",
+      "http://inference.corp.example/v1",
+      "http://whisper.lan:9000/transcribe",
+    ]) {
+      expect(() => validateEnv({ ...baseValidEnv, AI_API_BASE_URL: base }))
+        .toThrow("Environment validation failed");
+    }
   });
 
   test("ALLOW_INSECURE_HTTP_ENDPOINTS accepts plain http for a self-hosted AI server", () => {
@@ -265,7 +306,7 @@ describe("Config Validation", () => {
       JELLYFIN_EXTERNAL_URL: "http://jellyfin.example.com",
       ALLOW_INSECURE_HTTP_ENDPOINTS: "true",
     })).toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback address");
+    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback or private-network address (set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)");
 
     expect(() => validateEnv({
       ...baseValidEnv,
@@ -293,7 +334,7 @@ describe("Config Validation", () => {
   test("should require the external Jellyfin URL to be https", () => {
     expect(() => validateEnv({ ...baseValidEnv, JELLYFIN_EXTERNAL_URL: "http://jellyfin.example.com" }))
       .toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback address");
+    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback or private-network address (set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)");
   });
 
   test("should validate every provider in multi-provider mode", () => {
@@ -316,7 +357,7 @@ describe("Config Validation", () => {
       AI_OPENAI_MODEL: "gpt-4o-mini",
       JELLYFIN_EXTERNAL_URL: "http://jellyfin.example.com",
     })).toThrow("Environment validation failed");
-    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback address");
+    expect(mockLoggerError).toHaveBeenCalledWith("JELLYFIN_EXTERNAL_URL must use https unless it points to a loopback or private-network address (set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)");
   });
 
   test("should require a base url, key, and model for each multi-provider entry", () => {

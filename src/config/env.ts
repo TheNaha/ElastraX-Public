@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { isLoopbackHost as isLoopbackHostShared } from '../utils/netAddress';
+import { isLoopbackHost as isLoopbackHostShared, isPrivateHost } from '../utils/netAddress';
 
 type Env = Record<string, string | undefined>;
 
@@ -54,36 +54,49 @@ function validateUrl(
   raw: string | undefined,
   key: string,
   errors: string[],
-  options: { required?: boolean; allowPlainHttp?: boolean } = {},
+  options: { required?: boolean; allowPlainHttp?: boolean; warnings?: string[] } = {},
 ): URL | undefined {
   if (raw === undefined || raw.trim() === '') {
     if (options.required) errors.push(`${key} is required`);
     return undefined;
   }
+  // Only the parse is guarded: a catch around the whole block turned any bug in
+  // the validation itself into "must be a valid URL" (that is how a missing
+  // import hid here once).
+  let url: URL;
   try {
-    const url = new URL(raw.trim());
-    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-      errors.push(`${key} must use http or https`);
-      return undefined;
-    }
-    // Loopback http is always allowed. `allowPlainHttp` is the narrower,
-    // opt-in escape hatch for self-hosted internal services that genuinely have
-    // no TLS (Jellyfin on a docker hostname, SearXNG on a LAN box). Endpoints
-    // that carry a credential - the AI base URLs and transcription - only get it
-    // when the operator sets `ALLOW_INSECURE_HTTP_ENDPOINTS`, so a typo like
-    // `http://api.openai.com/v1` is rejected instead of sending the key in
-    // cleartext.
-    if (url.protocol === 'http:' && !options.allowPlainHttp && !isLoopbackHost(url.hostname)) {
-      errors.push(`${key} must use https unless it points to a loopback address`);
-    }
-    if (url.username || url.password) {
-      errors.push(`${key} must not contain credentials`);
-    }
-    return url;
+    url = new URL(raw.trim());
   } catch {
     errors.push(`${key} must be a valid URL`);
     return undefined;
   }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    errors.push(`${key} must use http or https`);
+    return undefined;
+  }
+  // Loopback http is always allowed. A literal private-network address is
+  // allowed too (RFC 1918, IPv6 ULA/link-local, CGNAT 100.64/10): that is what
+  // a self-hosted inference box on the LAN looks like, and it cannot be reached
+  // from the internet by accident. `allowPlainHttp` stays the wider opt-in for
+  // everything else — public addresses, and names, which can resolve anywhere —
+  // so a typo like `http://api.openai.com/v1` is still rejected instead of
+  // sending the key in cleartext. A private literal over http is accepted but
+  // named in a startup warning, because its credentials do travel in cleartext
+  // on that network.
+  if (url.protocol === 'http:' && !options.allowPlainHttp) {
+    if (isPrivateHost(url.hostname) && !isLoopbackHost(url.hostname)) {
+      options.warnings?.push(`${key} uses plain http to a private address; its credentials are sent in cleartext on that network`);
+    } else if (!isLoopbackHost(url.hostname)) {
+      errors.push(
+        `${key} must use https unless it points to a loopback or private-network address `
+        + '(set ALLOW_INSECURE_HTTP_ENDPOINTS=true to allow any plain-http host)',
+      );
+    }
+  }
+  if (url.username || url.password) {
+    errors.push(`${key} must not contain credentials`);
+  }
+  return url;
 }
 
 function validateSecret(raw: string | undefined, key: string, errors: string[], required: boolean): void {
@@ -105,12 +118,15 @@ export function validateEnv(env: Env = process.env): void {
   // reachable from the internet, so an operator can opt out explicitly. It has
   // to be opt-in: the API key travels in cleartext, and nothing can tell a
   // private address from a public one at validation time reliably enough to
-  // relax this automatically.
+  // relax this automatically. A *literal* private address (RFC 1918, ULA,
+  // CGNAT) is classified exactly and is accepted without the opt-in, with a
+  // warning; see `isPrivateHost`.
   const allowInsecureHttp = validateBoolean(
     env.ALLOW_INSECURE_HTTP_ENDPOINTS,
     'ALLOW_INSECURE_HTTP_ENDPOINTS',
     errors,
   ) === true;
+  const plainHttpWarnings: string[] = [];
 
   if (!providerList) {
     const model = env.AI_MODEL_NAME?.trim();
@@ -120,7 +136,7 @@ export function validateEnv(env: Env = process.env): void {
       env.AI_API_BASE_URL || (env.AI_CF_ACCOUNT_ID ? `https://api.cloudflare.com/client/v4/accounts/${env.AI_CF_ACCOUNT_ID.trim()}/ai/v1` : ''),
       'AI_API_BASE_URL',
       errors,
-      { required: true, allowPlainHttp: allowInsecureHttp },
+      { required: true, allowPlainHttp: allowInsecureHttp, warnings: plainHttpWarnings },
     );
     const apiKey = env.AI_API_KEY?.trim() || env.AI_CF_API_TOKEN?.trim();
     if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -141,7 +157,7 @@ export function validateEnv(env: Env = process.env): void {
         env[`AI_${upper}_BASE_URL`] || (env[`AI_${upper}_CF_ACCOUNT_ID`] ? `https://api.cloudflare.com/client/v4/accounts/${env[`AI_${upper}_CF_ACCOUNT_ID`]?.trim()}/ai/v1` : ''),
         `AI_${upper}_BASE_URL`,
         errors,
-        { required: true, allowPlainHttp: allowInsecureHttp },
+        { required: true, allowPlainHttp: allowInsecureHttp, warnings: plainHttpWarnings },
       );
       const apiKey = env[`AI_${upper}_API_KEY`]?.trim() || env[`AI_${upper}_CF_API_TOKEN`]?.trim();
       if (!apiKey && !(baseUrl && isLoopbackHost(baseUrl.hostname))) {
@@ -235,7 +251,7 @@ export function validateEnv(env: Env = process.env): void {
     errors.push('AI_MAX_TOKENS_PARAM must be max_tokens or max_completion_tokens');
   }
 
-  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors, { allowPlainHttp: allowInsecureHttp });
+  validateUrl(env.TRANSCRIBE_ENDPOINT, 'TRANSCRIBE_ENDPOINT', errors, { allowPlainHttp: allowInsecureHttp, warnings: plainHttpWarnings });
   validateUrl(env.SEARXNG_URL, 'SEARXNG_URL', errors, { allowPlainHttp: true });
   validateUrl(env.SEERR_API_URL, 'SEERR_API_URL', errors, { allowPlainHttp: true });
   validateUrl(env.JELLYFIN_API_URL, 'JELLYFIN_API_URL', errors, { allowPlainHttp: true });
@@ -254,6 +270,10 @@ export function validateEnv(env: Env = process.env): void {
     for (const error of errors) logger.error(error);
     throw new Error(`Environment validation failed with ${errors.length} error(s)`);
   }
+
+  // An accepted private-network literal over http: no opt-in needed, but the
+  // cleartext exposure is still named once per endpoint.
+  for (const warning of plainHttpWarnings) logger.warn(warning);
 
   if (allowInsecureHttp) {
     logger.warn(

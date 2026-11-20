@@ -19,12 +19,12 @@ Used when `AI_PROVIDERS` is **not** set.
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `AI_API_BASE_URL` | URL | *(none)* | yes (non-loopback) | OpenAI-compatible base URL. Cloudflare shorthand: if unset and `AI_CF_ACCOUNT_ID` is set, builds `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`. http allowed only on loopback hosts, or anywhere when `ALLOW_INSECURE_HTTP_ENDPOINTS=true`. |
+| `AI_API_BASE_URL` | URL | *(none)* | yes (non-loopback) | OpenAI-compatible base URL. Cloudflare shorthand: if unset and `AI_CF_ACCOUNT_ID` is set, builds `https://api.cloudflare.com/client/v4/accounts/<id>/ai/v1`. http allowed on loopback and on a **literal** private-network address (RFC 1918, IPv6 ULA/link-local, CGNAT `100.64.0.0/10`); any other plain-http host needs `ALLOW_INSECURE_HTTP_ENDPOINTS=true`. |
 | `AI_API_KEY` | string | *(none)* | yes (non-loopback) | API key / bearer token. Falls back to `AI_CF_API_TOKEN`. |
 | `AI_MODEL_NAME` | string | *(none)* | yes (single-provider) | Model name. Required in single-provider mode: `validateEnv` (`src/config/env.ts`) throws at startup if it is unset, before any provider is resolved. `resolveLLMProviders` (`src/config/llm.ts`) keeps `meta-llama/Meta-Llama-3-8B-Instruct` as a read-time fallback, but it is unreachable once `validateEnv` has run. |
 | `AI_CF_ACCOUNT_ID` | string | *(none)* | no | Cloudflare account ID (auto-builds `AI_API_BASE_URL`). |
 | `AI_CF_API_TOKEN` | string | *(none)* | no | Cloudflare API token (used as `AI_API_KEY` fallback). |
-| `ALLOW_INSECURE_HTTP_ENDPOINTS` | boolean | `false` | no | Accept plain `http://` for credential-bearing endpoints that otherwise require https: `AI_API_BASE_URL`, every `AI_<NAME>_BASE_URL`, and `TRANSCRIBE_ENDPOINT`. Intended for a self-hosted model or Whisper server on a trusted private network (`http://100.150.0.4:8080/v1`). The API key then travels in cleartext, so a startup warning is logged when it is on. Values other than `true`/`false` fail startup. |
+| `ALLOW_INSECURE_HTTP_ENDPOINTS` | boolean | `false` | no | Accept plain `http://` for credential-bearing endpoints that otherwise require https: `AI_API_BASE_URL`, every `AI_<NAME>_BASE_URL`, and `TRANSCRIBE_ENDPOINT`. Needed for a host that is a public address or a DNS name (`http://inference.corp.example/v1`); literal private addresses are accepted without it. The API key then travels in cleartext, so a startup warning is logged when it is on. Values other than `true`/`false` fail startup. |
 
 ## 3. AI / LLM — Multi-Provider Failover Mode
 
@@ -142,7 +142,7 @@ A permission check requires the **exact** role: `user` is implicit for everyone 
 
 | Variable | Type | Default | Required | Purpose |
 |---|---|---|---|---|
-| `TRANSCRIBE_ENDPOINT` | URL | *(unset)* | no | External transcription service (Whisper API compatible). Leave unset to disable. Must be https unless it points at a loopback address (or `ALLOW_INSECURE_HTTP_ENDPOINTS=true`): it carries an API key. |
+| `TRANSCRIBE_ENDPOINT` | URL | *(unset)* | no | External transcription service (Whisper API compatible). Leave unset to disable. Must be https unless it points at a loopback or literal private address (or `ALLOW_INSECURE_HTTP_ENDPOINTS=true`): it carries an API key. |
 | `TRANSCRIBE_API_KEY` | string | *(unset)* | no | Bearer token for the transcription service. |
 | `TRANSCRIBE_TIMEOUT_MS` | integer | `45000` | no | Timeout for transcription requests in ms. Range 1,000–600,000. |
 | `TRANSCRIBE_MODE` | string | `multipart` | no | `multipart` (default) or `json`. |
