@@ -1,4 +1,4 @@
-import { asc, eq, isNull, ne, or } from 'drizzle-orm';
+import { and, asc, eq, isNull, ne, or, sql } from 'drizzle-orm';
 import { createDatabase, ensureDatabaseSchema, type DatabaseHandle } from '../src/db';
 import { memories } from '../src/db/schema';
 import { resolveDatabasePath } from '../src/config/database';
@@ -15,10 +15,15 @@ export async function backfillEmbeddings(
     const pending = handle.db
       .select({ id: memories.id, content: memories.content })
       .from(memories)
-      .where(or(
-        isNull(memories.embedding),
-        isNull(memories.embeddingModel),
-        ne(memories.embeddingModel, model),
+      .where(and(
+        or(
+          isNull(memories.embedding),
+          isNull(memories.embeddingModel),
+          ne(memories.embeddingModel, model),
+        ),
+        // A blank row yields an empty vector by design, which can never be
+        // stored — selecting it made every run fail on the same row forever.
+        sql`trim(${memories.content}) <> ''`,
       ))
       .orderBy(asc(memories.created_at), asc(memories.id))
       .limit(MAX_BATCH_SIZE)
@@ -33,7 +38,9 @@ export async function backfillEmbeddings(
     handle.db.transaction(transaction => {
       for (let index = 0; index < pending.length; index++) {
         const vector = vectors[index]!;
-        if (vector.length === 0) throw new Error(`Embedding provider returned an empty vector for ${pending[index]!.id}`);
+        // Defensive: `embed()` already filters blank input, but a provider that
+        // returns a zero-length vector for one row must not abort the backfill.
+        if (vector.length === 0) continue;
         transaction
           .update(memories)
           .set({ embedding: float32ToBytes(vector), embeddingModel: model, embeddedAt: new Date() })

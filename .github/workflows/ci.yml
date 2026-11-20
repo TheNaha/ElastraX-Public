@@ -75,7 +75,7 @@ jobs:
           fi
 
       - name: Migration smoke
-        run: bun test test/migration.test.ts
+        run: bun test --no-env-file test/migration.test.ts
 
       - name: Lint
         run: bun run lint
