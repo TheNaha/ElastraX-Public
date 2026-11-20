@@ -34,7 +34,7 @@ The default handle is a singleton exposed as `db` (Drizzle client) and `sqlite` 
 - `db:push` is disabled (`package.json` script prints an error and exits 1).
 - `db:migrate` runs `scripts/dbBackup.ts migrate`, which calls `ensureDatabaseSchema` (back it up yourself first with `db:backup`; the script does not do it).
 - After `drizzle-kit generate`, rename the new file and its journal tag to the next `00NN_` number, set `when` to the next integer, and ensure a matching `meta/00NN_snapshot.json` exists.
-- `drizzle/migrations/meta/_journal.json` uses small sequential integers for `when` (1..N), not timestamps. `src/db/migrations.ts` validates these values and hardcodes some (`ROOM_KEY_MIGRATION_WHEN` and a checksum allowance keyed by journal position).
+- `drizzle/migrations/meta/_journal.json` uses small sequential integers for `when` (1..N), not timestamps. `src/db/migrations.ts` validates these values and hardcodes some (`ROOM_KEY_MIGRATION_WHEN` and a checksum allowance keyed by journal position). The ledger's own `created_at` is **not** compared with `when`: journals from earlier commits used `null` and epoch milliseconds, so equality would reject every database migrated back then. A row is identified by its position, whose checksum must still match the file.
 - Applied migrations are hash-checked; never edit a shipped `.sql` file.
 - CI runs `bun run db:generate` and fails if it changes `drizzle.config.ts`, `drizzle/`, or `src/db/schema.ts` — schema/migration drift is fatal.
 - `REQUIRED_INDEXES` in `src/db/migrations.ts` is the index contract: startup validation fails when a required index is missing, and `test/migration.test.ts` asserts set equality against a freshly migrated database, so a new index must be added to the list.
@@ -60,7 +60,7 @@ Timestamps are read through a mixed-unit normalisation (`CASE WHEN ts > 10000000
 ## Backups and restore
 
 - `bun run db:backup` writes consistent `VACUUM INTO` snapshots to `BACKUP_DIR` (default `./data/backups`), keeps `BACKUP_KEEP` (default 7), and prunes older snapshots with their manifests. Pruning refuses a manifest whose `snapshot.file` is not a bare filename inside the backup directory, and sweeps `*.db` snapshots that have no manifest after a 1 h grace (a snapshot is published just before its manifest).
-- `bun run db:restore` restores from a backup, validating integrity, foreign keys, schema version, and fingerprint before writing.
+- `bun run db:restore` restores from a backup, validating integrity, foreign keys, the backup's own manifest, and that its schema is **not newer** than this build. A snapshot from an older release is the normal rollback case: the script then runs the pending migrations on the restored copy and validates the schema contract. A destination that still has a `-wal`/`-shm` sidecar is refused.
 - `bun run db:preflight` validates a restored copy before migration (read-only).
 - Never point tests at `data/bot.db`; the test harness uses temp databases and fails the run if anything under repo `data/` changes.
 

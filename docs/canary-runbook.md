@@ -165,7 +165,7 @@ curl -fsS http://127.0.0.1:${WEBHOOK_PORT:-3500}/ready
 Data rollback is a separate, destructive decision:
 
 1. Stop the bot.
-2. Run the one-off restore container from section 1 (not a host command), with `DB_RESTORE_PATH` pointing at a path that does not exist yet. The restore validates integrity, foreign keys, the schema contract, and the expected schema version before writing the destination.
+2. Run the one-off restore container from section 1 (not a host command), with `DB_RESTORE_PATH` pointing at a path that does not exist yet. The restore validates integrity, foreign keys and the manifest, refuses a snapshot whose schema is newer than the image, then migrates an older snapshot forward and validates the schema contract before printing `Validated new database:`.
 3. Swap the file into place inside the volume, preserving ownership (`bun:bun`) and mode, for example with a one-off container that copies `/app/data/restore-check/bot.db` over the stopped instance's database and removes the `-wal`/`-shm` sidecars.
 4. Start, then re-run the section 5 probes, including retention compatibility below.
 
