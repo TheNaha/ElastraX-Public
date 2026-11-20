@@ -352,33 +352,55 @@ export class FlowHandler {
    */
   static async pruneAllExpired(now = Date.now()): Promise<number> {
     await this.initialize();
-    const rows = await db.select({ id: flowSessions.id, data: flowSessions.data }).from(flowSessions).all();
+    const rows = await db.select({ id: flowSessions.id }).from(flowSessions).all();
     let pruned = 0;
     for (const row of rows) {
-      try {
-        const session = JSON.parse(row.data) as UserSession;
-        if (
-          !session ||
-          typeof session !== 'object' ||
-          !session.flows ||
-          typeof session.flows !== 'object' ||
-          Array.isArray(session.flows)
-        ) {
-          await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
-          pruned++;
-          continue;
+      // Take the per-key lock and re-read inside it. The prune used to read every
+      // row up front and then write unconditionally, so a flow a user started
+      // between the read and the write was clobbered — and an empty stale read
+      // could DELETE the freshly written session.
+      await this.withLock(row.id, async () => {
+        let current: { data: string } | undefined;
+        try {
+          current = await db.select({ data: flowSessions.data })
+            .from(flowSessions)
+            .where(eq(flowSessions.id, row.id))
+            .all()[0];
+        } catch (error) {
+          logger.warn({ err: error, key: row.id }, '[FlowHandler] Expired-session sweep could not read a row');
+          return;
         }
-        const changed = this.pruneExpiredFlows(session, now);
-        if (changed && !this.hasFlows(session.flows)) {
+        if (!current) return;
+        try {
+          const session = JSON.parse(current.data) as UserSession;
+          if (
+            !session ||
+            typeof session !== 'object' ||
+            !session.flows ||
+            typeof session.flows !== 'object' ||
+            Array.isArray(session.flows)
+          ) {
+            await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+            this.memorySessions.delete(row.id);
+            pruned++;
+            return;
+          }
+          const changed = this.pruneExpiredFlows(session, now);
+          if (changed && !this.hasFlows(session.flows)) {
+            await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+            this.memorySessions.delete(row.id);
+            pruned++;
+          } else if (changed) {
+            await db.update(flowSessions).set({ data: JSON.stringify(session), updated_at: new Date() }).where(eq(flowSessions.id, row.id)).run();
+          }
+        } catch {
           await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
+          this.memorySessions.delete(row.id);
           pruned++;
-        } else if (changed) {
-          await db.update(flowSessions).set({ data: JSON.stringify(session), updated_at: new Date() }).where(eq(flowSessions.id, row.id)).run();
         }
-      } catch {
-        await db.delete(flowSessions).where(eq(flowSessions.id, row.id)).run();
-        pruned++;
-      }
+      }).catch(error => {
+        logger.warn({ err: error, key: row.id }, '[FlowHandler] Expired-session sweep failed for a row');
+      });
     }
     return pruned;
   }
@@ -420,26 +442,28 @@ export class FlowHandler {
       if (session.activeFlow === flowId) this.selectFallbackActiveFlow(session);
       if (!this.hasFlows(session.flows)) {
         this.memorySessions.delete(storageKey);
-        FlowHandler.safeDeleteSession(storageKey, 'Session deletion failed; cleared process-local session');
+        await FlowHandler.safeDeleteSession(storageKey, 'Session deletion failed; cleared process-local session');
       } else await this.writeSession(storageKey, session);
       logger.debug({ userId, flowId }, '[FlowHandler] Flow session cleared');
     });
   }
 
   /**
-   * Best-effort deletion of a flow session row. Failures are logged but never
-   * propagated: the process-local session has already been cleared, so a DB
-   * delete failure should not mask the caller's success.
+   * Delete a flow session row. Failures are logged but never propagated: the
+   * process-local session has already been cleared, so a DB delete failure should
+   * not mask the caller's success.
+   *
+   * Awaited by its caller (inside the session lock). Fire-and-forget let the
+   * delete land *after* the lock was released: a `setSession` that started in
+   * between re-read the not-yet-deleted row, wrote a new one, and the pending
+   * delete then removed it — memory and database diverged.
    */
-  private static safeDeleteSession(key: string, reason: string): void {
-    // `run()` returns a thenable; a rejection escapes a synchronous try/catch and
-    // becomes an unhandled rejection (fatal under Bun). `writeSession` in this
-    // file already handles its promise this way.
-    void Promise.resolve()
-      .then(() => db.delete(flowSessions).where(eq(flowSessions.id, key)).run())
-      .catch((error: unknown) => {
-        logger.warn({ err: error, key }, `[FlowHandler] ${reason}`);
-      });
+  private static async safeDeleteSession(key: string, reason: string): Promise<void> {
+    try {
+      await db.delete(flowSessions).where(eq(flowSessions.id, key)).run();
+    } catch (error: unknown) {
+      logger.warn({ err: error, key }, `[FlowHandler] ${reason}`);
+    }
   }
 
   static clearSession(
