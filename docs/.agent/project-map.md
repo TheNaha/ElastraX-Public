@@ -1,7 +1,7 @@
 # Project Map — ElastraX
 
-**Recorded Commit:** `9e16190` (code through maintenance pass 6; docs resynced 2026-11-19)
-**Date:** 2026-11-19
+**Recorded Commit:** `e245871` (code through maintenance pass 8; docs resynced 2026-11-21)
+**Date:** 2026-11-21
 **Runtime:** Bun 1.3.14 (TypeScript direct execution, no Node/npm build step)
 
 ---
@@ -81,6 +81,7 @@ ElastraX/
 │   │   ├── schema.ts            # Drizzle table definitions
 │   │   ├── migrations.ts        # Journal/checksum validation and schema contract
 │   │   ├── rooms.ts             # Room-key registry and resolution (schema-catalog probes memoised per handle)
+│   │   ├── roomLanguage.ts      # Room language lookup for code with no MessageContext (reminders, webhooks, digests)
 │   │   ├── runtime.ts           # Runtime lease table
 │   │   ├── retention.ts         # Message/delivery retention pruning
 │   │   ├── maintenance.ts       # Retention policy parsing and scheduler
@@ -103,6 +104,8 @@ ElastraX/
 │   ├── types/                   # Shared type declarations
 │   └── utils/                   # Shared infrastructure and services (see each file's header)
 │                                #   toolAccess.ts — shared tool guards (binding lookup, permission check)
+│                                #   i18n.ts — en/id translation table and t()
+│                                #   netAddress.ts — loopback/private/CGNAT host classification for endpoint validation
 ├── scripts/                     # Operational CLIs (dbBackup, dbRoomKeys, ciDiagnostics, retention, …)
 ├── drizzle/
 │   ├── migrations/              # Applied SQL migrations with immutable hash history
@@ -124,6 +127,10 @@ ElastraX/
 ### Canonical Room Key vs Transport Chat ID
 - `ctx.chatId`: Raw transport ID (e.g. `123456789@g.us`, Discord snowflake, Telegram chat ID) used solely for provider I/O.
 - `ctx.roomKey`: Durable canonical room identifier (`room:<platform>:<id>`). All persistence (rooms, history, reminders, subscriptions, outbox) indexes against `roomKey`.
+
+### Localisation
+- Every bot-rendered string goes through `t(lang, key)` (`src/utils/i18n.ts`) with `en`/`id` key and placeholder parity enforced by `test/i18n.test.ts`.
+- The locale is per room (`chat_rooms.language`); code without a `MessageContext` reads it through `getRoomLanguage(roomKey)` (`src/db/roomLanguage.ts`). Webhook jobs carry per-locale `textVariants`. See `docs/i18n.md`.
 
 ### Tool Calling & Plugin Sandboxing
 - Built-in tools extend `BaseTool`.
