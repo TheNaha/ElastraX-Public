@@ -15,7 +15,7 @@ All scripts run with Bun. Most are invoked via `package.json` scripts; some are 
 | `bun run db:restore` | `scripts/dbBackup.ts restore` | Restore from a backup (validates integrity/foreign keys/schema version). |
 | `bun run db:room-keys` | `scripts/dbRoomKeys.ts` | Read-only report of canonical room-key coverage and conflicts. |
 | `bun run db:room-keys:record` | `scripts/dbRoomKeys.ts --record-conflicts` | Record conflict audit rows. |
-| `bun run db:embed` | `scripts/backfillEmbeddings.ts` | Re-embed stored memories after changing the embedding model. |
+| `bun run db:embed` | `scripts/backfillEmbeddings.ts` | Re-embed stored memories after changing the embedding model. Skips blank content and rows whose embedding comes back empty, so one bad row cannot fail every run. |
 | `bun run db:retention` | `scripts/runRetention.ts` | Dry-run retention (default). Add `-- --apply` to delete. Refuses a missing database file or one without the retention tables. |
 
 ## Verification and diagnostics
@@ -39,7 +39,7 @@ All scripts run with Bun. Most are invoked via `package.json` scripts; some are 
 | `bun run start` | src/index.ts | Start the bot. |
 | `bun run dev` | src/index.ts --watch | Watch mode. |
 | `bun run fixtures:dump` | `scripts/dumpFixtures.ts` | Developer-only fixture dump (`ALLOW_FIXTURE_DUMP=true`). |
-| `scripts/push-to-public.sh` | shell | Mirror sync: fetches `origin`, refuses to continue unless `gitleaks detect` passes, then pushes `main` to the `origin-public` remote. |
+| `scripts/push-to-public.sh` | shell | Mirror sync: fetches `origin`, refuses a dirty tree or a checkout that is not `origin/main`, refuses to continue unless `gitleaks detect` passes, then pushes that verified commit to `origin-public`. |
 
 ## Notes
 

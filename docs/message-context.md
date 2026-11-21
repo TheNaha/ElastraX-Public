@@ -18,7 +18,7 @@
 | `mentionedIds` | `string[]` | no | Mentioned user IDs. |
 | `isBotMentioned` | `boolean` | yes | True if the bot was explicitly mentioned. Providers calculate this from platform-specific mention syntax/IDs. |
 | `receivedAt` | `number` | no | Unix timestamp (ms) of receipt. Used by `PingTool` for round-trip latency. |
-| `language` | `string` | no | Active language for this room (`'en'` \| `'id'`). Populated by the agent before invoking tools. Defaults to `'en'`. |
+| `language` | `string` | no | Active language for this room (`'en'` \| `'id'`). The agent reads it from the room row before invoking tools (`chat_rooms.language`, default `'en'`) and every bot-rendered string uses it. Code with no `MessageContext` (reminders, webhooks, digests) must call `getRoomLanguage(roomKey)` instead. Defaults to `'en'`. See [Localisation](./i18n.md). |
 | `messageType` | `string` | yes | Shared message-type vocabulary (`imageMessage`, `videoMessage`, `audioMessage`, `documentMessage`, `stickerMessage`, `conversation`, …). Each provider maps its own payload onto it (`messageTypeOf` in `src/providers/telegram.ts` and `whatsappParser.ts`). View-once messages are unwrapped to their inner type; an unrecognised payload is `unknown`. |
 | `hasMedia` | `boolean` | yes | True when the message carries image, video, audio, document or sticker media. Telegram `animation` (GIF) and `video_note` (round video) count as video; Telegram and WhatsApp stickers count as media, and Discord stickers (`message.stickers`, which arrive outside `attachments`) are converted into attachment descriptors. |
 | `mediaPath` | `string` | no | Local cached path of downloaded media. |

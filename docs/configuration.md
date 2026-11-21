@@ -84,6 +84,8 @@ Global (single-provider or no-prefix) equivalents: `AI_TIER`, `AI_SUPPORTS_IMAGE
 | `DEFAULT_SYSTEM_PROMPT` | string | built-in default | no | Default system prompt. Use `{{LANGUAGE}}` placeholder. Two media-service variants documented in `.env.example`. |
 | `LONG_TERM_MEMORY` | boolean | `true` in DMs, `false` in groups | no | Global default for long-term memory; per-chat override via `/config`. The DM/group difference is the built-in default when unset. |
 
+Reply language has no environment variable. It is per-room state (`chat_rooms.language`, default `en`) changed with `/language`, and the `{{LANGUAGE}}` placeholder above is filled from it. See [Localisation](./i18n.md).
+
 ## 6. Platform Providers
 
 | Variable | Type | Default | Required | Purpose |

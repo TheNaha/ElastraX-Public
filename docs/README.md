@@ -7,6 +7,7 @@
 - [API & Webhooks](./api.md) — exact routes, authentication, limits, replay handling, and delivery semantics.
 - [Admin Dashboard](./admin-dashboard.md) — operator dashboard auth, session cookie, CSRF, and `/admin/api/*` routes.
 - [Tools](./tools.md) — tool catalog and execution model.
+- [Localisation (i18n)](./i18n.md) — locales, room language, help text, and per-room webhook rendering.
 - [Services](./services.md) — long-lived services and timers started by `AppRuntime`, plus inbox/outbox delivery guarantees and scheduler retry semantics.
 - [Database](./database.md) — SQLite schema, migrations, lease behavior, and retention.
 - [Error Handling](./error-handling.md) — error types, codes, retryability, and startup validation.

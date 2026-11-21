@@ -99,9 +99,13 @@ Fan-out defaults to 25 destinations and is bounded by `WEBHOOK_MAX_DESTINATIONS`
 
 ## Replay and rate limits
 
-Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. The replay key is the route, the source and that id joined with a NUL byte, so the same id from two sources (or on two routes) is two different events. Keys live in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`, capped at `WEBHOOK_REPLAY_MAX_ENTRIES`. When the cap is reached the oldest *completed* id is evicted and intake continues — remembering an id is best effort, and forgetting one only risks re-delivering an event older than the window. The cache answers `503` with `Retry-After: 1` only while a request with that id is still in flight, or when every slot is in flight. When the durable outbox is registered, the same key becomes the delivery idempotency key, so a replay that slips past the cache is still deduplicated by the outbox.
+Send `X-Webhook-Id` or `X-Event-Id` for generic/media events. GitHub uses `X-GitHub-Delivery`. The replay key is the route, the source and that id joined with a NUL byte, so the same id from two sources (or on two routes) is two different events. Keys live in a bounded in-memory cache for `WEBHOOK_REPLAY_TTL_MS`, capped at `WEBHOOK_REPLAY_MAX_ENTRIES`. When the cap is reached the oldest *completed* id is evicted and intake continues — remembering an id is best effort, and forgetting one only risks re-delivering an event older than the window. The cache answers `503` with `Retry-After: 1` only while a request with that id is still in flight, or when every slot is in flight. When the durable outbox is registered, the delivery idempotency key is built from the same route, source and event id (plus the destination), so a replay that slips past the cache is still deduplicated by the outbox, while two senders reusing one event id on the same route remain two events.
 
 `X-Webhook-Source` or the payload `source` identifies a source. Each source gets its own token-bucket limit governed by `WEBHOOK_RATE_LIMIT_MAX` and `WEBHOOK_RATE_LIMIT_WINDOW_MS`. The peer address is used as an additional bucket only when it is not loopback: behind the documented reverse proxy it is always `127.0.0.1`, so keying on it would cap total throughput at one bucket regardless of source. Source length and the number of tracked rate-limit keys are bounded; a key that cannot be tracked without exceeding the cap is not stored, so the map never grows past the limit.
+
+Before the body is read or the secret is checked, a second per-peer bucket throttles unauthenticated requests. It uses its own limiter with four times the delivery limit (capped at 10,000), so a flood of bad secrets cannot spend a real sender's budget, and it is skipped for loopback for the same proxy reason. It answers `429` with `Retry-After`.
+
+Webhook notices are rendered per destination room in that room's language. The server builds `textVariants` (`en`/`id`; `text` stays the English default), and each destination receives its own variant. A caller-supplied generic `text` body is assumed to be already localised and is sent unchanged; only the server's own labels are translated. See [Localisation](./i18n.md).
 
 ## Request bounds
 
@@ -110,7 +114,7 @@ The listener rejects:
 - bodies over `WEBHOOK_MAX_BODY_BYTES` with `413`;
 - bodies not completed within `WEBHOOK_BODY_READ_TIMEOUT_MS` with `408`;
 - invalid or excess destinations with `400`;
-- authenticated request bursts over the configured rate limit with `429` and `Retry-After`.
+- request bursts over the configured rate limit — including the pre-authentication per-peer bucket — with `429` and `Retry-After`.
 
 Formatted chat text is truncated to `WEBHOOK_MAX_TEXT_LENGTH`.
 

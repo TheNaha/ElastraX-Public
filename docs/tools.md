@@ -71,6 +71,7 @@ The tool registry (`src/tools/registry.ts`, re-exported via `src/tools/index.ts`
 - Slash commands bypass the LLM and call the tool directly; model tool calls go through the same authorization and argument validation.
 - Command arguments are positional, and any declared parameter can be set explicitly with `field=value` (for example `/convert mp3 resolution=720p fps=30`). Only properties the tool actually declares are treated as overrides; an unknown `name=value` stays an ordinary positional argument and fails loudly if nothing accepts it.
 - While a tool (or a batch of tools) runs, the agent posts a live status message and edits it in place, listing each step as `[i/N]` with a running/completed/failed icon (⏳/✅/❌) using `BaseTool.describeAction`; the final answer is delivered as a separate message. The rendered status is bounded to 1,800 UTF-16 units, because `editMessage` grows a message by re-editing its head and posting the remainder, so an unbounded status would duplicate its tail on every step. Platforms without `sendMessage`/`editMessage` support fall back to no progress updates.
+- Every bot-rendered string on this path is localised to the room: the progress lines, `/menu`/`/help` (from the `help.tool.*`, `help.param.*` and `help.category.*` keys), and validation errors. A malformed slash command raises `CommandUsageError`, which carries the translated usage text and is answered as a usage error instead of `agent.internal_error`. See [Localisation](./i18n.md).
 
 ## Tool metadata reference
 
@@ -82,7 +83,7 @@ Mutating (non-`read`) tools and their overrides (`src/tools/registry.ts`, `MUTAB
 |---|---|---|
 | `owner_admin` | `admin` | `/owner`, `/broadcast`, `/leave`, `/botleave`, `/pinout` — owner only; `leave`/`botleave` are group-only. |
 | `config` | `admin` | `/config set`/`reset` — admin only. |
-| `language` | `local-write` | `/language set`/`reset` — admin only. |
+| `language` | `local-write` | `/language <en\|id>` — an admin changes it in a group; any participant may change it in a DM. |
 | `reminder` | `local-write` | `/remind` — local state write. |
 | `delete_message` | `external-mutation` | `/del` — deletes provider messages. |
 | `download_media` | `external-mutation` | `/dl` — writes files to disk. |

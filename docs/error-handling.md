@@ -10,7 +10,7 @@ ElastraX uses typed errors with codes and retryability flags. Startup validation
 - Non-integer bounds or out-of-range integers.
 - Weak secrets (fewer than 24 bytes).
 - Non-RFC3339 compatibility deadlines (must be absolute, future-dated).
-- Unsafe hosts: plain `http` is accepted only on a loopback address, except for `SEARXNG_URL`, `SEERR_API_URL` and `JELLYFIN_API_URL`, which opt in to plain http on any host because they are routinely self-hosted without TLS. The AI base URLs and `TRANSCRIBE_ENDPOINT` carry a credential, so they stay https-unless-loopback.
+- Unsafe hosts: credential-bearing endpoints (`AI_API_BASE_URL`, every `AI_<NAME>_BASE_URL`, `TRANSCRIBE_ENDPOINT`) require `https`, except on a loopback host or a **literal** private-network address (RFC 1918, IPv6 ULA/link-local, CGNAT `100.64.0.0/10`; a DNS name is never classified, because it can resolve anywhere). A private literal over plain http logs a per-endpoint cleartext-credentials warning. `ALLOW_INSECURE_HTTP_ENDPOINTS=true` widens the rule to a public address or a DNS name and logs one startup warning. `SEARXNG_URL`, `SEERR_API_URL` and `JELLYFIN_API_URL` opt in to plain http on any host because they are routinely self-hosted without TLS.
 - Credentials in URLs (`user:pass@`).
 - `AI_PROVIDERS` empty, duplicated, or containing invalid provider names.
 - `AI_TIER` not one of `standard`, `fast`, `powerful`.
@@ -26,6 +26,7 @@ ElastraX uses typed errors with codes and retryability flags. Startup validation
 | `WebhookRequestError` | `src/webhooks/utils.ts` | carries an HTTP status; server maps it to the response status | — |
 | `HttpClientError` | `src/utils/BaseHttpClient.ts` | `INVALID_URL`, `INVALID_PROTOCOL`, `TIMEOUT`, `NETWORK_ERROR`, `HTTP_ERROR`, `INVALID_RESPONSE`, `RESPONSE_TOO_LARGE`; carries `service`, `status`, `retryable` | `true` for timeouts, network failures, `429`, and `5xx` |
 | `TurnBudgetExceededError` | `src/ai/turnBudget.ts` | — | reported back to the model as a tool result; the turn still finishes |
+| `CommandUsageError` | `src/tools/registry.ts` | carries the translated usage text for a malformed slash command (bad arity, unknown action, failed validation) | answered to the user as a usage error, not an internal fault |
 | `TimeoutError` | `src/utils/withTimeout.ts` | `TIMEOUT` | carries a label and the timeout; the wrapped operation is aborted when it accepts a signal |
 | `FlowVersionConflictError` | `src/core/FlowHandler.ts` | raised when a stale flow writer loses the version race | — |
 | `ScheduledTaskCapabilityError` | `src/runtime/AppRuntime.ts` | raised when a scheduled agent task reaches for a denied capability | — |

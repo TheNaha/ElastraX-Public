@@ -74,7 +74,7 @@ The dashboard shares a listener that sets no `maxRequestBodySize`, so its own ha
 - `POST /admin/api/action/*` reads at most **64 KiB**;
 - oversized bodies fail with `413`, a stalled read with `408`, and a non-object or malformed JSON body with `400`.
 
-Login attempts are throttled per client IP (5 attempts per 60 s, bounded table; expired buckets are swept at most once per window, so a full table cannot turn every login POST into a 10 000-entry walk), and at most 32 sessions are kept; the oldest is evicted on login. A rejected mutation also needs the request to be same-origin, a valid session, and the CSRF header. `Host` and the first `X-Forwarded-Host` value are both accepted as origin candidates, so a reverse proxy that rewrites `Host` does not break every action.
+Login attempts are throttled per client IP (5 attempts per 60 s, bounded table; expired buckets are swept at most once per window, so a full table cannot turn every login POST into a 10 000-entry walk). Only **failed** attempts are charged and a successful login clears the bucket, so a correct token is not refused after a few typos; a limited request answers `429` with a `Retry-After` that reports the real remaining window. At most 32 sessions are kept; the oldest is evicted on login. A rejected mutation also needs the request to be same-origin, a valid session, and the CSRF header. `Host` and the first `X-Forwarded-Host` value are both accepted as origin candidates, so a reverse proxy that rewrites `Host` does not break every action.
 
 ## Deployment notes
 
