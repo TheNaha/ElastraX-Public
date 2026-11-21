@@ -1102,6 +1102,47 @@ describe('handleIncomingMessage', () => {
       expect(sent.every(text => text.includes('Visible answer.'))).toBe(true);
     });
 
+    test('does not ship an unterminated think block as the final answer', async () => {
+      // A stream that ends inside an open ` thinking` block after emitting some
+      // visible text (truncation, or a provider that opened the tag and stopped)
+      // must not deliver the raw reasoning as the final, persisted answer.
+      process.env.AI_STREAMING = 'true';
+      const OPEN = '<' + 'think>';
+      const chunk = (text: string, finish: string | null = null): string =>
+        `data: ${JSON.stringify({
+          id: 's', object: 'chat.completion.chunk', created: 1, model: 'm',
+          choices: [{ index: 0, delta: { content: text }, finish_reason: finish }],
+        })}\n\n`;
+
+      global.fetch = mock(async () => new Response(
+        [
+          chunk('Visible answer. '),
+          chunk(`${OPEN}secret reasoning that never closes`, 'stop'),
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+        { status: 200, headers: { 'Content-Type': 'text/event-stream' } },
+      )) as unknown as typeof global.fetch;
+
+      const edited: string[] = [];
+      const ctx = makeCtx({
+        isGroup: false,
+        text: 'Truncate mid-think',
+        sendMessage: mock(async () => ({ id: 'think-key-1' })),
+        editMessage: mock(async (_key: unknown, text: string) => {
+          edited.push(text);
+        }),
+      });
+
+      await handleIncomingMessage(ctx);
+
+      // The final edit must carry the visible answer only, never the reasoning.
+      const final = edited[edited.length - 1] ?? '';
+      expect(final).toContain('Visible answer.');
+      expect(final).not.toContain('secret reasoning');
+      expect(final).not.toContain(OPEN);
+    });
+
     /**
      * `editMessage` grows a message by re-editing its head and posting the
      * remainder as *new* messages, so a preview past the platform limit re-posts

@@ -1291,6 +1291,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     let preferredTier: ModelTier | undefined;
     /** Last non-empty assistant text seen, used if the final round produces nothing. */
     let lastAssistantText = '';
+    /**
+     * Text from the final, text-only round only. `lastAssistantText` also holds
+     * intermediate narration from tool-calling rounds ("Let me search…"), so on
+     * loop exhaustion adopting it persisted that narration as the bot's answer.
+     */
+    let finalRoundText = '';
     const progressTracker = new ToolProgressTracker(ctx, (err, phase) => {
       log.warn({ err: getErrorMessage(err), chatId, phase }, '[Agent] Tool progress update failed');
     });
@@ -1302,6 +1308,14 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
       // answer was replaced by "An internal error occurred".
       const forceTextOnly = iteration >= maxToolIterations;
       const iterationTools = forceTextOnly ? undefined : availableTools;
+      // Honour shutdown/abort between iterations. `AIClient` builds its own
+      // timeout signal, so without this check an aborted turn keeps issuing LLM
+      // and tool calls (up to `maxToolIterations`) while the DB is closing.
+      if (ctx.signal?.aborted) {
+        log.info({ chatId, iteration }, '[Agent] Turn aborted; stopping inference loop');
+        isDone = true;
+        break;
+      }
       // Some OpenAI-compatible servers reject a history that contains tool
       // results when the request omits the tool definitions, so the forced round
       // sends the history with the tool protocol flattened to plain text.
@@ -1339,7 +1353,10 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           // second internal-error reply. This lets the catch strip the cursor.
           finalizeStreamedBubble = async () => {
             if (!sentKey || streamingFailed) return;
-            const text = stripThinkTags(accumulated).trim();
+            // `stripPartialThinkTags`, not `stripThinkTags`: this bubble is
+            // finalised when a stream *failed*, so it may end inside an open
+            // ` thinking` block whose chain of thought must not ship.
+            const text = stripPartialThinkTags(accumulated).trim();
             try {
               await ctx.editMessage!(sentKey, text || '…');
             } catch (err: unknown) {
@@ -1422,7 +1439,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               // The tracker already owns an earlier bubble, so this one is never
               // edited again — and it still ends in the streaming cursor. Finalise
               // it here so the user is not left looking at a dangling "▌".
-              await ctx.editMessage!(sentKey, stripThinkTags(accumulated) || '…').catch((err: unknown) => {
+              await ctx.editMessage!(sentKey, stripPartialThinkTags(accumulated) || '…').catch((err: unknown) => {
                 log.warn({ err: getErrorMessage(err), chatId }, '[Agent] Failed to finalise an intermediate streamed bubble');
               });
             }
@@ -1448,7 +1465,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
               content: accumulated || '',
               tool_calls: toolCalls,
             });
-            if (accumulated.trim()) lastAssistantText = stripThinkTags(accumulated);
+            if (accumulated.trim()) lastAssistantText = stripPartialThinkTags(accumulated);
 
             // Execute tools
             const execution = await executeRequestedToolCalls(toolCalls, {
@@ -1473,9 +1490,14 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
 
           // Stream produced only text — we are done
           isDone = true;
-          const streamedText = stripThinkTags(accumulated) || (forceTextOnly ? lastAssistantText : '');
+          // `stripPartialThinkTags`: a stream can end inside an open ` thinking`
+          // block (truncation, or a provider that opened the tag and stopped);
+          // `stripThinkTags` only removes a closed pair, so the raw reasoning
+          // would ship as the final answer and be persisted to history.
+          const streamedText = stripPartialThinkTags(accumulated) || (forceTextOnly ? lastAssistantText : '');
           finalAiResponseText = streamedText || internalErrorText;
           usedFallbackError = streamedText.length === 0;
+          if (forceTextOnly && streamedText) finalRoundText = streamedText;
 
           // Final edit to remove cursor indicator
           if (sentKey && !usedFallbackError && !streamingFailed) {
@@ -1557,6 +1579,7 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
           // Standard text response (terminal state)
           isDone = true;
           finalAiResponseText = extractAssistantText(aiMsgObj) || (forceTextOnly ? lastAssistantText : '');
+          if (forceTextOnly && finalAiResponseText && !usedFallbackError) finalRoundText = finalAiResponseText;
           if (!finalAiResponseText) {
             finalAiResponseText = internalErrorText;
             usedFallbackError = true;
@@ -1590,8 +1613,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
         platform,
         maxToolIterations,
       }, '[Agent] Aborted inference loop after reaching max tool iterations');
-      finalAiResponseText = lastAssistantText || internalErrorText;
-      usedFallbackError = lastAssistantText.length === 0;
+      // The final, forced text-only round normally set `finalAiResponseText` and
+      // `isDone`; reaching here means even that produced nothing. `lastAssistantText`
+      // holds intermediate narration from tool-calling rounds, so it is not a
+      // final answer — only the final round's own text (if any) is.
+      finalAiResponseText = finalRoundText || internalErrorText;
+      usedFallbackError = finalRoundText.length === 0;
     }
 
     // 4. Save Final AI Response.
@@ -1599,6 +1626,12 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     // The "internal error" placeholder is not an assistant turn: storing it made
     // every later turn in the room carry "An internal error occurred." as the
     // bot's own previous answer, and the model could echo it back.
+    //
+    // `deliveredUserVisible` is set *before* the bookkeeping write below: a
+    // streamed answer already reached the user, so if the insert or the outbox
+    // write throws, the catch must not append a contradicted "internal error"
+    // reply on top of it.
+    if (streamedResponseSent && !usedFallbackError) deliveredUserVisible = true;
     if (!usedFallbackError) {
       await db.insert(messages).values({
         chatRoomId: roomId,
@@ -1615,10 +1648,8 @@ async function handleMessageInternal(ctx: MessageContext): Promise<void> {
     const replyAlreadyDelivered = streamedResponseSent && !usedFallbackError;
     const keyParts = outboxKeyParts(ctx.messageId, 'assistant', ctx.chatId);
     if (replyAlreadyDelivered) {
-      // Set before the bookkeeping write: `recordTextDelivered` is a raw INSERT
-      // and may throw, and at this point the user already has the answer, so the
-      // catch below must not append a contradicted "internal error" reply.
-      deliveredUserVisible = true;
+      // The user already has the answer (flag set above, before any write that
+      // can throw); record the delivery and move on.
       try {
         OutboxService.recordTextDelivered(platform, chatId, finalAiResponseText, keyParts);
       } catch (error) {

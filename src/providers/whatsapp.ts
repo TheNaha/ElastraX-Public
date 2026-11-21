@@ -452,6 +452,7 @@ export class WhatsAppProvider implements BotProvider {
     });
 
     socket.ev.on('group-participants.update', update => {
+      if (!this.isCurrent(socket, generation)) return;
       if (update.id) invalidateNativeAdminCache(update.id, 'whatsapp');
     });
 

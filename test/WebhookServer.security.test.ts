@@ -372,20 +372,31 @@ describe('WebhookServer security and HTTP contract', () => {
 
   test('rejected secrets do not consume the delivery rate budget', async () => {
     // The pre-auth bucket is separate from the delivery buckets: a flood of bad
-    // secrets must not make a legitimate sender see 429.
+    // secrets must not make a legitimate sender see 429. Each bad attempt comes
+    // from a distinct forwarded sender (as behind a proxy), so the pre-auth
+    // throttle bounds each one without any of them draining another's budget —
+    // and the valid sender, on its own key, still succeeds.
     const send = mock(async () => {});
     await withServer({ WEBHOOK_RATE_LIMIT_MAX: '1' }, async (_server, baseUrl) => {
-      const flood = async () => Bun.fetch(`${baseUrl}/webhook`, {
+      const flood = async (attempt: number) => Bun.fetch(`${baseUrl}/webhook`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': 'wrong-secret-value-000000' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': 'wrong-secret-value-000000',
+          'X-Forwarded-For': `203.0.113.${attempt + 1}`,
+        },
         body: JSON.stringify({ room_id: '100', text: 'guess' }),
       });
       for (let attempt = 0; attempt < 10; attempt += 1) {
-        expect((await flood()).status).toBe(401);
+        expect((await flood(attempt)).status).toBe(401);
       }
       const valid = await Bun.fetch(`${baseUrl}/webhook`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'X-Webhook-Secret': SECRET },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': SECRET,
+          'X-Forwarded-For': '198.51.100.7',
+        },
         body: JSON.stringify({ room_id: '100', text: 'hello' }),
       });
       expect(valid.status).toBe(200);
@@ -427,6 +438,30 @@ describe('WebhookServer security and HTTP contract', () => {
         expect(response.status).toBe(200);
       }
     }, server => server.registerSender('discord', send));
+  });
+
+  test('throttles repeated bad secrets from one peer before authentication', async () => {
+    // Behind a proxy every peer is loopback, so the pre-auth limiter keys on the
+    // leftmost `X-Forwarded-For` hop. A single sender that keeps guessing the
+    // shared secret is bounded (429) instead of probing without limit, while the
+    // body is never read past the pre-auth rejection.
+    await withServer({ WEBHOOK_RATE_LIMIT_MAX: '2' }, async (_server, baseUrl) => {
+      const guess = async () => Bun.fetch(`${baseUrl}/webhook`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Webhook-Secret': 'wrong-secret-value-000000',
+          'X-Forwarded-For': '192.0.2.66',
+        },
+        body: JSON.stringify({ room_id: '100', text: 'guess' }),
+      });
+      const statuses: number[] = [];
+      // Pre-auth budget is WEBHOOK_RATE_LIMIT_MAX * 4 = 8; exhaust it and then
+      // confirm further attempts are throttled before the secret check.
+      for (let attempt = 0; attempt < 12; attempt += 1) statuses.push((await guess()).status);
+      expect(statuses.slice(0, 8)).toEqual([401, 401, 401, 401, 401, 401, 401, 401]);
+      expect(statuses.slice(8)).toEqual([429, 429, 429, 429]);
+    }, server => server.registerSender('discord', mock(async () => {})));
   });
 
   test('rejects invalid numeric and boolean webhook configuration at startup', async () => {

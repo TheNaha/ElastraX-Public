@@ -620,11 +620,20 @@ export class WebhookServer {
     // `maxBodyBytes`) and the token bucket consulted only *after* the secret
     // check, so an unauthenticated client had unlimited attempts and could hold
     // `maxBodyBytes` of buffer per connection. It runs on its own bucket, not the
-    // delivery one, so this traffic cannot spend a real sender's budget. Loopback
-    // is exempt, exactly like the `ip:` key below, because the documented
-    // deployment puts a reverse proxy in front (every peer is 127.0.0.1).
-    if (!isLoopbackHost(ip) && this.preAuthLimiter) {
-      const preAuth = this.preAuthLimiter.consume([`ip:${ip}`], this.now());
+    // delivery one, so this traffic cannot spend a real sender's budget.
+    //
+    // The key must survive the documented reverse-proxy deployment: there every
+    // peer is 127.0.0.1, so skipping the check for loopback (as the *delivery*
+    // `ip:` key does) made the pre-auth limiter a no-op exactly where it is most
+    // needed. When the peer is loopback, key on the leftmost `X-Forwarded-For`
+    // hop (the real sender as the proxy reports it); otherwise the socket IP.
+    // This only affects unauthenticated throttling — delivery limiting still
+    // uses the `source:`/`ip:` keys and never trusts a forwarded header.
+    if (this.preAuthLimiter) {
+      const throttleKey = isLoopbackHost(ip)
+        ? req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'ip:proxy'
+        : `ip:${ip}`;
+      const preAuth = this.preAuthLimiter.consume([throttleKey], this.now());
       if (!preAuth.allowed) {
         return jsonResponse({ error: 'Rate limit exceeded' }, 429, {
           'Retry-After': String(preAuth.retryAfterSeconds),

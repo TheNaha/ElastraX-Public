@@ -181,8 +181,15 @@ export async function readRequestBytesWithLimit(
     }, timeoutMs);
   });
 
+  // `readBody()` keeps running after the timeout wins the race. Attach a no-op
+  // handler to it so a later rejection (the 413 cancel, a stream error after
+  // `reader.cancel`) is not an unhandled rejection, and its `finally` can run
+  // `releaseLock` without racing a pending `read()` against a throw the caller
+  // already handled.
+  const bodyPromise = readBody();
+  void bodyPromise.catch(() => undefined);
   try {
-    return await Promise.race([readBody(), timeout]);
+    return await Promise.race([bodyPromise, timeout]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }

@@ -122,3 +122,35 @@ function validateTimeout(timeoutMs: number): void {
 function abortReason(signal: AbortSignal): unknown {
   return signal.reason ?? new Error('Operation aborted.');
 }
+
+/**
+ * Reject as soon as `signal` aborts, without cancelling the underlying promise.
+ *
+ * For calls whose library does not accept a native `AbortSignal` (grammy's
+ * `getFile` types its own `abort-controller` signal): the work keeps running
+ * internally, but the caller is freed at the abort instead of waiting for a
+ * timeout that may be far longer. The underlying promise's eventual rejection
+ * is swallowed so it does not surface as an unhandled rejection.
+ */
+export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (!signal.aborted) {
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(abortReason(signal));
+      signal.addEventListener('abort', onAbort, { once: true });
+      promise.then(
+        value => {
+          signal.removeEventListener('abort', onAbort);
+          resolve(value);
+        },
+        error => {
+          signal.removeEventListener('abort', onAbort);
+          reject(error);
+        },
+      );
+    });
+  }
+  // Already aborted: still attach a handler to the source so its eventual
+  // rejection is observed rather than unhandled.
+  void promise.catch(() => undefined);
+  return Promise.reject(abortReason(signal));
+}

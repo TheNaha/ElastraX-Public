@@ -599,16 +599,27 @@ export class DiscordProvider implements BotProvider {
             // Content-Length, so checking after `arrayBuffer()` would already
             // have buffered an arbitrary payload.
             validateDiscordMediaUrl(attachment.url);
-            const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error', signal: AbortSignal.timeout(30_000) });
-            if (!response.ok) {
-              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment fetch failed: HTTP ${response.status}`);
+            // Register the controller so `stop()` aborts an in-flight forward
+            // fetch: it used to run on a bare `AbortSignal.timeout(30_000)` that
+            // no teardown could cancel, so a stopped provider kept fetching and
+            // buffering up to 200 MiB per attachment for 30 s after shutdown.
+            const forwardController = new AbortController();
+            this.mediaControllers.add(forwardController);
+            try {
+              const forwardSignal = AbortSignal.any([forwardController.signal, AbortSignal.timeout(30_000)]);
+              const response = await discordProviderDeps.fetch(attachment.url, { redirect: 'error', signal: forwardSignal });
+              if (!response.ok) {
+                throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment fetch failed: HTTP ${response.status}`);
+              }
+              const declared = Number(response.headers.get('content-length'));
+              if (Number.isSafeInteger(declared) && declared > HARD_MEDIA_MAX_BYTES) {
+                throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
+              }
+              const buffer = await readBoundedBody(response, HARD_MEDIA_MAX_BYTES, 'Discord attachment');
+              files.push(new AttachmentBuilder(buffer, { name: attachment.name }));
+            } finally {
+              this.mediaControllers.delete(forwardController);
             }
-            const declared = Number(response.headers.get('content-length'));
-            if (Number.isSafeInteger(declared) && declared > HARD_MEDIA_MAX_BYTES) {
-              throw new ProviderOperationError('discord', 'forwardMessage', `Discord attachment exceeds ${HARD_MEDIA_MAX_BYTES} bytes.`);
-            }
-            const buffer = await readBoundedBody(response, HARD_MEDIA_MAX_BYTES, 'Discord attachment');
-            files.push(new AttachmentBuilder(buffer, { name: attachment.name }));
           }
           await targetChannel.send({
             content: truncateDiscordText(msg.content || ''),

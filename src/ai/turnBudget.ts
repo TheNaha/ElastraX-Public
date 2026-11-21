@@ -162,8 +162,14 @@ export class TurnBudget {
       while (firstError === undefined) {
         const index = nextIndex++;
         if (index >= tasks.length) return;
-        this.beginParallelCall();
+        // The budget calls sit *inside* the try: `beginParallelCall` throws a
+        // `TurnBudgetExceededError` when the parallel cap is hit, and that used
+        // to escape to `Promise.all` while sibling workers kept running and
+        // `results` was half-filled — after `claimToolCalls` had already charged
+        // the whole batch. Capturing it like any task error keeps the workers
+        // draining and the partial results coherent.
         try {
+          this.beginParallelCall();
           const result = await tasks[index]!();
           this.recordToolResult(result, options.byteLength?.(result) ?? estimateToolResultBytes(result));
           results[index] = result;

@@ -37,6 +37,7 @@ import { IdentityService } from '../utils/IdentityService';
 import { readMediaBuffer, saveMediaResponse, type SavedMedia } from '../utils/MediaStorage';
 import { noteBotMessageSent, recordReactionFeedback } from '../utils/feedback';
 import { getErrorMessage, safeErrorMessage, toError } from '../utils/errorUtils';
+import { abortable } from '../utils/withTimeout';
 import { roleSatisfies } from '../core/roleAccess';
 
 const log = logger.child({ module: 'Telegram' });
@@ -541,15 +542,20 @@ export class TelegramProvider implements BotProvider {
     if (media.size && media.size > MAX_MEDIA_BYTES) {
       throw new ProviderOperationError('telegram', 'downloadMedia', `Attachment exceeds ${MAX_MEDIA_BYTES} bytes.`, undefined, 'UNSUPPORTED');
     }
-    const file = await bot.api.getFile(media.fileId);
-    if (!file.file_path) return null;
-
     const download = telegramProviderDeps.download ?? ((url: string, signal?: AbortSignal) => fetch(url, { signal }));
     const controller = new AbortController();
     this.mediaControllers.add(controller);
     const timer = setTimeout(() => controller.abort(), DOWNLOAD_TIMEOUT_MS);
     timer.unref?.();
     try {
+      // `getFile` is inside the timed/abortable region: it used to run before the
+      // timer and controller existed, so a stalled `api.telegram.org` held the
+      // turn for grammy's default 500 s and was not aborted by `stop()`. grammy's
+      // own AbortSignal type is not the native one, so instead of passing the
+      // controller's signal, race the call against the abort — the same controller
+      // that aborts the download now bounds the metadata call too.
+      const file = await abortable(bot.api.getFile(media.fileId), controller.signal);
+      if (!file.file_path) return null;
       const response = await download(`https://api.telegram.org/file/bot${bot.token}/${file.file_path}`, controller.signal);
       if (!response.ok) throw new ProviderOperationError('telegram', 'downloadMedia', `Download failed with status ${response.status}.`, undefined, 'OPERATION_FAILED');
       const mime = media.mime ?? guessMime(media.name);

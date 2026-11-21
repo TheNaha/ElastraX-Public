@@ -12,7 +12,14 @@ const THINK_TAG_PATTERN = /<think>[\s\S]*?<\/think>/gi;
 /** An unterminated think block — i.e. one that is still being streamed. */
 const OPEN_THINK_TAG_PATTERN = /<think>[\s\S]*$/i;
 
-/** Remove all think blocks and trim whitespace. */
+/**
+ * Remove all *closed* think blocks and trim whitespace.
+ *
+ * Only matches a `<think>…</think>` pair; an unterminated block (a stream that
+ * ended mid-reasoning) is left in place. That is correct for a complete message
+ * object, but a *partial* stream must use {@link stripPartialThinkTags} instead,
+ * or the model's chain of thought ships as the answer.
+ */
 export function stripThinkTags(text: string): string {
   return text.replace(THINK_TAG_PATTERN, "").trim();
 }
